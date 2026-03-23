@@ -2,7 +2,6 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 
-// 【核心修改】：支持接收 editItemData 以进入编辑模式
 export function createPublishView(currentUser, onBackCallback, onSuccessCallback, editItemData = null) {
     const container = document.createElement("div");
     Object.assign(container.style, {
@@ -24,11 +23,19 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
 
         <div style="display: flex; gap: 10px; margin-bottom: 5px;">
             <div style="flex: 1;">
-                <label style="display: block; margin-bottom: 5px;">类型 <span style="color: #F44336;">*</span></label>
+                <label style="display: block; margin-bottom: 5px;">主类别 <span style="color: #F44336;">*</span></label>
                 <select id="pub-type" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">
-                    <option value="tool">🧰 插件 / 工具 (Tool)</option>
-                    <option value="app">📦 工作流 / 应用 (App)</option>
-                    <option value="recommend">🌟 推荐他人作品 (Recommend)</option>
+                    <option value="tool">🧰 原创插件 / 工具</option>
+                    <option value="app">📦 原创工作流 / 应用</option>
+                    <option value="recommend">🌟 推荐他人作品</option>
+                </select>
+            </div>
+            <div id="box-recommend-type" style="display: none; flex: 1;">
+                <label style="display: block; margin-bottom: 5px;">推荐形式 (三选一) <span style="color: #F44336;">*</span></label>
+                <select id="pub-recommend-type" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">
+                    <option value="recommend_tool">🧰 作为工具 (支持Git安装)</option>
+                    <option value="recommend_app">📦 作为应用 (加载JSON)</option>
+                    <option value="recommend_link">🔗 纯链接 (新窗口打开)</option>
                 </select>
             </div>
             <div style="flex: 2;">
@@ -46,13 +53,13 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
             <div style="flex: 1;" id="box-resource-select">
                 <label style="display: block; margin-bottom: 5px;">资源接入 <span style="color: #F44336;">*</span></label>
                 <select id="pub-resource-type" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">
-                    <option value="link">🔗 外部链接</option>
+                    <option value="link">🔗 外部链接 / Git</option>
                     <option value="json">📄 上传 JSON</option>
                 </select>
             </div>
             <div style="flex: 2;" id="box-link">
-                <label style="display: block; margin-bottom: 5px;">源地址或引用 ID <span style="color: #F44336;">*</span></label>
-                <input type="text" id="pub-link" placeholder="输入外部地址或本社区作品的链接..." style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
+                <label style="display: block; margin-bottom: 5px;">源地址或外部 URL <span style="color: #F44336;">*</span></label>
+                <input type="text" id="pub-link" placeholder="输入外部地址或Git库链接..." style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
             </div>
             <div style="flex: 2; display: none;" id="box-json">
                 <label style="display: block; margin-bottom: 5px;">选择 JSON 文件 <span style="color: #F44336;">*</span> <span id="json-file-hint" style="color:#4CAF50; font-size:12px; font-weight:normal; display:none;">(已包含云端文件，重新选择将覆盖)</span></label>
@@ -80,7 +87,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
 
         <div style="margin-bottom: 10px;">
             <label style="display: block; margin-bottom: 5px;">详细说明</label>
-            <textarea id="pub-full" rows="6" placeholder="介绍具体功能、使用方法、前置环境要求等..." style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; resize: vertical; box-sizing: border-box;"></textarea>
+            <textarea id="pub-full" rows="36" placeholder="介绍具体功能、使用方法、前置环境要求等..." style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; resize: vertical; box-sizing: border-box;"></textarea>
         </div>
 
         <button id="btn-submit-publish" style="width: 100%; padding: 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 15px; transition: 0.3s; margin-bottom: 20px;">${submitBtnText}</button>
@@ -89,6 +96,8 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     container.querySelector("#btn-back").onclick = () => { if (onBackCallback) onBackCallback(); };
 
     const typeSelect = container.querySelector("#pub-type");
+    const recommendTypeSelect = container.querySelector("#pub-recommend-type");
+    const boxRecommendType = container.querySelector("#box-recommend-type");
     const resTypeSelect = container.querySelector("#pub-resource-type");
     const boxResourceSelect = container.querySelector("#box-resource-select");
     const boxLink = container.querySelector("#box-link");
@@ -103,27 +112,34 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     let coverFile = null;
     let jsonFile = null;
 
-    // 【核心新增】：回显已有数据
     if (isEditMode) {
-        typeSelect.value = editItemData.type;
-        typeSelect.disabled = true; // 修改时不允许变更核心大类
+        if (editItemData.type.startsWith("recommend")) {
+            typeSelect.value = "recommend";
+            recommendTypeSelect.value = editItemData.type === "recommend" ? "recommend_link" : editItemData.type;
+        } else {
+            typeSelect.value = editItemData.type;
+        }
+        typeSelect.disabled = true; 
+        recommendTypeSelect.disabled = true;
+
         container.querySelector("#pub-title").value = editItemData.title || "";
         container.querySelector("#pub-short").value = editItemData.shortDesc || "";
         container.querySelector("#pub-full").value = editItemData.fullDesc || "";
         container.querySelector("#pub-price").value = editItemData.price || 0;
 
-        if (editItemData.type !== "recommend") {
+        if (editItemData.coverUrl) {
+            coverPreview.src = editItemData.coverUrl;
+            coverPreview.style.display = "block";
+            container.querySelector("#cover-file-hint").style.display = "inline";
+        }
+
+        if (!editItemData.type.startsWith("recommend")) {
             if (editItemData.link && editItemData.link.includes("huggingface.co")) {
                 resTypeSelect.value = "json";
                 container.querySelector("#json-file-hint").style.display = "inline";
             } else if (editItemData.link) {
                 resTypeSelect.value = "link";
                 inputLink.value = editItemData.link;
-            }
-            if (editItemData.coverUrl) {
-                coverPreview.src = editItemData.coverUrl;
-                coverPreview.style.display = "block";
-                container.querySelector("#cover-file-hint").style.display = "inline";
             }
         } else {
             inputLink.value = editItemData.link || "";
@@ -133,11 +149,21 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     const updateFormView = () => {
         const mainType = typeSelect.value;
         if (mainType === "recommend") {
-            boxCover.style.display = "none"; boxPrice.style.display = "none";
-            boxResourceSelect.style.display = "none"; boxLink.style.display = "block";
-            boxJson.style.display = "none"; resTypeSelect.value = "link";
+            boxRecommendType.style.display = "block";
+            boxCover.style.display = "block"; 
+            boxPrice.style.display = "none";
+            boxResourceSelect.style.display = "none";
+
+            const recType = recommendTypeSelect.value;
+            if (recType === "recommend_app") {
+                boxLink.style.display = "none"; boxJson.style.display = "block";
+            } else {
+                boxLink.style.display = "block"; boxJson.style.display = "none";
+            }
         } else {
-            boxCover.style.display = "block"; boxPrice.style.display = "flex";
+            boxRecommendType.style.display = "none";
+            boxCover.style.display = "block"; 
+            boxPrice.style.display = "flex";
             boxResourceSelect.style.display = "block";
             if (resTypeSelect.value === "link") { boxLink.style.display = "block"; boxJson.style.display = "none"; } 
             else { boxLink.style.display = "none"; boxJson.style.display = "block"; }
@@ -145,8 +171,9 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     };
 
     typeSelect.onchange = updateFormView;
+    recommendTypeSelect.onchange = updateFormView;
     resTypeSelect.onchange = updateFormView;
-    updateFormView(); // 初始化触发一次
+    updateFormView();
 
     coverInput.onchange = (e) => {
         const file = e.target.files[0];
@@ -156,43 +183,43 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         reader.onload = (event) => { coverPreview.src = event.target.result; coverPreview.style.display = "block"; };
         reader.readAsDataURL(file);
     };
-
     inputJson.onchange = (e) => { jsonFile = e.target.files[0]; };
 
     const submitBtn = container.querySelector("#btn-submit-publish");
-
     submitBtn.onclick = async () => {
-        const type = typeSelect.value;
+        const mainType = typeSelect.value;
+        let type = mainType;
+        if (mainType === "recommend") type = recommendTypeSelect.value;
+        
         const title = container.querySelector("#pub-title").value.trim();
         const shortDesc = container.querySelector("#pub-short").value.trim();
         const fullDesc = container.querySelector("#pub-full").value.trim();
-        const price = type === "recommend" ? 0 : (parseFloat(container.querySelector("#pub-price").value) || 0);
-        const resType = resTypeSelect.value;
+        const price = mainType === "recommend" ? 0 : (parseFloat(container.querySelector("#pub-price").value) || 0);
         
         let finalLink = inputLink.value.trim();
-        // 如果是修改模式，且没有传新文件，则继承老的外部链接/云端链接
-        if (isEditMode && resType === "json" && !jsonFile && editItemData.link) {
-            finalLink = editItemData.link;
-        }
+        let isJsonUpload = (mainType !== "recommend" && resTypeSelect.value === "json") || (type === "recommend_app");
+
+        if (isEditMode && isJsonUpload && !jsonFile && editItemData.link) finalLink = editItemData.link;
 
         if (!title || !shortDesc) return showToast("请填写名称和简短描述！", "warning");
-        if (type === "recommend" && !finalLink) return showToast("推荐榜必须提供要推荐的源地址！", "warning");
-        if (type !== "recommend" && resType === "link" && !finalLink) return showToast("请填写资源外部链接！", "warning");
-        if (type !== "recommend" && resType === "json" && !jsonFile && !finalLink) return showToast("请选择要上传的 JSON 文件！", "warning");
+        if (type === "recommend_link" && !finalLink) return showToast("第三方链接必须提供源地址！", "warning");
+        if ((type === "tool" || type === "recommend_tool") && !isJsonUpload && !finalLink) return showToast("必须提供 Git 安装地址！", "warning");
+        if (isJsonUpload && !jsonFile && !finalLink) return showToast("必须上传工作流 JSON 文件！", "warning");
 
         submitBtn.innerHTML = "⏳ 正在连接云端...";
         submitBtn.disabled = true; submitBtn.style.background = "#555";
 
         try {
-            if (type !== "recommend" && resType === "json" && jsonFile) {
+            if (isJsonUpload && jsonFile) {
                 submitBtn.innerHTML = "⏳ 正在安全上传文件...";
-                const jsonUploadRes = await api.uploadFile(jsonFile, type);
+                const uploadType = type.includes("app") ? "app" : (type.includes("tool") ? "tool" : "recommend");
+                const jsonUploadRes = await api.uploadFile(jsonFile, uploadType);
                 finalLink = jsonUploadRes.url; 
             }
 
-            let coverUrl = isEditMode ? editItemData.coverUrl : null; // 默认继承
-            if (type !== "recommend" && coverFile) {
-                submitBtn.innerHTML = "⏳ 正在上传新封面...";
+            let coverUrl = isEditMode ? editItemData.coverUrl : null;
+            if (coverFile) {
+                submitBtn.innerHTML = "⏳ 正在上传封面...";
                 const coverUploadRes = await api.uploadFile(coverFile, "cover");
                 coverUrl = coverUploadRes.url;
             }
@@ -200,7 +227,6 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
             submitBtn.innerHTML = "⏳ 正在同步全网数据库...";
             const submitData = { type, title, shortDesc, fullDesc, price, link: finalLink, coverUrl, author: currentUser.account };
 
-            // 【核心分支】：判断是执行发布还是修改
             if (isEditMode) {
                 await api.updateItem(editItemData.id, currentUser.account, submitData);
                 showToast("✅ 修改已保存并同步全网！", "success");
@@ -208,9 +234,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
                 await api.publishItem(submitData);
                 showToast("🎉 发布成功！您的作品已全网同步。", "success");
             }
-            
             if (onSuccessCallback) onSuccessCallback();
-
         } catch (err) {
             showToast("操作失败: " + err.message, "error");
             submitBtn.disabled = false;
@@ -218,6 +242,5 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
             submitBtn.style.background = "#2196F3";
         }
     };
-
     return container;
 }

@@ -94,7 +94,8 @@ export function createItemCard(itemData, currentUser = null) {
         detailView.style.display = isHidden ? "block" : "none";
 
         if (isHidden && !isRendered) {
-            renderItemTrendChart(detailView.querySelector(`#${chartContainerId}`), itemData.uses);
+            // 【核心修正】：传递完整的 itemData 以供图表模块提取 use_history
+            renderItemTrendChart(detailView.querySelector(`#${chartContainerId}`), itemData);
             setupImageSandboxEvents(detailView);
             isRendered = true;
         }

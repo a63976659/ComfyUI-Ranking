@@ -21,7 +21,7 @@ export function getCoverSandboxHTML(coverUrl) {
 
 export function setupImageSandboxEvents(detailView) {
     const viewport = detailView.querySelector('.img-viewport');
-    if (!viewport) return; // 如果没有图片，直接返回
+    if (!viewport) return;
 
     const targetImg = detailView.querySelector('.target-img');
     const btnIn = detailView.querySelector('.btn-zoom-in');
@@ -32,7 +32,9 @@ export function setupImageSandboxEvents(detailView) {
 
     let scale = 1.0;
     const syncTransform = () => { targetImg.style.transform = `scale(${scale}) translate(${sliderX.value}px, ${sliderY.value}px)`; };
-    const zoom = (delta) => { scale = Math.max(0.5, Math.min(3.0, scale + delta)); syncTransform(); };
+    
+    // 【核心修改】：最大缩放限制上调至 5.0 (500%)
+    const zoom = (delta) => { scale = Math.max(0.5, Math.min(5.0, scale + delta)); syncTransform(); };
 
     btnIn.onclick = () => zoom(0.2); 
     btnOut.onclick = () => zoom(-0.2);

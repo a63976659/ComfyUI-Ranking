@@ -1,13 +1,19 @@
+// 前端页面/market/资源安装引擎.js
 import { app } from "../../../scripts/app.js"; 
 import { showToast } from "../components/UI交互提示组件.js";
+import { api } from "../core/网络请求API.js"; 
 
 export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatusBox) {
     btnUse.onclick = (e) => {
         e.stopPropagation();
-        if (!currentUser) return showToast("请先登录您的社区账号后再获取！", "warning");
+        if (!currentUser) return showToast("⚠️ 请先登录您的社区账号后再获取！", "warning");
         inlineStatusBox.style.display = "block";
 
-        if (itemData.type === 'tool') {
+        // 【核心修改】：匹配子类型并分配到对应的处理逻辑中
+        const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool';
+        const isApp = itemData.type === 'app' || itemData.type === 'recommend_app';
+
+        if (isTool) {
             inlineStatusBox.innerHTML = `
                 <div style="color: #ccc; margin-bottom: 10px; font-size: 13px;">同意通过 Git 自动将此工具克隆安装到本地 <b>custom_nodes</b> 文件夹？</div>
                 <div style="display: flex; gap: 10px;">
@@ -18,6 +24,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             inlineStatusBox.querySelector('#btn-cancel-install').onclick = () => inlineStatusBox.style.display = "none";
             inlineStatusBox.querySelector('#btn-confirm-install').onclick = async () => {
                 inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在执行安全克隆安装...</span>`;
+                try { await api.incrementItemUse(itemData.id); } catch(err) {}
                 try {
                     const res = await fetch("/community_hub/install_tool", {
                         method: "POST", headers: { "Content-Type": "application/json" },
@@ -31,8 +38,9 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     }
                 } catch(err) { inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务。</span>`; }
             };
-        } else if (itemData.type === 'app') {
+        } else if (isApp) {
             inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在热加载入工作区...</span>`;
+            api.incrementItemUse(itemData.id).catch(()=>{});
             fetch("/community_hub/download_app", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: itemData.link, id: itemData.id }) })
             .then(res => res.json())
             .then(data => {
@@ -44,6 +52,8 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             })
             .catch(() => { inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务。</span>`; });
         } else {
+            // 对于 pure 推荐链接 recommend_link
+            api.incrementItemUse(itemData.id).catch(()=>{});
             inlineStatusBox.innerHTML = `<span style="color: #FF9800;">该资源需手动访问源地址获取：</span><a href="${itemData.link}" target="_blank" style="color: #2196F3; margin-left: 5px;">前往地址</a>`;
         }
     };

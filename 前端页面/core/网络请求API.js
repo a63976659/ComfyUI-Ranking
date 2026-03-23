@@ -60,6 +60,11 @@ export const api = {
     async deleteItem(itemId, authorAccount) { 
         return request(`/api/items/${itemId}?author=${authorAccount}`, { method: "DELETE" }); 
     },
+
+    // 【核心新增】：触发云端使用量 +1 的接口
+    async incrementItemUse(itemId) { 
+        return request(`/api/items/${itemId}/use`, { method: "POST" }); 
+    },
     
     async register(userData) { 
         return request("/api/users/register", { method: "POST", body: userData }); 
