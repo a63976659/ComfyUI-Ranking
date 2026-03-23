@@ -15,7 +15,6 @@ export function createTopNav() {
     const titleSpan = document.createElement("div");
     titleSpan.innerHTML = "<strong style='color:#4CAF50;'>ComfyUI</strong> 社区精选";
     
-    // 【核心新增】：将顶部大标题改造为全局"关于页面"彩蛋入口
     Object.assign(titleSpan.style, {
         fontSize: "16px", cursor: "pointer", transition: "opacity 0.2s"
     });
@@ -23,13 +22,11 @@ export function createTopNav() {
     titleSpan.onmouseover = () => titleSpan.style.opacity = "0.8";
     titleSpan.onmouseout = () => titleSpan.style.opacity = "1";
     titleSpan.onclick = () => {
-        // 构造一份虚拟的插件数据，专门用于在详情页展示社区插件本身的介绍
         const aboutData = {
-            author: "a63976659", // 触发您的专属作者UI
+            author: "a63976659",
             title: "ComfyUI 社区精选 (Community Hub)",
             fullDesc: "ComfyUI 社区精选是一款专为 ComfyUI 打造的现代化、Web3.0 级别生态引擎，致力于聚合全网优质的插件、应用与工作流，让节点的获取与分享变得前所未有地简单。\n\n✨ 核心优势：\n1. 原生与无感融合：采用 ComfyUI V3 标准机制，零侵入保护工作流心流。\n2. 零延时体验：引入现代前端 SWR 缓存策略，告别白屏等待。\n3. 全局即时通讯：内置私信与系统通知，打破信息孤岛。\n4. 沙盒化交互：严格的事件防穿透机制，全方位保护底层画布安全。"
         };
-        // 派发详情页打开事件，通知侧边栏主程序切换视图
         window.dispatchEvent(new CustomEvent("comfy-open-detail", { detail: { itemData: aboutData, currentUser } }));
     };
 
@@ -113,8 +110,11 @@ export function createTopNav() {
                 const targetTitle = m.target_item_title ? ` <span style='color:#4CAF50;'>[${m.target_item_title}]</span>` : "";
                 const contentDiv = m.content ? `<div style="margin-top:6px; background:#1e1e1e; padding:8px; border-radius:4px; font-size:12px; color:#ccc; border-left:3px solid #555; word-break:break-all;">${m.content}</div>` : "";
 
+                // 【核心修复 1】：增加默认头像兜底，防止出现 /null 导致浏览器 404 报错
+                const avatarSrc = m.from_avatar || "https://via.placeholder.com/150";
+
                 item.innerHTML = `
-                    <img src="${m.from_avatar}" style="width:40px; height:40px; border-radius:50%; object-fit:cover; border: 1px solid #555;">
+                    <img src="${avatarSrc}" style="width:40px; height:40px; border-radius:50%; object-fit:cover; border: 1px solid #555;">
                     <div style="flex:1;">
                         <div style="font-size:13px; color:#eee;">
                             <span style="color:#2196F3; font-weight:bold; cursor:pointer;" class="msg-sender">@${m.from_name}</span> 
@@ -155,7 +155,7 @@ export function createTopNav() {
 
             if (res.unread_count > 0) {
                 await api.markMessagesRead(currentUser.account);
-                document.getElementById("unread-badge").style.display = "none";
+                bellBtn.querySelector("#unread-badge").style.display = "none";
             }
         } catch(e) {}
 
@@ -169,10 +169,10 @@ export function createTopNav() {
     };
 
     async function loadUnreadCount() {
-        if (!currentUser) { document.getElementById("unread-badge").style.display = "none"; return; }
+        if (!currentUser) { bellBtn.querySelector("#unread-badge").style.display = "none"; return; }
         try {
             const res = await api.getMessages(currentUser.account);
-            const badge = document.getElementById("unread-badge");
+            const badge = bellBtn.querySelector("#unread-badge");
             if (res.unread_count > 0) {
                 badge.innerText = res.unread_count > 99 ? '99+' : res.unread_count;
                 badge.style.display = "block";
@@ -182,7 +182,8 @@ export function createTopNav() {
 
     const updateUserButtonState = () => {
         if (currentUser) {
-            userActionBtn.innerHTML = `👤 ${currentUser.name}`;
+            // 【增强兜底】：防止部分老数据没有 name，降级显示 account
+            userActionBtn.innerHTML = `👤 ${currentUser.name || currentUser.account || '未知用户'}`;
             userActionBtn.style.backgroundColor = "#2196F3";
             userActionBtn.style.borderColor = "#2196F3";
             userActionBtn.onclick = () => openUserProfileModal(currentUser);
@@ -191,7 +192,7 @@ export function createTopNav() {
             userActionBtn.innerHTML = "🔑 登录 / 注册";
             userActionBtn.style.backgroundColor = "#333";
             userActionBtn.style.borderColor = "#555";
-            document.getElementById("unread-badge").style.display = "none";
+            bellBtn.querySelector("#unread-badge").style.display = "none";
             userActionBtn.onclick = () => {
                 showAuthModal(async (formData) => {
                     try {
@@ -220,8 +221,20 @@ export function createTopNav() {
                             token = res.token; isRemember = true; 
                         } else if (formData.type === "login") {
                             const res = await api.login(formData.account, formData.password);
-                            userData = { account: formData.account, name: res.name, avatar: res.avatar, ...res }; 
                             token = res.token; isRemember = formData.remember;
+                            
+                            // 【核心修复 2】：为了防止 login 接口未返回完整 name 字段，登录成功后强制拉取一次个人资料
+                            try {
+                                // 临时写入 Token，让接下来的请求带上鉴权头
+                                if (isRemember) localStorage.setItem("ComfyCommunity_Token", token); 
+                                else sessionStorage.setItem("ComfyCommunity_Token", token);
+                                
+                                const profileRes = await api.getUserProfile(formData.account);
+                                userData = { account: formData.account, ...profileRes.data };
+                            } catch (e) {
+                                // 万一拉取失败，降级使用已有数据，避免阻塞登录
+                                userData = { account: formData.account, name: res.name || res.data?.name || formData.account, avatar: res.avatar || res.data?.avatar };
+                            }
                         }
                         
                         currentUser = userData;
@@ -244,11 +257,10 @@ export function createTopNav() {
 
     const actionWrapper = document.createElement("div");
     actionWrapper.style.display = "flex"; actionWrapper.style.alignItems = "center";
-    actionWrapper.appendChild(chatEntryBtn); // 增加私信按钮
+    actionWrapper.appendChild(chatEntryBtn); 
     actionWrapper.appendChild(bellBtn);
     actionWrapper.appendChild(userActionBtn);
     
-    // 【核心修复】：将标题和按钮组装进 header 统一返回
     userHeader.appendChild(titleSpan);
     userHeader.appendChild(actionWrapper);
 

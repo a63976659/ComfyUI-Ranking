@@ -135,12 +135,21 @@ let globalSidebarDOM = null;
 app.registerExtension({
     name: "Comfy.CommunityLeaderboardSidebar",
     async setup(app) {
-        if (!globalSidebarDOM) globalSidebarDOM = buildSidebarDOM();
-        if (app.extensionManager && app.extensionManager.registerSidebarTab) {
-            app.extensionManager.registerSidebarTab({
-                id: "comfyui-ranking-sidebar", title: "社区精选", icon: "pi pi-trophy", type: "custom",
-                render: (container) => { container.innerHTML = ''; container.appendChild(globalSidebarDOM); }
-            });
+        try {
+            if (!globalSidebarDOM) globalSidebarDOM = buildSidebarDOM();
+            if (app.extensionManager && app.extensionManager.registerSidebarTab) {
+                app.extensionManager.registerSidebarTab({
+                    id: "comfyui-ranking-sidebar", 
+                    title: "社区精选", 
+                    icon: "pi pi-trophy", 
+                    type: "custom",
+                    render: (container) => { container.innerHTML = ''; container.appendChild(globalSidebarDOM); }
+                });
+            } else {
+                console.warn("未检测到 ComfyUI V3 侧边栏 API，请更新 ComfyUI 版本。");
+            }
+        } catch (error) {
+            console.error("【社区精选】侧边栏初始化失败:", error);
         }
     }
 });
