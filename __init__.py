@@ -5,6 +5,7 @@ import subprocess
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 from server import PromptServer
 from aiohttp import web
 
@@ -66,8 +67,11 @@ async def download_app(request):
     file_path = os.path.join(APP_MODELS_DIR, f"{app_id}.json")
     
     try:
+        # 【核心修复】：对 URL 进行安全编码，防止中文或特殊字符导致 ascii 解析失败
+        safe_url = urllib.parse.quote(download_url, safe=':/?&=#%')
+        
         # 模拟浏览器请求头拉取 JSON
-        req = urllib.request.Request(download_url, headers={'User-Agent': 'Mozilla/5.0'})
+        req = urllib.request.Request(safe_url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req) as response:
             content = response.read().decode('utf-8')
             json_data = json.loads(content) # 校验是否为合法 JSON
