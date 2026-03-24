@@ -4,6 +4,7 @@ import { openChatModal } from "../social/私信聊天组件.js";
 import { createSettingsForm } from "./个人设置表单组件.js";
 import { renderProfileListContent } from "./个人列表组件.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
+import { openRechargeModal, openWithdrawModal } from "../market/资金与钱包组件.js"; // 【新增】：引入钱包与资金组件
 
 export function showUserProfile(initialUserData, currentUser = null, isMe = true) {
     const container = document.createElement("div");
@@ -44,16 +45,29 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
             const privacy = userData.privacy || {};
             const followingCount = (!isMe && privacy.follows) ? "***" : (userData.following ? userData.following.length : 0);
 
+            // 【修改】：如果是本人，渲染完整的钱包与设置按钮组
             const actionButtons = isMe 
-                ? `<button id="btn-open-settings" style="background: transparent; border: 1px solid #555; color: #aaa; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;">⚙️ 设置</button>
-                   <button id="btn-logout" style="background: transparent; border: 1px solid #F44336; color: #F44336; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;">🚪 登出</button>`
+                ? `<div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
+                       <button id="btn-wallet" style="background: #FF9800; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 充值积分</button>
+                       <button id="btn-withdraw" style="background: transparent; border: 1px solid #4CAF50; color: #4CAF50; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.1)'" onmouseout="this.style.background='transparent'">💸 收益提现</button>
+                       <div style="display: flex; gap: 8px; margin-top: 4px;">
+                           <button id="btn-open-settings" style="flex: 1; background: transparent; border: 1px solid #555; color: #aaa; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.color='#fff'; this.style.borderColor='#888'" onmouseout="this.style.color='#aaa'; this.style.borderColor='#555'">⚙️ 设置</button>
+                           <button id="btn-logout" style="flex: 1; background: transparent; border: 1px solid #F44336; color: #F44336; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='transparent'; this.style.color='#F44336'">🚪 登出</button>
+                       </div>
+                   </div>`
                 : `<button id="btn-send-msg" style="background: #2196F3; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-right: 8px;">✉️ 私信</button>
                    <button id="btn-follow-user" style="background: ${isFollowing ? '#4CAF50' : '#FF9800'}; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">${isFollowing ? '✔️ 已关注' : '➕ 关注作者'}</button>`;
+
+            // 【新增】：仅向本人展示余额与收益数据
+            const balanceDisplayHtml = isMe 
+                ? `<div>💰 余额: <strong style="color:#FF9800;">${userData.balance || 0}</strong></div>
+                   <div>💸 可提现收益: <strong style="color:#4CAF50;">${userData.earn_balance || 0}</strong></div>`
+                : '';
 
             const headerHtml = `
                 <div style="display: flex; align-items: flex-start; gap: 15px; margin-bottom: 20px; position: relative;">
                     <img src="${userData.avatarDataUrl || userData.avatar || 'https://via.placeholder.com/150'}" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid #4CAF50; object-fit: cover;">
-                    <div style="flex: 1;">
+                    <div style="flex: 1; padding-right: 120px;">
                         <div style="font-size: 20px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
                             ${userData.name}
                             <span style="font-size: 12px; background: #444; padding: 2px 6px; border-radius: 4px; font-weight: normal;">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age || '未知'}岁</span>
@@ -61,9 +75,10 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                         <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">📍 ${userData.country || '保密'} - ${userData.region || ''}</div>
                         <div style="font-size: 13px; color: #ccc; line-height: 1.4; word-break: break-all;">${userData.intro || '这个人很懒，什么都没写...'}</div>
                     </div>
-                    <div style="position: absolute; top: 0; right: 0; display: flex; flex-direction: column; gap: 8px;">${actionButtons}</div>
+                    <div style="position: absolute; top: 0; right: 0; width: 120px; display: flex; flex-direction: column; gap: 8px;">${actionButtons}</div>
                 </div>
                 <div style="display: flex; gap: 20px; font-size: 13px; color: #bbb; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #333; flex-wrap: wrap;">
+                    ${balanceDisplayHtml}
                     <div>👍 获赞: <strong style="color:#fff;">${userData.receivedLikes || 0}</strong></div>
                     <div>⭐ 被收藏: <strong style="color:#fff;">${userData.receivedFavorites || 0}</strong></div>
                     <div>👥 粉丝: <strong style="color:#fff;">${userData.followers ? userData.followers.length : 0}</strong></div>
@@ -90,6 +105,20 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
             container.querySelector("#btn-back-profile").onclick = () => window.dispatchEvent(new CustomEvent("comfy-route-back"));
 
             if (isMe) {
+                // 【新增】：绑定钱包与提现点击事件
+                container.querySelector("#btn-wallet").onclick = () => {
+                    openRechargeModal(currentUser, (newBalance) => {
+                        userData.balance = newBalance;
+                        render(); // 更新数据后重新渲染 UI
+                    });
+                };
+                container.querySelector("#btn-withdraw").onclick = () => {
+                    openWithdrawModal(currentUser, (newEarnBalance) => {
+                        userData.earn_balance = newEarnBalance;
+                        render(); // 更新数据后重新渲染 UI
+                    });
+                };
+
                 container.querySelector("#btn-open-settings").onclick = () => { isSettingsView = true; render(); };
                 container.querySelector("#btn-logout").onclick = async () => {
                     if (await showConfirm("确定要退出当前账号吗？")) {

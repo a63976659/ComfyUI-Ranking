@@ -1,4 +1,4 @@
-// 前端页面/core/网络请求API.js
+// 前端页面/core/网络请求API.js (完整替换)
 
 const BASE_URL = "https://zhiwei666-comfyui-ranking-api.hf.space"; 
 
@@ -49,7 +49,6 @@ export const api = {
             body: { contact, contact_type: contactType, action_type: actionType, account: account } 
         }); 
     },
-
     async uploadFile(file, fileType) {
         const formData = new FormData(); 
         formData.append("file", file); 
@@ -80,13 +79,7 @@ export const api = {
     async resetPassword(account, oldPassword, newPassword, verifyContact, verifyType, code) { 
         return request(`/api/users/${account}/reset-password`, { 
             method: "POST", 
-            body: { 
-                old_password: oldPassword || "", // 允许原密码为空（找回密码时）
-                new_password: newPassword,
-                verify_contact: verifyContact,
-                verify_type: verifyType,
-                code: code // 【核心修复】：带上验证码传给云端
-            } 
+            body: { old_password: oldPassword || "", new_password: newPassword, verify_contact: verifyContact, verify_type: verifyType, code: code } 
         }); 
     },
     async updateUserProfile(account, profileData) { 
@@ -127,5 +120,12 @@ export const api = {
     },
     async getChatHistory(account, targetAccount) { 
         return request(`/api/chats/${account}/${targetAccount}`); 
+    },
+    // 【核心新增】：钱包购买与扣费拦截接口
+    async purchaseItem(account, itemId) {
+        return request("/api/wallet/purchase", { 
+            method: "POST", 
+            body: { account: account, item_id: itemId } 
+        });
     }
 };
