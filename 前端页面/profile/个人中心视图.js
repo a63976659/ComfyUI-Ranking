@@ -21,10 +21,22 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
     function render() {
         container.innerHTML = ""; 
 
-        const backBtnHtml = `<button id="btn-back-profile" style="background: #333; border: 1px solid #555; color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-bottom: 15px; width: fit-content; transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='#333'; this.style.borderColor='#555'"><span style="font-size: 14px;">⬅</span> 返回</button>`;
+        // 【修改点】：重构顶部导航栏，把设置和登出挪到和“返回”按钮同一行
+        const topBarHtml = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <button id="btn-back-profile" style="background: #333; border: 1px solid #555; color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='#333'; this.style.borderColor='#555'">
+                    <span style="font-size: 14px;">⬅</span> 返回
+                </button>
+                ${(isMe && !isSettingsView) ? `
+                <div style="display: flex; gap: 10px;">
+                    <button id="btn-open-settings" style="background: transparent; border: 1px solid #555; color: #aaa; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.color='#fff'; this.style.borderColor='#888'" onmouseout="this.style.color='#aaa'; this.style.borderColor='#555'">⚙️ 设置</button>
+                    <button id="btn-logout" style="background: transparent; border: 1px solid #F44336; color: #F44336; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='transparent'; this.style.color='#F44336'">🚪 登出</button>
+                </div>` : ''}
+            </div>
+        `;
 
         if (isSettingsView && isMe) {
-            container.innerHTML = backBtnHtml;
+            container.innerHTML = topBarHtml;
             const settingsContainer = createSettingsForm(
                 userData,
                 () => { isSettingsView = false; render(); }, 
@@ -41,36 +53,33 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
             let isFollowing = false;
             if (currentUser && userData.followers) { isFollowing = userData.followers.includes(currentUser.account); }
 
-            // 【修复】：读取隐私状态拦截数字显示
+            // 读取隐私状态拦截数字显示
             const privacy = userData.privacy || {};
             const followingCount = (!isMe && privacy.follows) ? "***" : (userData.following ? userData.following.length : 0);
 
-            // 【修改】：如果是本人，渲染完整的钱包与设置按钮组
+            // 【修改点】：给右侧 actionButtons 瘦身，只留下和钱相关的按钮，加高内边距让其更大气
             const actionButtons = isMe 
-                ? `<div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
-                       <button id="btn-wallet" style="background: #FF9800; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 充值积分</button>
-                       <button id="btn-withdraw" style="background: transparent; border: 1px solid #4CAF50; color: #4CAF50; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.1)'" onmouseout="this.style.background='transparent'">💸 收益提现</button>
-                       <div style="display: flex; gap: 8px; margin-top: 4px;">
-                           <button id="btn-open-settings" style="flex: 1; background: transparent; border: 1px solid #555; color: #aaa; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.color='#fff'; this.style.borderColor='#888'" onmouseout="this.style.color='#aaa'; this.style.borderColor='#555'">⚙️ 设置</button>
-                           <button id="btn-logout" style="flex: 1; background: transparent; border: 1px solid #F44336; color: #F44336; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='transparent'; this.style.color='#F44336'">🚪 登出</button>
-                       </div>
+                ? `<div style="display: flex; flex-direction: column; gap: 12px; width: 100%;">
+                       <button id="btn-wallet" style="background: #FF9800; border: none; color: white; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 充值积分</button>
+                       <button id="btn-withdraw" style="background: transparent; border: 1px solid #4CAF50; color: #4CAF50; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.1)'" onmouseout="this.style.background='transparent'">💸 收益提现</button>
                    </div>`
-                : `<button id="btn-send-msg" style="background: #2196F3; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-right: 8px;">✉️ 私信</button>
-                   <button id="btn-follow-user" style="background: ${isFollowing ? '#4CAF50' : '#FF9800'}; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">${isFollowing ? '✔️ 已关注' : '➕ 关注作者'}</button>`;
+                : `<button id="btn-send-msg" style="width: 100%; background: #2196F3; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">✉️ 私信</button>
+                   <button id="btn-follow-user" style="width: 100%; background: ${isFollowing ? '#4CAF50' : '#FF9800'}; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-top: 8px;">${isFollowing ? '✔️ 已关注' : '➕ 关注作者'}</button>`;
 
-            // 【新增】：仅向本人展示余额与收益数据
+            // 仅向本人展示余额与收益数据
             const balanceDisplayHtml = isMe 
                 ? `<div>💰 余额: <strong style="color:#FF9800;">${userData.balance || 0}</strong></div>
                    <div>💸 可提现收益: <strong style="color:#4CAF50;">${userData.earn_balance || 0}</strong></div>`
                 : '';
 
+            // 【修改点】：增强对 userData.age 空值的兼容判断
             const headerHtml = `
                 <div style="display: flex; align-items: flex-start; gap: 15px; margin-bottom: 20px; position: relative;">
                     <img src="${userData.avatarDataUrl || userData.avatar || 'https://via.placeholder.com/150'}" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid #4CAF50; object-fit: cover;">
-                    <div style="flex: 1; padding-right: 120px;">
+                    <div style="flex: 1; padding-right: 130px;">
                         <div style="font-size: 20px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
                             ${userData.name}
-                            <span style="font-size: 12px; background: #444; padding: 2px 6px; border-radius: 4px; font-weight: normal;">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age || '未知'}岁</span>
+                            <span style="font-size: 12px; background: #444; padding: 2px 6px; border-radius: 4px; font-weight: normal;">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age !== undefined && userData.age !== null ? userData.age : '未知'}岁</span>
                         </div>
                         <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">📍 ${userData.country || '保密'} - ${userData.region || ''}</div>
                         <div style="font-size: 13px; color: #ccc; line-height: 1.4; word-break: break-all;">${userData.intro || '这个人很懒，什么都没写...'}</div>
@@ -86,7 +95,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                 </div>
             `;
 
-            // 【修复】：基于隐私设置拦截选项卡的显示
+            // 基于隐私设置拦截选项卡的显示
             const tabs = [{ id: "published", label: isMe ? "我的发布" : "TA的发布" }];
             if (isMe || !privacy.likes) tabs.push({ id: "liked", label: "近期点赞" });
             if (isMe || !privacy.follows) tabs.push({ id: "following", label: "关注的人" });
@@ -101,11 +110,12 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
             });
             tabsHtml += `</div><div id="profile-list-container" style="flex: 1; overflow-y: auto; padding-right: 5px;"></div>`;
 
-            container.innerHTML = backBtnHtml + headerHtml + tabsHtml;
+            // 【修改点】：拼装新的顶部结构
+            container.innerHTML = topBarHtml + headerHtml + tabsHtml;
             container.querySelector("#btn-back-profile").onclick = () => window.dispatchEvent(new CustomEvent("comfy-route-back"));
 
             if (isMe) {
-                // 【新增】：绑定钱包与提现点击事件
+                // 绑定钱包与提现点击事件
                 container.querySelector("#btn-wallet").onclick = () => {
                     openRechargeModal(currentUser, (newBalance) => {
                         userData.balance = newBalance;
@@ -170,8 +180,13 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
     }
 
     container.updateData = function(newUserData) {
-        if (JSON.stringify(userData) !== JSON.stringify(newUserData)) { 
-            userData = newUserData; 
+        // 【修改点】：安全的合并机制，保留原有本地字段，防止被云端返回的 null 数据覆盖
+        const safeNewData = { ...newUserData };
+        Object.keys(safeNewData).forEach(key => safeNewData[key] == null && delete safeNewData[key]);
+        const mergedData = { ...userData, ...safeNewData };
+        
+        if (JSON.stringify(userData) !== JSON.stringify(mergedData)) { 
+            userData = mergedData; 
             if (!isSettingsView) { render(); } 
         }
     };
@@ -186,16 +201,21 @@ export function openUserProfileModal(userData) {
 
     api.getUserProfile(userData.account).then(res => {
         const freshData = res.data;
+        
+        // 【修改点】：同步修复 localStorage 写入时的覆盖漏洞
+        const safeFreshData = { ...freshData };
+        Object.keys(safeFreshData).forEach(key => safeFreshData[key] == null && delete safeFreshData[key]);
+
         const storage = localStorage.getItem("ComfyCommunity_User") ? localStorage : sessionStorage;
         try {
             const savedStr = storage.getItem("ComfyCommunity_User");
             if (savedStr) {
                 const savedObj = JSON.parse(savedStr);
-                savedObj.user = { ...savedObj.user, ...freshData };
+                savedObj.user = { ...savedObj.user, ...safeFreshData };
                 storage.setItem("ComfyCommunity_User", JSON.stringify(savedObj));
             }
         } catch(e){}
-        if (view.updateData) view.updateData(freshData);
+        if (view.updateData) view.updateData(freshData); // 这里直接传 freshData 给 updateData 即可，内部有防空过滤
     }).catch(err => console.warn("后台更新本人资料失败", err));
 }
 
