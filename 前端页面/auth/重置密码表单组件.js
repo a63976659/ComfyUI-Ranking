@@ -6,9 +6,9 @@ export function renderResetForm(container, switchView, onSuccessCallback) {
         <div style="margin-bottom: 10px;"><label style="display: block; margin-bottom: 5px;">当前账号 <span style="color: #F44336;">*</span></label><input type="text" id="reset-account" placeholder="输入要修改的账号" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
         
         <div style="margin-bottom: 10px; padding: 10px; background: rgba(33, 150, 243, 0.1); border: 1px dashed #2196F3; border-radius: 4px;">
-            <label style="display: block; margin-bottom: 5px; color: #2196F3; font-weight: bold;">安全验证 (绑定的手机号或邮箱) <span style="color: #F44336;">*</span></label>
+            <label style="display: block; margin-bottom: 5px; color: #2196F3; font-weight: bold;">安全验证 (绑定的邮箱) <span style="color: #F44336;">*</span></label>
             <div style="display: flex; gap: 8px;">
-                <input type="text" id="reset-verify" placeholder="手机号 / 邮箱二选一" style="flex: 1; padding: 8px; background: #222; border: 1px solid #2196F3; color: #fff; border-radius: 4px; box-sizing: border-box;">
+                <input type="text" id="reset-verify" placeholder="请输入绑定的安全邮箱" style="flex: 1; padding: 8px; background: #222; border: 1px solid #2196F3; color: #fff; border-radius: 4px; box-sizing: border-box;">
                 <button id="btn-send-code" style="padding: 0 15px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; white-space: nowrap; transition: 0.2s;">获取验证码</button>
             </div>
             <input type="text" id="reset-code" placeholder="输入 6 位验证码" maxlength="6" style="width: 100%; margin-top: 10px; padding: 8px; background: #222; border: 1px dashed #2196F3; color: #fff; border-radius: 4px; box-sizing: border-box;">
@@ -31,27 +31,26 @@ export function renderResetForm(container, switchView, onSuccessCallback) {
     btnSendCode.onclick = async (e) => {
         e.preventDefault();
         
-        // 【新增】：先抓取上方输入的账号，没填就不让发验证码
+        // 先抓取上方输入的账号，没填就不让发验证码
         const accountInput = container.querySelector("#reset-account").value.trim();
         if (!accountInput) return showToast("请先输入要修改密码的当前账号！", "warning");
 
         const verifyInput = container.querySelector("#reset-verify").value.trim();
         const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(verifyInput);
-        const isPhone = /^1[3-9]\d{9}$/.test(verifyInput) || /^\d{8,15}$/.test(verifyInput);
         
-        if (!isEmail && !isPhone) return showToast("请输入有效的邮箱或手机号！", "error");
+        // 【临时隐藏功能】：仅保留邮箱校验
+        if (!isEmail) return showToast("请输入有效的邮箱地址！", "error");
         
-        const contactType = isEmail ? "email" : "phone";
+        const contactType = "email"; // 强制走邮箱通道
         
         btnSendCode.disabled = true;
         btnSendCode.style.background = "#555";
         btnSendCode.innerText = "发送中...";
         
         try {
-            // 【核心修改】：把 accountInput 作为第四个参数传进去
             await api.sendVerifyCode(verifyInput, contactType, "reset", accountInput);
             
-            showToast(`验证码已发送至您的${isEmail ? '邮箱' : '手机'}，请查收`, "success");
+            showToast(`验证码已发送至您的邮箱，请查收`, "success");
             
             let timeLeft = 60;
             btnSendCode.innerText = `${timeLeft}s 后重发`;
@@ -87,10 +86,9 @@ export function renderResetForm(container, switchView, onSuccessCallback) {
         if (code.length !== 6) return showToast("请输入 6 位有效验证码！", "warning");
         
         const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(verify);
-        const isPhone = /^1[3-9]\d{9}$/.test(verify) || /^\d{8,15}$/.test(verify); 
         
-        if (!isEmail && !isPhone) {
-            return showToast("安全验证格式有误！请输入有效的邮箱或手机号。", "error");
+        if (!isEmail) {
+            return showToast("安全验证格式有误！请输入有效的邮箱。", "error");
         }
 
         if (np !== cp) return showToast("两次输入的新密码不一致！", "error");
@@ -100,7 +98,7 @@ export function renderResetForm(container, switchView, onSuccessCallback) {
             type: "reset", 
             account: acc, 
             verifyContact: verify, 
-            verifyType: isEmail ? "email" : "phone", 
+            verifyType: "email", // 强制使用邮箱
             code: code,
             oldPassword: op, 
             newPassword: np 

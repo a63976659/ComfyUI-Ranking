@@ -32,10 +32,11 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
                     <input type="text" id="reg-code" placeholder="6位数" maxlength="6" required style="width: 100%; padding: 8px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center;">
                 </div>
             </div>
-            <div style="display: flex; gap: 10px;">
+            
+            <div style="display: none; gap: 10px;">
                 <div style="flex: 1;">
                     <label style="display: block; margin-bottom: 5px;">手机号码 <span style="color: #F44336;">*</span></label>
-                    <input type="tel" id="reg-phone" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
+                    <input type="tel" id="reg-phone" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
                 </div>
             </div>
         </div>
@@ -142,10 +143,11 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
         const password = container.querySelector("#reg-password").value;
         const pwdConfirm = container.querySelector("#reg-password-confirm").value;
         const email = container.querySelector("#reg-email").value.trim();
-        const phone = container.querySelector("#reg-phone").value.trim();
+        const phone = container.querySelector("#reg-phone").value.trim(); // 取出来的是空字符串 ""
         const code = container.querySelector("#reg-code").value.trim();
 
-        if (!account || !name || !password || !email || !phone || !code) return showToast("带 * 号的均为必填项！", "warning");
+        // 【临时隐藏功能】：移除 !phone 的必填校验
+        if (!account || !name || !password || !email || !code) return showToast("带 * 号的均为必填项！", "warning");
         if (code.length !== 6) return showToast("请输入 6 位有效验证码！", "warning");
         
         if (!/^[a-zA-Z0-9_]{6,20}$/.test(account)) return showToast("账号必须大于5个字符，且仅支持大小写英文字母、数字和下划线！", "error");
