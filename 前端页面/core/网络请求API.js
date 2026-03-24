@@ -43,6 +43,13 @@ async function request(endpoint, options = {}) {
 }
 
 export const api = {
+    async sendVerifyCode(contact, contactType, actionType, account = null) { 
+        return request("/api/users/send-code", { 
+            method: "POST", 
+            body: { contact, contact_type: contactType, action_type: actionType, account: account } 
+        }); 
+    },
+
     async uploadFile(file, fileType) {
         const formData = new FormData(); 
         formData.append("file", file); 
@@ -52,20 +59,15 @@ export const api = {
     async publishItem(itemData) { 
         return request("/api/items", { method: "POST", body: itemData }); 
     },
-    
-    // 【核心新增】：内容修改与删除
     async updateItem(itemId, authorAccount, updateData) { 
         return request(`/api/items/${itemId}?author=${authorAccount}`, { method: "PUT", body: updateData }); 
     },
     async deleteItem(itemId, authorAccount) { 
         return request(`/api/items/${itemId}?author=${authorAccount}`, { method: "DELETE" }); 
     },
-
-    // 【核心新增】：触发云端使用量 +1 的接口
     async incrementItemUse(itemId) { 
         return request(`/api/items/${itemId}/use`, { method: "POST" }); 
     },
-    
     async register(userData) { 
         return request("/api/users/register", { method: "POST", body: userData }); 
     },
@@ -75,14 +77,15 @@ export const api = {
     async getUserProfile(account) { 
         return request(`/api/users/${account}`); 
     },
-    async resetPassword(account, oldPassword, newPassword, verifyContact, verifyType) { 
+    async resetPassword(account, oldPassword, newPassword, verifyContact, verifyType, code) { 
         return request(`/api/users/${account}/reset-password`, { 
             method: "POST", 
             body: { 
-                old_password: oldPassword, 
+                old_password: oldPassword || "", // 允许原密码为空（找回密码时）
                 new_password: newPassword,
                 verify_contact: verifyContact,
-                verify_type: verifyType
+                verify_type: verifyType,
+                code: code // 【核心修复】：带上验证码传给云端
             } 
         }); 
     },
@@ -92,28 +95,24 @@ export const api = {
     async updatePrivacy(username, privacySettings) { 
         return request(`/api/users/${username}/privacy`, { method: "PUT", body: privacySettings }); 
     },
-    
     async getItems(type = "tool", sort = "time", limit = 20) { 
         return request(`/api/items?type=${type}&sort=${sort}&limit=${limit}`); 
     },
     async getCreators(sort = "downloads", limit = 20) { 
         return request(`/api/creators?sort=${sort}&limit=${limit}`); 
     },
-
     async followUser(userId, targetAccount, isActive) { 
         return request("/api/users/follow", { method: "POST", body: { user_id: userId, target_account: targetAccount, is_active: isActive } }); 
     },
     async toggleInteraction(itemId, userId, actionType, isActive) { 
         return request("/api/interactions/toggle", { method: "POST", body: { item_id: itemId, user_id: userId, action_type: actionType, is_active: isActive } }); 
     },
-    
     async postComment(itemId, author, content, replyToUser = null, parentId = null) { 
         return request("/api/comments", { method: "POST", body: { item_id: itemId, author, content, reply_to_user: replyToUser, parent_id: parentId } }); 
     },
     async deleteComment(itemId, commentId, authorAccount) { 
         return request(`/api/comments/${itemId}/${commentId}?author=${authorAccount}`, { method: "DELETE" }); 
     },
-    
     async getMessages(account) { 
         return request(`/api/messages/${account}`); 
     },

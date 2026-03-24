@@ -1,3 +1,4 @@
+import { api } from "../core/网络请求API.js";
 import { regionData } from "./国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 
@@ -16,10 +17,29 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
             <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">设置密码 (≥6字符) <span style="color: #F44336;">*</span></label><input type="password" id="reg-password" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
             <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">确认密码 <span style="color: #F44336;">*</span></label><input type="password" id="reg-password-confirm" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
         </div>
-        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">安全邮箱 <span style="color: #F44336;">*</span></label><input type="email" id="reg-email" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">手机号码 <span style="color: #F44336;">*</span></label><input type="tel" id="reg-phone" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
+        
+        <div style="margin-bottom: 10px; padding: 10px; background: rgba(76, 175, 80, 0.1); border: 1px dashed #4CAF50; border-radius: 4px;">
+            <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                <div style="flex: 2;">
+                    <label style="display: block; margin-bottom: 5px; color: #4CAF50;">安全邮箱 (用于接收验证码) <span style="color: #F44336;">*</span></label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="email" id="reg-email" required style="flex: 1; padding: 8px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box;">
+                        <button id="btn-reg-send-code" style="padding: 0 12px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; white-space: nowrap;">获取验证码</button>
+                    </div>
+                </div>
+                <div style="flex: 1;">
+                    <label style="display: block; margin-bottom: 5px; color: #4CAF50;">验证码 <span style="color: #F44336;">*</span></label>
+                    <input type="text" id="reg-code" placeholder="6位数" maxlength="6" required style="width: 100%; padding: 8px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center;">
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <div style="flex: 1;">
+                    <label style="display: block; margin-bottom: 5px;">手机号码 <span style="color: #F44336;">*</span></label>
+                    <input type="tel" id="reg-phone" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
+                </div>
+            </div>
         </div>
+
         <div style="margin-bottom: 10px; background: #2a2a2a; padding: 10px; border-radius: 4px; border: 1px dashed #555; display: flex; align-items: center; justify-content: space-between;">
             <div>
                 <label style="display: block; margin-bottom: 5px;">头像</label>
@@ -63,7 +83,7 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
             avatarInput.value = ""; 
             selectedAvatarFile = null; 
             avatarPreview.src = genderSelect.value === "male" ? DEFAULT_AVATAR_MALE : DEFAULT_AVATAR_FEMALE; 
-            showToast("头像文件超出 3MB 限制！", "warning"); // 额外增加的 Toast 提示
+            showToast("头像文件超出 3MB 限制！", "warning");
             return; 
         }
         avatarError.style.display = "none"; 
@@ -75,6 +95,47 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
 
     container.querySelector("#toggle-to-login").onclick = (e) => { e.preventDefault(); switchView("login"); };
 
+    // 发送注册验证码逻辑
+    const btnRegSendCode = container.querySelector("#btn-reg-send-code");
+    let regCountdownTimer = null;
+    
+    btnRegSendCode.onclick = async (e) => {
+        e.preventDefault();
+        const emailInput = container.querySelector("#reg-email").value.trim();
+        const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput);
+        
+        if (!isEmail) return showToast("请输入有效的安全邮箱！", "error");
+        
+        btnRegSendCode.disabled = true;
+        btnRegSendCode.style.background = "#555";
+        btnRegSendCode.innerText = "发送中...";
+        
+        try {
+            await api.sendVerifyCode(emailInput, "email", "register");
+            showToast("验证码已发送至邮箱，请查收", "success");
+            
+            let timeLeft = 60;
+            btnRegSendCode.innerText = `${timeLeft}s 重发`;
+            regCountdownTimer = setInterval(() => {
+                timeLeft--;
+                if (timeLeft <= 0) {
+                    clearInterval(regCountdownTimer);
+                    btnRegSendCode.disabled = false;
+                    btnRegSendCode.style.background = "#4CAF50";
+                    btnRegSendCode.innerText = "获取验证码";
+                } else {
+                    btnRegSendCode.innerText = `${timeLeft}s 重发`;
+                }
+            }, 1000);
+            
+        } catch (err) {
+            showToast(err.message || "发送失败，请稍后重试", "error");
+            btnRegSendCode.disabled = false;
+            btnRegSendCode.style.background = "#4CAF50";
+            btnRegSendCode.innerText = "获取验证码";
+        }
+    };
+
     container.querySelector("#btn-submit-register").onclick = () => {
         const account = container.querySelector("#reg-account").value.trim();
         const name = container.querySelector("#reg-name").value.trim();
@@ -82,16 +143,17 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
         const pwdConfirm = container.querySelector("#reg-password-confirm").value;
         const email = container.querySelector("#reg-email").value.trim();
         const phone = container.querySelector("#reg-phone").value.trim();
+        const code = container.querySelector("#reg-code").value.trim();
 
-        // 将原生的 alert 统一替换为 showToast
-        if (!account || !name || !password || !email || !phone) return showToast("带 * 号的均为必填项！", "warning");
+        if (!account || !name || !password || !email || !phone || !code) return showToast("带 * 号的均为必填项！", "warning");
+        if (code.length !== 6) return showToast("请输入 6 位有效验证码！", "warning");
         
         if (!/^[a-zA-Z0-9_]{6,20}$/.test(account)) return showToast("账号必须大于5个字符，且仅支持大小写英文字母、数字和下划线！", "error");
         if (password !== pwdConfirm) return showToast("两次输入的密码不一致！", "error");
         if (!/^[A-Za-z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]{6,}$/.test(password)) return showToast("密码必须大于等于6个字符，仅允许大小写字母、数字及常用标点！", "error");
 
         const formData = {
-            type: "register", account, password, email, phone, name, gender: genderSelect.value,
+            type: "register", account, password, email, phone, name, gender: genderSelect.value, code,
             age: container.querySelector("#reg-age").value, country: countrySelect.value, region: regionSelect.value,
             intro: container.querySelector("#reg-intro").value, avatarFile: selectedAvatarFile, avatarDataUrl: selectedAvatarFile ? avatarPreview.src : null 
         };
