@@ -45,15 +45,42 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
 
         inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在校验购买状态与扣款安全...</span>`;
 
+        // 记录是否已经拥有，决定是否涨销量
+        let alreadyOwned = false; 
+
         // 防线 2：事务级扣费 (天然解决问题 3，意外中断不重扣)
         try {
-            await api.purchaseItem(currentUser.account, itemData.id);
+            const purchaseRes = await api.purchaseItem(currentUser.account, itemData.id);
+            
+            // 【需求2修改核心】：如果返回 already_owned，改变提示
+            if (purchaseRes && purchaseRes.already_owned) {
+                alreadyOwned = true;
+                if (!isFree) showToast("您已购买过此商品，此次使用不会收费！", "info");
+            } else if (!isFree) {
+                showToast(`支付成功！已扣除 ${itemData.price} 积分。`, "success");
+            }
+
+            // 更新用户本地显示的余额缓存
+            try {
+                const profileRes = await api.getUserProfile(currentUser.account);
+                if (profileRes.data && profileRes.data.balance !== undefined) {
+                    currentUser.balance = profileRes.data.balance;
+                }
+            } catch(e) {}
+
         } catch (err) {
-            inlineStatusBox.innerHTML = `
-                <span style="color: #F44336;">❌ 获取失败: ${err.message}</span>
-                <div style="margin-top: 5px; font-size: 12px; color: #aaa;">请前往【个人中心】->【我的钱包】进行充值。</div>
-            `;
-            return; 
+            // 【需求3修改核心】：捕获余额不足异常，阻断流程并引导充值
+            if (err.message && err.message.includes("余额不足")) {
+                inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 获取失败：积分余额不足。</span>`;
+                if (await showConfirm("您的积分余额不足，是否立刻前往个人中心充值？")) {
+                    window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: "profile" } }));
+                }
+                return; // 直接退出函数，不会走到下方的安装流程
+            } else {
+                inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 获取失败: ${err.message}</span>`;
+                showToast("获取失败：" + err.message, "error");
+                return;
+            }
         }
 
         if (isTool) {
@@ -67,7 +94,10 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             inlineStatusBox.querySelector('#btn-cancel-install').onclick = () => inlineStatusBox.style.display = "none";
             inlineStatusBox.querySelector('#btn-confirm-install').onclick = async () => {
                 inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在后台静默安装 (关闭侧边栏不影响进度)...</span>`;
-                try { await api.incrementItemUse(itemData.id); } catch(err) {}
+                
+                // 【需求2修改核心】：只有不是免单情况才涨使用量
+                if (!alreadyOwned) { try { await api.incrementItemUse(itemData.id); } catch(err) {} }
+                
                 try {
                     // 发起后台异步安装请求
                     const res = await fetch("/community_hub/install_tool", {
@@ -77,10 +107,9 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     const data = await res.json();
                     if (data.error) {
                         inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 安装失败: ${data.error}</span>`;
-                        showToast(`插件 [${itemData.title}] 安装失败: ${data.error}`, "error"); // 全局通知
+                        showToast(`插件 [${itemData.title}] 安装失败: ${data.error}`, "error"); 
                     } else {
                         inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🎉 工具安装成功！</div><div style="color: #aaa; margin-top: 5px;">请重启 ComfyUI 以加载新节点。</div>`;
-                        // 【核心新增】：触发全局 Toast，解决问题 4 (侧边栏关闭依然能看到提示)
                         showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
                     }
                 } catch(err) { 
@@ -89,7 +118,9 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             };
         } else if (isApp) {
             inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 授权通过，正在安全鉴权并热加载入工作区...</span>`;
-            api.incrementItemUse(itemData.id).catch(()=>{});
+            
+            // 【需求2修改核心】：只有不是免单情况才涨使用量
+            if (!alreadyOwned) { api.incrementItemUse(itemData.id).catch(()=>{}); }
             
             // 附带 account 凭证，解决问题 2 (一键鉴权加载)
             fetch("/community_hub/download_app", { 
@@ -111,7 +142,9 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             })
             .catch(() => { inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务或云端拦截。</span>`; });
         } else {
-            api.incrementItemUse(itemData.id).catch(()=>{});
+            // 【需求2修改核心】：只有不是免单情况才涨使用量
+            if (!alreadyOwned) { api.incrementItemUse(itemData.id).catch(()=>{}); }
+            
             inlineStatusBox.innerHTML = `<span style="color: #4CAF50;">✅ 授权通过，该资源需手动访问源地址获取：</span><a href="${itemData.link}" target="_blank" style="color: #2196F3; margin-left: 5px;">前往地址</a>`;
         }
     };
