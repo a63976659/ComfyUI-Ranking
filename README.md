@@ -37,8 +37,15 @@ ComfyUI精选社区 公测开启！
 2. 告别复杂的环境配置，寻找并安全导入最适合自己的工作流。
 3. 一分价钱一分货，通过真实评价、购买使用量和死链探测机制，避坑无效资源，让每一分钱都花在刀刃上。
 
+**安装方式：**
+1. 在ComfyUI插件文件夹`custom_nodes`空白处右键，选着在终端中打开（Win10在地址栏输入cmd并回车）
+2. 输入`git clone https://github.com/a63976659/ComfyUI-Ranking.git`并回车，等待安装完成。
+3. 重启ComfyUI
+4. 注意安装失败`custom_nodes`文件夹中会有一个空的`ComfyUI-Ranking`文件夹或者只有少量文件，需要删除`ComfyUI-Ranking`文件夹，重新安装。
 
-<img width="754" height="1739" alt="排行榜" src="https://github.com/user-attachments/assets/1d428992-ee86-40c3-a251-d2def6a09b92" />
+
+<img width="804" height="1837" alt="排行榜" src="https://github.com/user-attachments/assets/66eadc32-8092-4933-86d0-7d5fc0a4855d" />
+
 
 
 严格数据验证
