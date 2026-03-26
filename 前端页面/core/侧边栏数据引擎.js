@@ -1,17 +1,18 @@
+// 前端页面/core/侧边栏数据引擎.js (完整替换)
 import { api } from "./网络请求API.js";
 import { createItemCard } from "../market/列表卡片组件.js";
 import { createCreatorCard } from "../market/创作者卡片组件.js";
 
+// 设定本地缓存有效期为 2 小时 (防止反复刷新浪费算力和网络)
+const CACHE_EXPIRE_TIME = 1000 * 60 * 60 * 2; 
+
 export async function loadSidebarContent({ tab, sort, keyword, contentArea, currentUser, renderToken, getRenderToken }) {
     const cacheKey = `ComfyCommunity_ListCache_${tab}_${sort}`;
     const cachedDataStr = localStorage.getItem(cacheKey);
-    let hasCache = false;
 
     const renderData = (dataArray) => {
-        // 【防跳动拦截】: 如果网络返回时，用户已经切换了页面，则直接抛弃旧数据
         if (renderToken !== getRenderToken()) return; 
         
-        // 执行本地过滤机制
         let displayData = dataArray;
         if (keyword) {
             displayData = dataArray.filter(item => {
@@ -32,11 +33,23 @@ export async function loadSidebarContent({ tab, sort, keyword, contentArea, curr
         }
     };
 
-    if (cachedDataStr) {
-        try { renderData(JSON.parse(cachedDataStr)); hasCache = true; } catch (e) { localStorage.removeItem(cacheKey); }
+    // 🟢 核心修改：极其严格的缓存优先策略
+    if (cachedDataStr && !keyword) {
+        try { 
+            const cacheObj = JSON.parse(cachedDataStr);
+            const isExpired = Date.now() - cacheObj.timestamp > CACHE_EXPIRE_TIME;
+            
+            // 如果缓存没过期，直接渲染并【终止执行】，坚决不发网络请求！
+            if (!isExpired && cacheObj.data) {
+                renderData(cacheObj.data);
+                return; 
+            }
+        } catch (e) { 
+            localStorage.removeItem(cacheKey); 
+        }
     }
 
-    if (!hasCache) { contentArea.innerHTML = "<div style='text-align:center; padding: 40px 20px; color:#888;'>🌐 正在连接服务器拉取数据...</div>"; }
+    contentArea.innerHTML = "<div style='text-align:center; padding: 40px 20px; color:#888;'>🌐 正在连接服务器拉取数据...</div>";
 
     try {
         let response, realData;
@@ -49,14 +62,16 @@ export async function loadSidebarContent({ tab, sort, keyword, contentArea, curr
             realData = response.data || [];
         }
 
-        const freshDataStr = JSON.stringify(realData);
-        if (freshDataStr !== cachedDataStr) {
-            localStorage.setItem(cacheKey, freshDataStr); // 永远只缓存原始数据
-            renderData(realData); // 渲染时再去筛选
-        }
+        // 🟢 将时间和数据一并存入缓存
+        const freshCacheObj = { timestamp: Date.now(), data: realData };
+        localStorage.setItem(cacheKey, JSON.stringify(freshCacheObj));
+        
+        renderData(realData); 
     } catch (error) {
-        if (!hasCache && renderToken === getRenderToken()) { 
-            contentArea.innerHTML = `<div style='text-align:center; padding: 40px 20px; color:#F44336;'><div>⚠️ 数据加载失败</div><div style='font-size:12px; margin-top:10px; color:#aaa;'>${error.message}</div></div>`; 
+        if (cachedDataStr) {
+            try { renderData(JSON.parse(cachedDataStr).data); } catch(e){}
+        } else {
+            contentArea.innerHTML = `<div style='text-align:center; padding: 40px 20px; color:#F44336;'>❌ 数据加载失败: ${error.message}</div>`;
         }
     }
 }
