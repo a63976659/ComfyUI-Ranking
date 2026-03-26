@@ -26,11 +26,30 @@ export async function loadSidebarContent({ tab, sort, keyword, contentArea, curr
             contentArea.innerHTML = `<div style='text-align:center; padding: 40px 20px; color:#888;'>${keyword ? '没有搜索到相关内容' : '暂无数据，快来抢沙发吧！'}</div>`;
             return;
         }
+
+        // 🚀 性能黑科技 1：创建内存级的文档碎片购物车，避免引发浏览器疯狂回流重绘
+        const fragment = document.createDocumentFragment();
+
         if (tab === "tools" || tab === "apps" || tab === "recommends") {
-            displayData.forEach(data => contentArea.appendChild(createItemCard(data, currentUser)));
+            displayData.forEach(data => {
+                const card = createItemCard(data, currentUser);
+                // 🚀 性能黑科技 2：启用原生 CSS 虚拟列表，不在可视区域内坚决不占用 GPU 渲染！
+                card.style.contentVisibility = "auto";
+                card.style.containIntrinsicSize = "160px"; // 设定卡片预估高度，防止滚动条抖动
+                fragment.appendChild(card);
+            });
         } else if (tab === "creators") {
-            displayData.forEach(data => contentArea.appendChild(createCreatorCard(data, currentUser)));
+            displayData.forEach(data => {
+                const card = createCreatorCard(data, currentUser);
+                // 同理，给创作者卡片也加上虚拟列表优化
+                card.style.contentVisibility = "auto";
+                card.style.containIntrinsicSize = "100px"; 
+                fragment.appendChild(card);
+            });
         }
+
+        // 🚀 将装满卡片的“购物车”一次性挂载到 DOM，彻底消灭点击反应慢的问题！
+        contentArea.appendChild(fragment);
     };
 
     // 🟢 核心修改：极其严格的缓存优先策略
