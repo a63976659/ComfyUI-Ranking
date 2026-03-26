@@ -35,6 +35,10 @@ export function showAboutInfo(currentUser) {
 3. 全局即时通讯：内置私信与系统通知，打破信息孤岛。
 4. 沙盒化交互：严格的事件防穿透机制，全方位保护底层画布安全。
 
+工具安装位置：custom_nodes
+应用保存位置：models\app
+缓存保存位置：models\cache
+
 ComfyUI 社区精选是一款专为 ComfyUI 打造的现代化、Web3.0 级别生态引擎，致力于聚合全网优质的插件、应用与工作流，让节点的获取与分享变得前所未有地简单。
 
 <a href="https://space.bilibili.com/2114638644" target="_blank" style="text-decoration: none; display: inline-block; margin-top: 15px;">
