@@ -4,7 +4,9 @@ import { openChatModal } from "../social/私信聊天组件.js";
 import { createSettingsForm } from "./个人设置表单组件.js";
 import { renderProfileListContent } from "./个人列表组件.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
-import { openRechargeModal, openWithdrawModal } from "../market/资金与钱包组件.js"; // 【新增】：引入钱包与资金组件
+import { openRechargeModal, openWithdrawModal } from "../market/资金与钱包组件.js"; 
+import { buildProfileHTML } from "./个人中心_UI模板.js";   
+import { openTipModal } from "./个人中心_赞赏组件.js";     
 
 export function showUserProfile(initialUserData, currentUser = null, isMe = true) {
     const container = document.createElement("div");
@@ -21,22 +23,22 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
     function render() {
         container.innerHTML = ""; 
 
-        // 【修改点】：重构顶部导航栏，把设置和登出挪到和“返回”按钮同一行
-        const topBarHtml = `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <button id="btn-back-profile" style="background: #333; border: 1px solid #555; color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='#333'; this.style.borderColor='#555'">
-                    <span style="font-size: 14px;">⬅</span> 返回
-                </button>
-                ${(isMe && !isSettingsView) ? `
-                <div style="display: flex; gap: 10px;">
-                    <button id="btn-open-settings" style="background: transparent; border: 1px solid #555; color: #aaa; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.color='#fff'; this.style.borderColor='#888'" onmouseout="this.style.color='#aaa'; this.style.borderColor='#555'">⚙️ 设置</button>
-                    <button id="btn-logout" style="background: transparent; border: 1px solid #F44336; color: #F44336; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='transparent'; this.style.color='#F44336'">🚪 登出</button>
-                </div>` : ''}
-            </div>
-        `;
+        let isFollowing = false;
+        if (currentUser && userData.followers) { isFollowing = userData.followers.includes(currentUser.account); }
+
+        const privacy = userData.privacy || {};
+        const followingCount = (!isMe && privacy.follows) ? "***" : (userData.following ? userData.following.length : 0);
+
+        const tabs = [{ id: "published", label: isMe ? "我的发布" : "TA的发布" }];
+        if (isMe || !privacy.likes) tabs.push({ id: "liked", label: "近期点赞" });
+        if (isMe || !privacy.follows) tabs.push({ id: "following", label: "关注的人" });
+
+        if (!tabs.find(t => t.id === activeTab)) activeTab = "published";
+
+        // 调用解耦的模板引擎生成 HTML
+        container.innerHTML = buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs);
 
         if (isSettingsView && isMe) {
-            container.innerHTML = topBarHtml;
             const settingsContainer = createSettingsForm(
                 userData,
                 () => { isSettingsView = false; render(); }, 
@@ -50,82 +52,17 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
             container.appendChild(settingsContainer);
             container.querySelector("#btn-back-profile").onclick = () => { isSettingsView = false; render(); };
         } else {
-            let isFollowing = false;
-            if (currentUser && userData.followers) { isFollowing = userData.followers.includes(currentUser.account); }
-
-            // 读取隐私状态拦截数字显示
-            const privacy = userData.privacy || {};
-            const followingCount = (!isMe && privacy.follows) ? "***" : (userData.following ? userData.following.length : 0);
-
-            // 【修改点】：给右侧 actionButtons 瘦身，只留下和钱相关的按钮，加高内边距让其更大气
-            const actionButtons = isMe 
-                ? `<div style="display: flex; flex-direction: column; gap: 12px; width: 100%;">
-                       <button id="btn-wallet" style="background: #FF9800; border: none; color: white; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 充值积分</button>
-                       <button id="btn-withdraw" style="background: transparent; border: 1px solid #4CAF50; color: #4CAF50; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.1)'" onmouseout="this.style.background='transparent'">💸 收益提现</button>
-                   </div>`
-                : `<button id="btn-send-msg" style="width: 100%; background: #2196F3; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">✉️ 私信</button>
-                   <button id="btn-follow-user" style="width: 100%; background: ${isFollowing ? '#4CAF50' : '#FF9800'}; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-top: 8px;">${isFollowing ? '✔️ 已关注' : '➕ 关注作者'}</button>`;
-
-            // 仅向本人展示余额与收益数据
-            const balanceDisplayHtml = isMe 
-                ? `<div>💰 余额: <strong style="color:#FF9800;">${userData.balance || 0}</strong></div>
-                   <div>💸 可提现收益: <strong style="color:#4CAF50;">${userData.earn_balance || 0}</strong></div>`
-                : '';
-
-            // 【修改点】：增强对 userData.age 空值的兼容判断
-            const headerHtml = `
-                <div style="display: flex; align-items: flex-start; gap: 15px; margin-bottom: 20px; position: relative;">
-                    <img src="${userData.avatarDataUrl || userData.avatar || 'https://via.placeholder.com/150'}" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid #4CAF50; object-fit: cover;">
-                    <div style="flex: 1; padding-right: 130px;">
-                        <div style="font-size: 20px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
-                            ${userData.name}
-                            <span style="font-size: 12px; background: #444; padding: 2px 6px; border-radius: 4px; font-weight: normal;">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age !== undefined && userData.age !== null ? userData.age : '未知'}岁</span>
-                        </div>
-                        <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">📍 ${userData.country || '保密'} - ${userData.region || ''}</div>
-                        <div style="font-size: 13px; color: #ccc; line-height: 1.4; word-break: break-all;">${userData.intro || '这个人很懒，什么都没写...'}</div>
-                    </div>
-                    <div style="position: absolute; top: 0; right: 0; width: 120px; display: flex; flex-direction: column; gap: 8px;">${actionButtons}</div>
-                </div>
-                <div style="display: flex; gap: 20px; font-size: 13px; color: #bbb; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #333; flex-wrap: wrap;">
-                    ${balanceDisplayHtml}
-                    <div>👍 获赞: <strong style="color:#fff;">${userData.receivedLikes || 0}</strong></div>
-                    <div>⭐ 被收藏: <strong style="color:#fff;">${userData.receivedFavorites || 0}</strong></div>
-                    <div>👥 粉丝: <strong style="color:#fff;">${userData.followers ? userData.followers.length : 0}</strong></div>
-                    <div>🏃 关注的人: <strong style="color:#fff;">${followingCount}</strong></div>
-                </div>
-            `;
-
-            // 基于隐私设置拦截选项卡的显示
-            const tabs = [{ id: "published", label: isMe ? "我的发布" : "TA的发布" }];
-            if (isMe || !privacy.likes) tabs.push({ id: "liked", label: "近期点赞" });
-            if (isMe || !privacy.follows) tabs.push({ id: "following", label: "关注的人" });
-
-            // 防止切换选项卡时报错（如果刚好停留在一个被隐藏的 Tab 上）
-            if (!tabs.find(t => t.id === activeTab)) activeTab = "published";
-
-            let tabsHtml = `<div style="display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 5px;">`;
-            tabs.forEach(tab => {
-                const isActive = activeTab === tab.id;
-                tabsHtml += `<button class="profile-tab-btn" data-id="${tab.id}" style="background: transparent; border: none; cursor: pointer; padding: 5px 10px; color: ${isActive ? '#4CAF50' : '#888'}; font-weight: ${isActive ? 'bold' : 'normal'}; border-bottom: ${isActive ? '2px solid #4CAF50' : 'none'};">${tab.label}</button>`;
-            });
-            tabsHtml += `</div><div id="profile-list-container" style="flex: 1; overflow-y: auto; padding-right: 5px;"></div>`;
-
-            // 【修改点】：拼装新的顶部结构
-            container.innerHTML = topBarHtml + headerHtml + tabsHtml;
             container.querySelector("#btn-back-profile").onclick = () => window.dispatchEvent(new CustomEvent("comfy-route-back"));
 
             if (isMe) {
-                // 绑定钱包与提现点击事件
                 container.querySelector("#btn-wallet").onclick = () => {
-                    openRechargeModal(currentUser, (newBalance) => {
-                        userData.balance = newBalance;
-                        render(); // 更新数据后重新渲染 UI
-                    });
+                    openRechargeModal(currentUser, (newBalance) => { userData.balance = newBalance; render(); });
                 };
                 container.querySelector("#btn-withdraw").onclick = () => {
-                    openWithdrawModal(currentUser, (newEarnBalance) => {
-                        userData.earn_balance = newEarnBalance;
-                        render(); // 更新数据后重新渲染 UI
+                    openWithdrawModal(currentUser, () => { 
+                        userData.earn_balance = 0; 
+                        userData.tip_balance = 0;
+                        render(); 
                     });
                 };
 
@@ -140,22 +77,35 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                     }
                 };
             } else {
+                const btnTip = container.querySelector("#btn-tip-user");
+                if (btnTip) {
+                    btnTip.onclick = () => {
+                        if (!currentUser) return showToast("请先登录您的账号后再进行赞赏！", "warning");
+                        openTipModal(currentUser, userData, (newBalance) => {
+                            currentUser.balance = newBalance;
+                            openOtherUserProfileModal(userData.account, currentUser); 
+                        });
+                    };
+                }
+
                 const btnFollow = container.querySelector("#btn-follow-user");
-                btnFollow.onclick = async () => {
-                    if (!currentUser) return showToast("请先登录您的账号！", "warning");
-                    btnFollow.innerHTML = "⏳ 处理中..."; btnFollow.disabled = true;
-                    try {
-                        const newStatus = !isFollowing;
-                        await api.followUser(currentUser.account, userData.account, newStatus);
-                        isFollowing = newStatus;
-                        
-                        if (!userData.followers) userData.followers = [];
-                        if (isFollowing) { if (!userData.followers.includes(currentUser.account)) userData.followers.push(currentUser.account); } 
-                        else { userData.followers = userData.followers.filter(a => a !== currentUser.account); }
-                        render(); 
-                    } catch (err) { showToast("操作失败：" + err.message, "error"); btnFollow.innerHTML = isFollowing ? "✔️ 已关注" : "➕ 关注作者"; } 
-                    finally { btnFollow.disabled = false; }
-                };
+                if (btnFollow) {
+                    btnFollow.onclick = async () => {
+                        if (!currentUser) return showToast("请先登录您的账号！", "warning");
+                        btnFollow.innerHTML = "⏳ 处理中..."; btnFollow.disabled = true;
+                        try {
+                            const newStatus = !isFollowing;
+                            await api.followUser(currentUser.account, userData.account, newStatus);
+                            isFollowing = newStatus;
+                            
+                            if (!userData.followers) userData.followers = [];
+                            if (isFollowing) { if (!userData.followers.includes(currentUser.account)) userData.followers.push(currentUser.account); } 
+                            else { userData.followers = userData.followers.filter(a => a !== currentUser.account); }
+                            render(); 
+                        } catch (err) { showToast("操作失败：" + err.message, "error"); btnFollow.innerHTML = isFollowing ? "✔️ 已关注" : "➕ 关注作者"; } 
+                        finally { btnFollow.disabled = false; }
+                    };
+                }
 
                 const btnSendMsg = container.querySelector("#btn-send-msg");
                 if (btnSendMsg) {
@@ -180,11 +130,9 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
     }
 
     container.updateData = function(newUserData) {
-        // 【修改点】：安全的合并机制，保留原有本地字段，防止被云端返回的 null 数据覆盖
         const safeNewData = { ...newUserData };
         Object.keys(safeNewData).forEach(key => safeNewData[key] == null && delete safeNewData[key]);
         const mergedData = { ...userData, ...safeNewData };
-        
         if (JSON.stringify(userData) !== JSON.stringify(mergedData)) { 
             userData = mergedData; 
             if (!isSettingsView) { render(); } 
@@ -199,10 +147,12 @@ export function openUserProfileModal(userData) {
     const view = showUserProfile(userData, userData, true);
     window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
 
-    api.getUserProfile(userData.account).then(res => {
-        const freshData = res.data;
-        
-        // 【修改点】：同步修复 localStorage 写入时的覆盖漏洞
+    // 【修改点】：同步拉取云端 JSON 资料表与 SQL 金融账本
+    Promise.all([
+        api.getUserProfile(userData.account).catch(() => ({ data: {} })),
+        api.getWallet(userData.account).catch(() => ({}))
+    ]).then(([profileRes, walletRes]) => {
+        const freshData = { ...profileRes.data, ...walletRes };
         const safeFreshData = { ...freshData };
         Object.keys(safeFreshData).forEach(key => safeFreshData[key] == null && delete safeFreshData[key]);
 
@@ -215,7 +165,7 @@ export function openUserProfileModal(userData) {
                 storage.setItem("ComfyCommunity_User", JSON.stringify(savedObj));
             }
         } catch(e){}
-        if (view.updateData) view.updateData(freshData); // 这里直接传 freshData 给 updateData 即可，内部有防空过滤
+        if (view.updateData) view.updateData(freshData); 
     }).catch(err => console.warn("后台更新本人资料失败", err));
 }
 
@@ -235,8 +185,11 @@ export async function openOtherUserProfileModal(targetAccount, currentUser) {
     }
 
     try {
-        const res = await api.getUserProfile(targetAccount);
-        const freshData = res.data;
+        const [profileRes, walletRes] = await Promise.all([
+            api.getUserProfile(targetAccount).catch(() => ({ data: {} })),
+            api.getWallet(targetAccount).catch(() => ({}))
+        ]);
+        const freshData = { ...profileRes.data, ...walletRes };
         localStorage.setItem(cacheKey, JSON.stringify(freshData));
         
         if (activeContainer) { if (activeContainer.updateData) activeContainer.updateData(freshData); } 

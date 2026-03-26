@@ -2,6 +2,7 @@
 import { app } from "../../../scripts/app.js"; 
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { api } from "../core/网络请求API.js"; 
+import { openUserProfileModal } from "../profile/个人中心视图.js"; // 【修复点】：引入个人中心视图函数
 
 export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatusBox) {
     btnUse.onclick = async (e) => {
@@ -12,9 +13,17 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
         const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool';
         const isApp = itemData.type === 'app' || itemData.type === 'recommend_app';
 
-        // =======================================================
+        // 【新增】：本地前置余额校验
+        if (!isFree && (currentUser.balance || 0) < itemData.price) {
+            if (await showConfirm(`您的积分余额不足（当前：${currentUser.balance || 0}，需要：${itemData.price}）。是否前往个人中心充值？`)) {
+                if (typeof globalModal !== 'undefined') globalModal.closeTopModal();
+                // 【修复点】：直接调用函数唤起个人中心，解决白屏 Bug
+                openUserProfileModal(currentUser);
+            }
+            return; // 余额不足，直接终止后续所有云端请求
+        }
+
         // 防线 1：扣费前进行死链探测 (解决问题 1)
-        // =======================================================
         if (!isFree) {
             inlineStatusBox.style.display = "block";
             inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在检测云端资源有效性...</span>`;
@@ -73,7 +82,8 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             if (err.message && err.message.includes("余额不足")) {
                 inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 获取失败：积分余额不足。</span>`;
                 if (await showConfirm("您的积分余额不足，是否立刻前往个人中心充值？")) {
-                    window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: "profile" } }));
+                    // 【修复点】：直接调用函数唤起个人中心，解决白屏 Bug
+                    openUserProfileModal(currentUser);
                 }
                 return; // 直接退出函数，不会走到下方的安装流程
             } else {

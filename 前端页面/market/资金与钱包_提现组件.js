@@ -6,10 +6,13 @@ import { globalModal } from "../components/全局弹窗管理器.js";
 /**
  * 提现弹窗组件 (带邮箱验证码安全风控)
  * @param {Object} currentUser 当前登录用户
- * @param {Function} onBalanceChange 提现成功后的回调刷新函数
+ * @param {Function} onSuccess 提现成功后的回调函数
  */
-export function openWithdrawModal(currentUser, onBalanceChange) {
-    const maxWithdraw = currentUser.earn_balance || 0; 
+export function openWithdrawModal(currentUser, onSuccess) {
+    // 【修改点 4】：将双轨账目合并为总可提现额度
+    const earn = currentUser.earn_balance || 0;
+    const tip = currentUser.tip_balance || 0;
+    const maxWithdraw = earn + tip; 
     
     if (maxWithdraw <= 0) {
         return showToast("您的可提现收益为 0，快去发布优质工具赚取积分吧！", "warning");
@@ -23,6 +26,7 @@ export function openWithdrawModal(currentUser, onBalanceChange) {
             <div>
                 <div style="font-size: 13px; color: #2196F3; margin-bottom: 4px;">可提现收益 (积分)</div>
                 <div style="font-size: 24px; font-weight: bold; color: #fff;">${maxWithdraw}</div>
+                <div style="font-size: 11px; color: #888; margin-top: 4px;">(销售: ${earn} | 打赏: ${tip})</div>
             </div>
             <div style="text-align: right; font-size: 12px; color: #888;">
                 <div>提现比例：1 积分 = 1 元</div>
@@ -113,15 +117,12 @@ export function openWithdrawModal(currentUser, onBalanceChange) {
         btnSubmit.disabled = true;
 
         try {
-            await new Promise(r => setTimeout(r, 1500));
+            await api.submitWithdraw({ amount, alipayAccount, real_name: realName, code, account: currentUser.account });
             
             showToast("🎉 提现申请提交成功！预计 1-3 个工作日内打款至您的支付宝。", "success");
             globalModal.closeTopModal();
             
-            if (onBalanceChange) {
-                currentUser.earn_balance -= amount; 
-                onBalanceChange(currentUser.earn_balance);
-            }
+            if (onSuccess) onSuccess(); 
         } catch (error) {
             showToast("提现失败：" + error.message, "error");
             btnSubmit.innerHTML = "提交提现申请";

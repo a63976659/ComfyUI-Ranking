@@ -121,11 +121,25 @@ export const api = {
     async getChatHistory(account, targetAccount) { 
         return request(`/api/chats/${account}/${targetAccount}`); 
     },
-    // 【核心新增】：钱包购买与扣费拦截接口
+    async getWallet(account) {
+        return request(`/api/wallet/${account}`);
+    },
+    async tipUser(senderAccount, targetAccount, amount, isAnonymous) {
+        return request("/api/wallet/tip", {
+            method: "POST",
+            body: { sender_account: senderAccount, target_account: targetAccount, amount: amount, is_anonymous: isAnonymous }
+        });
+    }, // 👈 【修复点】：在这里补上了极其关键的逗号！
     async purchaseItem(account, itemId) {
         return request("/api/wallet/purchase", { 
             method: "POST", 
             body: { account: account, item_id: itemId } 
+        });
+    },
+    async submitWithdraw(data) {
+        return request("/api/wallet/withdraw", {
+            method: "POST",
+            body: data
         });
     }
 };
