@@ -16,7 +16,6 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
 
     if (isSettingsView && isMe) return topBarHtml; 
 
-    // 【修改点 1】：将打赏按钮放到右侧，和私信按钮保持 100% 宽度对齐
     const actionButtons = isMe 
         ? `<div style="display: flex; flex-direction: column; gap: 12px; width: 100%;">
                <button id="btn-wallet" style="background: #FF9800; border: none; color: white; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 充值积分</button>
@@ -26,7 +25,6 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
            <button id="btn-send-msg" style="width: 100%; background: #2196F3; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">✉️ 私信</button>
            <button id="btn-follow-user" style="width: 100%; background: ${isFollowing ? '#4CAF50' : '#4CAF50'}; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-top: 8px;">${isFollowing ? '✔️ 已关注' : '➕ 关注作者'}</button>`;
 
-    // 【修改点 4】：UI 展示层面明确分离双轨账目
     const balanceDisplayHtml = isMe 
         ? `<div style="display:flex; flex-direction:column; gap:4px;">
              <div>💰 我的余额: <strong style="color:#FF9800;">${userData.balance || 0}</strong></div>
@@ -69,7 +67,6 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
         return "☀️".repeat(suns) + "🌙".repeat(moons) + "⭐".repeat(stars);
     };
 
-    // 【修改点 2】：引入默认的欢迎话语
     let tipItemsHtml = '<div style="color: #888; text-align: center; padding: 40px 0; font-size: 13px;">🎁 还没有人赞赏过哦，快来成为第一个支持 TA 的人吧！</div>';
     
     if (userData.tips_received && Object.keys(userData.tips_received).length > 0) {
@@ -83,7 +80,6 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
         }).join('');
     }
 
-    // 【修改点 2】：固定高度 180px 并使用 flex 布局防止抖动
     const tipsHtml = `
         <div style="margin-bottom: 15px; padding: 15px; background: #222; border-radius: 8px; border: 1px solid #444; height: 180px; display: flex; flex-direction: column;">
             <div style="font-size: 14px; font-weight: bold; color: #FF9800; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
@@ -95,7 +91,27 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
         </div>
     `;
 
-    // 剔除掉了会引发错误的重新计算 tabs 的逻辑，直接使用传入的 tabs 和 activeTab 参数
+    // ====================================================================
+    // 【核心新增】：管理员专属系统公告发布 UI 面板 (仅自己且账号是管理员时可见)
+    // ====================================================================
+    let adminHtml = '';
+    if (isMe && userData.account === '123456') {
+        adminHtml = `
+            <div id="admin-ann-panel" style="margin-bottom: 15px; background: #181b28; border: 1px solid #2d334a; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                    <div style="font-weight: bold; font-size: 15px; color: #FF9800; display: flex; align-items: center; gap: 6px;">
+                        📢 全站系统公告发布
+                    </div>
+                    <div style="font-size: 11px; color: #E91E63; background:rgba(233,30,99,0.1); padding: 2px 6px; border-radius: 4px;">内测最高特权</div>
+                </div>
+                <textarea id="admin-ann-content" placeholder="在此输入公告内容（例如 V1.2.0 内测更新公告），支持直接回车换行，内容将在所有用户的消息提醒中醒目展示，发布后无法撤回，请谨慎操作！" style="width: 100%; height: 120px; background: #232738; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; color: #eee; padding: 10px; font-size: 13px; line-height: 1.6; resize: none; margin-bottom: 12px; box-sizing: border-box; outline: none; transition: border-color 0.2s;" onfocus="this.style.borderColor='#FF9800'" onblur="this.style.borderColor='rgba(255,255,255,0.05)'"></textarea>
+                <button id="btn-admin-ann-send" style="width: 100%; background: #E91E63; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; transition: background 0.2s, transform 0.1s;" onmouseover="this.style.background='#D81B60'; this.style.transform='scale(1.01)'" onmouseout="this.style.background='#E91E63'; this.style.transform='scale(1)'">
+                    🚀 确认发布全站公告
+                </button>
+            </div>
+        `;
+    }
+
     let tabsHtml = `<div style="display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 5px;">`;
     tabs.forEach(tab => {
         const isActive = activeTab === tab.id;
@@ -103,5 +119,6 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
     });
     tabsHtml += `</div><div id="profile-list-container" style="flex: 1; overflow-y: auto; padding-right: 5px;"></div>`;
 
-    return topBarHtml + headerHtml + tipsHtml + tabsHtml;
+    // 将 adminHtml 拼接在赞赏榜单之后，列表 Tab 之前
+    return topBarHtml + headerHtml + tipsHtml + adminHtml + tabsHtml;
 }

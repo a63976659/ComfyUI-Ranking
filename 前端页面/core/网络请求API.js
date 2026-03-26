@@ -129,7 +129,7 @@ export const api = {
             method: "POST",
             body: { sender_account: senderAccount, target_account: targetAccount, amount: amount, is_anonymous: isAnonymous }
         });
-    }, // 👈 【修复点】：在这里补上了极其关键的逗号！
+    }, 
     async purchaseItem(account, itemId) {
         return request("/api/wallet/purchase", { 
             method: "POST", 
@@ -140,6 +140,16 @@ export const api = {
         return request("/api/wallet/withdraw", {
             method: "POST",
             body: data
+        });
+    },
+    // =========================================================
+    // 【核心新增】：管理员发布全站系统公告接口
+    // =========================================================
+    async postSystemAnnouncement(adminAccount, contentText) {
+        if (!contentText || !contentText.trim()) throw new Error("公告内容不能为空！");
+        return request("/api/system/announcement", {
+            method: "POST",
+            body: { admin_account: adminAccount, content: contentText }
         });
     }
 };

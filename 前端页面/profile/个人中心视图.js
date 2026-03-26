@@ -126,6 +126,38 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
 
             const listDOM = container.querySelector("#profile-list-container");
             renderProfileListContent(activeTab, listDOM, userData, currentUser, openOtherUserProfileModal);
+
+            // =========================================================
+            // 【新增】：为管理员系统公告发布按钮绑定事件
+            // =========================================================
+            const btnAdminAnnSend = container.querySelector("#btn-admin-ann-send");
+            if (btnAdminAnnSend) {
+                btnAdminAnnSend.onclick = async () => {
+                    const contentArea = container.querySelector("#admin-ann-content");
+                    const content = contentArea.value;
+                    if (!content || !content.trim()) return showToast("⚠️ 公告内容不能为空！", "warning");
+
+                    const isConfirm = await showConfirm(`发送说明：\n\n1. 内容将下发给所有用户，无法撤回。\n2. 内容将在消息中心醒目展示。\n\n⚠️ 请确保内容准确，谨慎操作！`);
+                    if (!isConfirm) return;
+
+                    btnAdminAnnSend.innerText = "🚀 发布中...";
+                    btnAdminAnnSend.style.opacity = "0.7";
+                    btnAdminAnnSend.disabled = true;
+
+                    try {
+                        await api.postSystemAnnouncement(currentUser.account, content);
+                        contentArea.value = ""; // 清空输入框
+                        showToast("🎉 全站系统公告发布成功！", "success");
+                    } catch (error) {
+                        console.error("Failed to post announcement:", error);
+                        showToast(`❌ 发布失败: ${error.message}`, "error");
+                    } finally {
+                        btnAdminAnnSend.innerText = "🚀 确认发布全站公告";
+                        btnAdminAnnSend.style.opacity = "1";
+                        btnAdminAnnSend.disabled = false;
+                    }
+                };
+            }
         }
     }
 

@@ -48,6 +48,35 @@ function buildSidebarDOM() {
     });
     contentBoxWrapper.appendChild(contentArea);
 
+    // =========================================================================
+    // 【新增】底部专业版权与合作伙伴信息区域 (Footer)
+    // =========================================================================
+    const footerContainer = document.createElement("div");
+    Object.assign(footerContainer.style, {
+        padding: "15px 10px 20px",
+        textAlign: "center",
+        fontSize: "12px",
+        color: "#666",
+        flexShrink: "0",
+        background: "transparent"
+    });
+
+    footerContainer.innerHTML = `
+        <div style="display: flex; justify-content: center; align-items: center; gap: 16px; margin-bottom: 8px; flex-wrap: wrap;">
+            <a href="https://github.com/a63976659/ComfyUI-Ranking" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#4CAF50'" onmouseout="this.style.color='#888'">🌍 ComfyUI精选社区</a>
+            <a href="https://github.com/a63976659" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">🐙 GitHub</a>
+            <a href="https://huggingface.co/ZHIWEI666" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#FFD21E'" onmouseout="this.style.color='#888'">🤗 Hugging Face</a>
+            <a href="#" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#2196F3'" onmouseout="this.style.color='#888'">🏢 砚影科技</a>
+            <a href="https://space.bilibili.com/2114638644" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#00A1D6'" onmouseout="this.style.color='#888'">📺 Bilibili</a>
+        </div>
+        <div style="display: flex; justify-content: center; align-items: center; gap: 10px; color: #555;">
+            <span>MIT License Copyright (c) 2026 猪的飞行梦</span>
+            <span style="color: #444;">|</span>
+            <span>v1.2.0-Alpha</span>
+        </div>
+    `;
+    // =========================================================================
+
     let activeInlineView = null; 
 
     const showInlineView = (viewDOM) => {
@@ -55,6 +84,7 @@ function buildSidebarDOM() {
         tabsContainer.style.display = "none"; 
         sortContainer.style.display = "none"; 
         contentBoxWrapper.style.display = "none";
+        footerContainer.style.display = "none"; // 【核心】：打开详情/发布页时隐藏底部
         activeInlineView = viewDOM;
         container.appendChild(activeInlineView);
     };
@@ -67,6 +97,7 @@ function buildSidebarDOM() {
         tabsContainer.style.display = "flex"; 
         sortContainer.style.display = "flex"; 
         contentBoxWrapper.style.display = "flex";
+        footerContainer.style.display = "block"; // 【核心】：返回列表时恢复底部
     };
 
     window.addEventListener("comfy-route-view", (e) => {
@@ -83,13 +114,13 @@ function buildSidebarDOM() {
         showInlineView(view);
     });
 
-    // 【核心新增】：监听进入修改编辑页面的请求
+    // 监听进入修改编辑页面的请求
     window.addEventListener("comfy-route-edit-publish", (e) => {
         const { itemData, currentUser } = e.detail;
         const publishView = createPublishView(currentUser, 
             () => hideInlineView(), 
             () => { hideInlineView(); triggerLoad(); },
-            itemData // 将旧数据透传给修改表单以便回显
+            itemData 
         );
         showInlineView(publishView);
     });
@@ -148,6 +179,9 @@ function buildSidebarDOM() {
     container.appendChild(tabsContainer); 
     container.appendChild(sortContainer); 
     container.appendChild(contentBoxWrapper);
+    
+    // 【核心新增】：将底部追加到容器的最下方
+    container.appendChild(footerContainer);
     
     triggerLoad();
     return container;
