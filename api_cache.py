@@ -44,7 +44,7 @@ async def cache_image_handler(request):
 
     try:
         async with aiohttp.ClientSession() as session:
-            headers = {'User-Agent': 'Mozilla/5.0'}
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
             async with session.get(url, headers=headers, ssl=False, timeout=15) as response:
                 if response.status == 200:
                     content = await response.read()
@@ -68,8 +68,13 @@ async def api_proxy_handler(request):
     local_path = os.path.join(JSON_CACHE_DIR, f"{safe_filename}.json")
 
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    if "Authorization" in request.headers:
+    
+    # 🚀 核心修复：公私数据权限防火墙
+    # 如果是获取私信、聊天记录等严格私有数据，透传 Authorization 令牌
+    is_private_data = endpoint.startswith("/api/messages") or endpoint.startswith("/api/chats")
+    if "Authorization" in request.headers and is_private_data:
         headers["Authorization"] = request.headers["Authorization"]
+    # 榜单等公共数据，坚决剥离 Token，确保本地生成的 JSON 是全网纯净版，供所有本地账号秒读！
 
     async def background_fetch_and_save():
         """后台静默拉取云端最新数据并覆写本地文件"""
@@ -83,7 +88,7 @@ async def api_proxy_handler(request):
         except Exception:
             pass 
 
-    # 🚀 核心 SWR 逻辑：如果本地有文件，立刻 0 延迟返回，同时开启后台线程去云端同步！
+    # 🚀 核心 SWR 逻辑：如果本地有文件，立刻 0 延迟返回，同时开启后台线程去云端同步
     if os.path.exists(local_path):
         try:
             loop = asyncio.get_running_loop()
@@ -104,4 +109,4 @@ async def api_proxy_handler(request):
                 else:
                     return web.Response(status=response.status, text=await response.text())
     except Exception as e:
-        return web.json_response({"error": f"请求云端榜单失败: {str(e)}"}, status=500)
+        return web.json_response({"error": f"请求云端数据失败: {str(e)}"}, status=500)
