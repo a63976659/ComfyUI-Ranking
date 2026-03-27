@@ -95,7 +95,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                         btnFollow.innerHTML = "⏳ 处理中..."; btnFollow.disabled = true;
                         try {
                             const newStatus = !isFollowing;
-                            await api.followUser(currentUser.account, userData.account, newStatus);
+                            await api.toggleFollow(currentUser.account, userData.account, newStatus);
                             isFollowing = newStatus;
                             
                             if (!userData.followers) userData.followers = [];
