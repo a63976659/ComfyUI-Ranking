@@ -82,6 +82,19 @@ async function request(endpoint, options = {}) {
             throw new Error(errorMsg);
         }
 
+        // 🚀 核心自愈修复：监听所有数据修改动作，强制销毁脏缓存！
+        const method = fetchOptions.method ? fetchOptions.method.toUpperCase() : "GET";
+        if (["POST", "PUT", "DELETE"].includes(method)) {
+            Object.keys(localStorage).forEach(key => {
+                // 清理侧边栏列表、个人主页、聊天记录的硬缓存，但保留用户登录凭证
+                if (key.startsWith("ComfyCommunity_ListCache") || 
+                    key.startsWith("ComfyCommunity_ProfileCache") || 
+                    key.startsWith("ComfyCommunity_ChatHistory")) {
+                    localStorage.removeItem(key);
+                }
+            });
+        }
+
         // 入口数据挂载代理
         responseData = proxyImages(responseData);
         return responseData;
