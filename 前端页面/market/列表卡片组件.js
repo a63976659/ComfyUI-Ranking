@@ -14,14 +14,26 @@ export function createItemCard(itemData, currentUser = null) {
         marginBottom: "12px", border: "1px solid #444", color: "#fff", fontFamily: "sans-serif"
     });
 
+    // 🚀 核心新增：初始渲染时，动态计算真实的有效评论数（过滤软删除的废弃数据）
+    const calcActiveComments = (data) => {
+        if (!data) return 0;
+        return data.reduce((acc, c) => {
+            const parentCnt = c.isDeleted ? 0 : 1;
+            const repliesCnt = (c.replies || []).filter(r => !r.isDeleted).length;
+            return acc + parentCnt + repliesCnt;
+        }, 0);
+    };
+    const initialCommentCount = itemData.commentsData ? calcActiveComments(itemData.commentsData) : (itemData.comments || 0);
+
     const summaryView = document.createElement("div");
     summaryView.style.cursor = "pointer";
     
+    // 🚀 核心修改：为评论计数的 span 加上专属的 class，并填入过滤后的真实数量
     summaryView.innerHTML = `
         <div style="font-weight: bold; font-size: 14px; margin-bottom: 4px; color: #4CAF50;">${itemData.title}</div>
         <div style="font-size: 12px; color: #aaa; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 8px;">${itemData.shortDesc}</div>
         <div style="display: flex; gap: 10px; font-size: 11px; color: #888;">
-            <span>👍 ${itemData.likes || 0}</span> <span>⭐ ${itemData.favorites || 0}</span> <span>💬 ${itemData.comments || 0}</span>
+            <span>👍 ${itemData.likes || 0}</span> <span>⭐ ${itemData.favorites || 0}</span> <span class="card-comment-count">💬 ${initialCommentCount}</span>
             <span style="margin-left: auto; background: #444; padding: 2px 6px; border-radius: 4px; color: #fff;">使用: ${itemData.uses || 0}</span>
         </div>
     `;
@@ -94,7 +106,6 @@ export function createItemCard(itemData, currentUser = null) {
         detailView.style.display = isHidden ? "block" : "none";
 
         if (isHidden && !isRendered) {
-            // 【核心修正】：传递完整的 itemData 以供图表模块提取 use_history
             renderItemTrendChart(detailView.querySelector(`#${chartContainerId}`), itemData);
             setupImageSandboxEvents(detailView);
             isRendered = true;
@@ -103,13 +114,16 @@ export function createItemCard(itemData, currentUser = null) {
 
     const commentsContainer = document.createElement("div");
     commentsContainer.style.height = "250px"; 
-    const commentUI = createCommentSection(itemData.id, itemData.commentsData || [], currentUser);
+    
+    // 🚀 核心修改：传入一个回调函数，当组件内部发送/删除留言时，外部的数字能实时响应刷新！
+    const commentUI = createCommentSection(itemData.id, itemData.commentsData || [], currentUser, (newCount) => {
+        const badge = summaryView.querySelector(".card-comment-count");
+        if (badge) badge.innerText = `💬 ${newCount}`;
+    });
+    
     commentsContainer.appendChild(commentUI);
     detailView.appendChild(commentsContainer);
 
-    // =========================================================
-    // 【核心新增】：如果是作者本人，追加授权管理控制台
-    // =========================================================
     if (currentUser && currentUser.account === itemData.author) {
         const authorActionArea = document.createElement("div");
         Object.assign(authorActionArea.style, { display: "flex", gap: "10px", marginTop: "15px", paddingTop: "15px", borderTop: "1px dashed #555" });
@@ -122,7 +136,6 @@ export function createItemCard(itemData, currentUser = null) {
         
         authorActionArea.querySelector("#btn-edit-item").onclick = (e) => {
             e.stopPropagation();
-            // 派发事件，将当前内容数据传递给内联路由模块以打开修改界面
             window.dispatchEvent(new CustomEvent("comfy-route-edit-publish", { detail: { itemData, currentUser } }));
         };
         
@@ -132,7 +145,6 @@ export function createItemCard(itemData, currentUser = null) {
                 try {
                     await api.deleteItem(itemData.id, currentUser.account);
                     showToast("已成功删除", "success");
-                    // 触发全局刷新以更新列表
                     window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload")); 
                 } catch (err) {
                     showToast("删除失败: " + err.message, "error");
