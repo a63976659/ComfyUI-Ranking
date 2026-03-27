@@ -76,9 +76,17 @@ async function request(endpoint, options = {}) {
 
         if (!response.ok) {
             let errorMsg = `请求失败 (${response.status})`;
-            if (typeof responseData.detail === "string") errorMsg = responseData.detail;
-            else if (responseData.message) errorMsg = responseData.message;
-            else if (responseData.error) errorMsg = responseData.error;
+            
+            // 🚀 核心修改：增加对 FastAPI 422 报错数组的解析
+            if (Array.isArray(responseData.detail)) {
+                errorMsg = "数据格式错误: " + responseData.detail.map(e => `${e.loc[e.loc.length-1]} (${e.type})`).join(", ");
+            } else if (typeof responseData.detail === "string") {
+                errorMsg = responseData.detail;
+            } else if (responseData.message) {
+                errorMsg = responseData.message;
+            } else if (responseData.error) {
+                errorMsg = responseData.error;
+            }
             throw new Error(errorMsg);
         }
 
