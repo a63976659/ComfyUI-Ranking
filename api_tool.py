@@ -33,9 +33,7 @@ async def install_tool_handler(request):
         req = urllib.request.Request(proxy_api_url, data=payload, headers={'Content-Type': 'application/json'})
         
         # 2. 在 Python 线程中下载 ZIP 数据流
-        proxy_handler = urllib.request.ProxyHandler({}) 
-        opener = urllib.request.build_opener(proxy_handler)
-        with opener.open(req, timeout=60) as response: # 插件包较大，建议 timeout 给宽裕点
+        with urllib.request.urlopen(req, timeout=60) as response:
             zip_data = response.read()
             
             if zip_data == b"GITHUB_DOWNLOAD_FAILED":

@@ -38,9 +38,7 @@ async def download_app_handler(request):
             headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
         )
         
-        proxy_handler = urllib.request.ProxyHandler({}) # 构建一个强制为空的代理字典
-        opener = urllib.request.build_opener(proxy_handler) # 生成一个绝对纯净的请求引擎
-        with opener.open(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=30) as response:
             content = response.read().decode('utf-8')
             try:
                 json_data = json.loads(content)
