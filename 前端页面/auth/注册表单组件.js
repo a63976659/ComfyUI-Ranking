@@ -156,9 +156,22 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
 
         const formData = {
             type: "register", account, password, email, phone, name, gender: genderSelect.value, code,
-            age: container.querySelector("#reg-age").value, country: countrySelect.value, region: regionSelect.value,
-            intro: container.querySelector("#reg-intro").value, avatarFile: selectedAvatarFile, avatarDataUrl: selectedAvatarFile ? avatarPreview.src : null 
+            age: container.querySelector("#reg-age").value.trim(), country: countrySelect.value, region: regionSelect.value,
+            intro: container.querySelector("#reg-intro").value.trim(), avatarFile: selectedAvatarFile, avatarDataUrl: selectedAvatarFile ? avatarPreview.src : null 
         };
+
+        // 🚀 核心自愈：提交前清洗数据，把非必填的空字符串删掉，防止引发后端 422 报错
+        Object.keys(formData).forEach(key => {
+            if (formData[key] === "" || formData[key] === undefined || formData[key] === null) {
+                delete formData[key];
+            }
+        });
+        
+        // 特别处理 age：如果是纯数字字符串，强制转为整型 (int)
+        if (formData.age) {
+            formData.age = parseInt(formData.age, 10);
+        }
+
         if (onSuccessCallback) onSuccessCallback(formData);
     };
 }
