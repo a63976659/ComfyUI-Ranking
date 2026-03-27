@@ -13,11 +13,13 @@ function proxyImages(obj) {
                 && typeof obj[key] === 'string') {
                 
                 let originalUrl = obj[key];
+                // 自动修复：一层一层剥开已经被污染的多重代理前缀
                 while (originalUrl.startsWith('/community_hub/image?url=')) {
                     try { originalUrl = decodeURIComponent(originalUrl.replace('/community_hub/image?url=', '')); }
                     catch(e) { break; }
                 }
 
+                // 只有最终剥离出来的确实是外部网络链接，才挂上代理
                 if (originalUrl.startsWith('http')) {
                     obj[key] = `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
                 } else {
@@ -31,7 +33,7 @@ function proxyImages(obj) {
     return obj;
 }
 
-// 🟢 出口剥离：提交给云端前，强制扒掉本地代理外衣，还原为真实云端直链
+// 🟢 出口剥离：提交给云端前，强制扒掉本地代理外衣，还原为真实云端直链，彻底杜绝数据污染！
 function unproxyImages(obj) {
     if (!obj) return obj;
     if (typeof obj === 'string') {
@@ -54,34 +56,14 @@ function unproxyImages(obj) {
 }
 
 async function request(endpoint, options = {}) {
-    // ==== 🟢 核心修改开始 ====
-    const isGetMethod = (!options.method || options.method === "GET");
-    
-    // 增加消息和私信的路由白名单
-    const isCacheableEndpoint = 
-        endpoint.startsWith("/api/items") || 
-        endpoint.startsWith("/api/creators") ||
-        endpoint.startsWith("/api/messages") ||   // 拦截系统通知与消息列表
-        endpoint.startsWith("/api/chats");        // 拦截私信聊天列表
-    
-    let url;
-    // 如果命中白名单且是 GET 请求，导向本地 Python 缓存代理
-    if (isGetMethod && isCacheableEndpoint) {
-        url = `/community_hub/api_proxy?endpoint=${encodeURIComponent(endpoint)}`;
-    } else {
-        // 其他操作（如 POST 发送消息、已读标记等）必须实时走云端
-        url = `${BASE_URL}${endpoint}`;
-    }
-    // ==== 🟢 核心修改结束 ====
-    
+    const url = `${BASE_URL}${endpoint}`;
     const headers = { ...options.headers };
     if (!(options.body instanceof FormData)) { headers["Content-Type"] = "application/json"; }
     const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
     if (token) headers["Authorization"] = `Bearer ${token}`;
+    const fetchOptions = { method: options.method || "GET", headers, ...options };
     
-    // 🚀 核心修复：强制关闭浏览器层面的 fetch 缓存，确保一定会打到本地 Python 代理中心
-    const fetchOptions = { method: options.method || "GET", headers, cache: "no-store", ...options };
-
+    // 🚀 核心修改：在将 body 转为 JSON 字符串发送前，执行无情剥离！
     if (options.body && !(options.body instanceof FormData) && typeof options.body !== "string") {
         fetchOptions.body = JSON.stringify(unproxyImages(options.body));
     } else if (options.body instanceof FormData) {
@@ -100,6 +82,7 @@ async function request(endpoint, options = {}) {
             throw new Error(errorMsg);
         }
 
+        // 入口数据挂载代理
         responseData = proxyImages(responseData);
         return responseData;
     } catch (error) {
@@ -110,7 +93,7 @@ async function request(endpoint, options = {}) {
 
 // ============== 业务 API 导出 (保持原样) ==============
 export const api = {
-    async sendCode(contact, type, actionType, account = null) { return request("/api/users/send_code", { method: "POST", body: { contact, contact_type: type, action_type: actionType, account } }); },
+    async sendVerifyCode(contact, type, actionType, account = null) { return request("/api/users/send_code", { method: "POST", body: { contact, contact_type: type, action_type: actionType, account } }); },
     async register(data) { return request("/api/users/register", { method: "POST", body: data }); },
     async login(account, password) { return request("/api/users/login", { method: "POST", body: { account, password } }); },
     async resetPassword(data) { return request("/api/users/reset_password", { method: "POST", body: data }); },

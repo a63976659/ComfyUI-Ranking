@@ -112,7 +112,8 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     // 发起后台异步安装请求
                     const res = await fetch("/community_hub/install_tool", {
                         method: "POST", headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ url: itemData.link })
+                        // ✅ 补全 id 和 account 凭证参数
+                        body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account }) 
                     });
                     const data = await res.json();
                     if (data.error) {

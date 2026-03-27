@@ -16,7 +16,7 @@ export function createItemDetailView(itemData, currentUser) {
 
     let authorInfoHtml = `
         <div><strong>作者：</strong> <span id="detail-author-name">${authorName}</span></div>
-        <div style="margin-top: 10px; color: #888;">感谢 砚影科技 的大力支持！</div>
+        <div style="margin-top: 10px; color: #888;">感谢 砚影科技 的支持！</div>
     `;
 
     container.innerHTML = `

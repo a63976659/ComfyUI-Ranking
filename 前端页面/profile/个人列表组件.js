@@ -54,23 +54,10 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
     const cacheKey = `ProfileList_${userData.account}_${tabId}`;
     const cachedStr = localStorage.getItem(cacheKey);
     
-    // 🚀 性能黑科技植入：利用 DocumentFragment 和 contentVisibility 彻底解决海量卡片渲染卡顿
     const applyDOM = (items) => {
         domElement.innerHTML = ""; 
         if (items.length === 0) { domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#666;'>暂无记录</div>`; return; }
-        
-        const fragment = document.createDocumentFragment();
-        
-        items.forEach(item => { 
-            const card = createItemCard(item, currentUser);
-            // 启用原生 CSS 虚拟列表
-            card.style.contentVisibility = "auto";
-            card.style.containIntrinsicSize = "120px";
-            fragment.appendChild(card); 
-        });
-        
-        // 一次性挂载，极致顺滑
-        domElement.appendChild(fragment);
+        items.forEach(item => { domElement.appendChild(createItemCard(item, currentUser)); });
     };
 
     if (cachedStr) {
