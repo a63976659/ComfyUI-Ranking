@@ -5,13 +5,15 @@ import zipfile
 import io
 import urllib.request
 import urllib.error
+import subprocess
+import shutil
 from aiohttp import web
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_NODES_DIR = os.path.dirname(THIS_DIR)
 
 async def install_tool_handler(request):
-    """本地 API：请求云端代理下载私有库 ZIP 并后台静默解压"""
+    """本地 API：通过 Git Clone 下载插件，保留 .git 文件夹以便后续无缝更新"""
     data = await request.json()
     item_url = data.get("url")
     item_id = data.get("id")
@@ -23,47 +25,61 @@ async def install_tool_handler(request):
     target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
     clone_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
     
+    # 清理残留机制。如果文件夹已存在，说明可能是旧的无 .git 残缺安装，直接移除
     if os.path.exists(clone_target_path):
-        return web.json_response({"error": f"目录 {target_dir_name} 已存在，请先在 custom_nodes 中删除旧版本。"}, status=400)
+        try:
+            shutil.rmtree(clone_target_path)
+        except Exception as e:
+            return web.json_response({"error": f"目录 {target_dir_name} 已存在且被占用，无法自动清理，请先手动删除。错误: {str(e)}"}, status=400)
         
     try:
-        # 1. 组装凭证，请求云端私有库代理接口
-        proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_github_zip"
-        payload = json.dumps({"url": item_url, "item_id": item_id, "account": account}).encode("utf-8")
-        req = urllib.request.Request(proxy_api_url, data=payload, headers={'Content-Type': 'application/json'})
+        # 🚀 核心升级：双链路容灾机制
+        # 链路 A：使用目前最稳定的域名级直接替换镜像
+        mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
         
-        # 2. 在 Python 线程中下载 ZIP 数据流
-        with urllib.request.urlopen(req, timeout=60) as response:
-            zip_data = response.read()
-            
-            if zip_data == b"GITHUB_DOWNLOAD_FAILED":
-                return web.json_response({"error": "云端拉取 GitHub 私有库失败，可能 Token 已过期或仓库不存在"}, status=500)
-                
-            try:
-                # 尝试解析为 JSON (如果是云端拦截返回了错误信息)
-                err_check = json.loads(zip_data.decode('utf-8'))
-                if "error" in err_check: return web.json_response({"error": err_check["error"]}, status=403)
-            except:
-                pass # 正常情况解析 JSON 会报错，因为它是二进制的 ZIP 文件流
+        # 复制当前系统环境变量，防止 git 弹窗要求输入密码导致后台卡死
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"
 
-        # 3. 将内存中的 ZIP 流解压到 custom_nodes 目录
-        with zipfile.ZipFile(io.BytesIO(zip_data)) as zip_ref:
-            # GitHub 的 zipball 会自带一层根目录(如 owner-repo-commitId)
-            # 我们需要把里面的内容提取到指定的 target_dir_name 中
-            root_folder = zip_ref.namelist()[0].split('/')[0]
-            for member in zip_ref.namelist():
-                if member.startswith(root_folder + "/") and not member.endswith("/"):
-                    # 剥离顶层目录
-                    relative_path = member[len(root_folder)+1:]
-                    target_file_path = os.path.join(clone_target_path, relative_path)
-                    os.makedirs(os.path.dirname(target_file_path), exist_ok=True)
-                    with open(target_file_path, 'wb') as f:
-                        f.write(zip_ref.read(member))
-                        
-        return web.json_response({"status": "success"})
+        try:
+            print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
+            subprocess.run(
+                ["git", "clone", mirror_url, clone_target_path],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env
+            )
+            print("✅ 镜像 Git Clone 安装成功！保留了完整的版本控制 (.git)。")
+            return web.json_response({"status": "success"})
+            
+        except subprocess.CalledProcessError as e1:
+            print(f"⚠️ 镜像源不可用或发生冲突，系统正在自动无缝回退至直连: {item_url}")
+            
+            # 清理刚才克隆到一半可能留下的残缺空文件夹
+            if os.path.exists(clone_target_path):
+                shutil.rmtree(clone_target_path)
+                
+            # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
+            subprocess.run(
+                ["git", "clone", item_url, clone_target_path],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env
+            )
+            print("✅ 直连 Git Clone 安装成功！")
+            return web.json_response({"status": "success"})
+            
+    except FileNotFoundError:
+        # 拦截用户电脑根本没装 Git 的情况
+        return web.json_response({"error": "系统中未检测到 Git，请先安装 Git 环境才能下载插件！"}, status=500)
         
-    except urllib.error.HTTPError as e:
-        err_msg = e.read().decode('utf-8', errors='ignore')
-        return web.json_response({"error": f"云端代理拒绝访问: {err_msg}"}, status=403)
+    except subprocess.CalledProcessError as e2:
+        # 两条链路都失败了的最终兜底
+        error_msg = e2.stderr or e2.stdout
+        return web.json_response({"error": f"Git Clone 失败，镜像与直连均不可用。请检查网络或开启代理: {error_msg}"}, status=500)
+        
     except Exception as e:
-        return web.json_response({"error": f"解压安装失败: {str(e)}"}, status=500)
+        # 兜底异常拦截
+        return web.json_response({"error": f"安装过程发生未知失败: {str(e)}"}, status=500)
