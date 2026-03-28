@@ -96,12 +96,12 @@ export function renderResetForm(container, switchView, onSuccessCallback) {
 
         const formData = { 
             type: "reset", 
-            account: acc, 
-            verifyContact: verify, 
-            verifyType: "email", // 强制使用邮箱
-            code: code,
-            oldPassword: op, 
-            newPassword: np 
+            account: String(acc), 
+            verifyContact: String(verify), 
+            verifyType: "email", 
+            code: String(code),
+            old_password: op ? String(op) : null, // 对齐后端 old_password
+            new_password: String(np)              // 对齐后端 new_password
         };
         if (onSuccessCallback) onSuccessCallback(formData);
     };

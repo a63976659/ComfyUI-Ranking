@@ -117,7 +117,34 @@ export const api = {
     async sendVerifyCode(contact, type, actionType, account = null) { return request("/api/users/send_code", { method: "POST", body: { contact, contact_type: type, action_type: actionType, account } }); },
     async register(data) { return request("/api/users/register", { method: "POST", body: data }); },
     async login(account, password) { return request("/api/users/login", { method: "POST", body: { account, password } }); },
-    async resetPassword(data) { return request("/api/users/reset_password", { method: "POST", body: data }); },
+    
+    // 🚀 核心修复：究极参数防御机制，精准拦截前端组件漏传数据的问题
+    async resetPassword(...args) { 
+        let payload = {};
+        if (args.length === 1) {
+            if (typeof args[0] === 'object' && args[0] !== null) {
+                payload = args[0]; // 正常情况：传入了完整的 formData 对象
+            } else if (typeof args[0] === 'string' && args[0].trim().startsWith('{')) {
+                payload = JSON.parse(args[0]); // 兼容被提前 Stringify 的 JSON 对象
+            } else {
+                // 💥 致命错误拦截：如果只传了一个字符串或数字过来，直接在前端阻断并警报！
+                throw new Error(`🚨 传参丢失！只接收到了账号 [${args[0]}]，密码和验证码等数据未传达。请检查顶部导航组件或表单组件的代码！`);
+            }
+        } else if (args.length === 2 && typeof args[1] === 'object') {
+            payload = { account: args[0], ...args[1] }; // 兼容 (account, formData) 格式
+        } else {
+            // 兼容散装传参格式：(account, new_password, verifyContact, verifyType, code)
+            payload = { 
+                account: args[0], 
+                new_password: args[1] || args[0], 
+                verifyContact: args[2] || args[0], 
+                verifyType: args[3] || "email", 
+                code: args[4] 
+            }; 
+        }
+        return request("/api/users/reset_password", { method: "POST", body: payload }); 
+    },
+
     async getUserProfile(account) { return request(`/api/users/${account}`); },
     async updateUserProfile(account, data) { return request(`/api/users/${account}`, { method: "PUT", body: data }); },
     async updatePrivacy(account, privacy) { return request(`/api/users/${account}/privacy`, { method: "PUT", body: privacy }); },
