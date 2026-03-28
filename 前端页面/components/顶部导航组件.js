@@ -79,10 +79,10 @@ export function createTopNav() {
                         
                         if (formData.type === "reset") {
                             userActionBtn.innerHTML = "⏳ 修改密码中...";
-                            await api.resetPassword(
-                                formData.account, formData.oldPassword, formData.newPassword, 
-                                formData.verifyContact, formData.verifyType, formData.code
-                            );
+                            
+                            // 🚀 核心修复：停止错误地拆解字段导致 undefined，直接将包含所有数据的 formData 对象完整传给 API 装甲！
+                            await api.resetPassword(formData);
+                            
                             showToast("密码修改成功！请使用新密码重新登录。", "success");
                             window.dispatchEvent(new CustomEvent("comfy-route-back")); updateUserButtonState(); return; 
                         }

@@ -118,30 +118,36 @@ export const api = {
     async register(data) { return request("/api/users/register", { method: "POST", body: data }); },
     async login(account, password) { return request("/api/users/login", { method: "POST", body: { account, password } }); },
     
-    // 🚀 核心修复：究极参数防御机制，精准拦截前端组件漏传数据的问题
+    // 🚀 核心修复：究极数据打捞装甲与弹窗报警
     async resetPassword(...args) { 
-        let payload = {};
-        if (args.length === 1) {
-            if (typeof args[0] === 'object' && args[0] !== null) {
-                payload = args[0]; // 正常情况：传入了完整的 formData 对象
-            } else if (typeof args[0] === 'string' && args[0].trim().startsWith('{')) {
-                payload = JSON.parse(args[0]); // 兼容被提前 Stringify 的 JSON 对象
-            } else {
-                // 💥 致命错误拦截：如果只传了一个字符串或数字过来，直接在前端阻断并警报！
-                throw new Error(`🚨 传参丢失！只接收到了账号 [${args[0]}]，密码和验证码等数据未传达。请检查顶部导航组件或表单组件的代码！`);
-            }
-        } else if (args.length === 2 && typeof args[1] === 'object') {
-            payload = { account: args[0], ...args[1] }; // 兼容 (account, formData) 格式
-        } else {
-            // 兼容散装传参格式：(account, new_password, verifyContact, verifyType, code)
-            payload = { 
-                account: args[0], 
-                new_password: args[1] || args[0], 
-                verifyContact: args[2] || args[0], 
-                verifyType: args[3] || "email", 
-                code: args[4] 
-            }; 
+        let payload = { verifyType: "email" };
+
+        // 1. 深度搜刮：提取传入的对象数据
+        args.forEach(arg => {
+            if (typeof arg === 'object' && arg !== null) Object.assign(payload, arg);
+        });
+
+        // 2. 智能探测：从散装字符串中强行识别关键数据
+        let strings = args.filter(a => typeof a === 'string' || typeof a === 'number').map(String);
+        strings.forEach(str => {
+            if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(str)) payload.email = str; // 抓取邮箱
+            else if (/^\d{6}$/.test(str)) payload.code = str; // 抓取6位验证码
+            else if (str.length >= 6 && !payload.new_password && !/^\d+$/.test(str)) payload.new_password = str; // 抓取密码
+            else if (!payload.account) payload.account = str; // 剩下的当账号
+        });
+
+        // 3. 字段合并与对齐
+        payload.account = payload.account || payload.username;
+        payload.new_password = payload.new_password || payload.password || payload.newPassword;
+        payload.verifyContact = payload.verifyContact || payload.email || payload.phone || payload.verify_contact;
+
+        // 4. 🚨 终极拦截门：如果到了这一步数据还是没找齐，直接弹窗指认“内鬼”！
+        if (!payload.account || !payload.new_password || !payload.verifyContact || !payload.code) {
+            const errorStr = JSON.stringify(payload, null, 2);
+            alert(`🚨 发现前端传参严重丢失！\n\n系统拼命搜刮后只拿到了这些数据:\n${errorStr}\n\n👉 请立即检查【顶部导航组件.js】的第 82 行！\n\n必须把完整的表单数据传给 API，例如: api.resetPassword({account, password, email, code})`);
+            throw new Error("被前端参数拦截装甲阻断：数据不完整");
         }
+
         return request("/api/users/reset_password", { method: "POST", body: payload }); 
     },
 
