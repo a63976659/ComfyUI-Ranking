@@ -83,3 +83,77 @@ async def install_tool_handler(request):
     except Exception as e:
         # 兜底异常拦截
         return web.json_response({"error": f"安装过程发生未知失败: {str(e)}"}, status=500)
+
+async def install_private_tool_handler(request):
+    """本地 API：针对付费/私有库，通过云端鉴权代理下载 ZIP 包，静默内存解压并物理覆盖"""
+    data = await request.json()
+    item_url = data.get("url")
+    item_id = data.get("id")
+    account = data.get("account")
+    
+    if not item_url or not account or not item_id: 
+        return web.json_response({"error": "缺少核心鉴权参数"}, status=400)
+        
+    target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
+    extract_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
+    
+    try:
+        proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_github_zip"
+        payload = json.dumps({"url": item_url, "item_id": item_id, "account": account}).encode("utf-8")
+        req = urllib.request.Request(proxy_api_url, data=payload, headers={'Content-Type': 'application/json'})
+        
+        print(f"[ComfyUI-Ranking] 🔒 正在向云端发起私有资产鉴权与加密拉取: {item_id}")
+        with urllib.request.urlopen(req, timeout=120) as response:
+            zip_data = response.read()
+            
+            # 校验云端是否抛出拒绝信息或空流
+            if response.status != 200 or zip_data == b"GITHUB_DOWNLOAD_FAILED" or b'"error"' in zip_data[:50]:
+                try:
+                    err_msg = json.loads(zip_data.decode('utf-8')).get("error", "未知错误")
+                except:
+                    err_msg = "二进制流解析异常或云端拉取失败"
+                return web.json_response({"error": f"云端拒绝访问或拉取失败: {err_msg}"}, status=403)
+            
+            print("[ComfyUI-Ranking] ✅ 成功接收云端安全 ZIP 数据流，执行热覆盖解压...")
+            
+            # 【修复点】：在内存中剥离顶层包裹目录
+            with zipfile.ZipFile(io.BytesIO(zip_data)) as zip_ref:
+                namelist = zip_ref.namelist()
+                if not namelist:
+                    return web.json_response({"error": "下载的压缩包结构为空"}, status=500)
+                    
+                top_level_dir = namelist[0].split('/')[0] + '/'
+                
+                # 🚀 核心修复 1：执行纯净更新！在确认 ZIP 完好无损后，先彻底抹除旧版本文件夹，防止残留的废弃 .py 文件引发报错
+                if os.path.exists(extract_target_path):
+                    try:
+                        shutil.rmtree(extract_target_path)
+                    except Exception as e:
+                        # 🚀 核心修复 2：拦截 Windows 下 Python 文件被 ComfyUI 进程死锁的情况
+                        return web.json_response({"error": "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。"}, status=500)
+                
+                os.makedirs(extract_target_path, exist_ok=True)
+                
+                for member in namelist:
+                    if member.startswith(top_level_dir):
+                        target_path = member.replace(top_level_dir, "", 1)
+                        if not target_path: continue 
+                            
+                        source = zip_ref.open(member)
+                        dest_path = os.path.join(extract_target_path, target_path)
+                        
+                        if member.endswith('/'):
+                            os.makedirs(dest_path, exist_ok=True)
+                        else:
+                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                            with open(dest_path, "wb") as target:
+                                shutil.copyfileobj(source, target) # 强制写入纯净新文件
+                                
+        print(f"[ComfyUI-Ranking] 🎉 私有插件 {target_dir_name} 静默更新/安装完成！无 .git 目录残留。")
+        return web.json_response({"status": "success"})
+        
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode('utf-8', errors='ignore')
+        return web.json_response({"error": f"拉取中断: {err_msg}"}, status=500)
+    except Exception as e:
+        return web.json_response({"error": f"本地解压覆盖异常: {str(e)}"}, status=500)
