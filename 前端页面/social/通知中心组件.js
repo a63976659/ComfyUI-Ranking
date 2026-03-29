@@ -3,6 +3,11 @@ import { api } from "../core/网络请求API.js";
 import { openChatModal } from "./私信聊天组件.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
+import { CACHE } from "../core/全局配置.js";
+
+// 🚀 本地存储键管理
+const getNotifCacheKey = (account) => `${CACHE.LOCAL_KEYS.NOTIFICATIONS}_${account}`;
+const getNotifClearKey = (account) => `${CACHE.LOCAL_KEYS.NOTIF_CLEAR_TIME}_${account}`;
 
 export async function openNotificationCenter(currentUser, bellBtn) {
     if (!currentUser) return showToast("请先登录您的社区账号查看消息！", "warning");
@@ -11,9 +16,10 @@ export async function openNotificationCenter(currentUser, bellBtn) {
     Object.assign(outerBox.style, { flex: "none", height: "1220px", boxSizing: "border-box", overflowY: "auto", padding: "15px", display: "flex", flexDirection: "column", background: "var(--bg-color, #202020)" });
     
     const header = document.createElement("div");
+    // 🚀 返回按钮位置可调整参数：margin-left 控制右移，margin-top 控制下移
     header.innerHTML = `
-        <button id="btn-back-notif" style="background: #333; border: 1px solid #555; color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-bottom: 15px; width: fit-content; transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='#333'; this.style.borderColor='#555'">
-            <span style="font-size: 14px;">⬅</span> 返回列表
+        <button id="btn-back-notif" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); margin-bottom: 15px; width: fit-content; transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
+            <span style="font-size: 14px;">⬅</span> 返回
         </button>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px;">
             <div style="font-size: 16px; font-weight: bold; color: #fff;">🔔 消息与通知</div>
@@ -24,8 +30,8 @@ export async function openNotificationCenter(currentUser, bellBtn) {
     const listArea = document.createElement("div");
     Object.assign(listArea.style, { display: "flex", flexDirection: "column", gap: "10px" });
     
-    const cacheKey = `ComfyCommunity_NotifCache_${currentUser.account}`;
-    const clearKey = `ComfyCommunity_NotifClearTime_${currentUser.account}`;
+    const cacheKey = getNotifCacheKey(currentUser.account);
+    const clearKey = getNotifClearKey(currentUser.account);
     const cachedStr = localStorage.getItem(cacheKey);
     const clearTime = parseInt(localStorage.getItem(clearKey) || "0");
     

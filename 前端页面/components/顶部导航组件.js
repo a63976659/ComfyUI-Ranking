@@ -5,7 +5,11 @@ import { openChatModal } from "../social/私信聊天组件.js";
 import { api } from "../core/网络请求API.js"; 
 import { showToast } from "./UI交互提示组件.js";
 import { showAboutInfo } from "./关于插件组件.js";
-import { openNotificationCenter, loadUnreadCount } from "../social/通知中心组件.js"; // 【新增】：引入分离出去的通知中心引擎
+import { openNotificationCenter, loadUnreadCount } from "../social/通知中心组件.js";
+import { CACHE } from "../core/全局配置.js";
+
+// 🚀 新增：消息轮询定时器
+let messagePollingTimer = null;
 
 export function createTopNav() {
     const userHeader = document.createElement("div");
@@ -64,8 +68,14 @@ export function createTopNav() {
             userActionBtn.style.backgroundColor = "#2196F3";
             userActionBtn.style.borderColor = "#2196F3";
             userActionBtn.onclick = () => openUserProfileModal(currentUser);
-            loadUnreadCount(currentUser, bellBtn); // 使用外部引入的未读计数器
+            loadUnreadCount(currentUser, bellBtn);
+            
+            // 🚀 新增：启动消息定时轮询
+            startMessagePolling(currentUser, bellBtn);
         } else {
+            // 🚀 新增：停止轮询
+            stopMessagePolling();
+            
             userActionBtn.innerHTML = "🔑 登录 / 注册";
             userActionBtn.style.backgroundColor = "#333";
             userActionBtn.style.borderColor = "#555";
@@ -146,4 +156,33 @@ export function createTopNav() {
         dom: userHeader,
         getCurrentUser: () => currentUser
     };
+}
+
+// 🚀 新增：启动消息定时轮询
+function startMessagePolling(currentUser, bellBtn) {
+    if (!CACHE.MESSAGE_POLL.ENABLED) return;
+    
+    // 清除旧的定时器
+    stopMessagePolling();
+    
+    // 创建新的定时器，每隔一定时间检查新消息
+    messagePollingTimer = setInterval(async () => {
+        if (!currentUser) return;
+        try {
+            await loadUnreadCount(currentUser, bellBtn);
+        } catch (e) {
+            // 静默失败，不影响用户体验
+        }
+    }, CACHE.MESSAGE_POLL.INTERVAL);
+    
+    console.log(`📨 消息轮询已启动，间隔 ${CACHE.MESSAGE_POLL.INTERVAL / 1000} 秒`);
+}
+
+// 🚀 新增：停止消息定时轮询
+function stopMessagePolling() {
+    if (messagePollingTimer) {
+        clearInterval(messagePollingTimer);
+        messagePollingTimer = null;
+        console.log('📨 消息轮询已停止');
+    }
 }

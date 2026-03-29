@@ -9,66 +9,95 @@
 // ==========================================
 
 import { renderTipBoardHTML } from "../components/打赏等级工具.js";
+import { CACHE } from "../core/全局配置.js";
 
 export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs) {
     // 🚀 核心新增：使用统一工具渲染打赏总榜（带星星/月亮/太阳等级）
     const boardData = userData.tip_board || [];
     const boardHtml = renderTipBoardHTML(boardData, 10, "暂无打赏记录，快来占据榜首吧！", "normal");
 
-    const topBarHtml = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <button id="btn-back-profile" style="background: #333; border: 1px solid #555; color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='#333'; this.style.borderColor='#555'">
+    // 个人资料卡背景图：优先使用本地缓存，否则使用云端URL
+    let bannerImageUrl = userData.bannerUrl;
+    if (isMe) {
+        const localBannerCache = localStorage.getItem(CACHE.LOCAL_KEYS.PROFILE_BANNER_CACHE);
+        if (localBannerCache) {
+            bannerImageUrl = localBannerCache;
+        }
+    }
+    
+    const bannerStyle = bannerImageUrl 
+        ? `background-image: url(${bannerImageUrl}); background-size: cover; background-position: center;`
+        : `background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);`;
+
+    // 设置视图时返回简化的返回按钮（与个人资料页按钮样式一致，但不显示背景图）
+    if (isSettingsView && isMe) {
+        return `
+            <button id="btn-back-profile" style="align-self: flex-start; margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
                 <span style="font-size: 14px;">⬅</span> 返回
             </button>
-            ${(isMe && !isSettingsView) ? `
-            <div style="display: flex; gap: 10px;">
-                <button id="btn-open-settings" style="background: transparent; border: 1px solid #555; color: #aaa; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.color='#fff'; this.style.borderColor='#888'" onmouseout="this.style.color='#aaa'; this.style.borderColor='#555'">⚙️ 设置</button>
-                <button id="btn-logout" style="background: transparent; border: 1px solid #F44336; color: #F44336; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='transparent'; this.style.color='#F44336'">🚪 登出</button>
-            </div>` : ''}
-        </div>
-    `;
-
-    if (isSettingsView && isMe) return topBarHtml; 
+        `;
+    }
 
     const actionButtons = isMe 
-        ? `<div style="display: flex; flex-direction: column; gap: 12px; width: 100%;">
+        ? `<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
                <button id="btn-wallet" style="background: #FF9800; border: none; color: white; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 充值积分</button>
-               <button id="btn-withdraw" style="background: transparent; border: 1px solid #4CAF50; color: #4CAF50; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.1)'" onmouseout="this.style.background='transparent'">💸 收益提现</button>
+               <button id="btn-withdraw" style="background: rgba(76,175,80,0.2); border: 1px solid #4CAF50; color: #4CAF50; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.3)'" onmouseout="this.style.background='rgba(76,175,80,0.2)'">💸 收益提现</button>
            </div>`
         : `<button id="btn-tip-user" style="width: 100%; background: #FF9800; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s; margin-bottom: 8px;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🎁 打赏支持</button>
            <button id="btn-send-msg" style="width: 100%; background: #2196F3; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">✉️ 私信</button>
            <button id="btn-follow-user" style="width: 100%; background: ${isFollowing ? '#4CAF50' : '#4CAF50'}; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-top: 8px;">${isFollowing ? '✔️ 已关注' : '➕ 关注作者'}</button>`;
 
-    const balanceDisplayHtml = isMe 
-        ? `<div style="display:flex; flex-direction:column; gap:4px;">
-             <div>💰 我的余额: <strong style="color:#FF9800;">${userData.balance || 0}</strong></div>
-             <div>🛍️ 销售收益: <strong style="color:#4CAF50;">${userData.earn_balance || 0}</strong></div>
-             <div>🎁 打赏收益: <strong style="color:#E91E63;">${userData.tip_balance || 0}</strong></div>
-           </div>`
-        : '';
-
-    const headerHtml = `
-        <div style="display: flex; align-items: flex-start; gap: 15px; margin-bottom: 20px; position: relative;">
-            <img src="${userData.avatarDataUrl || userData.avatar || 'https://via.placeholder.com/150'}" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid #4CAF50; object-fit: cover;">
-            <div style="flex: 1; padding-right: 160px;">
-                <div style="font-size: 20px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
-                    ${userData.name}
-                    <span style="font-size: 12px; background: #444; padding: 2px 6px; border-radius: 4px; font-weight: normal;">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age !== undefined && userData.age !== null ? userData.age : '未知'}岁</span>
+    // 统计数据区域（现在在背景图内）
+    const statsHtml = `
+        <div style="display: flex; gap: 15px; font-size: 12px; color: rgba(255,255,255,0.9); flex-wrap: wrap; margin-top: 15px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+            ${isMe ? `
+                <div style="display:flex; gap: 12px;">
+                    <span>💰 余额: <strong style="color:#FF9800;">${userData.balance || 0}</strong></span>
+                    <span>🛍️ 销售: <strong style="color:#4CAF50;">${userData.earn_balance || 0}</strong></span>
+                    <span>🎁 打赏: <strong style="color:#E91E63;">${userData.tip_balance || 0}</strong></span>
                 </div>
-                <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">📍 ${userData.country || '保密'} - ${userData.region || ''}</div>
-                <div style="font-size: 13px; color: #ccc; line-height: 1.4; word-break: break-all;">${userData.intro || '这个人很懒，什么都没写...'}</div>
+            ` : ''}
+            <div style="display:flex; gap: 12px;">
+                <span>👍 获赞: <strong style="color:#fff;">${userData.receivedLikes || 0}</strong></span>
+                <span>⭐ 收藏: <strong style="color:#fff;">${userData.receivedFavorites || 0}</strong></span>
+                <span>👥 粉丝: <strong style="color:#fff;">${userData.followers ? userData.followers.length : 0}</strong></span>
+                <span>🏃 关注: <strong style="color:#fff;">${followingCount}</strong></span>
             </div>
-            <div style="position: absolute; top: 0; right: 0; width: 140px; display: flex; flex-direction: column; gap: 8px;">${actionButtons}</div>
         </div>
-        <div style="display: flex; gap: 20px; font-size: 13px; color: #bbb; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #333; flex-wrap: wrap;">
-            ${balanceDisplayHtml}
-            <div style="display:flex; flex-direction:column; gap:4px;">
-                <div>👍 获赞: <strong style="color:#fff;">${userData.receivedLikes || 0}</strong></div>
-                <div>⭐ 被收藏: <strong style="color:#fff;">${userData.receivedFavorites || 0}</strong></div>
-            </div>
-            <div style="display:flex; flex-direction:column; gap:4px;">
-                <div>👥 粉丝: <strong style="color:#fff;">${userData.followers ? userData.followers.length : 0}</strong></div>
-                <div>🏃 关注的人: <strong style="color:#fff;">${followingCount}</strong></div>
+    `;
+
+    // 整个头部区域（包括返回按钮、用户信息、统计数据）都在背景图内
+    const headerHtml = `
+        <div style="position: relative; border-radius: 12px; overflow: hidden; margin-bottom: 15px;">
+            <div style="${bannerStyle} padding: 15px; min-height: 200px;">
+                <!-- 顶部导航栏 -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <button id="btn-back-profile" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
+                        <span style="font-size: 14px;">⬅</span> 返回
+                    </button>
+                    ${isMe ? `
+                    <div style="display: flex; gap: 10px;">
+                        <button id="btn-open-settings" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #ccc; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.color='#fff'; this.style.borderColor='#888'" onmouseout="this.style.color='#ccc'; this.style.borderColor='rgba(85,85,85,0.8)'">⚙️ 设置</button>
+                        <button id="btn-logout" style="background: rgba(244,67,54,0.2); border: 1px solid #F44336; color: #F44336; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='rgba(244,67,54,0.2)'; this.style.color='#F44336'">🚪 登出</button>
+                    </div>` : ''}
+                </div>
+                
+                <!-- 用户信息区域 -->
+                <div style="display: flex; align-items: flex-start; gap: 15px; position: relative;">
+                    <img src="${userData.avatarDataUrl || userData.avatar || 'https://via.placeholder.com/150'}" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid #4CAF50; object-fit: cover; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+                    <div style="flex: 1; padding-right: 150px;">
+                        <div style="font-size: 20px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; text-shadow: 0 2px 4px rgba(0,0,0,0.6);">
+                            ${userData.name}
+                            <span style="font-size: 12px; background: rgba(68,68,68,0.8); padding: 2px 6px; border-radius: 4px; font-weight: normal; backdrop-filter: blur(4px);">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age !== undefined && userData.age !== null ? userData.age : '未知'}岁</span>
+                        </div>
+                        <div style="font-size: 12px; color: rgba(255,255,255,0.85); margin-bottom: 8px; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">📍 ${userData.country || '保密'} - ${userData.region || ''}</div>
+                        <div style="font-size: 13px; color: rgba(255,255,255,0.95); line-height: 1.4; word-break: break-all; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">${userData.intro || '这个人很懒，什么都没写...'}</div>
+                    </div>
+                    <div style="position: absolute; top: 0; right: 0; width: 135px; display: flex; flex-direction: column; gap: 8px;">${actionButtons}</div>
+                </div>
+                
+                <!-- 统计数据区域 -->
+                ${statsHtml}
             </div>
         </div>
     `;
@@ -99,6 +128,25 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                     🚀 确认发布全站公告
                 </button>
             </div>
+            
+            <!-- 管理员调试面板：Python 脚本执行 -->
+            <div id="admin-debug-panel" style="margin-bottom: 15px; background: #1a1f2e; border: 1px solid #3d4663; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                    <div style="font-weight: bold; font-size: 15px; color: #4CAF50; display: flex; align-items: center; gap: 6px;">
+                        🔧 API 调试与脚本执行
+                    </div>
+                    <div style="font-size: 11px; color: #4CAF50; background:rgba(76,175,80,0.1); padding: 2px 6px; border-radius: 4px;">开发者工具</div>
+                </div>
+                <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+                    <input type="text" id="admin-script-input" placeholder="输入脚本名称，如: test_api.py 或 密码迁移.py" style="flex: 1; padding: 10px; background: #232738; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: #eee; font-size: 13px; outline: none; transition: border-color 0.2s;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'">
+                    <button id="btn-admin-run-script" style="padding: 10px 20px; background: #4CAF50; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; white-space: nowrap; transition: background 0.2s;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
+                        ▶️ 执行
+                    </button>
+                </div>
+                <div id="admin-script-result" style="background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; min-height: 80px; max-height: 200px; overflow-y: auto; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; color: #8b949e; line-height: 1.5; white-space: pre-wrap; word-break: break-all;">
+                    <span style="color: #6e7681;"># 结果将在这里显示...</span>
+                </div>
+            </div>
         `;
     }
 
@@ -110,5 +158,5 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
     tabsHtml += `</div><div id="profile-list-container" style="flex: 1; overflow-y: auto; padding-right: 5px;"></div>`;
 
     // 将 adminHtml 拼接在赞赏榜单之后，列表 Tab 之前
-    return topBarHtml + headerHtml + tipsHtml + adminHtml + tabsHtml;
+    return headerHtml + tipsHtml + adminHtml + tabsHtml;
 }

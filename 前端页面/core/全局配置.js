@@ -63,6 +63,25 @@ export const CACHE = {
         LIST_CACHE: "ComfyCommunity_ListCache",
         PROFILE_CACHE: "ComfyCommunity_ProfileCache",
         CHAT_HISTORY: "ComfyCommunity_ChatHistory"
+    },
+    
+    // 本地背景存储键（不上传云端）
+    LOCAL_KEYS: {
+        SIDEBAR_BACKGROUND: "ComfyRanking_SidebarBackground",      // 工具背景图 Base64
+        PROFILE_BANNER_CACHE: "ComfyRanking_ProfileBannerCache",   // 个人资料背景图本地缓存
+        ACQUIRED_ITEMS: "ComfyRanking_AcquiredItems",              // 已获取的资源记录
+        // 🚀 新增：私信和通知本地缓存
+        NOTIFICATIONS: "ComfyRanking_Notifications",               // 通知消息缓存
+        CHAT_LIST: "ComfyRanking_ChatList",                        // 对话列表缓存
+        CHAT_HISTORY_PREFIX: "ComfyRanking_ChatHistory_",          // 聊天记录前缀
+        NOTIF_CLEAR_TIME: "ComfyRanking_NotifClearTime",           // 通知清空时间戳
+        CHAT_CLEAR_PREFIX: "ComfyRanking_ChatCleared_"             // 聊天清空时间戳前缀
+    },
+    
+    // 🚀 新增：消息轮询配置
+    MESSAGE_POLL: {
+        INTERVAL: 30 * 1000,     // 轮询间隔：30秒
+        ENABLED: true             // 是否启用定时检查
     }
 };
 

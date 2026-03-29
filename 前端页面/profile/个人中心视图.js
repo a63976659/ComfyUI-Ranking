@@ -34,6 +34,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
         const followingCount = (!isMe && privacy.follows) ? "***" : (userData.following ? userData.following.length : 0);
 
         const tabs = [{ id: "published", label: isMe ? "我的发布" : "TA的发布" }];
+        if (isMe) tabs.push({ id: "acquired", label: "我获取的" }); // 🚀 新增：已安装/购买记录
         if (isMe || !privacy.likes) tabs.push({ id: "liked", label: "近期点赞" });
         if (isMe || !privacy.follows) tabs.push({ id: "following", label: "关注的人" });
 
@@ -159,6 +160,39 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                         btnAdminAnnSend.innerText = "🚀 确认发布全站公告";
                         btnAdminAnnSend.style.opacity = "1";
                         btnAdminAnnSend.disabled = false;
+                    }
+                };
+            }
+
+            // =========================================================
+            // 【新增】：管理员调试脚本执行按钮绑定事件
+            // =========================================================
+            const btnAdminRunScript = container.querySelector("#btn-admin-run-script");
+            if (btnAdminRunScript) {
+                btnAdminRunScript.onclick = async () => {
+                    const scriptInput = container.querySelector("#admin-script-input");
+                    const resultArea = container.querySelector("#admin-script-result");
+                    const scriptName = scriptInput.value.trim();
+                    
+                    if (!scriptName) {
+                        resultArea.innerHTML = '<span style="color: #f85149;">❌ 请输入脚本名称！</span>';
+                        return;
+                    }
+
+                    btnAdminRunScript.innerText = "⏳ 执行中...";
+                    btnAdminRunScript.disabled = true;
+                    resultArea.innerHTML = '<span style="color: #58a6ff;">⚡ 正在执行 ' + scriptName + ' ...</span>';
+
+                    try {
+                        const response = await api.runAdminScript(currentUser.account, scriptName);
+                        const output = response.output || response.message || JSON.stringify(response, null, 2);
+                        resultArea.innerHTML = `<span style="color: #3fb950;">✅ 执行成功：</span>\n\n${output}`;
+                    } catch (error) {
+                        console.error("Script execution failed:", error);
+                        resultArea.innerHTML = `<span style="color: #f85149;">❌ 执行失败：</span>\n\n${error.message}`;
+                    } finally {
+                        btnAdminRunScript.innerText = "▶️ 执行";
+                        btnAdminRunScript.disabled = false;
                     }
                 };
             }

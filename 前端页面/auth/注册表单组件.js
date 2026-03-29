@@ -1,12 +1,27 @@
 import { api } from "../core/网络请求API.js";
-import { regionData } from "./国家地区数据.js";
+import { regionData, getSortedCountries } from "./国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 
 const DEFAULT_AVATAR_MALE = "https://via.placeholder.com/150/2196F3/FFFFFF?text=Male";
 const DEFAULT_AVATAR_FEMALE = "https://via.placeholder.com/150/E91E63/FFFFFF?text=Female";
 
+// 计算年龄工具函数
+function calculateAge(birthDate) {
+    if (!birthDate) return null;
+    const today = new Date();
+    const birth = new Date(birthDate);
+    let age = today.getFullYear() - birth.getFullYear();
+    const monthDiff = today.getMonth() - birth.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+        age--;
+    }
+    return age >= 0 && age <= 150 ? age : null;
+}
+
 export function renderRegisterForm(container, switchView, onSuccessCallback) {
-    const countryOptions = Object.keys(regionData).map(c => `<option value="${c}">${c}</option>`).join("");
+    // 使用排序后的国家列表（常用国家置顶）
+    const sortedCountries = getSortedCountries();
+    const countryOptions = sortedCountries.map(c => `<option value="${c}">${c}</option>`).join("");
     
     container.innerHTML = `
         <div style="display: flex; gap: 10px; margin-bottom: 10px;">
@@ -50,7 +65,13 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
             <div><label style="display: block; margin-bottom: 5px;">性别 <span style="color: #F44336;">*</span></label><select id="reg-gender" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;"><option value="male">男</option><option value="female">女</option></select></div>
         </div>
         <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">年龄</label><input type="number" id="reg-age" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;"></div>
+            <div style="flex: 1;">
+                <label style="display: block; margin-bottom: 5px;">出生日期</label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="date" id="reg-birthday" style="flex: 1; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">
+                    <span id="reg-age-display" style="color: #888; font-size: 12px; white-space: nowrap;"></span>
+                </div>
+            </div>
             <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">国家</label><select id="reg-country" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">${countryOptions}</select></div>
             <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">地区</label><select id="reg-region" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;"></select></div>
         </div>
@@ -65,6 +86,19 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
     const avatarError = container.querySelector("#avatar-error");
     const countrySelect = container.querySelector("#reg-country");
     const regionSelect = container.querySelector("#reg-region");
+    const birthdayInput = container.querySelector("#reg-birthday");
+    const ageDisplay = container.querySelector("#reg-age-display");
+    
+    // 出生日期变化时自动计算年龄
+    birthdayInput.onchange = () => {
+        const age = calculateAge(birthdayInput.value);
+        if (age !== null) {
+            ageDisplay.textContent = `${age} 岁`;
+            ageDisplay.style.color = "#4CAF50";
+        } else {
+            ageDisplay.textContent = "";
+        }
+    };
     
     const updateRegionOptions = () => {
         const regions = regionData[countrySelect.value] || [];
@@ -156,7 +190,9 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
 
         const formData = {
             type: "register", account, password, email, phone, name, gender: genderSelect.value, code,
-            age: container.querySelector("#reg-age").value.trim(), country: countrySelect.value, region: regionSelect.value,
+            birthday: birthdayInput.value, // 保存出生日期
+            age: calculateAge(birthdayInput.value), // 自动计算年龄
+            country: countrySelect.value, region: regionSelect.value,
             intro: container.querySelector("#reg-intro").value.trim(), avatarFile: selectedAvatarFile, avatarDataUrl: selectedAvatarFile ? avatarPreview.src : null 
         };
 
@@ -166,11 +202,6 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
                 delete formData[key];
             }
         });
-        
-        // 特别处理 age：如果是纯数字字符串，强制转为整型 (int)
-        if (formData.age) {
-            formData.age = parseInt(formData.age, 10);
-        }
 
         if (onSuccessCallback) onSuccessCallback(formData);
     };

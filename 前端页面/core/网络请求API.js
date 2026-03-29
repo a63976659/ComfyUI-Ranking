@@ -265,5 +265,13 @@ export const api = {
     async postSystemAnnouncement(adminAccount, contentText) {
         if (!contentText || !contentText.trim()) throw new Error("公告内容不能为空！");
         return request("/api/system/announcement", { method: "POST", body: { admin_account: adminAccount, content: contentText } });
+    },
+
+    // ==========================================
+    // 🔧 管理员调试：执行 Python 脚本
+    // ==========================================
+    async runAdminScript(adminAccount, scriptName) {
+        if (!scriptName || !scriptName.trim()) throw new Error("脚本名称不能为空！");
+        return request("/api/admin/run-script", { method: "POST", body: { admin_account: adminAccount, script_name: scriptName } });
     }
 };

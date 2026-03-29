@@ -1,17 +1,35 @@
 // 前端页面/profile/个人设置表单组件.js
 import { api } from "../core/网络请求API.js";
-import { regionData } from "../auth/国家地区数据.js";
+import { regionData, getSortedCountries } from "../auth/国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { uploadFile } from "../market/发布内容_提交引擎.js"; // 🟢 新增：引入带本地压缩裁剪功能的上传引擎
+import { uploadFile } from "../market/发布内容_提交引擎.js";
+import { openImageCropper } from "../components/图片裁剪组件.js";
+import { CACHE } from "../core/全局配置.js";
+
+// 计算年龄工具函数
+function calculateAge(birthDate) {
+    if (!birthDate) return null;
+    const today = new Date();
+    const birth = new Date(birthDate);
+    let age = today.getFullYear() - birth.getFullYear();
+    const monthDiff = today.getMonth() - birth.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+        age--;
+    }
+    return age >= 0 && age <= 150 ? age : null;
+}
 
 export function createSettingsForm(initialUserData, onCancelCallback, onSaveSuccessCallback) {
     const container = document.createElement("div");
     let userData = { ...initialUserData };
 
-    // 从用户数据的 privacy 对象中读取真实状态，而不是 localStorage
+    // 从用户数据的 privacy 对象中读取真实状态
     const privacy = userData.privacy || {};
     const getPrivacy = (key) => privacy[key] === true;
-    const countryOptions = Object.keys(regionData).map(c => `<option value="${c}" ${c === userData.country ? 'selected' : ''}>${c}</option>`).join("");
+    
+    // 使用排序后的国家列表（常用国家置顶）
+    const sortedCountries = getSortedCountries();
+    const countryOptions = sortedCountries.map(c => `<option value="${c}" ${c === userData.country ? 'selected' : ''}>${c}</option>`).join("");
 
     container.innerHTML = `
         <div style="margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #444; font-weight: bold; font-size: 16px;">⚙️ 编辑资料与隐私设置</div>
@@ -25,6 +43,28 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                 <input type="file" id="setting-avatar" accept="image/*" style="display: none;">
             </div>
 
+            <div style="background: #2a2a2a; padding: 10px; border-radius: 6px; border: 1px dashed #555;">
+                <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">🇺️ 个人资料卡背景图</div>
+                <div id="setting-banner-preview" style="width: 100%; height: 80px; border-radius: 4px; background: ${userData.bannerUrl ? `url(${userData.bannerUrl})` : '#1a1a1a'}; background-size: cover; background-position: center; margin-bottom: 8px; border: 1px solid #444;"></div>
+                <div style="display: flex; gap: 8px;">
+                    <button id="btn-trigger-banner" style="flex: 1; padding: 6px 12px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px;">📷 上传并裁剪</button>
+                    <button id="btn-clear-banner" style="padding: 6px 12px; background: transparent; border: 1px solid #555; color: #888; border-radius: 4px; cursor: pointer; font-size: 12px;">🗑️ 清除</button>
+                </div>
+                <div style="font-size: 11px; color: #666; margin-top: 5px;">比例 16:9，可缩放拖动裁剪，压缩后上传云端。</div>
+                <input type="file" id="setting-banner" accept="image/*" style="display: none;">
+            </div>
+
+            <div style="background: #2a2a2a; padding: 10px; border-radius: 6px; border: 1px dashed #555;">
+                <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">🎨 界面背景（仅本地）</div>
+                <div id="setting-ui-bg-preview" style="width: 100%; height: 100px; border-radius: 4px; background: #1a1a1a; background-size: cover; background-position: center; margin-bottom: 8px; border: 1px solid #444;"></div>
+                <div style="display: flex; gap: 8px;">
+                    <button id="btn-trigger-ui-bg" style="flex: 1; padding: 6px 12px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px;">📷 上传并裁剪</button>
+                    <button id="btn-clear-ui-bg" style="padding: 6px 12px; background: transparent; border: 1px solid #555; color: #888; border-radius: 4px; cursor: pointer; font-size: 12px;">🗑️ 清除</button>
+                </div>
+                <div style="font-size: 11px; color: #666; margin-top: 5px;">比例 9:16，仅保存在本地，不占用云端空间。</div>
+                <input type="file" id="setting-ui-bg" accept="image/*" style="display: none;">
+            </div>
+
             <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">显示名称</label><input type="text" id="setting-name" value="${userData.name || ''}" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
             
             <div style="display: flex; gap: 10px;">
@@ -35,7 +75,13 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                         <option value="other" ${userData.gender === 'other' ? 'selected' : ''}>保密 (Secret)</option>
                     </select>
                 </div>
-                <div style="flex: 1;"><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">年龄 (选填)</label><input type="number" id="setting-age" value="${userData.age || ''}" placeholder="不公开" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
+                <div style="flex: 1;">
+                    <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">出生日期 (选填)</label>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="date" id="setting-birthday" value="${userData.birthday || ''}" style="flex: 1; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
+                        <span id="setting-age-display" style="color: #888; font-size: 12px; white-space: nowrap;">${userData.age ? userData.age + ' 岁' : ''}</span>
+                    </div>
+                </div>
             </div>
 
             <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">国家/地区</label>
@@ -79,7 +125,33 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     const countrySelect = container.querySelector("#setting-country");
     const regionSelect = container.querySelector("#setting-region");
     const settingAvatarInput = container.querySelector("#setting-avatar");
-    let avatarDataUrl = userData.avatarDataUrl; // 这个变量现在装的是极短的云端 URL，而不是几兆的 Base64
+    const settingBannerInput = container.querySelector("#setting-banner");
+    const settingUiBgInput = container.querySelector("#setting-ui-bg");
+    const bannerPreview = container.querySelector("#setting-banner-preview");
+    const uiBgPreview = container.querySelector("#setting-ui-bg-preview");
+    const birthdayInput = container.querySelector("#setting-birthday");
+    const ageDisplay = container.querySelector("#setting-age-display");
+    let avatarDataUrl = userData.avatarDataUrl;
+    let bannerUrl = userData.bannerUrl || null;
+
+    // 加载本地界面背景预览
+    const savedUiBg = localStorage.getItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND);
+    if (savedUiBg) {
+        uiBgPreview.style.backgroundImage = `url(${savedUiBg})`;
+        uiBgPreview.style.backgroundSize = "cover";
+        uiBgPreview.style.backgroundPosition = "center";
+    }
+
+    // 出生日期变化时自动计算年龄
+    birthdayInput.onchange = () => {
+        const age = calculateAge(birthdayInput.value);
+        if (age !== null) {
+            ageDisplay.textContent = `${age} 岁`;
+            ageDisplay.style.color = "#4CAF50";
+        } else {
+            ageDisplay.textContent = "";
+        }
+    };
 
     countrySelect.onchange = (e) => {
         const c = e.target.value;
@@ -89,24 +161,27 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
 
     container.querySelector("#btn-trigger-avatar").onclick = () => settingAvatarInput.click();
     
-    // 🟢 核心改造：对接本地 Canvas 裁剪与云端 Datasets 图床上传
+    // 头像上传逻辑（1:1 裁剪）
     settingAvatarInput.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        settingAvatarInput.value = "";
+
+        // 打开裁剪弹窗（1:1 比例）
+        const croppedFile = await openImageCropper(file, 1, "裁剪头像", 1);
+        if (!croppedFile) return;
 
         const btnTrigger = container.querySelector("#btn-trigger-avatar");
         const originalText = btnTrigger.innerText;
-        btnTrigger.innerText = "处理并上传中...";
+        btnTrigger.innerText = "上传中...";
         btnTrigger.disabled = true;
 
         try {
-            // 🚀 这里会调用 发布内容_提交引擎 中的 processAvatar 方法
-            // 在本地浏览器的 GPU 中进行 512x512 缩放和 JPG 压缩，随后直接上传到云端 Datasets
-            const cloudImageUrl = await uploadFile(file, "avatar");
+            const cloudImageUrl = await uploadFile(croppedFile, "avatar");
             
             if (cloudImageUrl) {
-                avatarDataUrl = cloudImageUrl; // 保存这个极小的永久云端直链
-                container.querySelector("#setting-avatar-preview").src = cloudImageUrl; // 更新界面预览
+                avatarDataUrl = cloudImageUrl;
+                container.querySelector("#setting-avatar-preview").src = cloudImageUrl;
                 showToast("✅ 头像上传成功！请点击底部保存设置生效。", "success");
             }
         } catch (err) {
@@ -117,6 +192,101 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         }
     };
 
+    // 个人资料卡背景图上传逻辑（16:9 裁剪）
+    container.querySelector("#btn-trigger-banner").onclick = () => settingBannerInput.click();
+    container.querySelector("#btn-clear-banner").onclick = () => {
+        bannerUrl = null;
+        bannerPreview.style.backgroundImage = "none";
+        bannerPreview.style.background = "#1a1a1a";
+        // 同时清除本地缓存
+        localStorage.removeItem(CACHE.LOCAL_KEYS.PROFILE_BANNER_CACHE);
+        showToast("✅ 已清除背景图，请点击底部保存设置生效。", "success");
+    };
+    
+    settingBannerInput.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        settingBannerInput.value = "";
+
+        // 打开裁剪弹窗（16:9 比例）
+        const croppedFile = await openImageCropper(file, 16/9, "裁剪个人资料卡背景", 3);
+        if (!croppedFile) return;
+
+        const btnTrigger = container.querySelector("#btn-trigger-banner");
+        const originalText = btnTrigger.innerText;
+        btnTrigger.innerText = "上传中...";
+        btnTrigger.disabled = true;
+
+        try {
+            // 同时上传到云端和保存到本地
+            const cloudImageUrl = await uploadFile(croppedFile, "banner");
+            
+            if (cloudImageUrl) {
+                bannerUrl = cloudImageUrl;
+                bannerPreview.style.backgroundImage = `url(${cloudImageUrl})`;
+                bannerPreview.style.backgroundSize = "cover";
+                bannerPreview.style.backgroundPosition = "center";
+                
+                // 同时保存一份到本地缓存，确保启动时能正常显示
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    try {
+                        localStorage.setItem(CACHE.LOCAL_KEYS.PROFILE_BANNER_CACHE, ev.target.result);
+                    } catch (storageErr) {
+                        console.warn("背景图本地缓存失败:", storageErr);
+                    }
+                };
+                reader.readAsDataURL(croppedFile);
+                
+                showToast("✅ 背景图上传成功！请点击底部保存设置生效。", "success");
+            }
+        } catch (err) {
+            showToast("❌ 背景图上传失败: " + err.message, "error");
+        } finally {
+            btnTrigger.innerText = originalText;
+            btnTrigger.disabled = false;
+        }
+    };
+
+    // 界面背景上传逻辑（9:16 裁剪，仅本地）
+    container.querySelector("#btn-trigger-ui-bg").onclick = () => settingUiBgInput.click();
+    container.querySelector("#btn-clear-ui-bg").onclick = () => {
+        localStorage.removeItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND);
+        uiBgPreview.style.backgroundImage = "none";
+        uiBgPreview.style.background = "#1a1a1a";
+        // 立即应用到侧边栏
+        window.dispatchEvent(new CustomEvent("comfy-sidebar-bg-update"));
+        showToast("✅ 已清除界面背景，已立即生效。", "success");
+    };
+    
+    settingUiBgInput.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        settingUiBgInput.value = "";
+
+        // 打开裁剪弹窗（9:16 比例）
+        const croppedFile = await openImageCropper(file, 9/16, "裁剪界面背景", 3);
+        if (!croppedFile) return;
+
+        // 读取为 Base64 并保存到本地
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const base64 = ev.target.result;
+            try {
+                localStorage.setItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND, base64);
+                uiBgPreview.style.backgroundImage = `url(${base64})`;
+                uiBgPreview.style.backgroundSize = "cover";
+                uiBgPreview.style.backgroundPosition = "center";
+                // 立即应用到侧边栏
+                window.dispatchEvent(new CustomEvent("comfy-sidebar-bg-update"));
+                showToast("✅ 界面背景设置成功，已立即生效！", "success");
+            } catch (err) {
+                showToast("❌ 图片过大，无法保存到本地", "error");
+            }
+        };
+        reader.readAsDataURL(croppedFile);
+    };
+
     container.querySelector("#btn-cancel-settings").onclick = () => { if (onCancelCallback) onCancelCallback(); };
 
     container.querySelector("#btn-save-settings").onclick = async (e) => {
@@ -125,14 +295,17 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         btn.disabled = true;
 
         try {
+            const birthday = birthdayInput.value || null;
             const updateData = {
                 name: container.querySelector("#setting-name").value.trim(),
                 intro: container.querySelector("#setting-intro").value.trim(),
-                age: parseInt(container.querySelector("#setting-age").value) || null,
+                birthday: birthday,
+                age: calculateAge(birthday),
                 country: countrySelect.value,
                 region: regionSelect.value,
                 gender: container.querySelector("#setting-gender").value,
-                avatarDataUrl: avatarDataUrl
+                avatarDataUrl: avatarDataUrl,
+                bannerUrl: bannerUrl
             };
 
             const res = await api.updateUserProfile(userData.account, updateData);

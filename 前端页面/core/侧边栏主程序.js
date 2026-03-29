@@ -5,18 +5,34 @@ import { createTopNav } from "../components/顶部导航组件.js";
 import { loadSidebarContent } from "./侧边栏数据引擎.js";
 import { createItemDetailView } from "../market/资源详情页面组件.js";
 import { showToast } from "../components/UI交互提示组件.js";
+import { CACHE } from "./全局配置.js";
 
 const Store = {
     save(key, value) { localStorage.setItem(`ComfyCommunitySidebar_${key}`, value); },
     load(key, defaultValue) { return localStorage.getItem(`ComfyCommunitySidebar_${key}`) || defaultValue; }
 };
 
+// 工具背景图本地存储管理
+const BackgroundStore = {
+    save(base64) { localStorage.setItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND, base64); },
+    load() { return localStorage.getItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND) || null; },
+    clear() { localStorage.removeItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND); }
+};
+
 function buildSidebarDOM() {
     const container = document.createElement("div");
+    
+    // 加载本地背景图
+    const savedBg = BackgroundStore.load();
+    const bgStyle = savedBg 
+        ? `background-image: url(${savedBg}); background-size: cover; background-position: center;`
+        : `background-color: var(--bg-color, #202020);`;
+    
     Object.assign(container.style, {
         display: "flex", flexDirection: "column", height: "100%", width: "100%",
-        backgroundColor: "var(--bg-color, #202020)", color: "var(--fg-color, #fff)", fontFamily: "sans-serif"
+        color: "var(--fg-color, #fff)", fontFamily: "sans-serif"
     });
+    container.style.cssText += bgStyle;
 
     const topNav = createTopNav();
 
@@ -76,6 +92,20 @@ function buildSidebarDOM() {
             <span>v1.2.0-Alpha</span>
         </div>
     `;
+    
+    // 监听从设置页面触发的背景更新事件
+    window.addEventListener("comfy-sidebar-bg-update", () => {
+        const newBg = BackgroundStore.load();
+        if (newBg) {
+            container.style.backgroundImage = `url(${newBg})`;
+            container.style.backgroundSize = "cover";
+            container.style.backgroundPosition = "center";
+            container.style.backgroundColor = "transparent";
+        } else {
+            container.style.backgroundImage = "none";
+            container.style.backgroundColor = "var(--bg-color, #202020)";
+        }
+    });
     // =========================================================================
 
     let activeInlineView = null; 
@@ -158,14 +188,54 @@ function buildSidebarDOM() {
         showInlineView(publishView);
     };
 
+    // Tab 颜色配置：每个 Tab 不同的强调色
+    const tabColors = {
+        tools: { active: "#4CAF50", inactive: "#6BBF6B" },      // 工具 - 绿色
+        apps: { active: "#2196F3", inactive: "#64B5F6" },       // 应用 - 蓝色
+        recommends: { active: "#FF9800", inactive: "#FFB74D" }, // 推荐榜 - 橙色
+        creators: { active: "#E91E63", inactive: "#F06292" }    // 创作者 - 粉色
+    };
+
+    // 文字阴影效果：多层阴影确保任何背景下都清晰可见
+    const getTextShadow = (color, isActive) => {
+        const baseShadow = "0 1px 2px rgba(0,0,0,0.8), 0 0 4px rgba(0,0,0,0.6), 1px 1px 3px rgba(0,0,0,0.5)";
+        return isActive 
+            ? `${baseShadow}, 0 0 10px ${color}, 0 0 20px ${color}` 
+            : baseShadow;
+    };
+
     tabs.forEach(tab => {
         const btn = document.createElement("button");
         btn.innerText = tab.label;
-        Object.assign(btn.style, { flex: "1", padding: "8px", cursor: "pointer", background: currentTab === tab.id ? "#444" : "transparent", color: currentTab === tab.id ? "#fff" : "#aaa", border: "none", borderBottom: currentTab === tab.id ? "2px solid #4CAF50" : "none" });
+        const isActive = currentTab === tab.id;
+        const color = tabColors[tab.id];
+        Object.assign(btn.style, { 
+            flex: "1", 
+            padding: "8px", 
+            cursor: "pointer", 
+            background: isActive ? "rgba(0,0,0,0.3)" : "rgba(0,0,0,0.15)", 
+            color: isActive ? color.active : color.inactive, 
+            border: "none", 
+            borderBottom: isActive ? `2px solid ${color.active}` : "none",
+            fontWeight: "bold",
+            textShadow: getTextShadow(color.active, isActive),
+            transition: "all 0.2s ease",
+            fontSize: "13px"
+        });
         btn.onclick = () => {
             currentTab = tab.id; Store.save("activeTab", currentTab);
-            Array.from(tabsContainer.children).forEach(c => { c.style.background = "transparent"; c.style.color = "#aaa"; c.style.borderBottom = "none"; });
-            btn.style.background = "#444"; btn.style.color = "#fff"; btn.style.borderBottom = "2px solid #4CAF50";
+            Array.from(tabsContainer.children).forEach((c, i) => { 
+                const tabId = tabs[i].id;
+                const tabColor = tabColors[tabId];
+                c.style.background = "rgba(0,0,0,0.15)"; 
+                c.style.color = tabColor.inactive; 
+                c.style.borderBottom = "none"; 
+                c.style.textShadow = getTextShadow(tabColor.active, false);
+            });
+            btn.style.background = "rgba(0,0,0,0.3)"; 
+            btn.style.color = color.active; 
+            btn.style.borderBottom = `2px solid ${color.active}`;
+            btn.style.textShadow = getTextShadow(color.active, true);
             sortContainer.querySelector("#hub-search-input").value = ""; 
             triggerLoad();
         };

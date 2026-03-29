@@ -4,10 +4,10 @@ import { api } from "../core/网络请求API.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { renderItemTrendChart } from "../components/图表渲染组件.js";
 import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
-import { setupResourceInstall } from "./资源安装引擎.js";
+import { setupResourceInstall, checkItemStatus } from "./资源安装引擎.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
-import { renderTipBoardHTML, isMaxTipLevel } from "../components/打赏等级工具.js"; // 🚀 引入打赏弹窗
+import { renderTipBoardHTML, isMaxTipLevel } from "../components/打赏等级工具.js";
 
 export function createItemCard(itemData, currentUser = null) {
     const card = document.createElement("div");
@@ -67,9 +67,24 @@ export function createItemCard(itemData, currentUser = null) {
     Object.assign(btnLike.style, { flex: "1", padding: "6px", background: "transparent", border: "1px solid #555", borderRadius: "4px", cursor: "pointer", color: "#aaa" });
     const btnFav = document.createElement("button");
     Object.assign(btnFav.style, { flex: "1", padding: "6px", background: "transparent", border: "1px solid #555", borderRadius: "4px", cursor: "pointer", color: "#aaa" });
+    
+    // 🚀 根据安装状态显示不同的按钮样式
     const btnUse = document.createElement("button");
-    Object.assign(btnUse.style, { flex: "1", padding: "6px", background: "#2196F3", border: "none", borderRadius: "4px", cursor: "pointer", color: "white", fontWeight: "bold" });
-    btnUse.innerHTML = `🚀 立即获取 ${itemData.uses ? '(' + itemData.uses + ')' : ''}`;
+    const installStatus = checkItemStatus(itemData.id, itemData.latest_version);
+    
+    if (installStatus.hasUpdate) {
+        // 有更新可用
+        Object.assign(btnUse.style, { flex: "1", padding: "6px", background: "#FF9800", border: "none", borderRadius: "4px", cursor: "pointer", color: "white", fontWeight: "bold" });
+        btnUse.innerHTML = `♻️ 可更新`;
+    } else if (installStatus.installed) {
+        // 已安装
+        Object.assign(btnUse.style, { flex: "1", padding: "6px", background: "#4CAF50", border: "none", borderRadius: "4px", cursor: "pointer", color: "white", fontWeight: "bold" });
+        btnUse.innerHTML = `✅ 已安装`;
+    } else {
+        // 未安装
+        Object.assign(btnUse.style, { flex: "1", padding: "6px", background: "#2196F3", border: "none", borderRadius: "4px", cursor: "pointer", color: "white", fontWeight: "bold" });
+        btnUse.innerHTML = `🚀 立即获取 ${itemData.uses ? '(' + itemData.uses + ')' : ''}`;
+    }
 
     actionArea.appendChild(btnLike); actionArea.appendChild(btnFav); actionArea.appendChild(btnUse);
     detailView.appendChild(actionArea);

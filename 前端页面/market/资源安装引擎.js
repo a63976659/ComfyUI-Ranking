@@ -1,8 +1,76 @@
-// 前端页面/market/资源安装引擎.js (完整替换)
+// 前端页面/market/资源安装引擎.js
 import { app } from "../../../scripts/app.js"; 
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { api } from "../core/网络请求API.js"; 
-import { openUserProfileModal } from "../profile/个人中心视图.js"; // 【修复点】：引入个人中心视图函数
+import { openUserProfileModal } from "../profile/个人中心视图.js";
+import { CACHE } from "../core/全局配置.js";
+
+// ==========================================
+// 📦 已获取资源记录管理
+// ==========================================
+
+/**
+ * 保存已获取的资源记录到本地
+ * @param {Object} itemData - 资源数据
+ */
+function saveAcquiredItem(itemData) {
+    try {
+        const key = CACHE.LOCAL_KEYS.ACQUIRED_ITEMS;
+        const existing = JSON.parse(localStorage.getItem(key) || "[]");
+        
+        // 检查是否已存在，如果存在则更新
+        const index = existing.findIndex(item => item.id === itemData.id);
+        const record = {
+            id: itemData.id,
+            title: itemData.title,
+            type: itemData.type,
+            author: itemData.author,
+            shortDesc: itemData.shortDesc,
+            coverBase64: itemData.coverBase64,
+            link: itemData.link,
+            price: itemData.price || 0,
+            local_version: itemData.latest_version,
+            acquired_at: Date.now()
+        };
+        
+        if (index >= 0) {
+            existing[index] = record;
+        } else {
+            existing.unshift(record); // 新记录放在最前面
+        }
+        
+        localStorage.setItem(key, JSON.stringify(existing));
+    } catch (e) {
+        console.warn("保存已获取资源记录失败:", e);
+    }
+}
+
+/**
+ * 获取所有已获取的资源记录
+ * @returns {Array}
+ */
+export function getAcquiredItems() {
+    try {
+        const key = CACHE.LOCAL_KEYS.ACQUIRED_ITEMS;
+        return JSON.parse(localStorage.getItem(key) || "[]");
+    } catch (e) {
+        return [];
+    }
+}
+
+/**
+ * 检查资源是否已安装
+ * @param {string} itemId - 资源ID
+ * @returns {Object|null} { installed: boolean, hasUpdate: boolean, localVersion: string|null }
+ */
+export function checkItemStatus(itemId, cloudVersion) {
+    const localVersion = localStorage.getItem(`ComfyCommunity_LocalVer_${itemId}`);
+    if (!localVersion) {
+        return { installed: false, hasUpdate: false, localVersion: null };
+    }
+    const hasUpdate = cloudVersion && localVersion !== cloudVersion;
+    return { installed: true, hasUpdate, localVersion };
+}
 
 export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatusBox) {
     btnUse.onclick = async (e) => {
@@ -135,6 +203,13 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         if (itemData.latest_version) {
                             localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
                         }
+                        
+                        // 🚀 保存到已获取记录
+                        saveAcquiredItem(itemData);
+                        
+                        // 🚀 更新按钮状态
+                        btnUse.innerHTML = `✅ 已安装`;
+                        btnUse.style.background = "#4CAF50";
                     }
                 } catch(err) { 
                     inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务。</span>`; 
@@ -167,6 +242,13 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     if (itemData.latest_version) {
                         localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
                     }
+                    
+                    // 🚀 保存到已获取记录
+                    saveAcquiredItem(itemData);
+                    
+                    // 🚀 更新按钮状态
+                    btnUse.innerHTML = `✅ 已下载`;
+                    btnUse.style.background = "#4CAF50";
                 }
             })
             .catch(() => { inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务或云端拦截。</span>`; });
