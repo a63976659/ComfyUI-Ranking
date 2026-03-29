@@ -34,7 +34,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
         const followingCount = (!isMe && privacy.follows) ? "***" : (userData.following ? userData.following.length : 0);
 
         const tabs = [{ id: "published", label: isMe ? "我的发布" : "TA的发布" }];
-        if (isMe) tabs.push({ id: "acquired", label: "我获取的" }); // 🚀 新增：已安装/购买记录
+        if (isMe) tabs.push({ id: "acquired", label: "我购买的" }); // 🚀 新增：已安装/购买记录
         if (isMe || !privacy.likes) tabs.push({ id: "liked", label: "近期点赞" });
         if (isMe || !privacy.follows) tabs.push({ id: "following", label: "关注的人" });
 

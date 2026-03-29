@@ -61,7 +61,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
         if (acquiredItems.length === 0) {
             domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#666;'>
                 <div style="font-size: 40px; margin-bottom: 10px;">📦</div>
-                <div>还没有获取任何资源</div>
+                <div>还没有购买任何资源</div>
                 <div style="font-size: 12px; color: #888; margin-top: 5px;">去榜单页面发现优秀工具吧！</div>
             </div>`;
             return;
