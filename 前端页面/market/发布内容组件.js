@@ -2,6 +2,20 @@
 import { generatePublishHTML } from "./发布内容_UI模板.js";
 import { handlePublishSubmit } from "./发布内容_提交引擎.js";
 
+// 🖼️ 编辑模式下回显已有图片的辅助函数
+function renderImagePreviews(imageUrls, container, onRemove) {
+    container.innerHTML = '';
+    imageUrls.forEach((url, idx) => {
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
+        wrapper.innerHTML = `
+            <img src="${url}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
+            ${idx === 0 ? '<span style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px;">封面</span>' : ''}
+        `;
+        container.appendChild(wrapper);
+    });
+}
+
 export function createPublishView(currentUser, onBackCallback, onSuccessCallback, editItemData = null) {
     const container = document.createElement("div");
     Object.assign(container.style, {
@@ -27,19 +41,21 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     const boxResourceSelect = container.querySelector("#box-resource-select");
     const boxLink = container.querySelector("#box-link");
     const boxJson = container.querySelector("#box-json");
+    const boxNetdisk = container.querySelector("#box-netdisk");  // ☁️ 网盘链接输入框
+    const boxNetdiskPassword = container.querySelector("#netdisk-password-settings");  // 🔐 网盘密码设置
     const boxCover = container.querySelector("#box-cover");
     const boxPrice = container.querySelector("#box-price");
     const inputLink = container.querySelector("#pub-link");
     const inputJson = container.querySelector("#pub-json");
-    const coverInput = container.querySelector("#pub-cover");
-    const coverPreview = container.querySelector("#pub-cover-preview");
+    const imagesInput = container.querySelector("#pub-images");  // 🖼️ 多图上传
+    const imagesPreview = container.querySelector("#pub-images-preview");  // 🖼️ 多图预览
     
     const boxPrivateRepo = container.querySelector("#private-repo-settings");
     const isPrivateCheck = container.querySelector("#pub-is-private");
     const tokenContainer = container.querySelector("#github-token-container");
     
     // 3. 独立管控的文件流本地沙盒状态
-    let coverFile = null;
+    let imageFiles = [];  // 🖼️ 多图文件列表
     let jsonFile = null;
 
     // 编辑模式下的数据回显防抖填充
@@ -58,10 +74,14 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         container.querySelector("#pub-full").value = editItemData.fullDesc || "";
         container.querySelector("#pub-price").value = editItemData.price || 0;
 
-        if (editItemData.coverUrl) {
-            coverPreview.src = editItemData.coverUrl;
-            coverPreview.style.display = "block";
+        // 🖼️ 编辑模式回显已有图片
+        const existingImages = editItemData.imageUrls || [];
+        if (editItemData.coverUrl && !existingImages.includes(editItemData.coverUrl)) {
+            existingImages.unshift(editItemData.coverUrl);
+        }
+        if (existingImages.length > 0) {
             container.querySelector("#cover-file-hint").style.display = "inline";
+            renderImagePreviews(existingImages, imagesPreview, () => {});
         }
 
         if (!editItemData.type.startsWith("recommend")) {
@@ -99,23 +119,42 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
             boxPrice.style.display = "flex";
             boxResourceSelect.style.display = "block";
             
+            // ☁️ 修改：原创工具可选择 "外部链接/Git" 或 "网盘链接"
+            const jsonOption = resTypeSelect.querySelector('option[value="json"]');
             if (mainType === "tool") {
-                resTypeSelect.value = "link";
-                resTypeSelect.disabled = true;
+                // 工具类型：允许选择 link 或 netdisk，禁用 json 选项
+                if (jsonOption) jsonOption.disabled = true;
+                if (resTypeSelect.value === "json") {
+                    resTypeSelect.value = "link";  // 默认回退到 link
+                }
+                resTypeSelect.disabled = false;
             } else if (mainType === "app") {
+                if (jsonOption) jsonOption.disabled = false;
                 resTypeSelect.value = "json";
                 resTypeSelect.disabled = true;
             } else {
+                if (jsonOption) jsonOption.disabled = false;
                 resTypeSelect.disabled = false;
             }
 
             if (resTypeSelect.value === "link") { 
                 boxLink.style.display = "block"; 
                 boxJson.style.display = "none"; 
+                boxNetdisk.style.display = "none";  // ☁️
+                boxNetdiskPassword.style.display = "none";  // 🔐
                 boxPrivateRepo.style.display = "block"; 
+            } else if (resTypeSelect.value === "netdisk") {
+                // ☁️ 网盘链接模式
+                boxLink.style.display = "none"; 
+                boxJson.style.display = "none"; 
+                boxNetdisk.style.display = "block";
+                boxNetdiskPassword.style.display = "block";
+                boxPrivateRepo.style.display = "none"; 
             } else { 
                 boxLink.style.display = "none"; 
                 boxJson.style.display = "block"; 
+                boxNetdisk.style.display = "none";  // ☁️
+                boxNetdiskPassword.style.display = "none";  // 🔐
                 boxPrivateRepo.style.display = "none"; 
             }
         }
@@ -131,21 +170,44 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     
     updateFormView();
 
-    coverInput.onchange = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        coverFile = file;
-        const reader = new FileReader();
-        reader.onload = (event) => { coverPreview.src = event.target.result; coverPreview.style.display = "block"; };
-        reader.readAsDataURL(file);
+    // 🖼️ 多图上传处理
+    imagesInput.onchange = (e) => {
+        const files = Array.from(e.target.files).slice(0, 6);  // 最多6张
+        if (files.length === 0) return;
+        
+        imageFiles = files;
+        imagesPreview.innerHTML = '';
+        
+        files.forEach((file, idx) => {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
+                wrapper.innerHTML = `
+                    <img src="${ev.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
+                    ${idx === 0 ? '<span style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px;">封面</span>' : ''}
+                    <button data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+                `;
+                wrapper.querySelector('button').onclick = () => {
+                    imageFiles = imageFiles.filter((_, i) => i !== idx);
+                    wrapper.remove();
+                    // 更新封面标记
+                    const firstImg = imagesPreview.querySelector('img');
+                    if (firstImg) firstImg.style.borderColor = '#4CAF50';
+                };
+                imagesPreview.appendChild(wrapper);
+            };
+            reader.readAsDataURL(file);
+        });
     };
+    
     inputJson.onchange = (e) => { jsonFile = e.target.files[0]; };
 
     // 4. 将提取的参数交接给分离出去的提交引擎
     const submitBtn = container.querySelector("#btn-submit-publish");
     submitBtn.onclick = () => handlePublishSubmit({
         container, currentUser, isEditMode, editItemData, 
-        coverFile, jsonFile, onSuccessCallback, submitBtn, submitBtnText
+        imageFiles, jsonFile, onSuccessCallback, submitBtn, submitBtnText  // 🖼️ imageFiles 替换 coverFile
     });
 
     return container;

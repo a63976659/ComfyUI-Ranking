@@ -12,6 +12,7 @@ import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { createCommentSection } from "../social/评论与互动组件.js";
 import { renderTipLevelHTML } from "../components/打赏等级工具.js";
 import { getBannerCacheKey } from "../core/全局配置.js";  // 🖼️ 背景图缓存Key
+import { getSettings } from "../components/全局设置组件.js";  // ⚙️ 获取设置
 
 function loadECharts() {
     return new Promise((resolve, reject) => {
@@ -110,11 +111,15 @@ export function createCreatorCard(creatorData, currentUser = null) {
 
     const avatarSrc = creatorData.avatar || "https://via.placeholder.com/150";
     
+    // ⚙️ 读取设置：是否显示创作者背景图
+    const settings = getSettings();
+    const showBanner = settings.showCreatorBanner;
+    
     // 🖼️ 个人资料卡背景图：优先使用本地缓存（与个人资料界面共用同一份缓存）
     const cacheKey = getBannerCacheKey(creatorData.account);
     const cachedBanner = localStorage.getItem(cacheKey);
     const bannerUrl = cachedBanner || creatorData.bannerUrl;  // 优先用本地缓存
-    const hasBanner = bannerUrl && bannerUrl.trim() !== '';
+    const hasBanner = showBanner && bannerUrl && bannerUrl.trim() !== '';  // ⚙️ 受设置控制
     
     // 🖼️ 全覆盖背景图样式
     const cardBgStyle = hasBanner 

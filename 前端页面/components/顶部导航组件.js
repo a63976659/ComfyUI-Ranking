@@ -6,6 +6,7 @@ import { api } from "../core/网络请求API.js";
 import { showToast } from "./UI交互提示组件.js";
 import { showAboutInfo } from "./关于插件组件.js";
 import { openNotificationCenter, loadUnreadCount } from "../social/通知中心组件.js";
+import { openSettingsPage } from "./全局设置组件.js";  // ⚙️ 新增
 import { CACHE } from "../core/全局配置.js";
 
 // 🚀 新增：消息轮询定时器
@@ -26,6 +27,32 @@ export function createTopNav() {
     titleSpan.onmouseover = () => titleSpan.style.opacity = "0.8";
     titleSpan.onmouseout = () => titleSpan.style.opacity = "1";
     titleSpan.onclick = () => showAboutInfo(currentUser);
+
+    // ⚙️ 设置按钮（放在社区精选旁边）
+    const settingsBtn = document.createElement("button");
+    Object.assign(settingsBtn.style, {
+        background: "transparent",
+        border: "none",
+        color: "#888",
+        cursor: "pointer",
+        fontSize: "16px",
+        marginLeft: "8px",
+        padding: "4px",
+        transition: "0.2s",
+        verticalAlign: "middle"
+    });
+    settingsBtn.innerHTML = "⚙️";
+    settingsBtn.title = "界面设置";
+    settingsBtn.onmouseover = () => { settingsBtn.style.color = "#4CAF50"; settingsBtn.style.transform = "rotate(30deg)"; };
+    settingsBtn.onmouseout = () => { settingsBtn.style.color = "#888"; settingsBtn.style.transform = "rotate(0deg)"; };
+    settingsBtn.onclick = (e) => { e.stopPropagation(); openSettingsPage(); };
+
+    // 📦 将标题和设置按钮包裹在一起
+    const titleWrapper = document.createElement("div");
+    titleWrapper.style.display = "flex";
+    titleWrapper.style.alignItems = "center";
+    titleWrapper.appendChild(titleSpan);
+    titleWrapper.appendChild(settingsBtn);
 
     const userActionBtn = document.createElement("button");
     Object.assign(userActionBtn.style, { padding: "6px 12px", backgroundColor: "#333", color: "#fff", border: "1px solid #555", borderRadius: "4px", cursor: "pointer", fontSize: "12px", transition: "background 0.2s" });
@@ -149,7 +176,7 @@ export function createTopNav() {
     actionWrapper.appendChild(bellBtn);
     actionWrapper.appendChild(userActionBtn);
     
-    userHeader.appendChild(titleSpan);
+    userHeader.appendChild(titleWrapper);  // ⚙️ 改为 titleWrapper
     userHeader.appendChild(actionWrapper);
 
     return {

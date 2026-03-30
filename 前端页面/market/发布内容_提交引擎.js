@@ -99,7 +99,7 @@ export async function uploadFile(file, file_type) {
 export async function handlePublishSubmit(params) {
     const {
         container, currentUser, isEditMode, editItemData,
-        coverFile, jsonFile, onSuccessCallback, submitBtn, submitBtnText
+        imageFiles, jsonFile, onSuccessCallback, submitBtn, submitBtnText  // 🖼️ imageFiles 替换 coverFile
     } = params;
 
     const typeSelect = container.querySelector("#pub-type");
@@ -108,6 +108,8 @@ export async function handlePublishSubmit(params) {
     const boxPrivateRepo = container.querySelector("#private-repo-settings");
     const isPrivateCheck = container.querySelector("#pub-is-private");
     const inputLink = container.querySelector("#pub-link");
+    const inputNetdiskLink = container.querySelector("#pub-netdisk-link");  // ☁️ 网盘链接
+    const inputNetdiskPassword = container.querySelector("#pub-netdisk-password");  // 🔐 网盘密码
 
     const mainType = typeSelect.value;
     let type = mainType;
@@ -120,8 +122,20 @@ export async function handlePublishSubmit(params) {
     
     let finalLink = inputLink.value.trim();
     let isJsonUpload = (mainType !== "recommend" && resTypeSelect.value === "json") || (type === "recommend_app");
+    let isNetdisk = (mainType !== "recommend" && resTypeSelect.value === "netdisk");  // ☁️ 是否网盘模式
+    
+    // ☁️ 网盘模式下使用网盘链接
+    if (isNetdisk) {
+        finalLink = inputNetdiskLink.value.trim();
+    }
 
     if (isEditMode && isJsonUpload && !jsonFile && editItemData.link) finalLink = editItemData.link;
+
+    // ☁️ 网盘密码（加密存储，仅购买后解密显示）
+    let netdisk_password = null;
+    if (isNetdisk && inputNetdiskPassword.value.trim()) {
+        netdisk_password = inputNetdiskPassword.value.trim();
+    }
 
     let github_token = null;
     if (boxPrivateRepo.style.display !== "none" && isPrivateCheck.checked) {
@@ -131,8 +145,9 @@ export async function handlePublishSubmit(params) {
 
     if (!title || !shortDesc) return showToast("请填写名称和简短描述！", "warning");
     if (type === "recommend_link" && !finalLink) return showToast("第三方链接必须提供源地址！", "warning");
-    if ((type === "tool" || type === "recommend_tool") && !isJsonUpload && !finalLink) return showToast("必须提供 Git 安装地址！", "warning");
+    if ((type === "tool" || type === "recommend_tool") && !isJsonUpload && !isNetdisk && !finalLink) return showToast("必须提供 Git 安装地址！", "warning");
     if (isJsonUpload && !jsonFile && !finalLink) return showToast("必须上传工作流 JSON 文件！", "warning");
+    if (isNetdisk && !finalLink) return showToast("必须填写网盘链接！", "warning");  // ☁️
 
     submitBtn.innerHTML = "⏳ 正在连接云端...";
     submitBtn.disabled = true; 
@@ -146,15 +161,31 @@ export async function handlePublishSubmit(params) {
             finalLink = jsonUploadRes.url; 
         }
 
+        // 🖼️ 上传多张效果展示图
         let coverUrl = isEditMode ? editItemData.coverUrl : null;
-        if (coverFile) {
-            submitBtn.innerHTML = "⏳ 正在上传封面...";
-            const coverUploadRes = await api.uploadFile(coverFile, "cover");
-            coverUrl = coverUploadRes.url;
+        let imageUrls = isEditMode ? (editItemData.imageUrls || []) : [];
+        
+        if (imageFiles && imageFiles.length > 0) {
+            submitBtn.innerHTML = `⏳ 正在上传图片 (0/${imageFiles.length})...`;
+            const uploadedUrls = [];
+            
+            for (let i = 0; i < imageFiles.length; i++) {
+                submitBtn.innerHTML = `⏳ 正在上传图片 (${i + 1}/${imageFiles.length})...`;
+                const uploadRes = await api.uploadFile(imageFiles[i], "cover");
+                uploadedUrls.push(uploadRes.url);
+            }
+            
+            coverUrl = uploadedUrls[0];  // 第一张作为封面
+            imageUrls = uploadedUrls;     // 全部图片URL
         }
 
         submitBtn.innerHTML = "⏳ 正在同步全网数据库...";
-        const submitData = { type, title, shortDesc, fullDesc, price, link: finalLink, coverUrl, author: currentUser.account, github_token };
+        const submitData = { 
+            type, title, shortDesc, fullDesc, price, link: finalLink, coverUrl, imageUrls,  // 🖼️ 添加 imageUrls
+            author: currentUser.account, github_token,
+            netdisk_password,  // ☁️ 网盘密码（后端加密存储）
+            is_netdisk: isNetdisk  // ☁️ 标记为网盘资源
+        };
 
         if (isEditMode) {
             await api.updateItem(editItemData.id, currentUser.account, submitData);

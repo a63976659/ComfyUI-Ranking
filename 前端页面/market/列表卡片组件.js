@@ -111,7 +111,7 @@ export function createItemCard(itemData, currentUser = null) {
     
     mediaArea.innerHTML = `
         ${chartHtml}
-        ${getCoverSandboxHTML(itemData.coverUrl)}
+        ${getCoverSandboxHTML(itemData.imageUrls?.length > 0 ? itemData.imageUrls : itemData.coverUrl)}
         <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #aaa;">📝 详细说明</div>
         <div style="background: #1e1e1e; padding: 10px; border-radius: 4px; font-size: 12px; color: #bbb; margin-bottom: 12px; max-height: 200px; overflow-y: auto; line-height: 1.6; border: 1px solid #333; word-wrap: break-word; white-space: pre-wrap;">${itemData.fullDesc}</div>
     `;
