@@ -126,8 +126,9 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
         let alreadyOwned = false; 
 
         // 防线 2：事务级扣费 (天然解决问题 3，意外中断不重扣)
+        let purchaseRes = null;  // ☁️ 保存购买响应（包含网盘密码）
         try {
-            const purchaseRes = await api.purchaseItem(currentUser.account, itemData.id);
+            purchaseRes = await api.purchaseItem(currentUser.account, itemData.id);
             
             // 【需求2修改核心】：如果返回 already_owned，改变提示
             if (purchaseRes && purchaseRes.already_owned) {
@@ -253,10 +254,41 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             })
             .catch(() => { inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务或云端拦截。</span>`; });
         } else {
+            // ☁️ 网盘链接或纯链接模式
             // 【需求2修改核心】：只有不是免单情况才涨使用量
             if (!alreadyOwned) { api.incrementItemUse(itemData.id).catch(()=>{}); }
             
-            inlineStatusBox.innerHTML = `<span style="color: #4CAF50;">✅ 授权通过，该资源需手动访问源地址获取：</span><a href="${itemData.link}" target="_blank" style="color: #2196F3; margin-left: 5px;">前往地址</a>`;
+            // ☁️ 从购买响应中获取网盘信息（安全：只有购买成功后才返回）
+            const isNetdisk = purchaseRes?.is_netdisk || itemData.is_netdisk;
+            const netdiskPassword = purchaseRes?.netdisk_password || itemData.netdisk_password;
+            
+            // ☁️ 网盘资源：购买后显示密码
+            if (isNetdisk && netdiskPassword) {
+                inlineStatusBox.innerHTML = `
+                    <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，网盘资源信息如下：</div>
+                    <div style="background: #1a1d2e; padding: 12px; border-radius: 6px; border: 1px solid #2d334a;">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <span style="color: #2196F3;">🔗 网盘链接：</span>
+                            <a href="${itemData.link}" target="_blank" style="color: #4CAF50; word-break: break-all;">点击打开</a>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="color: #FF9800;">🔐 提取码：</span>
+                            <code style="background: #333; padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;">${netdiskPassword}</code>
+                            <button onclick="navigator.clipboard.writeText('${netdiskPassword}'); this.innerText='✅ 已复制'" style="padding: 4px 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">📋 复制</button>
+                        </div>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 11px; color: #888;">💡 提示：请复制提取码后前往网盘下载资源</div>
+                `;
+            } else if (isNetdisk) {
+                // ☁️ 网盘资源无密码
+                inlineStatusBox.innerHTML = `
+                    <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，请前往网盘下载：</div>
+                    <a href="${itemData.link}" target="_blank" style="color: #2196F3;">🔗 打开网盘链接</a>
+                `;
+            } else {
+                // 纯链接模式
+                inlineStatusBox.innerHTML = `<span style="color: #4CAF50;">✅ 授权通过，该资源需手动访问源地址获取：</span><a href="${itemData.link}" target="_blank" style="color: #2196F3; margin-left: 5px;">前往地址</a>`;
+            }
         }
     };
 }

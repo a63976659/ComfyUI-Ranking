@@ -12,8 +12,9 @@
 //   - 网络状态检测与离线提示
 //   - 按钮加载状态
 //   - 全局加载遮罩
-// ==========================================
+// ===========================================
 
+import { t } from "./用户体验增强.js";
 
 // ==========================================
 // 📢 Toast 消息提示
@@ -282,7 +283,7 @@ export function showRetryDialog(message, retryFn, options = {}) {
         
         box.querySelector("#ui-btn-retry").onclick = async () => {
             const retryBtn = box.querySelector("#ui-btn-retry");
-            retryBtn.innerHTML = `<span class="btn-spinner"></span> 重试中...`;
+            retryBtn.innerHTML = `<span class="btn-spinner"></span> ${t('common.retrying')}`;
             retryBtn.disabled = true;
             
             try {
@@ -291,7 +292,7 @@ export function showRetryDialog(message, retryFn, options = {}) {
                 resolve(true);
             } catch (error) {
                 // 重试失败，更新错误信息
-                box.querySelector("div[style*='background: #1a1a1a']").innerHTML = error.message || "重试失败，请稍后再试";
+                box.querySelector("div[style*='background: #1a1a1a']").innerHTML = error.message || t('common.retry_failed');
                 retryBtn.innerHTML = retryText;
                 retryBtn.disabled = false;
             }

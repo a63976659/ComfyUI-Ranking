@@ -2,6 +2,7 @@ import { api } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { CACHE } from "../core/全局配置.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
+import { t } from "../components/用户体验增强.js";
 
 // 🚀 本地存储键管理
 const getChatListKey = (account) => `${CACHE.LOCAL_KEYS.CHAT_LIST}_${account}`;
@@ -18,10 +19,10 @@ export function openChatModal(currentUser, targetAccount = null) {
     Object.assign(topHeader.style, { padding: "10px 15px", borderBottom: "1px solid #444", display: "flex", alignItems: "center", gap: "10px", background: "#2a2a2a" });
     topHeader.innerHTML = `
         <button id="btn-back-chat" style="margin-left: 15px; margin-top: 20px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-            <span style="font-size: 14px;">⬅</span> 返回
+            <span style="font-size: 14px;">⬅</span> ${t('common.back')}
         </button>
-        <span style="font-size: 16px; font-weight: bold; flex: 1;">💬 私信聊天</span>
-        <button id="btn-clear-chat-top" style="background: transparent; border: 1px solid #F44336; color: #F44336; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s; display: none;" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='transparent'; this.style.color='#F44336'">🗑️ 清空消息</button>
+        <span style="font-size: 16px; font-weight: bold; flex: 1;">💬 ${t('chat.title')}</span>
+        <button id="btn-clear-chat-top" style="background: transparent; border: 1px solid #F44336; color: #F44336; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s; display: none;" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='transparent'; this.style.color='#F44336'">🗑️ ${t('chat.clear_messages')}</button>
     `;
     topHeader.querySelector("#btn-back-chat").onclick = () => window.dispatchEvent(new CustomEvent("comfy-route-back"));
     container.appendChild(topHeader);
@@ -51,11 +52,11 @@ export function openChatModal(currentUser, targetAccount = null) {
     
     const inputField = document.createElement("input");
     Object.assign(inputField.style, { flex: 1, padding: "10px", borderRadius: "20px", border: "1px solid #555", background: "#333", color: "#fff", outline: "none" });
-    inputField.placeholder = "输入消息...";
+    inputField.placeholder = t('chat.input_placeholder');
     
     const sendBtn = document.createElement("button");
     Object.assign(sendBtn.style, { padding: "10px 20px", borderRadius: "20px", border: "none", background: "#2196F3", color: "#fff", cursor: "pointer", fontWeight: "bold" });
-    sendBtn.innerText = "发送";
+    sendBtn.innerText = t('common.send');
     
     inputArea.appendChild(inputField);
     inputArea.appendChild(sendBtn);
@@ -76,7 +77,7 @@ export function openChatModal(currentUser, targetAccount = null) {
     const renderChatList = (list) => {
         chatListContainer.innerHTML = "";
         if (list.length === 0) {
-            chatListContainer.innerHTML = `<div style="padding:20px; text-align:center; color:#888; font-size:12px;">暂无对话</div>`;
+            chatListContainer.innerHTML = `<div style="padding:20px; text-align:center; color:#888; font-size:12px;">${t('chat.no_conversations')}</div>`;
             return;
         }
         list.forEach(chat => {
@@ -161,7 +162,7 @@ export function openChatModal(currentUser, targetAccount = null) {
                 cursor: isMe ? "default" : "pointer"
             });
             avatarEl.src = isMe ? myAvatar : otherAvatar;
-            avatarEl.title = isMe ? "我" : `点击查看 ${currentTargetInfo?.name || currentChatTarget} 的个人资料`;
+            avatarEl.title = isMe ? t('chat.me') : `${t('chat.view_profile')} ${currentTargetInfo?.name || currentChatTarget}`;
             
             // 🚀 新增：点击对方头像跳转个人资料
             if (!isMe) {

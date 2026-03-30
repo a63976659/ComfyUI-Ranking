@@ -1,22 +1,34 @@
 // 前端页面/core/侧边栏主程序.js
 import { app } from "../../../scripts/app.js"; 
 import { createPublishView } from "../market/发布内容组件.js";
+import { createPublishTaskView } from "../task/发布任务组件.js";  // 🎯 新增：任务发布
+import { createPublishPostView } from "../post/发布帖子组件.js";  // 🎯 新增：帖子发布
 import { createTopNav } from "../components/顶部导航组件.js";
 import { loadSidebarContent } from "./侧边栏数据引擎.js";
 import { createItemDetailView } from "../market/资源详情页面组件.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { CACHE } from "./全局配置.js";
+import { CACHE, getBackgroundKey } from "./全局配置.js";
+import { cleanupImageSandbox } from "../components/图片沙盒组件.js";  // 🔧 P3优化：导入清理函数
+// 🎯 P2 用户体验增强
+import { initUXEnhancements, t } from "../components/用户体验增强.js";
+
+// 初始化 UX 增强
+try {
+    initUXEnhancements();
+} catch (e) {
+    console.warn('🎯 UX 增强初始化失败:', e);
+}
 
 const Store = {
     save(key, value) { localStorage.setItem(`ComfyCommunitySidebar_${key}`, value); },
     load(key, defaultValue) { return localStorage.getItem(`ComfyCommunitySidebar_${key}`) || defaultValue; }
 };
 
-// 工具背景图本地存储管理
+// 工具背景图本地存储管理（账号隔离）
 const BackgroundStore = {
-    save(base64) { localStorage.setItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND, base64); },
-    load() { return localStorage.getItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND) || null; },
-    clear() { localStorage.removeItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND); }
+    save(base64) { localStorage.setItem(getBackgroundKey(), base64); },
+    load() { return localStorage.getItem(getBackgroundKey()) || null; },
+    clear() { localStorage.removeItem(getBackgroundKey()); }
 };
 
 function buildSidebarDOM() {
@@ -38,20 +50,43 @@ function buildSidebarDOM() {
 
     const tabsContainer = document.createElement("div");
     Object.assign(tabsContainer.style, { display: "flex", borderBottom: "1px solid #444", padding: "10px 10px 0 10px" });
-    const tabs = [{ id: "tools", label: "工具" }, { id: "apps", label: "应用" }, { id: "recommends", label: "推荐榜" }, { id: "creators", label: "创作者" }];
+    // 🌐 多语言支持：Tab 名称使用翻译函数
+    const tabs = [
+        { id: "tools", label: t('nav.tools') },
+        { id: "apps", label: t('nav.apps') },
+        { id: "recommends", label: t('nav.recommends') },
+        { id: "creators", label: t('nav.creators') },
+        { id: "tasks", label: t('nav.tasks') },
+        { id: "posts", label: t('nav.posts') }
+    ];
 
     const sortContainer = document.createElement("div");
     Object.assign(sortContainer.style, { padding: "10px", display: "flex", gap: "8px", alignItems: "center", width: "100%", boxSizing: "border-box" });
     sortContainer.innerHTML = `
-        <select id="hub-sort-select" style="background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 90px; flex-shrink: 0;">
-            <option value="time">最新发布</option>
-    <option value="downloads">下载使用最多</option>
-    <option value="likes">点赞最多</option>
-    <option value="favorites">收藏最多</option>
-    <option value="tips">💰 近期打赏榜</option> </select>
+        <!-- 通用排序选择框（工具/应用/推荐/创作者） -->
+        <select id="hub-sort-select" style="background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
+            <option value="time">${t('market.latest')}</option>
+            <option value="downloads">${t('market.downloads')}</option>
+            <option value="likes">${t('market.like')}</option>
+            <option value="favorites">${t('market.favorites')}</option>
+            <option value="tips">💰 ${t('market.tips_ranking') || '近期打赏榜'}</option>
         </select>
-        <input type="text" id="hub-search-input" placeholder="🔍 搜索名称 / 简介..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
-        <button id="btn-open-publish" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">➕ 发布</button>
+        <!-- 任务榜筛选控件（状态+排序） -->
+        <select id="task-status-filter" style="display: none; background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
+            <option value="">${t('task.filter_all')}</option>
+            <option value="open">${t('task.filter_open')}</option>
+            <option value="in_progress">${t('task.filter_in_progress')}</option>
+            <option value="submitted">${t('task.filter_submitted')}</option>
+            <option value="completed">${t('task.filter_completed')}</option>
+            <option value="disputed">${t('task.filter_disputed')}</option>
+        </select>
+        <select id="task-sort-select" style="display: none; background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
+            <option value="latest">${t('task.sort_latest')}</option>
+            <option value="price">${t('task.sort_price')}</option>
+            <option value="deadline">${t('task.sort_deadline')}</option>
+        </select>
+        <input type="text" id="hub-search-input" placeholder="🔍 ${t('common.search')}..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
+        <button id="btn-open-publish" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">➕ ${t('market.publish')}</button>
     `;
 
     const contentBoxWrapper = document.createElement("div");
@@ -122,6 +157,9 @@ function buildSidebarDOM() {
 
     const hideInlineView = () => {
         if (activeInlineView) {
+            // 🔧 P3优化：在移除视图前清理事件监听器
+            cleanupImageSandbox(activeInlineView);
+            
             activeInlineView.remove();
             activeInlineView = null;
         }
@@ -181,11 +219,25 @@ function buildSidebarDOM() {
         const currentUser = topNav.getCurrentUser();
         if (!currentUser) return showToast("⚠️ 请先登录您的社区账号后再进行发布！", "warning");
         
-        const publishView = createPublishView(currentUser, 
-            () => hideInlineView(), 
-            () => { hideInlineView(); triggerLoad(); }
-        );
-        showInlineView(publishView);
+        // 🎯 根据当前Tab打开对应的发布界面
+        if (currentTab === "tasks") {
+            // 任务榜 -> 打开发布任务界面
+            const view = createPublishTaskView(currentUser);
+            showInlineView(view);
+        } else if (currentTab === "posts") {
+            // 讨论区 -> 打开发布帖子界面
+            const view = createPublishPostView(currentUser);
+            showInlineView(view);
+        } else {
+            // 工具/应用/推荐 -> 打开发布内容界面，并自动设置对应类型
+            const publishView = createPublishView(currentUser, 
+                () => hideInlineView(), 
+                () => { hideInlineView(); triggerLoad(); },
+                null,  // editItemData
+                currentTab  // initialType: tools/apps/recommends
+            );
+            showInlineView(publishView);
+        }
     };
 
     // Tab 颜色配置：每个 Tab 不同的强调色
@@ -193,7 +245,9 @@ function buildSidebarDOM() {
         tools: { active: "#4CAF50", inactive: "#6BBF6B" },      // 工具 - 绿色
         apps: { active: "#2196F3", inactive: "#64B5F6" },       // 应用 - 蓝色
         recommends: { active: "#FF9800", inactive: "#FFB74D" }, // 推荐榜 - 橙色
-        creators: { active: "#E91E63", inactive: "#F06292" }    // 创作者 - 粉色
+        creators: { active: "#E91E63", inactive: "#F06292" },   // 创作者 - 粉色
+        tasks: { active: "#FF5722", inactive: "#FF8A65" },      // 任务榜 - 深橙色
+        posts: { active: "#9C27B0", inactive: "#BA68C8" }       // 讨论区 - 紫色
     };
 
     // 文字阴影效果：多层阴影确保任何背景下都清晰可见
@@ -236,15 +290,66 @@ function buildSidebarDOM() {
             btn.style.color = color.active; 
             btn.style.borderBottom = `2px solid ${color.active}`;
             btn.style.textShadow = getTextShadow(color.active, true);
-            sortContainer.querySelector("#hub-search-input").value = ""; 
+            sortContainer.querySelector("#hub-search-input").value = "";
+            // 🎯 根据 Tab 切换筛选控件显示
+            updateFilterVisibility(currentTab);
             triggerLoad();
         };
         tabsContainer.appendChild(btn);
     });
 
+    // 🎯 筛选控件显示切换函数
+    const updateFilterVisibility = (tabId) => {
+        const hubSortSelect = sortContainer.querySelector("#hub-sort-select");
+        const taskStatusFilter = sortContainer.querySelector("#task-status-filter");
+        const taskSortSelect = sortContainer.querySelector("#task-sort-select");
+        const publishBtn = sortContainer.querySelector("#btn-open-publish");
+        
+        if (tabId === "tasks") {
+            // 任务榜：隐藏通用排序，显示任务筛选
+            hubSortSelect.style.display = "none";
+            taskStatusFilter.style.display = "block";
+            taskSortSelect.style.display = "block";
+            publishBtn.style.display = "block";
+        } else if (tabId === "creators") {
+            // 🎯 创作者界面：隐藏发布按钮
+            hubSortSelect.style.display = "block";
+            taskStatusFilter.style.display = "none";
+            taskSortSelect.style.display = "none";
+            publishBtn.style.display = "none";
+        } else {
+            // 其他Tab：显示通用排序，隐藏任务筛选
+            hubSortSelect.style.display = "block";
+            taskStatusFilter.style.display = "none";
+            taskSortSelect.style.display = "none";
+            publishBtn.style.display = "block";
+        }
+    };
+    
+    // 初始化筛选控件显示状态
+    updateFilterVisibility(currentTab);
+
     sortContainer.querySelector("#hub-sort-select").value = currentSort;
     sortContainer.querySelector("#hub-sort-select").onchange = (e) => { currentSort = e.target.value; Store.save("activeSort", currentSort); triggerLoad(); };
     sortContainer.querySelector("#hub-search-input").oninput = triggerLoad;
+    
+    // 🎯 任务榜筛选控件事件绑定
+    sortContainer.querySelector("#task-status-filter").onchange = () => {
+        window.dispatchEvent(new CustomEvent("comfy-task-filter-change", {
+            detail: {
+                status: sortContainer.querySelector("#task-status-filter").value,
+                sort: sortContainer.querySelector("#task-sort-select").value
+            }
+        }));
+    };
+    sortContainer.querySelector("#task-sort-select").onchange = () => {
+        window.dispatchEvent(new CustomEvent("comfy-task-filter-change", {
+            detail: {
+                status: sortContainer.querySelector("#task-status-filter").value,
+                sort: sortContainer.querySelector("#task-sort-select").value
+            }
+        }));
+    };
 
     container.appendChild(topNav.dom); 
     container.appendChild(tabsContainer); 
@@ -259,6 +364,26 @@ function buildSidebarDOM() {
 }
 
 let globalSidebarDOM = null;
+let globalSidebarContainer = null;  // 🌐 保存容器引用，用于语言切换时替换
+let pendingLanguageRefresh = false;  // 🌐 语言切换待刷新标志
+
+// 🌐 语言切换监听器：标记需要刷新，待返回主界面时执行
+document.addEventListener('comfy-language-change', () => {
+    pendingLanguageRefresh = true;
+});
+
+// 🌐 返回主界面时检查是否需要刷新语言
+window.addEventListener('comfy-route-back', () => {
+    if (pendingLanguageRefresh && globalSidebarContainer) {
+        pendingLanguageRefresh = false;
+        // 延迟执行，确保当前视图已关闭
+        setTimeout(() => {
+            globalSidebarDOM = buildSidebarDOM();
+            globalSidebarContainer.innerHTML = '';
+            globalSidebarContainer.appendChild(globalSidebarDOM);
+        }, 50);
+    }
+});
 
 app.registerExtension({
     name: "Comfy.CommunityLeaderboardSidebar",
@@ -267,7 +392,11 @@ app.registerExtension({
         if (app.extensionManager && app.extensionManager.registerSidebarTab) {
             app.extensionManager.registerSidebarTab({
                 id: "comfyui-ranking-sidebar", title: "社区精选", icon: "pi pi-trophy", type: "custom",
-                render: (container) => { container.innerHTML = ''; container.appendChild(globalSidebarDOM); }
+                render: (container) => { 
+                    globalSidebarContainer = container;  // 🌐 保存容器引用
+                    container.innerHTML = ''; 
+                    container.appendChild(globalSidebarDOM); 
+                }
             });
         }
     }

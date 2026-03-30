@@ -35,6 +35,23 @@ export const API = {
 
 
 // ==========================================
+// 🔐 管理员配置 (P0安全修复：管理员账号配置化)
+// ==========================================
+// 注意：前端仅用于UI显示控制，后端从环境变量 ADMIN_ACCOUNTS 读取
+// 修改此处需同步修改云端环境变量
+export const ADMIN_ACCOUNTS = new Set(["123456", "888888"]);
+
+/**
+ * 检查账号是否为管理员
+ * @param {string} account - 用户账号
+ * @returns {boolean}
+ */
+export function isAdmin(account) {
+    return ADMIN_ACCOUNTS.has(account);
+}
+
+
+// ==========================================
 // 💾 缓存配置
 // ==========================================
 export const CACHE = {
@@ -310,6 +327,47 @@ export function getApiUrl(endpoint) {
 }
 
 /**
+ * 获取当前登录用户账号
+ * @returns {string|null}
+ */
+export function getCurrentAccount() {
+    try {
+        const userStr = localStorage.getItem(CACHE.LEGACY_KEYS.USER) || sessionStorage.getItem(CACHE.LEGACY_KEYS.USER);
+        if (userStr) {
+            const userData = JSON.parse(userStr);
+            return userData?.user?.account || null;
+        }
+    } catch (e) {
+        console.warn("获取当前账号失败:", e);
+    }
+    return null;
+}
+
+/**
+ * 获取账号区分的界面背景图存储键
+ * @param {string} [account] - 账号，不传则自动获取当前登录账号
+ * @returns {string}
+ */
+export function getBackgroundKey(account) {
+    const acc = account || getCurrentAccount();
+    return acc 
+        ? `${CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND}_${acc}` 
+        : CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND;
+}
+
+/**
+ * 获取账号区分的个人资料卡背景缓存键
+ * @param {string} [account] - 账号，不传则自动获取当前登录账号
+ * @returns {string}
+ */
+export function getBannerCacheKey(account) {
+    const acc = account || getCurrentAccount();
+    return acc 
+        ? `${CACHE.LOCAL_KEYS.PROFILE_BANNER_CACHE}_${acc}` 
+        : CACHE.LOCAL_KEYS.PROFILE_BANNER_CACHE;
+}
+
+/**
  * 获取缓存键（带前缀）
  * @param {string} key - 缓存键
  * @returns {string}
@@ -351,5 +409,8 @@ export default {
     LINKS,
     getApiUrl,
     getCacheKey,
-    isFeatureEnabled
+    isFeatureEnabled,
+    getCurrentAccount,
+    getBackgroundKey,
+    getBannerCacheKey
 };

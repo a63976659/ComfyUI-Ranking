@@ -4,6 +4,7 @@ import { openChatModal } from "../social/私信聊天组件.js";
 import { createSettingsForm } from "./个人设置表单组件.js";
 import { renderProfileListContent } from "./个人列表组件.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
+import { t } from "../components/用户体验增强.js";
 // ==========================================
 // 资金模块 (充值/提现)
 // ==========================================
@@ -11,6 +12,52 @@ import { openRechargeModal } from "../market/资金与钱包_充值组件.js";
 import { openWithdrawModal } from "../market/资金与钱包_提现组件.js"; 
 import { buildProfileHTML } from "./个人中心_UI模板.js";   
 import { openTipModal } from "./个人中心_赞赏组件.js";     
+import { getBannerCacheKey, isAdmin } from "../core/全局配置.js";
+import { getVersionConfig, getStageLabel } from "../components/关于插件组件.js";
+
+
+// ==========================================
+// 🖼️ 个人资料卡背景图云端同步
+// ==========================================
+// 作用：当本地无缓存但云端有背景图时，下载并缓存到本地
+async function syncBannerCache(account, bannerUrl) {
+    if (!bannerUrl || !account) return;
+    
+    const cacheKey = getBannerCacheKey(account);
+    const localCache = localStorage.getItem(cacheKey);
+    
+    // 本地已有缓存，无需同步
+    if (localCache) return;
+    
+    try {
+        // 处理代理 URL（云端 URL 可能需要通过本地代理访问）
+        let fetchUrl = bannerUrl;
+        if (bannerUrl.startsWith('http') && !bannerUrl.includes('/community_hub/image')) {
+            fetchUrl = `/community_hub/image?url=${encodeURIComponent(bannerUrl)}`;
+        }
+        
+        const response = await fetch(fetchUrl);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const blob = await response.blob();
+        
+        // 转换为 Base64 并存储
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                localStorage.setItem(cacheKey, reader.result);
+                // 触发界面刷新，显示新缓存的背景图
+                window.dispatchEvent(new CustomEvent("comfy-banner-synced", { detail: { account } }));
+            } catch (storageErr) {
+                console.warn("背景图本地缓存失败:", storageErr);
+            }
+        };
+        reader.onerror = () => console.warn("背景图读取失败");
+        reader.readAsDataURL(blob);
+    } catch (err) {
+        console.warn(`背景图下载失败: ${err.message}`);
+    }
+}
 
 export function showUserProfile(initialUserData, currentUser = null, isMe = true) {
     const container = document.createElement("div");
@@ -24,6 +71,24 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
     let activeTab = localStorage.getItem(`Profile_ActiveTab_${isMe}`) || "published";
     let userData = initialUserData;
 
+    // 🖼️ 监听背景图同步完成事件，自动刷新显示
+    const bannerSyncHandler = (e) => {
+        if (isMe && e.detail?.account === userData.account && !isSettingsView) {
+            console.log(`✨ 背景图同步完成，刷新界面`);
+            render();
+        }
+    };
+    window.addEventListener("comfy-banner-synced", bannerSyncHandler);
+    
+    // 组件销毁时移除事件监听
+    const observer = new MutationObserver(() => {
+        if (!document.body.contains(container)) {
+            window.removeEventListener("comfy-banner-synced", bannerSyncHandler);
+            observer.disconnect();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
     function render() {
         container.innerHTML = ""; 
 
@@ -33,15 +98,29 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
         const privacy = userData.privacy || {};
         const followingCount = (!isMe && privacy.follows) ? "***" : (userData.following ? userData.following.length : 0);
 
-        const tabs = [{ id: "published", label: isMe ? "我的发布" : "TA的发布" }];
-        if (isMe) tabs.push({ id: "acquired", label: "我购买的" }); // 🚀 新增：已安装/购买记录
-        if (isMe || !privacy.likes) tabs.push({ id: "liked", label: "近期点赞" });
-        if (isMe || !privacy.follows) tabs.push({ id: "following", label: "关注的人" });
+        const tabs = [{ id: "published", label: isMe ? t('profile.my_published') : t('profile.their_published') }];
+        if (isMe) tabs.push({ id: "acquired", label: t('profile.my_purchased') });
+        if (isMe) tabs.push({ id: "my_tasks", label: t('profile.my_tasks') });
+        if (isMe) tabs.push({ id: "transactions", label: t('profile.transactions') });
+        if (isMe) tabs.push({ id: "my_posts", label: t('profile.my_posts') });
+        if (isMe || !privacy.likes) tabs.push({ id: "liked", label: t('profile.recent_likes') });
+        if (isMe || !privacy.follows) tabs.push({ id: "following", label: t('profile.following') });
 
         if (!tabs.find(t => t.id === activeTab)) activeTab = "published";
 
         // 调用解耦的模板引擎生成 HTML
         container.innerHTML = buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs);
+
+        // 🏷️ 动态更新管理员特权徽章
+        const adminBadge = container.querySelector('#admin-privilege-badge');
+        if (adminBadge && isMe && isAdmin(userData.account)) {
+            getVersionConfig().then(config => {
+                const stageLabel = getStageLabel(config.stage);
+                adminBadge.textContent = `${stageLabel}${t('profile.max_privilege')}`;
+            }).catch(() => {
+                adminBadge.textContent = t('profile.beta_max_privilege');
+            });
+        }
 
         if (isSettingsView && isMe) {
             const settingsContainer = createSettingsForm(
@@ -73,19 +152,19 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
 
                 container.querySelector("#btn-open-settings").onclick = () => { isSettingsView = true; render(); };
                 container.querySelector("#btn-logout").onclick = async () => {
-                    if (await showConfirm("确定要退出当前账号吗？")) {
+                    if (await showConfirm(t('confirm.logout'))) {
                         localStorage.removeItem("ComfyCommunity_User"); localStorage.removeItem("ComfyCommunity_Token");
                         sessionStorage.removeItem("ComfyCommunity_User"); sessionStorage.removeItem("ComfyCommunity_Token");
                         window.dispatchEvent(new CustomEvent("comfy-route-back")); 
                         window.dispatchEvent(new CustomEvent("comfy-user-logout"));
-                        showToast("已退出登录", "info");
+                        showToast(t('feedback.logged_out'), "info");
                     }
                 };
             } else {
                 const btnTip = container.querySelector("#btn-tip-user");
                 if (btnTip) {
                     btnTip.onclick = () => {
-                        if (!currentUser) return showToast("请先登录您的账号后再进行赞赏！", "warning");
+                        if (!currentUser) return showToast(t('feedback.login_required_tip'), "warning");
                         openTipModal(currentUser, userData, (newBalance) => {
                             currentUser.balance = newBalance;
                             openOtherUserProfileModal(userData.account, currentUser); 
@@ -96,8 +175,8 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                 const btnFollow = container.querySelector("#btn-follow-user");
                 if (btnFollow) {
                     btnFollow.onclick = async () => {
-                        if (!currentUser) return showToast("请先登录您的账号！", "warning");
-                        btnFollow.innerHTML = "⏳ 处理中..."; btnFollow.disabled = true;
+                        if (!currentUser) return showToast(t('feedback.login_required'), "warning");
+                        btnFollow.innerHTML = `⏳ ${t('common.processing')}...`; btnFollow.disabled = true;
                         try {
                             const newStatus = !isFollowing;
                             await api.toggleFollow(currentUser.account, userData.account, newStatus);
@@ -107,7 +186,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                             if (isFollowing) { if (!userData.followers.includes(currentUser.account)) userData.followers.push(currentUser.account); } 
                             else { userData.followers = userData.followers.filter(a => a !== currentUser.account); }
                             render(); 
-                        } catch (err) { showToast("操作失败：" + err.message, "error"); btnFollow.innerHTML = isFollowing ? "✔️ 已关注" : "➕ 关注作者"; } 
+                        } catch (err) { showToast(t('feedback.operation_failed') + err.message, "error"); btnFollow.innerHTML = isFollowing ? `✔️ ${t('social.followed')}` : `➕ ${t('social.follow')}`; } 
                         finally { btnFollow.disabled = false; }
                     };
                 }
@@ -115,7 +194,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                 const btnSendMsg = container.querySelector("#btn-send-msg");
                 if (btnSendMsg) {
                     btnSendMsg.onclick = () => {
-                        if (!currentUser) return showToast("请先登录您的社区账号！", "warning");
+                        if (!currentUser) return showToast(t('feedback.login_required'), "warning");
                         openChatModal(currentUser, userData.account);
                     };
                 }
@@ -140,24 +219,24 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                 btnAdminAnnSend.onclick = async () => {
                     const contentArea = container.querySelector("#admin-ann-content");
                     const content = contentArea.value;
-                    if (!content || !content.trim()) return showToast("⚠️ 公告内容不能为空！", "warning");
+                    if (!content || !content.trim()) return showToast(`⚠️ ${t('admin.empty_content')}`, "warning");
 
-                    const isConfirm = await showConfirm(`发送说明：\n\n1. 内容将下发给所有用户，无法撤回。\n2. 内容将在消息中心醒目展示。\n\n⚠️ 请确保内容准确，谨慎操作！`);
+                    const isConfirm = await showConfirm(t('admin.announce_confirm'));
                     if (!isConfirm) return;
 
-                    btnAdminAnnSend.innerText = "🚀 发布中...";
+                    btnAdminAnnSend.innerText = `🚀 ${t('admin.publishing')}...`;
                     btnAdminAnnSend.style.opacity = "0.7";
                     btnAdminAnnSend.disabled = true;
 
                     try {
                         await api.postSystemAnnouncement(currentUser.account, content);
-                        contentArea.value = ""; // 清空输入框
-                        showToast("🎉 全站系统公告发布成功！", "success");
+                        contentArea.value = "";
+                        showToast(`🎉 ${t('admin.publish_success')}`, "success");
                     } catch (error) {
                         console.error("Failed to post announcement:", error);
-                        showToast(`❌ 发布失败: ${error.message}`, "error");
+                        showToast(`❌ ${t('admin.publish_failed')}: ${error.message}`, "error");
                     } finally {
-                        btnAdminAnnSend.innerText = "🚀 确认发布全站公告";
+                        btnAdminAnnSend.innerText = `🚀 ${t('admin.confirm_publish')}`;
                         btnAdminAnnSend.style.opacity = "1";
                         btnAdminAnnSend.disabled = false;
                     }
@@ -175,23 +254,23 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                     const scriptName = scriptInput.value.trim();
                     
                     if (!scriptName) {
-                        resultArea.innerHTML = '<span style="color: #f85149;">❌ 请输入脚本名称！</span>';
+                        resultArea.innerHTML = `<span style="color: #f85149;">❌ ${t('admin.enter_script_name')}</span>`;
                         return;
                     }
 
-                    btnAdminRunScript.innerText = "⏳ 执行中...";
+                    btnAdminRunScript.innerText = `⏳ ${t('admin.executing')}...`;
                     btnAdminRunScript.disabled = true;
-                    resultArea.innerHTML = '<span style="color: #58a6ff;">⚡ 正在执行 ' + scriptName + ' ...</span>';
+                    resultArea.innerHTML = `<span style="color: #58a6ff;">⚡ ${t('admin.running')} ${scriptName} ...</span>`;
 
                     try {
                         const response = await api.runAdminScript(currentUser.account, scriptName);
                         const output = response.output || response.message || JSON.stringify(response, null, 2);
-                        resultArea.innerHTML = `<span style="color: #3fb950;">✅ 执行成功：</span>\n\n${output}`;
+                        resultArea.innerHTML = `<span style="color: #3fb950;">✅ ${t('admin.exec_success')}：</span>\n\n${output}`;
                     } catch (error) {
                         console.error("Script execution failed:", error);
-                        resultArea.innerHTML = `<span style="color: #f85149;">❌ 执行失败：</span>\n\n${error.message}`;
+                        resultArea.innerHTML = `<span style="color: #f85149;">❌ ${t('admin.exec_failed')}：</span>\n\n${error.message}`;
                     } finally {
-                        btnAdminRunScript.innerText = "▶️ 执行";
+                        btnAdminRunScript.innerText = `▶️ ${t('admin.execute')}`;
                         btnAdminRunScript.disabled = false;
                     }
                 };
@@ -217,7 +296,7 @@ export function openUserProfileModal(userData) {
     const view = showUserProfile(userData, userData, true);
     window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
 
-    // 【修改点】：同步拉取云端 JSON 资料表与 SQL 金融账本
+    // 同步拉取云端 JSON 资料表与 SQL 金融账本
     Promise.all([
         api.getUserProfile(userData.account).catch(() => ({ data: {} })),
         api.getWallet(userData.account).catch(() => ({}))
@@ -235,7 +314,14 @@ export function openUserProfileModal(userData) {
                 storage.setItem("ComfyCommunity_User", JSON.stringify(savedObj));
             }
         } catch(e){}
-        if (view.updateData) view.updateData(freshData); 
+        
+        // 🖼️ 同步个人资料卡背景图：云端有但本地无缓存时自动下载
+        if (freshData.bannerUrl) {
+            syncBannerCache(userData.account, freshData.bannerUrl);
+        }
+        
+        // 立即更新界面，显示云端背景图（通过代理 URL）
+        if (view.updateData) view.updateData(freshData);
     }).catch(err => console.warn("后台更新本人资料失败", err));
 }
 
@@ -267,5 +353,5 @@ export async function openOtherUserProfileModal(targetAccount, currentUser) {
             const profileElement = showUserProfile(freshData, currentUser, false);
             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: profileElement } }));
         }
-    } catch (err) { if (!activeContainer) showToast("获取作者信息失败，可能该账号已注销。", "error"); }
+    } catch (err) { if (!activeContainer) showToast(t('feedback.user_fetch_failed'), "error"); }
 }

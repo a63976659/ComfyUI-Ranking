@@ -1,5 +1,7 @@
 // 前端页面/components/图表渲染组件.js
 
+import { t } from "./用户体验增强.js";
+
 function loadECharts() {
     return new Promise((resolve, reject) => {
         if (window.echarts) { resolve(window.echarts); return; }
@@ -27,7 +29,7 @@ function getLast6Months() {
 
 // 【核心修改】：接收入参从单纯的数字改为完整的 itemData 以读取历史记录
 export function renderItemTrendChart(domElement, itemData) {
-    domElement.innerHTML = `<div style="text-align:center; line-height:160px; color:#888;">正在加载图表...</div>`;
+    domElement.innerHTML = `<div style="text-align:center; line-height:160px; color:#888;">${t('chart.loading')}</div>`;
     loadECharts().then(echarts => {
         domElement.innerHTML = "";
         const chartInstance = echarts.init(domElement, 'dark', { backgroundColor: 'transparent' });
@@ -51,6 +53,6 @@ export function renderItemTrendChart(domElement, itemData) {
         
         window.addEventListener('resize', () => chartInstance.resize());
     }).catch(err => {
-        domElement.innerHTML = `<div style="text-align:center; line-height:160px; color:#F44336;">图表库加载失败</div>`;
+        domElement.innerHTML = `<div style="text-align:center; line-height:160px; color:#F44336;">${t('chart.load_failed')}</div>`;
     });
 }

@@ -1,0 +1,17 @@
+[project]
+name = "ComfyUI-Ranking"
+description = ""
+version = "1.0.0"
+license = "LICENSE"
+
+[project.urls]
+Repository = ""
+#  Used by Comfy Registry https://registry.comfy.org
+
+[tool.comfy]
+PublisherId = "a63976659"
+DisplayName = "ComfyUI-Ranking"
+Icon = ""
+includes = [] 
+# "requires-comfyui" = ">=1.0.0"  # ComfyUI version compatibility
+

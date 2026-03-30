@@ -6,6 +6,8 @@
 // 关联文件：
 //   - 个人设置表单组件.js (调用此组件进行背景裁剪)
 // ==========================================
+// 🔧 P3优化：事件监听器生命周期管理，防止内存泄漏
+// ==========================================
 
 /**
  * 创建图片裁剪弹窗
@@ -139,6 +141,15 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
         document.addEventListener("mousemove", handleMouseMove);
         document.addEventListener("mouseup", handleMouseUp);
 
+        // 🔧 P3优化：ESC 键关闭
+        function handleKeyDown(e) {
+            if (e.key === 'Escape') {
+                cleanup();
+                resolve(null);
+            }
+        }
+        document.addEventListener("keydown", handleKeyDown);
+
         function handleMouseMove(e) {
             if (!isDragging) return;
             offsetX = e.clientX - dragStartX;
@@ -237,10 +248,14 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
             };
         }, 0);
 
-        // 清理函数
+        // 🔧 P3优化：统一清理函数，确保所有事件监听器被移除
+        let isCleanedUp = false;
         function cleanup() {
+            if (isCleanedUp) return;  // 防止重复清理
+            isCleanedUp = true;
             document.removeEventListener("mousemove", handleMouseMove);
             document.removeEventListener("mouseup", handleMouseUp);
+            document.removeEventListener("keydown", handleKeyDown);
             overlay.remove();
         }
 

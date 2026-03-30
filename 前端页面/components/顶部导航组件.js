@@ -6,10 +6,13 @@ import { api } from "../core/网络请求API.js";
 import { showToast } from "./UI交互提示组件.js";
 import { showAboutInfo } from "./关于插件组件.js";
 import { openNotificationCenter, loadUnreadCount } from "../social/通知中心组件.js";
+import { openSettingsPage } from "./全局设置组件.js";  // ⚙️ 新增
 import { CACHE } from "../core/全局配置.js";
+import { t } from "./用户体验增强.js";  // 🌐 多语言支持
 
 // 🚀 新增：消息轮询定时器
 let messagePollingTimer = null;
+let isPollingActive = false;  // 🔧 P3优化：防止重复启动轮询
 
 export function createTopNav() {
     const userHeader = document.createElement("div");
@@ -19,7 +22,7 @@ export function createTopNav() {
     });
 
     const titleSpan = document.createElement("div");
-    titleSpan.innerHTML = "<strong style='color:#4CAF50;'>ComfyUI</strong> 社区精选";
+    titleSpan.innerHTML = `<strong style='color:#4CAF50;'>ComfyUI</strong> ${t('nav.community') || '社区精选'}`;
     
     Object.assign(titleSpan.style, { fontSize: "16px", cursor: "pointer", transition: "opacity 0.2s" });
     titleSpan.title = "查看关于本插件与作者信息";
@@ -27,13 +30,39 @@ export function createTopNav() {
     titleSpan.onmouseout = () => titleSpan.style.opacity = "1";
     titleSpan.onclick = () => showAboutInfo(currentUser);
 
+    // ⚙️ 设置按钮（放在社区精选旁边）
+    const settingsBtn = document.createElement("button");
+    Object.assign(settingsBtn.style, {
+        background: "transparent",
+        border: "none",
+        color: "#888",
+        cursor: "pointer",
+        fontSize: "16px",
+        marginLeft: "8px",
+        padding: "4px",
+        transition: "0.2s",
+        verticalAlign: "middle"
+    });
+    settingsBtn.innerHTML = "⚙️";
+    settingsBtn.title = t('nav.settings');
+    settingsBtn.onmouseover = () => { settingsBtn.style.color = "#4CAF50"; settingsBtn.style.transform = "rotate(30deg)"; };
+    settingsBtn.onmouseout = () => { settingsBtn.style.color = "#888"; settingsBtn.style.transform = "rotate(0deg)"; };
+    settingsBtn.onclick = (e) => { e.stopPropagation(); openSettingsPage(); };
+
+    // 📦 将标题和设置按钮包裹在一起
+    const titleWrapper = document.createElement("div");
+    titleWrapper.style.display = "flex";
+    titleWrapper.style.alignItems = "center";
+    titleWrapper.appendChild(titleSpan);
+    titleWrapper.appendChild(settingsBtn);
+
     const userActionBtn = document.createElement("button");
     Object.assign(userActionBtn.style, { padding: "6px 12px", backgroundColor: "#333", color: "#fff", border: "1px solid #555", borderRadius: "4px", cursor: "pointer", fontSize: "12px", transition: "background 0.2s" });
 
     const chatEntryBtn = document.createElement("button");
     Object.assign(chatEntryBtn.style, { background: "transparent", border: "none", color: "#aaa", cursor: "pointer", fontSize: "18px", marginRight: "10px", transition: "0.2s" });
     chatEntryBtn.innerHTML = `✉️`;
-    chatEntryBtn.title = "打开私信聊天中心";
+    chatEntryBtn.title = t('social.chat');
 
     const bellBtn = document.createElement("button");
     Object.assign(bellBtn.style, { background: "transparent", border: "none", color: "#aaa", cursor: "pointer", fontSize: "18px", position: "relative", marginRight: "15px" });
@@ -55,7 +84,7 @@ export function createTopNav() {
     window.addEventListener("comfy-user-logout", () => { currentUser = null; updateUserButtonState(); });
 
     chatEntryBtn.onclick = () => {
-        if (!currentUser) return showToast("请先登录您的社区账号！", "warning");
+        if (!currentUser) return showToast(t('auth.login_required') || "请先登录您的社区账号！", "warning");
         openChatModal(currentUser);
     };
 
@@ -64,7 +93,7 @@ export function createTopNav() {
 
     const updateUserButtonState = () => {
         if (currentUser) {
-            userActionBtn.innerHTML = `👤 ${currentUser.name || currentUser.account || '未知用户'}`;
+            userActionBtn.innerHTML = `👤 ${currentUser.name || currentUser.account || t('common.unknown_user') || '未知用户'}`;
             userActionBtn.style.backgroundColor = "#2196F3";
             userActionBtn.style.borderColor = "#2196F3";
             userActionBtn.onclick = () => openUserProfileModal(currentUser);
@@ -76,7 +105,7 @@ export function createTopNav() {
             // 🚀 新增：停止轮询
             stopMessagePolling();
             
-            userActionBtn.innerHTML = "🔑 登录 / 注册";
+            userActionBtn.innerHTML = `🔑 ${t('nav.login')}`;
             userActionBtn.style.backgroundColor = "#333";
             userActionBtn.style.borderColor = "#555";
             bellBtn.querySelector("#unread-badge").style.display = "none";
@@ -84,29 +113,29 @@ export function createTopNav() {
             userActionBtn.onclick = () => {
                 const view = createAuthView(async (formData) => {
                     try {
-                        userActionBtn.innerHTML = "⏳ 处理中...";
+                        userActionBtn.innerHTML = `⏳ ${t('common.loading')}`;
                         let userData; let token; let isRemember = false;
                         
                         if (formData.type === "reset") {
-                            userActionBtn.innerHTML = "⏳ 修改密码中...";
+                            userActionBtn.innerHTML = `⏳ ${t('auth.resetting_password') || '修改密码中...'}`;
                             
                             // 🚀 核心修复：停止错误地拆解字段导致 undefined，直接将包含所有数据的 formData 对象完整传给 API 装甲！
                             await api.resetPassword(formData);
                             
-                            showToast("密码修改成功！请使用新密码重新登录。", "success");
+                            showToast(t('auth.password_reset_success') || "密码修改成功！请使用新密码重新登录。", "success");
                             window.dispatchEvent(new CustomEvent("comfy-route-back")); updateUserButtonState(); return; 
                         }
                         if (formData.type === "register") {
                             if (formData.avatarFile) {
-                                userActionBtn.innerHTML = "⏳ 上传头像中...";
+                                userActionBtn.innerHTML = `⏳ ${t('auth.uploading_avatar') || '上传头像中...'}`;
                                 try {
                                     const uploadRes = await api.uploadFile(formData.avatarFile, "avatar");
                                     formData.avatarDataUrl = uploadRes.url; 
                                 } catch (uploadErr) {}
                             }
-                            userActionBtn.innerHTML = "⏳ 注册账号中...";
+                            userActionBtn.innerHTML = `⏳ ${t('auth.registering') || '注册账号中...'}`;
                             await api.register(formData);
-                            showToast("注册成功！正在为您自动登录...", "success");
+                            showToast(t('auth.register_success') + (t('auth.auto_login') || '！正在为您自动登录...'), "success");
                             const res = await api.login(formData.account, formData.password);
                             userData = { account: formData.account, name: formData.name, avatar: res.avatar, ...res }; 
                             token = res.token; isRemember = true; 
@@ -121,7 +150,7 @@ export function createTopNav() {
                             } catch (e) {
                                 userData = { account: formData.account, name: res.name || res.data?.name || formData.account, avatar: res.avatar || res.data?.avatar };
                             }
-                            showToast("登录成功！", "success");
+                            showToast(t('auth.login_success'), "success");
                         }
                         
                         currentUser = userData;
@@ -133,7 +162,7 @@ export function createTopNav() {
                         updateUserButtonState();
                         window.dispatchEvent(new CustomEvent("comfy-user-login")); 
                     } catch (err) {
-                        showToast("操作失败: " + err.message, "error"); updateUserButtonState(); 
+                        showToast(`${t('common.error')}: ` + err.message, "error"); updateUserButtonState(); 
                     }
                 });
                 window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
@@ -149,7 +178,7 @@ export function createTopNav() {
     actionWrapper.appendChild(bellBtn);
     actionWrapper.appendChild(userActionBtn);
     
-    userHeader.appendChild(titleSpan);
+    userHeader.appendChild(titleWrapper);  // ⚙️ 改为 titleWrapper
     userHeader.appendChild(actionWrapper);
 
     return {
@@ -161,13 +190,19 @@ export function createTopNav() {
 // 🚀 新增：启动消息定时轮询
 function startMessagePolling(currentUser, bellBtn) {
     if (!CACHE.MESSAGE_POLL.ENABLED) return;
+    if (isPollingActive) return;  // 🔧 P3优化：防止重复启动
     
     // 清除旧的定时器
     stopMessagePolling();
+    isPollingActive = true;
     
     // 创建新的定时器，每隔一定时间检查新消息
     messagePollingTimer = setInterval(async () => {
-        if (!currentUser) return;
+        // 🔧 P3优化：双重检查，确保用户仍在线
+        if (!currentUser || !isPollingActive) {
+            stopMessagePolling();
+            return;
+        }
         try {
             await loadUnreadCount(currentUser, bellBtn);
         } catch (e) {
@@ -180,6 +215,7 @@ function startMessagePolling(currentUser, bellBtn) {
 
 // 🚀 新增：停止消息定时轮询
 function stopMessagePolling() {
+    isPollingActive = false;  // 🔧 P3优化：先标记为停止
     if (messagePollingTimer) {
         clearInterval(messagePollingTimer);
         messagePollingTimer = null;

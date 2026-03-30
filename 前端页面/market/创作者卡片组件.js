@@ -11,6 +11,9 @@
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { createCommentSection } from "../social/评论与互动组件.js";
 import { renderTipLevelHTML } from "../components/打赏等级工具.js";
+import { getBannerCacheKey } from "../core/全局配置.js";
+import { getSettings } from "../components/全局设置组件.js";
+import { t } from "../components/用户体验增强.js";
 
 function loadECharts() {
     return new Promise((resolve, reject) => {
@@ -18,7 +21,7 @@ function loadECharts() {
         const script = document.createElement("script");
         script.src = "https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js";
         script.onload = () => resolve(window.echarts);
-        script.onerror = () => reject(new Error("ECharts 加载失败"));
+        script.onerror = () => reject(new Error("ECharts load failed"));
         document.head.appendChild(script);
     });
 }
@@ -39,7 +42,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
     if (!tipBoard || tipBoard.length === 0) {
         container.innerHTML = `
             <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #FF9800;">${title}</div>
-            <div style="color: #666; font-size: 12px; text-align: center; padding: 15px 0;">暂无赞赏记录</div>
+            <div style="color: #666; font-size: 12px; text-align: center; padding: 15px 0;">${t('creator.no_tips')}</div>
         `;
         return container;
     }
@@ -52,7 +55,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
     let listHtml = top10.map((entry, idx) => {
         const rankColor = rankColors[idx] || "#888";
         const rankIcon = idx < 3 ? ["🥇", "🥈", "🥉"][idx] : `<span style="color:${rankColor}">#${idx + 1}</span>`;
-        const displayName = entry.is_anon ? "匿名用户" : entry.account;
+        const displayName = entry.is_anon ? t('creator.anonymous') : entry.account;
         const nameStyle = entry.is_anon ? "color: #888; font-style: italic;" : "color: #4CAF50; cursor: pointer;";
         
         // 使用统一等级工具获取等级图标
@@ -98,8 +101,9 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
 export function createCreatorCard(creatorData, currentUser = null) {
     const card = document.createElement("div");
     Object.assign(card.style, {
-        backgroundColor: "var(--comfy-input-bg, #2b2b2b)", borderRadius: "8px", padding: "10px",
-        marginBottom: "12px", border: "1px solid #444", color: "#fff", fontFamily: "sans-serif"
+        backgroundColor: "var(--comfy-input-bg, #2b2b2b)", borderRadius: "8px", 
+        marginBottom: "12px", border: "1px solid #444", color: "#fff", fontFamily: "sans-serif",
+        overflow: "hidden"  // 🖼️ 背景图需要隐藏溢出
     });
 
     const chartContainerId = `creator-chart-${Math.random().toString(36).substr(2, 9)}`;
@@ -108,22 +112,42 @@ export function createCreatorCard(creatorData, currentUser = null) {
 
     const avatarSrc = creatorData.avatar || "https://via.placeholder.com/150";
     
+    // ⚙️ 读取设置：是否显示创作者背景图
+    const settings = getSettings();
+    const showBanner = settings.showCreatorBanner;
+    
+    // 🖼️ 个人资料卡背景图：优先使用本地缓存（与个人资料界面共用同一份缓存）
+    const cacheKey = getBannerCacheKey(creatorData.account);
+    const cachedBanner = localStorage.getItem(cacheKey);
+    const bannerUrl = cachedBanner || creatorData.bannerUrl;  // 优先用本地缓存
+    const hasBanner = showBanner && bannerUrl && bannerUrl.trim() !== '';  // ⚙️ 受设置控制
+    
+    // 🖼️ 全覆盖背景图样式
+    const cardBgStyle = hasBanner 
+        ? `background-image: url(${bannerUrl}); background-size: cover; background-position: center;`
+        : '';
+    
     summaryView.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px; padding: 5px 0;">
-            <img class="creator-avatar-link" src="${avatarSrc}" title="访问 TA 的主页" style="width: 50px; height: 50px; border-radius: 50%; border: 2px solid #555; object-fit: cover; cursor: pointer; transition: 0.2s;" onmouseover="this.style.borderColor='#4CAF50'" onmouseout="this.style.borderColor='#555'">
-            <div class="creator-name-link" title="访问 TA 的主页" style="font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s;" onmouseover="this.style.color='#4CAF50'" onmouseout="this.style.color='white'">${creatorData.name}</div>
-            <div style="font-size: 12px; color: #888; margin-left: auto;">被使用 ${creatorData.downloads || 0} 次</div>
-        </div>
-        <div style="font-size: 12px; color: #aaa; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 10px;">${creatorData.shortDesc}</div>
-        <div style="background: #222; border-radius: 6px; padding: 8px 10px; border: 1px dashed #555;">
-            <div style="display: flex; gap: 15px; font-size: 12px; color: #eee; justify-content: space-between; margin-bottom: 8px;">
-                <span style="color: #FF5722;">👍 获赞: <strong>${creatorData.likes}</strong></span>
-                <span style="color: #FFC107;">⭐ 收藏: <strong>${creatorData.favorites}</strong></span>
-                <span style="color: #4CAF50;">👥 粉丝: <strong>${creatorData.followers}</strong></span>
-            </div>
-            <div style="display: flex; gap: 15px; font-size: 12px; color: #ccc; justify-content: center; border-top: 1px solid #333; padding-top: 8px;">
-                <span style="color: #2196F3;">🛠️ 产出工具: <strong>${creatorData.toolsCount}</strong> 个</span>
-                <span style="color: #9C27B0;">📦 产出应用: <strong>${creatorData.appsCount}</strong> 个</span>
+        <div style="${cardBgStyle} position: relative; padding: 10px; border-radius: 8px;">
+            ${hasBanner ? '<div style="position: absolute; inset: 0; background: rgba(0,0,0,0.2); border-radius: 8px;"></div>' : ''}
+            <div style="position: relative; z-index: 1;">
+                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px; padding: 5px 0;">
+                    <img class="creator-avatar-link" src="${avatarSrc}" title="访问 TA 的主页" style="width: 50px; height: 50px; border-radius: 50%; border: 2px solid ${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}; object-fit: cover; cursor: pointer; transition: 0.2s; ${hasBanner ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.3);' : ''}" onmouseover="this.style.borderColor='#4CAF50'" onmouseout="this.style.borderColor='${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}'">
+                    <div class="creator-name-link" title="访问 TA 的主页" style="font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; color: #FFD700; text-shadow: 0 1px 4px rgba(0,0,0,0.8), 0 0 8px rgba(255,215,0,0.3);" onmouseover="this.style.color='#FFA500'" onmouseout="this.style.color='#FFD700'">${creatorData.name}</div>
+                    <div style="font-size: 12px; color: #FF6B6B; margin-left: auto; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">被使用 ${creatorData.downloads || 0} 次</div>
+                </div>
+                <div style="font-size: 12px; color: ${hasBanner ? '#ccc' : '#aaa'}; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 10px;">${creatorData.shortDesc}</div>
+                <div style="background: rgba(34,34,34,${hasBanner ? '0.8' : '1'}); border-radius: 6px; padding: 8px 10px; border: 1px dashed #555;">
+                    <div style="display: flex; gap: 15px; font-size: 12px; color: #eee; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="color: #FF5722;">👍 获赞: <strong>${creatorData.likes}</strong></span>
+                        <span style="color: #FFC107;">⭐ 收藏: <strong>${creatorData.favorites}</strong></span>
+                        <span style="color: #4CAF50;">👥 粉丝: <strong>${creatorData.followers}</strong></span>
+                    </div>
+                    <div style="display: flex; gap: 15px; font-size: 12px; color: #ccc; justify-content: center; border-top: 1px solid #333; padding-top: 8px;">
+                        <span style="color: #2196F3;">🛠️ 产出工具: <strong>${creatorData.toolsCount}</strong> 个</span>
+                        <span style="color: #9C27B0;">📦 产出应用: <strong>${creatorData.appsCount}</strong> 个</span>
+                    </div>
+                </div>
             </div>
         </div>
     `;

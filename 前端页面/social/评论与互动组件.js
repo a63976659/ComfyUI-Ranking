@@ -1,5 +1,6 @@
 // 前端页面/social/评论与互动组件.js
 import { api } from "../core/网络请求API.js";
+import { t } from "../components/用户体验增强.js";
 
 export function setupToggleButton(btnElement, initialState, initialCount, activeText, inactiveText, activeColor, apiCallback) {
     let isActive = initialState;
@@ -53,10 +54,10 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
 
     const inputField = document.createElement("input");
     Object.assign(inputField.style, { flex: "1", padding: "6px 10px", borderRadius: "15px", border: "1px solid #555", backgroundColor: "#1e1e1e", color: "#fff", outline: "none" });
-    inputField.placeholder = "说点什么...";
+    inputField.placeholder = t('social.say_something');
 
     const submitBtn = document.createElement("button");
-    submitBtn.innerText = "发送";
+    submitBtn.innerText = t('common.send');
     Object.assign(submitBtn.style, { padding: "4px 12px", borderRadius: "15px", border: "none", backgroundColor: "#4CAF50", color: "#fff", cursor: "pointer", fontWeight: "bold" });
 
     // 🚀 核心新增：封装一个统计算法，每次发生数据变动时向外抛出真实的评论数量
@@ -79,14 +80,14 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             if (!comment.replies || comment.replies.length === 0) return null;
             itemDiv.innerHTML = `
                 <div style="width: ${isSubReply ? '24px' : '32px'}; height: ${isSubReply ? '24px' : '32px'}; border-radius: 50%; background: #333; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #555;">✖</div>
-                <div style="flex: 1; background: #2a2a2a; padding: 6px 10px; border-radius: 4px; color: #666; font-style: italic; border: 1px dashed #444;">此条评论已由用户删除</div>
+                <div style="flex: 1; background: #2a2a2a; padding: 6px 10px; border-radius: 4px; color: #666; font-style: italic; border: 1px dashed #444;">${t('social.comment_deleted')}</div>
             `;
         } else {
             const avatarSize = isSubReply ? "24px" : "32px";
-            const replyLabel = comment.replyToUserName ? `<span style="color: #888;">回复 <span style="color: #2196F3;">@${comment.replyToUserName}</span>：</span>` : "";
+            const replyLabel = comment.replyToUserName ? `<span style="color: #888;">${t('social.reply_to')} <span style="color: #2196F3;">@${comment.replyToUserName}</span>：</span>` : "";
             
             const isMine = currentUser && currentUser.account === comment.author;
-            const deleteBtnHtml = isMine ? `<span class="delete-btn" style="color: #F44336; cursor: pointer; margin-left: 10px; font-size: 10px;">删除</span>` : "";
+            const deleteBtnHtml = isMine ? `<span class="delete-btn" style="color: #F44336; cursor: pointer; margin-left: 10px; font-size: 10px;">${t('common.delete')}</span>` : "";
 
             const avatarSrc = comment.avatar || "https://via.placeholder.com/150";
 
@@ -98,7 +99,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
                     </div>
                     <div style="line-height: 1.4; word-break: break-all;">${replyLabel}${comment.content}</div>
                     <div style="display: flex; gap: 15px; margin-top: 4px; font-size: 10px; color: #777;">
-                        <span class="reply-btn" style="cursor: pointer; color: #aaa;">回复</span>${deleteBtnHtml}
+                        <span class="reply-btn" style="cursor: pointer; color: #aaa;">${t('social.reply')}</span>${deleteBtnHtml}
                     </div>
                 </div>
             `;
@@ -108,19 +109,19 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
                     account: comment.author, name: comment.authorName || comment.author,
                     parentId: isSubReply ? comment.parentId : comment.id 
                 };
-                inputField.placeholder = `回复 @${currentReplyTarget.name}:`;
+                inputField.placeholder = `${t('social.reply_to')} @${currentReplyTarget.name}:`;
                 inputField.focus();
             };
 
             if (isMine) {
                 itemDiv.querySelector(".delete-btn").onclick = async () => {
-                    if (confirm("确定要删除这条评论吗？删除后将无法恢复。")) {
+                    if (confirm(t('social.delete_comment_confirm'))) {
                         try {
                             await api.deleteComment(itemId, comment.id, currentUser.account);
-                            comment.isDeleted = true; // 打上软删除标记
+                            comment.isDeleted = true;
                             renderList(); 
-                            triggerCountUpdate(); // 🚀 核心修改：删除后触发外部数字衰减更新
-                        } catch(e) { alert("删除失败"); }
+                            triggerCountUpdate();
+                        } catch(e) { alert(t('feedback.delete_failed')); }
                     }
                 };
             }
@@ -131,7 +132,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
     function renderList() {
         listArea.innerHTML = "";
         if (!commentsData || commentsData.length === 0) {
-            listArea.innerHTML = `<div style="text-align:center; padding: 20px; color:#666;">暂无留言，来抢沙发吧~</div>`;
+            listArea.innerHTML = `<div style="text-align:center; padding: 20px; color:#666;">${t('social.no_comments')}</div>`;
             return;
         }
 
@@ -151,7 +152,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
     }
 
     submitBtn.onclick = async () => {
-        if (!currentUser) return alert("请先登录您的社区账号！");
+        if (!currentUser) return alert(t('feedback.login_required'));
         const text = inputField.value.trim();
         if (!text) return;
 
@@ -173,12 +174,12 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
                 commentsData.push(newComment);
             }
             
-            inputField.value = ""; inputField.placeholder = "说点什么...";
+            inputField.value = ""; inputField.placeholder = t('social.say_something');
             currentReplyTarget = null;
             renderList();
-            triggerCountUpdate(); // 🚀 核心修改：发送成功后触发外部数字递增更新
+            triggerCountUpdate();
         } catch (e) {
-            alert("发送失败: " + e.message);
+            alert(`${t('feedback.send_failed')}: ${e.message}`);
         } finally {
             submitBtn.disabled = false;
         }
