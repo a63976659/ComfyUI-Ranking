@@ -78,26 +78,26 @@ export async function playSound(type = 'whoosh') {
                 break;
                 
             case 'blip':
-                // 数据点音效
-                oscillator.type = 'square';
-                oscillator.frequency.setValueAtTime(1200, now);
-                oscillator.frequency.exponentialRampToValueAtTime(600, now + 0.05);
-                gainNode.gain.setValueAtTime(0.08, now);  // 提高音量
-                gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+                // 数据点音效 - 柔和版
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(800, now);
+                oscillator.frequency.exponentialRampToValueAtTime(400, now + 0.08);
+                gainNode.gain.setValueAtTime(0.15, now);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
                 oscillator.start(now);
-                oscillator.stop(now + 0.05);
+                oscillator.stop(now + 0.08);
                 break;
                 
             case 'charge':
-                // 充能音效（用于深渊汇聚）
-                oscillator.type = 'sawtooth';
-                oscillator.frequency.setValueAtTime(100, now);
-                oscillator.frequency.exponentialRampToValueAtTime(800, now + 0.3);
-                gainNode.gain.setValueAtTime(0.05, now);  // 提高音量
-                gainNode.gain.linearRampToValueAtTime(0.12, now + 0.2);
-                gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+                // 充能音效（用于深渊汇聚）- 柔和版
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(150, now);
+                oscillator.frequency.exponentialRampToValueAtTime(450, now + 0.4);
+                gainNode.gain.setValueAtTime(0.03, now);
+                gainNode.gain.linearRampToValueAtTime(0.06, now + 0.25);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
                 oscillator.start(now);
-                oscillator.stop(now + 0.35);
+                oscillator.stop(now + 0.45);
                 break;
                 
             case 'pop':

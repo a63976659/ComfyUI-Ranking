@@ -101,7 +101,7 @@ export function createPublishTaskView(currentUser) {
                         💰 ${t('task.total_price')} <span style="color: #F44336;">*</span>
                     </label>
                     <div style="position: relative;">
-                        <input type="number" id="total-price" min="10" step="10" placeholder="100" 
+                        <input type="number" id="total-price" min="0" step="10" placeholder="100" 
                                style="width: 100%; padding: 10px 12px; padding-right: 40px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #FF9800; font-size: 16px; font-weight: bold; box-sizing: border-box;">
                         <span style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: #888; font-size: 12px;">${t('common.credits')}</span>
                     </div>
@@ -262,7 +262,7 @@ export function createPublishTaskView(currentUser) {
             showToast(t('task.please_enter_description'), "warning");
             return;
         }
-        if (totalPrice < 10) {
+        if (totalPrice < 0) {
             showToast(t('task.price_min_10'), "warning");
             return;
         }
@@ -298,7 +298,7 @@ export function createPublishTaskView(currentUser) {
                 totalPrice,
                 depositRatio,
                 deadline,
-                publisher: currentUser
+                publisher: currentUser.account || currentUser
             });
             
             showToast(t('task.publish_success'), "success");
