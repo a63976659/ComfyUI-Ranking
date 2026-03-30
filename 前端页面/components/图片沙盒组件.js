@@ -8,13 +8,51 @@
 //   - 资源详情页面组件.js (资源图片展示)
 // ==========================================
 // ⚡ 功能：多图轮播、左右切换、图片保护（禁止复制/下载）
+// 🔧 P3优化：事件监听器生命周期管理，防止内存泄漏
 // ==========================================
 
-// 默认占位图（灰色加载动画）
-const PLACEHOLDER_SVG = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260' viewBox='0 0 400 260'%3E%3Crect fill='%231a1a1a' width='400' height='260'/%3E%3Crect x='180' y='110' width='40' height='40' rx='4' fill='%23333'%3E%3Canimate attributeName='opacity' values='0.3;1;0.3' dur='1.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Ctext x='200' y='180' text-anchor='middle' fill='%23666' font-size='12'%3E加载中...%3C/text%3E%3C/svg%3E`;
+import { t } from "./用户体验增强.js";
 
-// 错误占位图
-const ERROR_SVG = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260' viewBox='0 0 400 260'%3E%3Crect fill='%231a1a1a' width='400' height='260'/%3E%3Ctext x='200' y='125' text-anchor='middle' fill='%23666' font-size='24'%3E⚠️%3C/text%3E%3Ctext x='200' y='150' text-anchor='middle' fill='%23666' font-size='12'%3E图片加载失败%3C/text%3E%3C/svg%3E`;
+// 🔧 动态生成SVG占位图（支持多语言）
+function createPlaceholderSVG(text) {
+    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260' viewBox='0 0 400 260'%3E%3Crect fill='%231a1a1a' width='400' height='260'/%3E%3Crect x='180' y='110' width='40' height='40' rx='4' fill='%23333'%3E%3Canimate attributeName='opacity' values='0.3;1;0.3' dur='1.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Ctext x='200' y='180' text-anchor='middle' fill='%23666' font-size='12'%3E${encodeURIComponent(text)}%3C/text%3E%3C/svg%3E`;
+}
+
+function createErrorSVG(text) {
+    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260' viewBox='0 0 400 260'%3E%3Crect fill='%231a1a1a' width='400' height='260'/%3E%3Ctext x='200' y='125' text-anchor='middle' fill='%23666' font-size='24'%3E⚠️%3C/text%3E%3Ctext x='200' y='150' text-anchor='middle' fill='%23666' font-size='12'%3E${encodeURIComponent(text)}%3C/text%3E%3C/svg%3E`;
+}
+
+function createTimeoutSVG(text) {
+    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260' viewBox='0 0 400 260'%3E%3Crect fill='%231a1a1a' width='400' height='260'/%3E%3Ctext x='200' y='125' text-anchor='middle' fill='%23666' font-size='24'%3E⏱️%3C/text%3E%3Ctext x='200' y='150' text-anchor='middle' fill='%23666' font-size='12'%3E${encodeURIComponent(text)}%3C/text%3E%3C/svg%3E`;
+}
+
+// 获取占位图
+function getPlaceholderSVG() { return createPlaceholderSVG(t('image.loading')); }
+function getErrorSVG() { return createErrorSVG(t('image.load_failed')); }
+function getTimeoutSVG() { return createTimeoutSVG(t('image.load_timeout')); }
+
+// 🔧 P3优化：带超时机制的图片加载器
+const IMAGE_LOAD_TIMEOUT = 15000;  // 15秒超时
+
+function loadImageWithTimeout(url, timeout = IMAGE_LOAD_TIMEOUT) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const timer = setTimeout(() => {
+            img.onload = img.onerror = null;
+            reject(new Error('图片加载超时'));
+        }, timeout);
+        
+        img.onload = () => {
+            clearTimeout(timer);
+            resolve(img);
+        };
+        img.onerror = () => {
+            clearTimeout(timer);
+            reject(new Error('图片加载失败'));
+        };
+        img.src = url;
+    });
+}
 
 /**
  * 🖼️ 生成效果展示图 HTML（支持多图轮播）
@@ -33,7 +71,7 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     if (imageUrls.length === 0) return '';
     
     const firstUrl = imageUrls[0];
-    const imgSrc = lazyLoad ? PLACEHOLDER_SVG : firstUrl;
+    const imgSrc = lazyLoad ? getPlaceholderSVG() : firstUrl;
     const dataAttr = lazyLoad ? `data-src="${firstUrl}"` : '';
     const lazyClass = lazyLoad ? 'lazy-image lazy-loading' : '';
     
@@ -56,13 +94,13 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     `;
     
     return `
-        <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #aaa;">🖼️ 效果展示图${hasMultiple ? ` (${imageUrls.length}张)` : ''}</div>
+        <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #aaa;">🖼️ ${t('image.gallery')}${hasMultiple ? ` (${imageUrls.length})` : ''}</div>
         <div class="img-viewport" data-images='${JSON.stringify(imageUrls)}' data-current="0" style="position: relative; width: 100%; height: 260px; background: #111; border: 2px dashed #666; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; cursor: grab;" oncontextmenu="return false;">
             <img class="target-img ${lazyClass}" src="${imgSrc}" ${dataAttr} draggable="false" style="max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center; transition: transform 0.05s linear, opacity 0.3s ease; ${protectionStyles}">
             ${navButtons}
             <div style="position: absolute; top: 10px; right: 10px; display: flex; gap: 5px; opacity: 0.3; transition: 0.3s; z-index: 10;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3">
                 <button class="btn-zoom-out" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold;">-</button>
-                <button class="btn-zoom-reset" style="background: #333; color: #fff; border: 1px solid #555; height: 28px; padding: 0 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">重置</button>
+                <button class="btn-zoom-reset" style="background: #333; color: #fff; border: 1px solid #555; height: 28px; padding: 0 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">${t('common.reset')}</button>
                 <button class="btn-zoom-in" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold;">+</button>
             </div>
             <div class="sliders-wrapper" style="opacity: 0.2; transition: 0.3s; position: absolute; width: 100%; height: 100%; top:0; left:0; pointer-events: none;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.2">
@@ -103,29 +141,28 @@ export function setupImageSandboxEvents(detailView) {
         imageUrls = [];
     }
     
-    // 🖼️ 加载指定索引的图片
-    const loadImage = (index) => {
+    // 🖼️ 加载指定索引的图片（🔧 P3优化：带超时机制）
+    const loadImage = async (index) => {
         if (index < 0 || index >= imageUrls.length) return;
         currentIndex = index;
         viewport.dataset.current = index;
         
         const url = imageUrls[index];
         targetImg.classList.add('lazy-loading');
-        targetImg.src = PLACEHOLDER_SVG;
+        targetImg.src = getPlaceholderSVG();
         
-        const tempImg = new Image();
-        tempImg.onload = () => {
+        try {
+            await loadImageWithTimeout(url);
             targetImg.src = url;
             targetImg.classList.remove('lazy-loading');
             targetImg.classList.add('lazy-loaded');
             targetImg.style.opacity = '1';
-        };
-        tempImg.onerror = () => {
-            targetImg.src = ERROR_SVG;
+        } catch (err) {
+            // 区分超时和加载失败
+            targetImg.src = err.message.includes('超时') ? getTimeoutSVG() : getErrorSVG();
             targetImg.classList.remove('lazy-loading');
             targetImg.classList.add('lazy-error');
-        };
-        tempImg.src = url;
+        }
         
         // 更新计数器
         if (imgCounter) {
@@ -139,26 +176,21 @@ export function setupImageSandboxEvents(detailView) {
         syncTransform();
     };
 
-    // ⚡ 初始加载第一张图片
+    // ⚡ 初始加载第一张图片（🔧 P3优化：带超时机制）
     if (targetImg.classList.contains('lazy-loading') && targetImg.dataset.src) {
         const realSrc = targetImg.dataset.src;
-        const tempImg = new Image();
         
-        tempImg.onload = () => {
+        loadImageWithTimeout(realSrc).then(() => {
             targetImg.src = realSrc;
             targetImg.classList.remove('lazy-loading');
             targetImg.classList.add('lazy-loaded');
             targetImg.style.opacity = '1';
             delete targetImg.dataset.src;
-        };
-        
-        tempImg.onerror = () => {
-            targetImg.src = ERROR_SVG;
+        }).catch(err => {
+            targetImg.src = err.message.includes('超时') ? getTimeoutSVG() : getErrorSVG();
             targetImg.classList.remove('lazy-loading');
             targetImg.classList.add('lazy-error');
-        };
-        
-        tempImg.src = realSrc;
+        });
     }
 
     // 🖼️ 轮播切换按钮事件
@@ -192,19 +224,25 @@ export function setupImageSandboxEvents(detailView) {
     sliderX.addEventListener('input', syncTransform); 
     sliderY.addEventListener('input', syncTransform);
 
-    // ✋ 拖动功能
+    // ✨ 拖动功能（统一管理事件监听器）
     let isDragging = false; let startX, startY, initValX, initValY;
+    
+    // 🔧 命名事件处理函数，便于清理
+    const handleMouseMove = (e) => {
+        if (!isDragging) return;
+        const dx = (e.clientX - startX) / scale; const dy = (e.clientY - startY) / scale;
+        sliderX.value = initValX + dx; sliderY.value = initValY + dy; syncTransform();
+    };
+    
+    const handleMouseUp = () => { isDragging = false; viewport.style.cursor = 'grab'; };
+    
     viewport.addEventListener('mousedown', (e) => {
         if(e.target.tagName.toLowerCase() === 'input' || e.target.tagName.toLowerCase() === 'button') return;
         isDragging = true; viewport.style.cursor = 'grabbing';
         startX = e.clientX; startY = e.clientY; initValX = parseInt(sliderX.value); initValY = parseInt(sliderY.value);
     });
-    window.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        const dx = (e.clientX - startX) / scale; const dy = (e.clientY - startY) / scale;
-        sliderX.value = initValX + dx; sliderY.value = initValY + dy; syncTransform();
-    });
-    window.addEventListener('mouseup', () => { isDragging = false; viewport.style.cursor = 'grab'; });
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
     viewport.addEventListener('mouseleave', () => { isDragging = false; viewport.style.cursor = 'grab'; });
     
     // ⌨️ 键盘左右切换
@@ -223,4 +261,24 @@ export function setupImageSandboxEvents(detailView) {
     viewport.addEventListener('mouseleave', () => {
         document.removeEventListener('keydown', handleKeydown);
     });
+    
+    // 🔧 P3优化：注册清理函数，供组件销毁时调用
+    const cleanup = () => {
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+        document.removeEventListener('keydown', handleKeydown);
+    };
+    viewport._sandboxCleanup = cleanup;
+}
+
+/**
+ * 🔧 清理图片沙盒事件监听器（防止内存泄漏）
+ * @param {HTMLElement} detailView - 详情视图容器
+ */
+export function cleanupImageSandbox(detailView) {
+    const viewport = detailView?.querySelector('.img-viewport');
+    if (viewport && viewport._sandboxCleanup) {
+        viewport._sandboxCleanup();
+        viewport._sandboxCleanup = null;
+    }
 }

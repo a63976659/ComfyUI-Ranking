@@ -26,6 +26,25 @@ import {
     getCache,
     lazyLoadImages 
 } from "../components/性能优化工具.js";
+import { applyCardAnimation, getAnimationTypeForTab } from "../components/动画音效引擎.js";
+
+// 💬 讨论区组件（动态导入）
+let postsViewModule = null;
+async function getPostsView() {
+    if (!postsViewModule) {
+        postsViewModule = await import("../post/讨论区组件.js");
+    }
+    return postsViewModule;
+}
+
+// 📝 任务榜组件（动态导入）
+let tasksViewModule = null;
+async function getTasksView() {
+    if (!tasksViewModule) {
+        tasksViewModule = await import("../task/任务榜组件.js");
+    }
+    return tasksViewModule;
+}
 
 
 // ==========================================
@@ -71,6 +90,46 @@ export async function loadSidebarContent({
     renderToken, 
     getRenderToken 
 }) {
+    // ========== 💬 讨论区特殊处理 ==========
+    if (tab === "posts") {
+        try {
+            const postsModule = await getPostsView();
+            const postsView = postsModule.createPostsView(currentUser);
+            contentArea.innerHTML = "";
+            contentArea.appendChild(postsView);
+            // 触发帖子列表加载
+            if (postsModule.loadPosts) {
+                postsModule.loadPosts();
+            }
+        } catch (error) {
+            console.error("讨论区加载失败:", error);
+            contentArea.innerHTML = `
+                <div style='text-align:center; padding: 40px 20px; color:#F44336;'>
+                    ❌ 讨论区加载失败: ${error.message}
+                </div>
+            `;
+        }
+        return;
+    }
+    
+    // ========== 📝 任务榜特殊处理 ==========
+    if (tab === "tasks") {
+        try {
+            const tasksModule = await getTasksView();
+            const tasksView = tasksModule.createTasksView(currentUser);
+            contentArea.innerHTML = "";
+            contentArea.appendChild(tasksView);
+        } catch (error) {
+            console.error("任务榜加载失败:", error);
+            contentArea.innerHTML = `
+                <div style='text-align:center; padding: 40px 20px; color:#F44336;'>
+                    ❌ 任务榜加载失败: ${error.message}
+                </div>
+            `;
+        }
+        return;
+    }
+    
     const cacheKey = `ListCache_${tab}_${sort}`;
     const state = getPaginationState(tab, sort);
     const pageSize = tab === "creators" ? CREATORS_PAGE_SIZE : PAGE_SIZE;
@@ -111,18 +170,32 @@ export async function loadSidebarContent({
         
         // 渲染卡片
         const fragment = document.createDocumentFragment();
+        const animationType = getAnimationTypeForTab(tab);
+        const cards = [];
         
         if (tab === "tools" || tab === "apps" || tab === "recommends") {
             displayData.forEach(data => {
-                fragment.appendChild(createItemCard(data, currentUser));
+                const card = createItemCard(data, currentUser);
+                cards.push(card);
+                fragment.appendChild(card);
             });
         } else if (tab === "creators") {
             displayData.forEach(data => {
-                fragment.appendChild(createCreatorCard(data, currentUser));
+                const card = createCreatorCard(data, currentUser);
+                cards.push(card);
+                fragment.appendChild(card);
             });
         }
         
         contentArea.appendChild(fragment);
+        
+        // ✨ 应用动画（仅对首次渲染的可见卡片）
+        if (!append) {
+            const visibleCount = Math.min(cards.length, 10); // 只对前10张卡片播放动画
+            cards.forEach((card, index) => {
+                applyCardAnimation(card, animationType, index, visibleCount);
+            });
+        }
         
         // 对新渲染的图片启用懒加载
         lazyLoadImages(contentArea, "img:not(.lazy-loaded):not(.lazy-loading)");
@@ -299,7 +372,7 @@ export async function refreshSidebarContent(params) {
 // 📊 预加载相邻标签页数据
 // ==========================================
 export async function preloadAdjacentTabs(currentTab, sort) {
-    const tabs = ["tools", "apps", "recommends", "creators"];
+    const tabs = ["tools", "apps", "recommends", "creators", "tasks", "posts"];
     const currentIndex = tabs.indexOf(currentTab);
     
     // 预加载前后各一个标签页
@@ -318,6 +391,9 @@ export async function preloadAdjacentTabs(currentTab, sort) {
                 let response;
                 if (tab === "creators") {
                     response = await api.getCreators(sort, 100);
+                } else if (tab === "posts" || tab === "tasks") {
+                    // 讨论区/任务榜使用独立组件，不需要预加载
+                    continue;
                 } else {
                     const itemType = tab === "tools" ? "tool" : (tab === "apps" ? "app" : "recommend");
                     response = await api.getItems(itemType, sort, 200);

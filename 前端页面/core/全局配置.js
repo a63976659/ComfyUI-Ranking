@@ -39,7 +39,7 @@ export const API = {
 // ==========================================
 // 注意：前端仅用于UI显示控制，后端从环境变量 ADMIN_ACCOUNTS 读取
 // 修改此处需同步修改云端环境变量
-export const ADMIN_ACCOUNTS = new Set(["666666", "123456", "888888"]);
+export const ADMIN_ACCOUNTS = new Set(["123456", "888888"]);
 
 /**
  * 检查账号是否为管理员

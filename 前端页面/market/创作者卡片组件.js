@@ -11,8 +11,9 @@
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { createCommentSection } from "../social/评论与互动组件.js";
 import { renderTipLevelHTML } from "../components/打赏等级工具.js";
-import { getBannerCacheKey } from "../core/全局配置.js";  // 🖼️ 背景图缓存Key
-import { getSettings } from "../components/全局设置组件.js";  // ⚙️ 获取设置
+import { getBannerCacheKey } from "../core/全局配置.js";
+import { getSettings } from "../components/全局设置组件.js";
+import { t } from "../components/用户体验增强.js";
 
 function loadECharts() {
     return new Promise((resolve, reject) => {
@@ -20,7 +21,7 @@ function loadECharts() {
         const script = document.createElement("script");
         script.src = "https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js";
         script.onload = () => resolve(window.echarts);
-        script.onerror = () => reject(new Error("ECharts 加载失败"));
+        script.onerror = () => reject(new Error("ECharts load failed"));
         document.head.appendChild(script);
     });
 }
@@ -41,7 +42,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
     if (!tipBoard || tipBoard.length === 0) {
         container.innerHTML = `
             <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #FF9800;">${title}</div>
-            <div style="color: #666; font-size: 12px; text-align: center; padding: 15px 0;">暂无赞赏记录</div>
+            <div style="color: #666; font-size: 12px; text-align: center; padding: 15px 0;">${t('creator.no_tips')}</div>
         `;
         return container;
     }
@@ -54,7 +55,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
     let listHtml = top10.map((entry, idx) => {
         const rankColor = rankColors[idx] || "#888";
         const rankIcon = idx < 3 ? ["🥇", "🥈", "🥉"][idx] : `<span style="color:${rankColor}">#${idx + 1}</span>`;
-        const displayName = entry.is_anon ? "匿名用户" : entry.account;
+        const displayName = entry.is_anon ? t('creator.anonymous') : entry.account;
         const nameStyle = entry.is_anon ? "color: #888; font-style: italic;" : "color: #4CAF50; cursor: pointer;";
         
         // 使用统一等级工具获取等级图标

@@ -10,6 +10,7 @@
 
 import { renderTipBoardHTML } from "../components/打赏等级工具.js";
 import { CACHE, getBannerCacheKey, isAdmin } from "../core/全局配置.js";
+import { t } from "../components/用户体验增强.js";
 
 export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs) {
     // 🚀 核心新增：使用统一工具渲染打赏总榜（带星星/月亮/太阳等级）
@@ -35,35 +36,35 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
     if (isSettingsView && isMe) {
         return `
             <button id="btn-back-profile" style="align-self: flex-start; margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-                <span style="font-size: 14px;">⬅</span> 返回
+                <span style="font-size: 14px;">⬅</span> ${t('common.back')}
             </button>
         `;
     }
 
     const actionButtons = isMe 
         ? `<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
-               <button id="btn-wallet" style="background: #FF9800; border: none; color: white; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 充值积分</button>
-               <button id="btn-withdraw" style="background: rgba(76,175,80,0.2); border: 1px solid #4CAF50; color: #4CAF50; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.3)'" onmouseout="this.style.background='rgba(76,175,80,0.2)'">💸 收益提现</button>
+               <button id="btn-wallet" style="background: #FF9800; border: none; color: white; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 ${t('profile.recharge')}</button>
+               <button id="btn-withdraw" style="background: rgba(76,175,80,0.2); border: 1px solid #4CAF50; color: #4CAF50; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.3)'" onmouseout="this.style.background='rgba(76,175,80,0.2)'">💸 ${t('profile.withdraw')}</button>
            </div>`
-        : `<button id="btn-tip-user" style="width: 100%; background: #FF9800; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s; margin-bottom: 8px;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🎁 打赏支持</button>
-           <button id="btn-send-msg" style="width: 100%; background: #2196F3; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">✉️ 私信</button>
-           <button id="btn-follow-user" style="width: 100%; background: ${isFollowing ? '#4CAF50' : '#4CAF50'}; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-top: 8px;">${isFollowing ? '✔️ 已关注' : '➕ 关注作者'}</button>`;
+        : `<button id="btn-tip-user" style="width: 100%; background: #FF9800; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s; margin-bottom: 8px;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🎁 ${t('profile.tip_support')}</button>
+           <button id="btn-send-msg" style="width: 100%; background: #2196F3; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">✉️ ${t('profile.send_message')}</button>
+           <button id="btn-follow-user" style="width: 100%; background: ${isFollowing ? '#4CAF50' : '#4CAF50'}; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-top: 8px;">${isFollowing ? `✔️ ${t('profile.followed')}` : `➕ ${t('profile.follow_author')}`}</button>`;
 
     // 统计数据区域（现在在背景图内）
     const statsHtml = `
         <div style="display: flex; gap: 15px; font-size: 12px; color: rgba(255,255,255,0.9); flex-wrap: wrap; margin-top: 15px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
             ${isMe ? `
                 <div style="display:flex; gap: 12px;">
-                    <span>💰 余额: <strong style="color:#FF9800;">${userData.balance || 0}</strong></span>
-                    <span>🛍️ 销售: <strong style="color:#4CAF50;">${userData.earn_balance || 0}</strong></span>
-                    <span>🎁 打赏: <strong style="color:#E91E63;">${userData.tip_balance || 0}</strong></span>
+                    <span>💰 ${t('profile.balance')}: <strong style="color:#FF9800;">${userData.balance || 0}</strong></span>
+                    <span>🛍️ ${t('profile.sales')}: <strong style="color:#4CAF50;">${userData.earn_balance || 0}</strong></span>
+                    <span>🎁 ${t('profile.tips')}: <strong style="color:#E91E63;">${userData.tip_balance || 0}</strong></span>
                 </div>
             ` : ''}
             <div style="display:flex; gap: 12px;">
-                <span>👍 获赞: <strong style="color:#fff;">${userData.receivedLikes || 0}</strong></span>
-                <span>⭐ 收藏: <strong style="color:#fff;">${userData.receivedFavorites || 0}</strong></span>
-                <span>👥 粉丝: <strong style="color:#fff;">${userData.followers ? userData.followers.length : 0}</strong></span>
-                <span>🏃 关注: <strong style="color:#fff;">${followingCount}</strong></span>
+                <span>👍 ${t('profile.received_likes')}: <strong style="color:#fff;">${userData.receivedLikes || 0}</strong></span>
+                <span>⭐ ${t('profile.received_favorites')}: <strong style="color:#fff;">${userData.receivedFavorites || 0}</strong></span>
+                <span>👥 ${t('profile.followers_count')}: <strong style="color:#fff;">${userData.followers ? userData.followers.length : 0}</strong></span>
+                <span>🏃 ${t('profile.following_count')}: <strong style="color:#fff;">${followingCount}</strong></span>
             </div>
         </div>
     `;
@@ -75,12 +76,12 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                 <!-- 顶部导航栏 -->
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <button id="btn-back-profile" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-                        <span style="font-size: 14px;">⬅</span> 返回
+                        <span style="font-size: 14px;">⬅</span> ${t('common.back')}
                     </button>
                     ${isMe ? `
                     <div style="display: flex; gap: 10px;">
-                        <button id="btn-open-settings" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #ccc; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.color='#fff'; this.style.borderColor='#888'" onmouseout="this.style.color='#ccc'; this.style.borderColor='rgba(85,85,85,0.8)'">⚙️ 设置</button>
-                        <button id="btn-logout" style="background: rgba(244,67,54,0.2); border: 1px solid #F44336; color: #F44336; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='rgba(244,67,54,0.2)'; this.style.color='#F44336'">🚪 登出</button>
+                        <button id="btn-open-settings" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #ccc; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.color='#fff'; this.style.borderColor='#888'" onmouseout="this.style.color='#ccc'; this.style.borderColor='rgba(85,85,85,0.8)'">⚙️ ${t('profile.settings')}</button>
+                        <button id="btn-logout" style="background: rgba(244,67,54,0.2); border: 1px solid #F44336; color: #F44336; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='rgba(244,67,54,0.2)'; this.style.color='#F44336'">🚪 ${t('profile.logout')}</button>
                     </div>` : ''}
                 </div>
                 
@@ -90,10 +91,10 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                     <div style="flex: 1; padding-right: 150px;">
                         <div style="font-size: 20px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; text-shadow: 0 2px 4px rgba(0,0,0,0.6);">
                             ${userData.name}
-                            <span style="font-size: 12px; background: rgba(68,68,68,0.8); padding: 2px 6px; border-radius: 4px; font-weight: normal; backdrop-filter: blur(4px);">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age !== undefined && userData.age !== null ? userData.age : '未知'}岁</span>
+                            <span style="font-size: 12px; background: rgba(68,68,68,0.8); padding: 2px 6px; border-radius: 4px; font-weight: normal; backdrop-filter: blur(4px);">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age !== undefined && userData.age !== null ? userData.age : t('profile.unknown_age')}${t('profile.age_years')}</span>
                         </div>
-                        <div style="font-size: 12px; color: rgba(255,255,255,0.85); margin-bottom: 8px; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">📍 ${userData.country || '保密'} - ${userData.region || ''}</div>
-                        <div style="font-size: 13px; color: rgba(255,255,255,0.95); line-height: 1.4; word-break: break-all; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">${userData.intro || '这个人很懒，什么都没写...'}</div>
+                        <div style="font-size: 12px; color: rgba(255,255,255,0.85); margin-bottom: 8px; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">📍 ${userData.country || t('profile.location_secret')} - ${userData.region || ''}</div>
+                        <div style="font-size: 13px; color: rgba(255,255,255,0.95); line-height: 1.4; word-break: break-all; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">${userData.intro || t('profile.no_intro')}</div>
                     </div>
                     <div style="position: absolute; top: 0; right: 0; width: 135px; display: flex; flex-direction: column; gap: 8px;">${actionButtons}</div>
                 </div>
@@ -107,7 +108,7 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
     // 🚀 将开头计算好的 boardHtml 嵌入为专用的打赏榜单面板
     const tipsHtml = `
         <div style="background: rgba(233, 30, 99, 0.05); border: 1px solid rgba(233, 30, 99, 0.2); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-            <div style="font-size: 14px; font-weight: bold; color: #E91E63; margin-bottom: 10px; display:flex; align-items:center; gap:6px;">💖 创作者赞赏总榜 (TOP 10)</div>
+            <div style="font-size: 14px; font-weight: bold; color: #E91E63; margin-bottom: 10px; display:flex; align-items:center; gap:6px;">💖 ${t('profile.creator_tip_board')}</div>
             ${boardHtml}
         </div>
     `;
@@ -124,7 +125,7 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                     <div style="font-weight: bold; font-size: 15px; color: #FF9800; display: flex; align-items: center; gap: 6px;">
                         📢 全站系统公告发布
                     </div>
-                    <div style="font-size: 11px; color: #E91E63; background:rgba(233,30,99,0.1); padding: 2px 6px; border-radius: 4px;">内测最高特权</div>
+                    <div id="admin-privilege-badge" style="font-size: 11px; color: #E91E63; background:rgba(233,30,99,0.1); padding: 2px 6px; border-radius: 4px;">加载中...</div>
                 </div>
                 <textarea id="admin-ann-content" placeholder="在此输入公告内容（例如 V1.2.0 内测更新公告），支持直接回车换行，内容将在所有用户的消息提醒中醒目展示，发布后无法撤回，请谨慎操作！" style="width: 100%; height: 120px; background: #232738; border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; color: #eee; padding: 10px; font-size: 13px; line-height: 1.6; resize: none; margin-bottom: 12px; box-sizing: border-box; outline: none; transition: border-color 0.2s;" onfocus="this.style.borderColor='#FF9800'" onblur="this.style.borderColor='rgba(255,255,255,0.05)'"></textarea>
                 <button id="btn-admin-ann-send" style="width: 100%; background: #E91E63; color: #fff; border: none; padding: 10px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; transition: background 0.2s, transform 0.1s;" onmouseover="this.style.background='#D81B60'; this.style.transform='scale(1.01)'" onmouseout="this.style.background='#E91E63'; this.style.transform='scale(1)'">

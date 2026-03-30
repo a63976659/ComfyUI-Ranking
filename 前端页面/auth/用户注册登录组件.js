@@ -1,6 +1,7 @@
 import { renderLoginForm } from "./登录表单组件.js";
 import { renderRegisterForm } from "./注册表单组件.js";
 import { renderResetForm } from "./重置密码表单组件.js";
+import { t } from "../components/用户体验增强.js";
 
 export function createAuthView(onSuccessCallback) {
     const container = document.createElement("div");
@@ -13,9 +14,9 @@ export function createAuthView(onSuccessCallback) {
 
     container.innerHTML = `
         <button id="btn-back-auth" style="background: #333; border: 1px solid #555; color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-bottom: 15px; width: fit-content; transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='#333'; this.style.borderColor='#555'">
-    <span style="font-size: 14px;">⬅</span> 返回
+    <span style="font-size: 14px;">⬅</span> ${t('common.back')}
 </button>
-        <div style="text-align:center; font-weight:bold; font-size:16px; margin-bottom:10px; color:#fff;">🔐 社区账号验证</div>
+        <div style="text-align:center; font-weight:bold; font-size:16px; margin-bottom:10px; color:#fff;">🔐 ${t('auth.title')}</div>
         <div id="auth-form-container"></div>
     `;
     

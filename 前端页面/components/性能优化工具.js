@@ -10,9 +10,185 @@
 //   - 所有图片渲染场景 (使用懒加载)
 // ==========================================
 // 🏗️ P2架构优化：使用配置中心常量
+// 🔒 P0安全优化：敏感数据脱敏
 // ==========================================
 
 import { CACHE, PAGINATION } from "../core/全局配置.js";
+
+// ==========================================
+// 🔒 P0安全优化：敏感数据脱敏工具
+// ==========================================
+// 特点：
+//   - 金额数据加密传输
+//   - 敏感数据不存 localStorage
+//   - 内存缓存自动过期
+
+// 🔐 加密密钥（每次会话随机生成）
+const SESSION_KEY = crypto.getRandomValues(new Uint8Array(16)).reduce((a, b) => a + b.toString(16).padStart(2, '0'), '');
+
+// 🔐 敏感数据内存缓存（不存 localStorage）
+const sensitiveCache = new Map();
+
+// 🔧 P3优化：缓存大小限制和统一清理定时器
+const MAX_SENSITIVE_ITEMS = 100;
+let sensitiveCacheCleanupTimer = null;
+
+/**
+ * 🔒 简单加密（用于前端显示脱敏，非安全加密）
+ * @param {number} amount - 金额
+ * @returns {string} 加密后的字符串
+ */
+export function encryptAmount(amount) {
+    const str = String(amount);
+    let result = '';
+    for (let i = 0; i < str.length; i++) {
+        const charCode = str.charCodeAt(i) ^ SESSION_KEY.charCodeAt(i % SESSION_KEY.length);
+        result += String.fromCharCode(charCode);
+    }
+    return btoa(result);
+}
+
+/**
+ * 🔒 解密金额
+ * @param {string} encrypted - 加密字符串
+ * @returns {number} 原始金额
+ */
+export function decryptAmount(encrypted) {
+    try {
+        const decoded = atob(encrypted);
+        let result = '';
+        for (let i = 0; i < decoded.length; i++) {
+            const charCode = decoded.charCodeAt(i) ^ SESSION_KEY.charCodeAt(i % SESSION_KEY.length);
+            result += String.fromCharCode(charCode);
+        }
+        return parseInt(result, 10) || 0;
+    } catch {
+        return 0;
+    }
+}
+
+/**
+ * 🔒 设置敏感数据缓存（仅内存，不存 localStorage）
+ * @param {string} key - 缓存键
+ * @param {any} value - 缓存值
+ * @param {number} ttl - 过期时间（毫秒），默认5分钟
+ */
+export function setSensitiveCache(key, value, ttl = 5 * 60 * 1000) {
+    // 🔧 P3优化：限制缓存大小，防止内存持续增长
+    if (sensitiveCache.size >= MAX_SENSITIVE_ITEMS) {
+        // 删除最早的项
+        const firstKey = sensitiveCache.keys().next().value;
+        sensitiveCache.delete(firstKey);
+    }
+    
+    const expireAt = Date.now() + ttl;
+    sensitiveCache.set(key, { value, expireAt });
+    
+    // 🔧 P3优化：统一清理定时器（仅一个，避免创建大量 setTimeout）
+    if (!sensitiveCacheCleanupTimer) {
+        sensitiveCacheCleanupTimer = setInterval(() => {
+            const now = Date.now();
+            for (const [k, v] of sensitiveCache) {
+                if (now >= v.expireAt) {
+                    sensitiveCache.delete(k);
+                }
+            }
+            // 缓存清空时停止定时器
+            if (sensitiveCache.size === 0) {
+                clearInterval(sensitiveCacheCleanupTimer);
+                sensitiveCacheCleanupTimer = null;
+            }
+        }, 60000);  // 每分钟清理一次
+    }
+}
+
+/**
+ * 🔒 获取敏感数据缓存
+ * @param {string} key - 缓存键
+ * @returns {any|null}
+ */
+export function getSensitiveCache(key) {
+    if (!sensitiveCache.has(key)) return null;
+    
+    const cached = sensitiveCache.get(key);
+    if (Date.now() >= cached.expireAt) {
+        sensitiveCache.delete(key);
+        return null;
+    }
+    return cached.value;
+}
+
+/**
+ * 🔒 清除敏感数据缓存
+ * @param {string} key - 缓存键，不传则清除全部
+ */
+export function clearSensitiveCache(key) {
+    if (key) {
+        sensitiveCache.delete(key);
+    } else {
+        sensitiveCache.clear();
+    }
+}
+
+/**
+ * 🔒 敏感字段列表（这些字段不应该存到 localStorage）
+ */
+export const SENSITIVE_FIELDS = [
+    'balance',           // 余额
+    'earn_balance',      // 收益余额
+    'tip_balance',       // 打赏余额
+    'frozen_balance',    // 冻结余额
+    'password',          // 密码
+    'password_hash',     // 密码哈希
+    'token',             // Token
+    'netdisk_password',  // 网盘密码
+    'github_token',      // GitHub Token
+    'transactions',      // 交易记录
+    'tx_hash',           // 交易哈希
+];
+
+/**
+ * 🔒 过滤敏感字段（用于存储前脱敏）
+ * @param {Object} data - 原始数据
+ * @returns {Object} 脱敏后的数据
+ */
+export function filterSensitiveData(data) {
+    if (!data || typeof data !== 'object') return data;
+    
+    const filtered = Array.isArray(data) ? [...data] : { ...data };
+    
+    if (Array.isArray(filtered)) {
+        return filtered.map(item => filterSensitiveData(item));
+    }
+    
+    for (const field of SENSITIVE_FIELDS) {
+        if (field in filtered) {
+            delete filtered[field];
+        }
+    }
+    
+    // 递归处理嵌套对象
+    for (const key in filtered) {
+        if (filtered[key] && typeof filtered[key] === 'object') {
+            filtered[key] = filterSensitiveData(filtered[key]);
+        }
+    }
+    
+    return filtered;
+}
+
+/**
+ * 🔒 金额显示脱敏（部分隐藏）
+ * @param {number} amount - 金额
+ * @param {boolean} hide - 是否隐藏
+ * @returns {string}
+ */
+export function maskAmount(amount, hide = false) {
+    if (hide) {
+        return '****';
+    }
+    return String(amount);
+}
 
 // ==========================================
 // 📦 缓存管理器
@@ -748,4 +924,313 @@ export function batchRequest(batchKey, itemId, batchFetcher) {
             }
         }, BATCH_DELAY);
     });
+}
+
+
+// ==========================================
+// 🚀 P1性能优化：虚拟滚动组件
+// ==========================================
+// 特点：
+//   - 只渲染可视区域 + 缓冲区 DOM，大幅减少 DOM 节点
+//   - 支持动态高度卡片
+//   - 平滑滚动体验
+
+/**
+ * 创建虚拟滚动列表
+ * @param {Object} options - 配置选项
+ * @param {HTMLElement} options.container - 滚动容器
+ * @param {Array} options.items - 数据数组
+ * @param {Function} options.renderItem - 渲染单个卡片的函数 (item, index) => HTMLElement
+ * @param {number} options.itemHeight - 预估卡片高度（px），默认 160
+ * @param {number} options.buffer - 缓冲区卡片数，默认 5
+ * @returns {Object} 虚拟滚动实例
+ */
+export function createVirtualScroller(options) {
+    const {
+        container,
+        items = [],
+        renderItem,
+        itemHeight = 160,
+        buffer = 5
+    } = options;
+    
+    let _items = [...items];
+    let _itemHeights = new Map();  // 记录实际高度
+    let _scrollTop = 0;
+    let _containerHeight = container.clientHeight || 600;
+    let _isDestroyed = false;
+    
+    // 创建内部结构
+    const wrapper = document.createElement("div");
+    wrapper.className = "virtual-scroll-wrapper";
+    wrapper.style.cssText = "position: relative; width: 100%;";
+    
+    const content = document.createElement("div");
+    content.className = "virtual-scroll-content";
+    content.style.cssText = "position: absolute; top: 0; left: 0; right: 0;";
+    
+    wrapper.appendChild(content);
+    container.innerHTML = "";
+    container.appendChild(wrapper);
+    
+    // 计算总高度
+    const getTotalHeight = () => {
+        let total = 0;
+        for (let i = 0; i < _items.length; i++) {
+            total += _itemHeights.get(i) || itemHeight;
+        }
+        return total;
+    };
+    
+    // 获取可见范围
+    const getVisibleRange = () => {
+        let startIdx = 0;
+        let endIdx = 0;
+        let accHeight = 0;
+        
+        // 找开始索引
+        for (let i = 0; i < _items.length; i++) {
+            const h = _itemHeights.get(i) || itemHeight;
+            if (accHeight + h >= _scrollTop) {
+                startIdx = Math.max(0, i - buffer);
+                break;
+            }
+            accHeight += h;
+        }
+        
+        // 找结束索引
+        accHeight = 0;
+        for (let i = 0; i < _items.length; i++) {
+            accHeight += _itemHeights.get(i) || itemHeight;
+            if (accHeight >= _scrollTop + _containerHeight) {
+                endIdx = Math.min(_items.length - 1, i + buffer);
+                break;
+            }
+        }
+        if (endIdx === 0) endIdx = Math.min(_items.length - 1, startIdx + Math.ceil(_containerHeight / itemHeight) + buffer * 2);
+        
+        return { startIdx, endIdx };
+    };
+    
+    // 计算偶移量
+    const getOffsetTop = (idx) => {
+        let offset = 0;
+        for (let i = 0; i < idx; i++) {
+            offset += _itemHeights.get(i) || itemHeight;
+        }
+        return offset;
+    };
+    
+    // 渲染可见卡片
+    const render = () => {
+        if (_isDestroyed) return;
+        
+        const { startIdx, endIdx } = getVisibleRange();
+        const fragment = document.createDocumentFragment();
+        
+        for (let i = startIdx; i <= endIdx; i++) {
+            const item = _items[i];
+            if (!item) continue;
+            
+            const el = renderItem(item, i);
+            el.style.position = "absolute";
+            el.style.top = getOffsetTop(i) + "px";
+            el.style.left = "0";
+            el.style.right = "0";
+            el.dataset.virtualIdx = i;
+            
+            fragment.appendChild(el);
+        }
+        
+        content.innerHTML = "";
+        content.appendChild(fragment);
+        
+        // 更新容器高度
+        wrapper.style.height = getTotalHeight() + "px";
+        
+        // 测量实际高度（延迟执行）
+        requestAnimationFrame(() => {
+            content.querySelectorAll("[data-virtual-idx]").forEach(el => {
+                const idx = parseInt(el.dataset.virtualIdx);
+                const actualHeight = el.offsetHeight;
+                if (actualHeight && actualHeight !== (_itemHeights.get(idx) || itemHeight)) {
+                    _itemHeights.set(idx, actualHeight);
+                }
+            });
+        });
+    };
+    
+    // 滚动事件（节流）
+    let rafId = null;
+    const handleScroll = () => {
+        if (rafId) return;
+        rafId = requestAnimationFrame(() => {
+            _scrollTop = container.scrollTop;
+            render();
+            rafId = null;
+        });
+    };
+    
+    // 窗口尺寸变化
+    const handleResize = debounce(() => {
+        _containerHeight = container.clientHeight;
+        render();
+    }, 200);
+    
+    // 初始化
+    const init = () => {
+        container.addEventListener("scroll", handleScroll, { passive: true });
+        window.addEventListener("resize", handleResize);
+        render();
+    };
+    
+    // 销毁
+    const destroy = () => {
+        _isDestroyed = true;
+        container.removeEventListener("scroll", handleScroll);
+        window.removeEventListener("resize", handleResize);
+        if (rafId) cancelAnimationFrame(rafId);
+    };
+    
+    // 更新数据
+    const setItems = (newItems) => {
+        _items = [...newItems];
+        _itemHeights.clear();
+        render();
+    };
+    
+    // 滚动到指定位置
+    const scrollToIndex = (idx) => {
+        const offset = getOffsetTop(idx);
+        container.scrollTop = offset;
+    };
+    
+    init();
+    
+    return {
+        render,
+        destroy,
+        setItems,
+        scrollToIndex,
+        get items() { return _items; },
+        get visibleRange() { return getVisibleRange(); }
+    };
+}
+
+
+// ==========================================
+// 🚀 P1性能优化：分级缓存 TTL
+// ==========================================
+// 特点：
+//   - 榜单数据 5 分钟
+//   - 用户资料 30 分钟
+//   - 静态配置 24 小时
+
+export const CACHE_TTL = {
+    REALTIME: 1 * 60 * 1000,       // 1分钟：实时数据（如在线状态）
+    HOT: 5 * 60 * 1000,            // 5分钟：热点数据（榜单、趋势）
+    NORMAL: 30 * 60 * 1000,        // 30分钟：普通数据（用户资料）
+    STATIC: 24 * 60 * 60 * 1000,   // 24小时：静态数据（配置、图片）
+    PERMANENT: 7 * 24 * 60 * 60 * 1000  // 7天：几乎不变的数据
+};
+
+/**
+ * 根据数据类型获取推荐 TTL
+ * @param {string} dataType - 数据类型
+ * @returns {number} TTL 毫秒数
+ */
+export function getRecommendedTTL(dataType) {
+    const ttlMap = {
+        // 热点数据（5分钟）
+        'items_list': CACHE_TTL.HOT,
+        'creators_list': CACHE_TTL.HOT,
+        'rankings': CACHE_TTL.HOT,
+        'tip_board': CACHE_TTL.HOT,
+        'trend_data': CACHE_TTL.HOT,
+        
+        // 普通数据（30分钟）
+        'user_profile': CACHE_TTL.NORMAL,
+        'user_settings': CACHE_TTL.NORMAL,
+        'comments': CACHE_TTL.NORMAL,
+        'notifications': CACHE_TTL.NORMAL,
+        
+        // 静态数据（24小时）
+        'config': CACHE_TTL.STATIC,
+        'categories': CACHE_TTL.STATIC,
+        'image_url': CACHE_TTL.STATIC,
+        
+        // 默认
+        'default': CACHE_TTL.NORMAL
+    };
+    
+    return ttlMap[dataType] || ttlMap['default'];
+}
+
+/**
+ * 智能缓存设置（自动选择 TTL）
+ * @param {string} key - 缓存键
+ * @param {any} value - 缓存值
+ * @param {string} dataType - 数据类型（用于自动选择 TTL）
+ * @param {boolean} persist - 是否持久化
+ */
+export function setSmartCache(key, value, dataType = 'default', persist = true) {
+    const ttl = getRecommendedTTL(dataType);
+    setCache(key, value, ttl, persist);
+}
+
+
+// ==========================================
+// 🚀 P1性能优化：WebP 图片转换
+// ==========================================
+
+// 检测浏览器是否支持 WebP
+let _webpSupported = null;
+export async function isWebPSupported() {
+    if (_webpSupported !== null) return _webpSupported;
+    
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            _webpSupported = img.width > 0 && img.height > 0;
+            resolve(_webpSupported);
+        };
+        img.onerror = () => {
+            _webpSupported = false;
+            resolve(false);
+        };
+        img.src = 'data:image/webp;base64,UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==';
+    });
+}
+
+/**
+ * 转换图片 URL 为 WebP 格式（如果服务器支持）
+ * @param {string} url - 原始图片 URL
+ * @returns {string} 转换后的 URL
+ */
+export function toWebP(url) {
+    if (!url || typeof url !== 'string') return url;
+    
+    // 已经是 WebP 或 data URL，跳过
+    if (url.endsWith('.webp') || url.startsWith('data:')) return url;
+    
+    // 检查是否是我们的图片代理 URL
+    if (url.includes('/api/image_proxy')) {
+        // 添加 webp 参数
+        const separator = url.includes('?') ? '&' : '?';
+        return `${url}${separator}format=webp`;
+    }
+    
+    return url;
+}
+
+/**
+ * 批量转换图片数组为 WebP
+ * @param {string[]} urls - 图片 URL 数组
+ * @returns {string[]} 转换后的数组
+ */
+export async function toWebPBatch(urls) {
+    const supported = await isWebPSupported();
+    if (!supported) return urls;
+    
+    return urls.map(url => toWebP(url));
 }

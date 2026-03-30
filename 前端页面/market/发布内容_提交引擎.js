@@ -1,6 +1,7 @@
 // 前端页面/market/发布内容_提交引擎.js
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
+import { t } from "../components/用户体验增强.js";
 
 /**
  * 🟢 新增核心逻辑：利用 HTML5 Canvas 纯前端裁剪并压缩头像
@@ -72,23 +73,23 @@ export async function uploadFile(file, file_type) {
         
         // 拦截点：如果是头像，就在纯内存中先进行裁剪、缩放、压缩
         if (file_type === "avatar" && file.type && file.type.startsWith("image/")) {
-            showToast("🖼️ 正在本地处理和压缩头像...");
+            showToast(`🖼️ ${t('publish.processing_avatar')}`);
             fileToUpload = await processAvatar(file);
         }
 
-        showToast(`🌐 正在上传文件 ${(fileToUpload.size/1024).toFixed(1)}KB 至云端...`);
+        showToast(`🌐 ${t('publish.uploading_file', { size: (fileToUpload.size/1024).toFixed(1) })}`);
         const res = await api.uploadFile(fileToUpload, file_type);
         
         if (res.status === "success") {
-            showToast("✅ 文件上传成功！");
+            showToast(`✅ ${t('publish.upload_success')}`);
             return res.url; 
         } else {
-            showToast(`❌ 文件上传失败: ${res.error || res.message}`, "error");
+            showToast(`❌ ${t('publish.upload_failed')}: ${res.error || res.message}`, "error");
             return null;
         }
     } catch (error) {
         console.error("Upload Error:", error);
-        showToast(`❌ 上传过程出现异常: ${error.message}`, "error");
+        showToast(`❌ ${t('publish.upload_error')}: ${error.message}`, "error");
         return null;
     }
 }
@@ -140,22 +141,22 @@ export async function handlePublishSubmit(params) {
     let github_token = null;
     if (boxPrivateRepo.style.display !== "none" && isPrivateCheck.checked) {
         github_token = container.querySelector("#pub-github-token").value.trim();
-        if (!github_token) return showToast("勾选了私有仓库，请务必填写 PAT 访问密钥！", "warning");
+        if (!github_token) return showToast(t('publish.pat_required'), "warning");
     }
 
-    if (!title || !shortDesc) return showToast("请填写名称和简短描述！", "warning");
-    if (type === "recommend_link" && !finalLink) return showToast("第三方链接必须提供源地址！", "warning");
-    if ((type === "tool" || type === "recommend_tool") && !isJsonUpload && !isNetdisk && !finalLink) return showToast("必须提供 Git 安装地址！", "warning");
-    if (isJsonUpload && !jsonFile && !finalLink) return showToast("必须上传工作流 JSON 文件！", "warning");
-    if (isNetdisk && !finalLink) return showToast("必须填写网盘链接！", "warning");  // ☁️
+    if (!title || !shortDesc) return showToast(t('publish.name_desc_required'), "warning");
+    if (type === "recommend_link" && !finalLink) return showToast(t('publish.link_required'), "warning");
+    if ((type === "tool" || type === "recommend_tool") && !isJsonUpload && !isNetdisk && !finalLink) return showToast(t('publish.git_required'), "warning");
+    if (isJsonUpload && !jsonFile && !finalLink) return showToast(t('publish.json_required'), "warning");
+    if (isNetdisk && !finalLink) return showToast(t('publish.netdisk_required'), "warning");  // ☁️
 
-    submitBtn.innerHTML = "⏳ 正在连接云端...";
+    submitBtn.innerHTML = `⏳ ${t('publish.connecting')}`;
     submitBtn.disabled = true; 
     submitBtn.style.background = "#555";
 
     try {
         if (isJsonUpload && jsonFile) {
-            submitBtn.innerHTML = "⏳ 正在安全上传文件...";
+            submitBtn.innerHTML = `⏳ ${t('publish.uploading_secure')}`;
             const uploadType = type.includes("app") ? "app" : (type.includes("tool") ? "tool" : "recommend");
             const jsonUploadRes = await api.uploadFile(jsonFile, uploadType);
             finalLink = jsonUploadRes.url; 
@@ -166,11 +167,11 @@ export async function handlePublishSubmit(params) {
         let imageUrls = isEditMode ? (editItemData.imageUrls || []) : [];
         
         if (imageFiles && imageFiles.length > 0) {
-            submitBtn.innerHTML = `⏳ 正在上传图片 (0/${imageFiles.length})...`;
+            submitBtn.innerHTML = `⏳ ${t('publish.uploading_images', { current: 0, total: imageFiles.length })}`;
             const uploadedUrls = [];
             
             for (let i = 0; i < imageFiles.length; i++) {
-                submitBtn.innerHTML = `⏳ 正在上传图片 (${i + 1}/${imageFiles.length})...`;
+                submitBtn.innerHTML = `⏳ ${t('publish.uploading_images', { current: i + 1, total: imageFiles.length })}`;
                 const uploadRes = await api.uploadFile(imageFiles[i], "cover");
                 uploadedUrls.push(uploadRes.url);
             }
@@ -179,7 +180,7 @@ export async function handlePublishSubmit(params) {
             imageUrls = uploadedUrls;     // 全部图片URL
         }
 
-        submitBtn.innerHTML = "⏳ 正在同步全网数据库...";
+        submitBtn.innerHTML = `⏳ ${t('publish.syncing')}`;
         const submitData = { 
             type, title, shortDesc, fullDesc, price, link: finalLink, coverUrl, imageUrls,  // 🖼️ 添加 imageUrls
             author: currentUser.account, github_token,
@@ -189,14 +190,14 @@ export async function handlePublishSubmit(params) {
 
         if (isEditMode) {
             await api.updateItem(editItemData.id, currentUser.account, submitData);
-            showToast("✅ 修改已保存并同步全网！", "success");
+            showToast(`✅ ${t('publish.save_success')}`, "success");
         } else {
             await api.publishItem(submitData);
-            showToast("🎉 发布成功！您的作品已全网同步。", "success");
+            showToast(`🎉 ${t('publish.publish_success')}`, "success");
         }
         if (onSuccessCallback) onSuccessCallback();
     } catch (err) {
-        showToast("操作失败: " + err.message, "error");
+        showToast(`${t('common.operation_failed')}: ` + err.message, "error");
         submitBtn.disabled = false;
         submitBtn.innerHTML = submitBtnText;
         submitBtn.style.background = "#2196F3";

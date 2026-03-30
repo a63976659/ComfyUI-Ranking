@@ -9,6 +9,7 @@
 // ==========================================
 
 import { showToast } from "./UI交互提示组件.js";
+import { setLanguage, getLanguage, t } from "./用户体验增强.js";
 
 // 🔧 设置项 localStorage Key
 const SETTINGS_KEY = "ComfyCommunity_Settings";
@@ -16,10 +17,19 @@ const SETTINGS_KEY = "ComfyCommunity_Settings";
 // 🔧 默认设置值
 const DEFAULT_SETTINGS = {
     showCreatorBanner: true,  // 创作者卡片显示背景图
+    enableAnimations: true,   // ✨ 榜单切换动画
+    enableSoundEffects: true, // 🔊 动画音效
+    language: 'zh-CN',        // 🌐 界面语言
     // 🚀 后续可扩展更多设置项
     // compactMode: false,    // 紧凑模式
     // darkMode: true,        // 深色模式
 };
+
+// 🌐 语言选项（双语显示）
+const LANGUAGE_OPTIONS = [
+    { value: 'zh-CN', label: '简体中文 / Simplified Chinese' },
+    { value: 'en-US', label: 'English / 英语' }
+];
 
 /**
  * 📦 获取当前设置
@@ -105,6 +115,30 @@ export function createSettingsView() {
         .setting-item:hover {
             background: rgba(255,255,255,0.03);
         }
+        .setting-select {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            min-width: 200px;
+            outline: none;
+            transition: 0.2s;
+        }
+        .setting-select:hover {
+            border-color: #4CAF50;
+        }
+        .setting-select:focus {
+            border-color: #4CAF50;
+            box-shadow: 0 0 0 2px rgba(76,175,80,0.2);
+        }
+        .setting-select option {
+            background: #2a2a2a;
+            color: #fff;
+            padding: 8px;
+        }
     `;
     document.head.appendChild(styleSheet);
     
@@ -113,43 +147,84 @@ export function createSettingsView() {
         <div style="display: flex; align-items: center; gap: 10px; padding: 15px; border-bottom: 1px solid #444; background: #1a1a1a;">
             <!-- 🚀 返回按钮位置可调整参数：margin-left 控制右移，margin-top 控制下移 -->
             <button id="btn-back-settings" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-                <span style="font-size: 14px;">⬅</span> 返回
+                <span style="font-size: 14px;">⬅</span> ${t('common.back')}
             </button>
-            <span style="font-size: 16px; font-weight: bold; color: #fff;">⚙️ 界面设置</span>
+            <span style="font-size: 16px; font-weight: bold; color: #fff;">⚙️ ${t('settings.title')}</span>
         </div>
         
         <!-- 设置内容区域 -->
         <div style="padding: 0; flex: 1;">
             
+            <!-- 分类：通用设置 -->
+            <div style="padding: 16px 16px 10px; color: #2196F3; font-size: 13px; font-weight: bold; border-bottom: 1px solid #333; background: rgba(33,150,243,0.05);">
+                🌐 ${t('settings.general')}
+            </div>
+            
+            <!-- 设置项：界面语言 -->
+            <div class="setting-item">
+                <div style="flex: 1;">
+                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.language')} / Language</div>
+                    <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.language_desc')} / Select display language</div>
+                </div>
+                <select id="select-language" class="setting-select">
+                    ${LANGUAGE_OPTIONS.map(opt => 
+                        `<option value="${opt.value}" ${(settings.language || 'zh-CN') === opt.value ? 'selected' : ''}>${opt.label}</option>`
+                    ).join('')}
+                </select>
+            </div>
+            
             <!-- 分类：显示偏好 -->
-            <div style="padding: 16px 16px 10px; color: #4CAF50; font-size: 13px; font-weight: bold; border-bottom: 1px solid #333; background: rgba(76,175,80,0.05);">
-                📐 显示偏好
+            <div style="padding: 16px 16px 10px; color: #4CAF50; font-size: 13px; font-weight: bold; border-bottom: 1px solid #333; background: rgba(76,175,80,0.05); margin-top: 20px;">
+                📐 ${t('settings.display')}
             </div>
             
             <!-- 设置项：创作者卡片背景图 -->
             <div class="setting-item">
                 <div style="flex: 1;">
-                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">创作者卡片背景图</div>
-                    <div style="color: #888; font-size: 12px; line-height: 1.4;">开启后创作者列表卡片显示个人背景图，关闭后显示简洁纯色风格</div>
+                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.creator_banner')}</div>
+                    <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.creator_banner_desc')}</div>
                 </div>
                 <div id="switch-creator-banner" class="setting-switch ${settings.showCreatorBanner ? 'active' : ''}"></div>
             </div>
             
             <!-- 分类：更多功能 -->
             <div style="padding: 16px 16px 10px; color: #FF9800; font-size: 13px; font-weight: bold; border-bottom: 1px solid #333; background: rgba(255,152,0,0.05); margin-top: 20px;">
-                🚀 更多功能
+                ✨ ${t('settings.animation')}
             </div>
             
-            <!-- 占位提示 -->
-            <div style="padding: 30px 16px; color: #666; font-size: 13px; text-align: center;">
-                <div style="font-size: 32px; margin-bottom: 10px; opacity: 0.5;">🔧</div>
-                更多设置项即将推出，敬请期待...
+            <!-- 设置项：榜单切换动画 -->
+            <div class="setting-item">
+                <div style="flex: 1;">
+                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.animations')}</div>
+                    <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.animations_desc')}</div>
+                </div>
+                <div id="switch-animations" class="setting-switch ${settings.enableAnimations ? 'active' : ''}"></div>
+            </div>
+            
+            <!-- 设置项：动画音效 -->
+            <div class="setting-item">
+                <div style="flex: 1;">
+                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.sound')}</div>
+                    <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.sound_desc')}</div>
+                </div>
+                <div id="switch-sound-effects" class="setting-switch ${settings.enableSoundEffects ? 'active' : ''}"></div>
+            </div>
+            
+            <!-- 动画预览提示 -->
+            <div style="padding: 16px; background: rgba(33, 150, 243, 0.05); border-radius: 8px; margin: 16px; border: 1px dashed #333;">
+                <div style="color: #2196F3; font-size: 12px; font-weight: bold; margin-bottom: 8px;">🎨 ${t('settings.animation_preview')}</div>
+                <div style="color: #888; font-size: 11px; line-height: 1.5;">
+                    • ${t('settings.anim_cascade')}<br>
+                    • ${t('settings.anim_fan')}<br>
+                    • ${t('settings.anim_abyss')}<br>
+                    • ${t('settings.anim_dataflow')}
+                </div>
             </div>
         </div>
         
         <!-- 底部信息 -->
         <div style="padding: 15px; border-top: 1px solid #333; background: #1a1a1a; text-align: center;">
-            <div style="color: #666; font-size: 11px;">设置会自动保存到本地</div>
+            <div style="color: #666; font-size: 11px;">${t('settings.auto_save')}</div>
         </div>
     `;
     
@@ -158,6 +233,33 @@ export function createSettingsView() {
     // 返回按钮
     container.querySelector("#btn-back-settings").onclick = () => {
         window.dispatchEvent(new CustomEvent("comfy-route-back"));
+    };
+    
+    // 🌐 下拉控制：界面语言
+    const selectLanguage = container.querySelector("#select-language");
+    selectLanguage.onchange = () => {
+        const newLang = selectLanguage.value;
+        
+        const currentSettings = getSettings();
+        currentSettings.language = newLang;
+        saveSettings(currentSettings);
+        
+        // 同步到 i18n 模块
+        setLanguage(newLang);
+        
+        const langName = LANGUAGE_OPTIONS.find(opt => opt.value === newLang)?.label || newLang;
+        showToast(`🌐 ${t('settings.language_changed') || '语言已切换为'} ${langName.split(' / ')[0]}`, "success");
+        
+        // 🔄 直接重新渲染设置页面（无需先返回再打开，避免闪烁）
+        setTimeout(() => {
+            // 获取当前容器的父元素
+            const parent = container.parentElement;
+            if (parent) {
+                // 创建新的设置视图并替换
+                const newSettingsView = createSettingsView();
+                parent.replaceChild(newSettingsView, container);
+            }
+        }, 100);
     };
     
     // 🎛️ 开关控制：创作者背景图
@@ -170,7 +272,33 @@ export function createSettingsView() {
         currentSettings.showCreatorBanner = newValue;
         saveSettings(currentSettings);
         
-        showToast(newValue ? "已开启创作者背景图" : "已关闭创作者背景图", "success");
+        showToast(newValue ? `✅ ${t('settings.creator_banner')} ${t('settings.enabled')}` : `${t('settings.creator_banner')} ${t('settings.disabled')}`, "success");
+    };
+    
+    // 🎬 开关控制：榜单切换动画
+    const switchAnimations = container.querySelector("#switch-animations");
+    switchAnimations.onclick = () => {
+        const newValue = !switchAnimations.classList.contains("active");
+        switchAnimations.classList.toggle("active", newValue);
+        
+        const currentSettings = getSettings();
+        currentSettings.enableAnimations = newValue;
+        saveSettings(currentSettings);
+        
+        showToast(newValue ? `✨ ${t('settings.animations')} ${t('settings.enabled')}` : `${t('settings.animations')} ${t('settings.disabled')}`, "success");
+    };
+    
+    // 🔊 开关控制：动画音效
+    const switchSoundEffects = container.querySelector("#switch-sound-effects");
+    switchSoundEffects.onclick = () => {
+        const newValue = !switchSoundEffects.classList.contains("active");
+        switchSoundEffects.classList.toggle("active", newValue);
+        
+        const currentSettings = getSettings();
+        currentSettings.enableSoundEffects = newValue;
+        saveSettings(currentSettings);
+        
+        showToast(newValue ? `🔊 ${t('settings.sound')} ${t('settings.enabled')}` : `${t('settings.sound')} ${t('settings.disabled')}`, "success");
     };
     
     return container;

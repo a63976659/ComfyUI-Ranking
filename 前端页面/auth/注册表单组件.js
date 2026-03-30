@@ -1,6 +1,7 @@
 import { api } from "../core/网络请求API.js";
 import { regionData, getSortedCountries } from "./国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
+import { t } from "../components/用户体验增强.js";
 
 const DEFAULT_AVATAR_MALE = "https://via.placeholder.com/150/2196F3/FFFFFF?text=Male";
 const DEFAULT_AVATAR_FEMALE = "https://via.placeholder.com/150/E91E63/FFFFFF?text=Female";
@@ -25,32 +26,32 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
     
     container.innerHTML = `
         <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">登录账号 (>5字符，仅英文数字下划线) <span style="color: #F44336;">*</span></label><input type="text" id="reg-account" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">显示名称 <span style="color: #F44336;">*</span></label><input type="text" id="reg-name" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
+            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.account')} (>5${t('common.chars')}) <span style="color: #F44336;">*</span></label><input type="text" id="reg-account" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
+            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.display_name')} <span style="color: #F44336;">*</span></label><input type="text" id="reg-name" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
         </div>
         <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">设置密码 (≥6字符) <span style="color: #F44336;">*</span></label><input type="password" id="reg-password" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">确认密码 <span style="color: #F44336;">*</span></label><input type="password" id="reg-password-confirm" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
+            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.set_password')} (≥6${t('common.chars')}) <span style="color: #F44336;">*</span></label><input type="password" id="reg-password" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
+            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.confirm_password')} <span style="color: #F44336;">*</span></label><input type="password" id="reg-password-confirm" required style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
         </div>
         
         <div style="margin-bottom: 10px; padding: 10px; background: rgba(76, 175, 80, 0.1); border: 1px dashed #4CAF50; border-radius: 4px;">
             <div style="display: flex; gap: 10px; margin-bottom: 10px;">
                 <div style="flex: 2;">
-                    <label style="display: block; margin-bottom: 5px; color: #4CAF50;">安全邮箱 (用于接收验证码) <span style="color: #F44336;">*</span></label>
+                    <label style="display: block; margin-bottom: 5px; color: #4CAF50;">${t('auth.security_email')} (${t('auth.security_email_desc')}) <span style="color: #F44336;">*</span></label>
                     <div style="display: flex; gap: 8px;">
                         <input type="email" id="reg-email" required style="flex: 1; padding: 8px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box;">
-                        <button id="btn-reg-send-code" style="padding: 0 12px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; white-space: nowrap;">获取验证码</button>
+                        <button id="btn-reg-send-code" style="padding: 0 12px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; white-space: nowrap;">${t('auth.get_code')}</button>
                     </div>
                 </div>
                 <div style="flex: 1;">
-                    <label style="display: block; margin-bottom: 5px; color: #4CAF50;">验证码 <span style="color: #F44336;">*</span></label>
-                    <input type="text" id="reg-code" placeholder="6位数" maxlength="6" required style="width: 100%; padding: 8px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center;">
+                    <label style="display: block; margin-bottom: 5px; color: #4CAF50;">${t('auth.verification_code')} <span style="color: #F44336;">*</span></label>
+                    <input type="text" id="reg-code" placeholder="6${t('common.digits')}" maxlength="6" required style="width: 100%; padding: 8px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center;">
                 </div>
             </div>
             
             <div style="display: none; gap: 10px;">
                 <div style="flex: 1;">
-                    <label style="display: block; margin-bottom: 5px;">手机号码 <span style="color: #F44336;">*</span></label>
+                    <label style="display: block; margin-bottom: 5px;">${t('auth.phone')} <span style="color: #F44336;">*</span></label>
                     <input type="tel" id="reg-phone" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
                 </div>
             </div>
@@ -58,26 +59,26 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
 
         <div style="margin-bottom: 10px; background: #2a2a2a; padding: 10px; border-radius: 4px; border: 1px dashed #555; display: flex; align-items: center; justify-content: space-between;">
             <div>
-                <label style="display: block; margin-bottom: 5px;">头像</label>
+                <label style="display: block; margin-bottom: 5px;">${t('auth.avatar')}</label>
                 <div style="display: flex; align-items: center; gap: 10px;"><img id="avatar-preview" src="${DEFAULT_AVATAR_MALE}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #444;"><input type="file" id="reg-avatar" accept="image/*" style="font-size: 12px; color: #aaa; max-width: 150px;"></div>
-                <div id="avatar-error" style="color: #F44336; font-size: 12px; margin-top: 5px; display: none;">文件超出 3MB！</div>
+                <div id="avatar-error" style="color: #F44336; font-size: 12px; margin-top: 5px; display: none;">${t('auth.file_too_large')}</div>
             </div>
-            <div><label style="display: block; margin-bottom: 5px;">性别 <span style="color: #F44336;">*</span></label><select id="reg-gender" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;"><option value="male">男</option><option value="female">女</option></select></div>
+            <div><label style="display: block; margin-bottom: 5px;">${t('auth.gender')} <span style="color: #F44336;">*</span></label><select id="reg-gender" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;"><option value="male">${t('auth.male')}</option><option value="female">${t('auth.female')}</option></select></div>
         </div>
         <div style="display: flex; gap: 10px; margin-bottom: 10px;">
             <div style="flex: 1;">
-                <label style="display: block; margin-bottom: 5px;">出生日期</label>
+                <label style="display: block; margin-bottom: 5px;">${t('auth.birthday')}</label>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <input type="date" id="reg-birthday" style="flex: 1; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">
                     <span id="reg-age-display" style="color: #888; font-size: 12px; white-space: nowrap;"></span>
                 </div>
             </div>
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">国家</label><select id="reg-country" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">${countryOptions}</select></div>
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">地区</label><select id="reg-region" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;"></select></div>
+            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.country')}</label><select id="reg-country" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">${countryOptions}</select></div>
+            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.region')}</label><select id="reg-region" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;"></select></div>
         </div>
-        <div style="margin-bottom: 20px;"><label style="display: block; margin-bottom: 5px;">个人介绍 (限100字)</label><textarea id="reg-intro" rows="2" maxlength="100" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; resize: vertical;"></textarea></div>
-        <button id="btn-submit-register" style="width: 100%; padding: 10px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px;">注 册 账 号</button>
-        <div style="text-align: center; font-size: 12px;">已有账号？ <a href="#" id="toggle-to-login" style="color: #2196F3; text-decoration: none;">返回登录</a></div>
+        <div style="margin-bottom: 20px;"><label style="display: block; margin-bottom: 5px;">${t('auth.intro')} (${t('auth.intro_limit')})</label><textarea id="reg-intro" rows="2" maxlength="100" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; resize: vertical;"></textarea></div>
+        <button id="btn-submit-register" style="width: 100%; padding: 10px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px;">${t('auth.register_submit')}</button>
+        <div style="text-align: center; font-size: 12px;">${t('auth.has_account')} <a href="#" id="toggle-to-login" style="color: #2196F3; text-decoration: none;">${t('auth.back_to_login')}</a></div>
     `;
 
     const genderSelect = container.querySelector("#reg-gender");
@@ -93,7 +94,7 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
     birthdayInput.onchange = () => {
         const age = calculateAge(birthdayInput.value);
         if (age !== null) {
-            ageDisplay.textContent = `${age} 岁`;
+            ageDisplay.textContent = `${age} ${t('auth.age_years')}`;
             ageDisplay.style.color = "#4CAF50";
         } else {
             ageDisplay.textContent = "";
@@ -118,7 +119,7 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
             avatarInput.value = ""; 
             selectedAvatarFile = null; 
             avatarPreview.src = genderSelect.value === "male" ? DEFAULT_AVATAR_MALE : DEFAULT_AVATAR_FEMALE; 
-            showToast("头像文件超出 3MB 限制！", "warning");
+            showToast(t('auth.file_too_large'), "warning");
             return; 
         }
         avatarError.style.display = "none"; 
@@ -139,35 +140,35 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
         const emailInput = container.querySelector("#reg-email").value.trim();
         const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput);
         
-        if (!isEmail) return showToast("请输入有效的安全邮箱！", "error");
+        if (!isEmail) return showToast(t('auth.invalid_email'), "error");
         
         btnRegSendCode.disabled = true;
         btnRegSendCode.style.background = "#555";
-        btnRegSendCode.innerText = "发送中...";
+        btnRegSendCode.innerText = t('auth.sending');
         
         try {
             await api.sendVerifyCode(emailInput, "email", "register");
-            showToast("验证码已发送至邮箱，请查收", "success");
+            showToast(t('auth.code_sent'), "success");
             
             let timeLeft = 60;
-            btnRegSendCode.innerText = `${timeLeft}s 重发`;
+            btnRegSendCode.innerText = `${timeLeft}s ${t('auth.resend')}`;
             regCountdownTimer = setInterval(() => {
                 timeLeft--;
                 if (timeLeft <= 0) {
                     clearInterval(regCountdownTimer);
                     btnRegSendCode.disabled = false;
                     btnRegSendCode.style.background = "#4CAF50";
-                    btnRegSendCode.innerText = "获取验证码";
+                    btnRegSendCode.innerText = t('auth.get_code');
                 } else {
-                    btnRegSendCode.innerText = `${timeLeft}s 重发`;
+                    btnRegSendCode.innerText = `${timeLeft}s ${t('auth.resend')}`;
                 }
             }, 1000);
             
         } catch (err) {
-            showToast(err.message || "发送失败，请稍后重试", "error");
+            showToast(err.message || t('feedback.error'), "error");
             btnRegSendCode.disabled = false;
             btnRegSendCode.style.background = "#4CAF50";
-            btnRegSendCode.innerText = "获取验证码";
+            btnRegSendCode.innerText = t('auth.get_code');
         }
     };
 
@@ -180,13 +181,12 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
         const phone = container.querySelector("#reg-phone").value.trim(); // 取出来的是空字符串 ""
         const code = container.querySelector("#reg-code").value.trim();
 
-        // 【临时隐藏功能】：移除 !phone 的必填校验
-        if (!account || !name || !password || !email || !code) return showToast("带 * 号的均为必填项！", "warning");
-        if (code.length !== 6) return showToast("请输入 6 位有效验证码！", "warning");
+        if (!account || !name || !password || !email || !code) return showToast(t('auth.required_fields'), "warning");
+        if (code.length !== 6) return showToast(t('auth.invalid_code'), "warning");
         
-        if (!/^[a-zA-Z0-9_]{6,20}$/.test(account)) return showToast("账号必须大于5个字符，且仅支持大小写英文字母、数字和下划线！", "error");
-        if (password !== pwdConfirm) return showToast("两次输入的密码不一致！", "error");
-        if (!/^[A-Za-z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]{6,}$/.test(password)) return showToast("密码必须大于等于6个字符，仅允许大小写字母、数字及常用标点！", "error");
+        if (!/^[a-zA-Z0-9_]{6,20}$/.test(account)) return showToast(t('auth.account_format_error'), "error");
+        if (password !== pwdConfirm) return showToast(t('auth.password_mismatch'), "error");
+        if (!/^[A-Za-z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]{6,}$/.test(password)) return showToast(t('auth.password_format_error'), "error");
 
         const formData = {
             type: "register", account, password, email, phone, name, gender: genderSelect.value, code,

@@ -1,6 +1,7 @@
 // 前端页面/market/发布内容组件.js
 import { generatePublishHTML } from "./发布内容_UI模板.js";
 import { handlePublishSubmit } from "./发布内容_提交引擎.js";
+import { t } from "../components/用户体验增强.js";
 
 // 🖼️ 编辑模式下回显已有图片的辅助函数
 function renderImagePreviews(imageUrls, container, onRemove) {
@@ -10,13 +11,13 @@ function renderImagePreviews(imageUrls, container, onRemove) {
         wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
         wrapper.innerHTML = `
             <img src="${url}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-            ${idx === 0 ? '<span style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px;">封面</span>' : ''}
+            ${idx === 0 ? `<span style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px;">${t('post.cover')}</span>` : ''}
         `;
         container.appendChild(wrapper);
     });
 }
 
-export function createPublishView(currentUser, onBackCallback, onSuccessCallback, editItemData = null) {
+export function createPublishView(currentUser, onBackCallback, onSuccessCallback, editItemData = null, initialType = null) {
     const container = document.createElement("div");
     Object.assign(container.style, {
         display: "flex", flexDirection: "column", gap: "15px", color: "#ccc", 
@@ -24,12 +25,12 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     });
 
     const isEditMode = !!editItemData;
-    const viewTitle = isEditMode ? "✏️ 修改发布内容" : "🚀 发布新内容";
-    const submitBtnText = isEditMode ? "💾 保 存 修 改" : "🚀 确 认 发 布";
+    const viewTitle = isEditMode ? `✏️ ${t('publish.edit_content')}` : `🚀 ${t('publish.new_content')}`;
+    const submitBtnText = isEditMode ? `💾 ${t('publish.save_changes')}` : `🚀 ${t('publish.confirm_publish')}`;
     const hasExistingToken = isEditMode && !!editItemData.github_token;
 
     // 1. 渲染分离出去的视图模板
-    container.innerHTML = generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExistingToken, editItemData);
+    container.innerHTML = generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExistingToken, editItemData, t);
 
     container.querySelector("#btn-back").onclick = () => { if (onBackCallback) onBackCallback(); };
 
@@ -73,6 +74,18 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         container.querySelector("#pub-short").value = editItemData.shortDesc || "";
         container.querySelector("#pub-full").value = editItemData.fullDesc || "";
         container.querySelector("#pub-price").value = editItemData.price || 0;
+        
+        // 🔄 P7后悔模式：显示待生效价格提示
+        const pendingHint = container.querySelector("#price-pending-hint");
+        if (pendingHint && editItemData.pending_price !== null && editItemData.pending_price !== undefined && editItemData.pending_price_effective_at) {
+            const effectiveTime = new Date(editItemData.pending_price_effective_at);
+            const now = new Date();
+            if (effectiveTime > now) {
+                const hoursLeft = Math.ceil((effectiveTime - now) / (1000 * 60 * 60));
+                pendingHint.style.display = "block";
+                pendingHint.innerHTML = `⏳ ${t('publish.current_price')} <strong>${editItemData.price}</strong> ${t('common.credits')} → ${t('publish.will_change_in')} <strong>${hoursLeft}</strong> ${t('publish.hours_later')} <strong style="color:#4CAF50;">${editItemData.pending_price}</strong> ${t('common.credits')}`;
+            }
+        }
 
         // 🖼️ 编辑模式回显已有图片
         const existingImages = editItemData.imageUrls || [];
@@ -168,6 +181,19 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         tokenContainer.style.display = e.target.checked ? "block" : "none";
     };
     
+    // 🎯 根据初始类型自动设置并锁定主类别（非编辑模式下）
+    if (!isEditMode && initialType) {
+        if (initialType === "tool" || initialType === "tools") {
+            typeSelect.value = "tool";
+        } else if (initialType === "app" || initialType === "apps") {
+            typeSelect.value = "app";
+        } else if (initialType === "recommend" || initialType === "recommends") {
+            typeSelect.value = "recommend";
+        }
+        // 🔒 锁定主类别，禁止修改
+        typeSelect.disabled = true;
+    }
+    
     updateFormView();
 
     // 🖼️ 多图上传处理
@@ -185,7 +211,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
                 wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
                 wrapper.innerHTML = `
                     <img src="${ev.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-                    ${idx === 0 ? '<span style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px;">封面</span>' : ''}
+                    ${idx === 0 ? `<span style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px;">${t('post.cover')}</span>` : ''}
                     <button data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
                 `;
                 wrapper.querySelector('button').onclick = () => {

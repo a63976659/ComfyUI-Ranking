@@ -8,7 +8,9 @@
 //   - 个人中心_UI模板.js (创作者总榜)
 //   - 创作者卡片组件.js (创作者列表)
 //   - 资源详情页面组件.js (资源详情打赏榜)
-// ==========================================
+// ===========================================
+
+import { t } from "./用户体验增强.js";
 
 /**
  * 等级规则（参考QQ等级系统）：
@@ -65,7 +67,7 @@ export function calculateTipLevel(amount) {
  */
 export function renderTipLevelHTML(amount, compact = false) {
     if (!amount || amount <= 0) {
-        return `<span style="color:#666; font-size:11px;">新粉丝</span>`;
+        return `<span style="color:#666; font-size:11px;">${t('tip.new_fan')}</span>`;
     }
     
     const level = calculateTipLevel(amount);
@@ -109,7 +111,7 @@ export function renderTipLevelHTML(amount, compact = false) {
     
     // 满级特效
     if (level.isMaxLevel) {
-        return `<span style="background: linear-gradient(90deg, #FFD700, #FF6B6B, #4CAF50); padding: 2px 6px; border-radius: 4px; font-size:11px;">👑 至尊赞助者</span>`;
+        return `<span style="background: linear-gradient(90deg, #FFD700, #FF6B6B, #4CAF50); padding: 2px 6px; border-radius: 4px; font-size:11px;">👑 ${t('tip.supreme_sponsor')}</span>`;
     }
     
     return parts.length > 0 

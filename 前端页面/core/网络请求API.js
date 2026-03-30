@@ -175,9 +175,16 @@ async function request(endpoint, options = {}) {
             return responseData;
         } catch (error) {
             clearTimeout(timeoutId);  // 清除超时计时器
-            // 🚀 超时错误特殊处理
+            
+            // 🔧 P3优化：错误分类处理，提供更清晰的错误信息
             if (error.name === 'AbortError') {
                 throw new Error('网络请求超时，请检查网络连接');
+            }
+            if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('Failed to fetch'))) {
+                throw new Error('网络连接失败，请检查网络');
+            }
+            if (error instanceof SyntaxError) {
+                throw new Error('服务器响应格式错误');
             }
             throw error;
         } finally {
@@ -267,6 +274,19 @@ export const api = {
     async getChatList(account) { return request(`/api/chats/${account}`); },
     async getChatHistory(account, targetAccount) { return request(`/api/chats/${account}/${targetAccount}`); },
     async getWallet(account) { return request(`/api/wallet/${account}`); },
+    
+    // 💳 P6支付增强：交易明细查询
+    async getTransactions(account, page = 1, limit = 20, txType = null) {
+        let url = `/api/wallet/${account}/transactions?page=${page}&limit=${limit}`;
+        if (txType) url += `&tx_type=${txType}`;
+        return request(url);
+    },
+    
+    // 💳 P6支付增强：任务收益统计
+    async getTaskStats(account) {
+        return request(`/api/wallet/${account}/task-stats`);
+    },
+    
     async tipUser(senderAccount, targetAccount, amount, isAnonymous, itemId = null) { 
         return request("/api/wallet/tip", { 
             method: "POST", 
@@ -286,5 +306,141 @@ export const api = {
     async runAdminScript(adminAccount, scriptName) {
         if (!scriptName || !scriptName.trim()) throw new Error("脚本名称不能为空！");
         return request("/api/admin/run-script", { method: "POST", body: { admin_account: adminAccount, script_name: scriptName } });
+    },
+
+    // ==========================================
+    // 💬 讨论区 API
+    // ==========================================
+    async getPosts(page = 1, limit = 20) { 
+        return request(`/api/posts?page=${page}&limit=${limit}`); 
+    },
+    async getPostDetail(postId) { 
+        return request(`/api/posts/${postId}`); 
+    },
+    async createPost(data) { 
+        return request("/api/posts", { method: "POST", body: data }); 
+    },
+    async updatePost(postId, data) { 
+        return request(`/api/posts/${postId}`, { method: "PUT", body: data }); 
+    },
+    async deletePost(postId) { 
+        return request(`/api/posts/${postId}`, { method: "DELETE" }); 
+    },
+    async togglePostLike(postId) { 
+        return request(`/api/posts/${postId}/like`, { method: "POST" }); 
+    },
+    async togglePostFavorite(postId) { 
+        return request(`/api/posts/${postId}/favorite`, { method: "POST" }); 
+    },
+    async tipPost(postId, amount, isAnon = false) { 
+        return request(`/api/posts/${postId}/tip?amount=${amount}&is_anon=${isAnon}`, { method: "POST" }); 
+    },
+    async getPostComments(postId) { 
+        return request(`/api/posts/${postId}/comments`); 
+    },
+    async addPostComment(postId, content) { 
+        return request(`/api/posts/${postId}/comments?content=${encodeURIComponent(content)}`, { method: "POST" }); 
+    },
+    async getMyPosts() {
+        return request("/api/my-posts");
+    },
+
+    // ==========================================
+    // 📝 任务榜 API
+    // ==========================================
+    async getTasks(page = 1, limit = 20, status = null, sort = "latest") {
+        let url = `/api/tasks?page=${page}&limit=${limit}&sort=${sort}`;
+        if (status) url += `&status=${status}`;
+        return request(url);
+    },
+    async getTaskDetail(taskId) {
+        return request(`/api/tasks/${taskId}`);
+    },
+    async createTask(data) {
+        return request("/api/tasks", { method: "POST", body: data });
+    },
+    async updateTask(taskId, data) {
+        return request(`/api/tasks/${taskId}`, { method: "PUT", body: data });
+    },
+    async cancelTask(taskId) {
+        return request(`/api/tasks/${taskId}`, { method: "DELETE" });
+    },
+    async applyTask(taskId, message = null) {
+        let url = `/api/tasks/${taskId}/apply`;
+        if (message) url += `?message=${encodeURIComponent(message)}`;
+        return request(url, { method: "POST" });
+    },
+    async cancelApplyTask(taskId) {
+        return request(`/api/tasks/${taskId}/apply`, { method: "DELETE" });
+    },
+    async assignTask(taskId, assignee) {
+        return request(`/api/tasks/${taskId}/assign?assignee=${encodeURIComponent(assignee)}`, { method: "POST" });
+    },
+    async submitTask(taskId, deliverables, note = null) {
+        let url = `/api/tasks/${taskId}/submit`;
+        return request(url, { method: "POST", body: { deliverables, note } });
+    },
+    async acceptTask(taskId, isAccepted, feedback = null) {
+        let url = `/api/tasks/${taskId}/accept?is_accepted=${isAccepted}`;
+        if (feedback) url += `&feedback=${encodeURIComponent(feedback)}`;
+        return request(url, { method: "POST" });
+    },
+    async disputeTask(taskId, reason, evidence = null) {
+        return request(`/api/tasks/${taskId}/dispute`, { 
+            method: "POST", 
+            body: { reason, evidence: evidence || [] } 
+        });
+    },
+    async getMyTasks(role = "publisher") {
+        return request(`/api/my-tasks?role=${role}`);
+    },
+
+    // ==========================================
+    // ⚖️ 申诉仲裁 API
+    // ==========================================
+    async getDisputeDetail(disputeId) {
+        return request(`/api/disputes/${disputeId}`);
+    },
+    async respondDispute(disputeId, response, evidence = null) {
+        return request(`/api/disputes/${disputeId}/respond`, {
+            method: "POST",
+            body: { response, evidence: evidence || [] }
+        });
+    },
+    async getAdminDisputes(status = null) {
+        let url = "/api/admin/disputes";
+        if (status) url += `?status=${status}`;
+        return request(url);
+    },
+    async resolveDispute(disputeId, resolution, ratio = null, note = null) {
+        return request(`/api/admin/disputes/${disputeId}/resolve`, {
+            method: "POST",
+            body: { resolution, ratio, note }
+        });
+    },
+
+    // ==========================================
+    // 🔄 P7后悔模式：退款API
+    // ==========================================
+    async getPurchaseStatus(account, itemId) {
+        return request(`/api/wallet/${account}/purchase/${itemId}`);
+    },
+    async requestRefund(account, itemId) {
+        return request(`/api/wallet/refund?account=${encodeURIComponent(account)}&item_id=${encodeURIComponent(itemId)}`, {
+            method: "POST"
+        });
+    },
+
+    // ==========================================
+    // 🔒 管理员：系统配置 API
+    // ==========================================
+    async getSystemConfig(configKey) {
+        return request(`/api/admin/config/${configKey}`);
+    },
+    async setSystemConfig(configKey, value) {
+        return request(`/api/admin/config/${configKey}`, {
+            method: "PUT",
+            body: value
+        });
     }
 };
