@@ -9,17 +9,19 @@
 // ==========================================
 
 import { renderTipBoardHTML } from "../components/打赏等级工具.js";
-import { CACHE } from "../core/全局配置.js";
+import { CACHE, getBannerCacheKey, isAdmin } from "../core/全局配置.js";
 
 export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs) {
     // 🚀 核心新增：使用统一工具渲染打赏总榜（带星星/月亮/太阳等级）
     const boardData = userData.tip_board || [];
     const boardHtml = renderTipBoardHTML(boardData, 10, "暂无打赏记录，快来占据榜首吧！", "normal");
 
-    // 个人资料卡背景图：优先使用本地缓存，否则使用云端URL
+    // 个人资料卡背景图：
+    // - 自己查看自己：优先使用本地缓存（账号区分键），否则使用云端 URL
+    // - 他人查看：直接使用云端 URL (userData.bannerUrl)
     let bannerImageUrl = userData.bannerUrl;
     if (isMe) {
-        const localBannerCache = localStorage.getItem(CACHE.LOCAL_KEYS.PROFILE_BANNER_CACHE);
+        const localBannerCache = localStorage.getItem(getBannerCacheKey(userData.account));
         if (localBannerCache) {
             bannerImageUrl = localBannerCache;
         }
@@ -112,9 +114,10 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
 
     // ====================================================================
     // 【核心新增】：管理员专属系统公告发布 UI 面板 (仅自己且账号是管理员时可见)
+    // 🔒 P0安全修复：使用配置化的 isAdmin() 函数
     // ====================================================================
     let adminHtml = '';
-    if (isMe && userData.account === '123456') {
+    if (isMe && isAdmin(userData.account)) {
         adminHtml = `
             <div id="admin-ann-panel" style="margin-bottom: 15px; background: #181b28; border: 1px solid #2d334a; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">

@@ -4,7 +4,7 @@ import { regionData, getSortedCountries } from "../auth/国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { uploadFile } from "../market/发布内容_提交引擎.js";
 import { openImageCropper } from "../components/图片裁剪组件.js";
-import { CACHE } from "../core/全局配置.js";
+import { CACHE, getBackgroundKey, getBannerCacheKey } from "../core/全局配置.js";
 
 // 计算年龄工具函数
 function calculateAge(birthDate) {
@@ -133,9 +133,13 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     const ageDisplay = container.querySelector("#setting-age-display");
     let avatarDataUrl = userData.avatarDataUrl;
     let bannerUrl = userData.bannerUrl || null;
+    
+    // 🚀 优化：延迟上传模式 - 裁剪后不立即上传，保存时才上传
+    let pendingBannerFile = null;  // 待上传的背景图文件
+    let pendingBannerDataUrl = null;  // 用于预览和本地缓存
 
-    // 加载本地界面背景预览
-    const savedUiBg = localStorage.getItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND);
+    // 加载本地界面背景预览（使用账号区分键）
+    const savedUiBg = localStorage.getItem(getBackgroundKey(userData.account));
     if (savedUiBg) {
         uiBgPreview.style.backgroundImage = `url(${savedUiBg})`;
         uiBgPreview.style.backgroundSize = "cover";
@@ -193,13 +197,16 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     };
 
     // 个人资料卡背景图上传逻辑（16:9 裁剪）
+    // 🚀 优化：裁剪后只预览，点击保存时才上传到云端
     container.querySelector("#btn-trigger-banner").onclick = () => settingBannerInput.click();
     container.querySelector("#btn-clear-banner").onclick = () => {
         bannerUrl = null;
+        pendingBannerFile = null;
+        pendingBannerDataUrl = null;
         bannerPreview.style.backgroundImage = "none";
         bannerPreview.style.background = "#1a1a1a";
-        // 同时清除本地缓存
-        localStorage.removeItem(CACHE.LOCAL_KEYS.PROFILE_BANNER_CACHE);
+        // 同时清除本地缓存（使用账号区分键）
+        localStorage.removeItem(getBannerCacheKey(userData.account));
         showToast("✅ 已清除背景图，请点击底部保存设置生效。", "success");
     };
     
@@ -212,46 +219,26 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         const croppedFile = await openImageCropper(file, 16/9, "裁剪个人资料卡背景", 3);
         if (!croppedFile) return;
 
-        const btnTrigger = container.querySelector("#btn-trigger-banner");
-        const originalText = btnTrigger.innerText;
-        btnTrigger.innerText = "上传中...";
-        btnTrigger.disabled = true;
-
-        try {
-            // 同时上传到云端和保存到本地
-            const cloudImageUrl = await uploadFile(croppedFile, "banner");
-            
-            if (cloudImageUrl) {
-                bannerUrl = cloudImageUrl;
-                bannerPreview.style.backgroundImage = `url(${cloudImageUrl})`;
-                bannerPreview.style.backgroundSize = "cover";
-                bannerPreview.style.backgroundPosition = "center";
-                
-                // 同时保存一份到本地缓存，确保启动时能正常显示
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                    try {
-                        localStorage.setItem(CACHE.LOCAL_KEYS.PROFILE_BANNER_CACHE, ev.target.result);
-                    } catch (storageErr) {
-                        console.warn("背景图本地缓存失败:", storageErr);
-                    }
-                };
-                reader.readAsDataURL(croppedFile);
-                
-                showToast("✅ 背景图上传成功！请点击底部保存设置生效。", "success");
-            }
-        } catch (err) {
-            showToast("❌ 背景图上传失败: " + err.message, "error");
-        } finally {
-            btnTrigger.innerText = originalText;
-            btnTrigger.disabled = false;
-        }
+        // 🚀 优化：不立即上传，只保存到待上传变量
+        pendingBannerFile = croppedFile;
+        
+        // 转换为 DataURL 用于预览
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            pendingBannerDataUrl = ev.target.result;
+            bannerPreview.style.backgroundImage = `url(${pendingBannerDataUrl})`;
+            bannerPreview.style.backgroundSize = "cover";
+            bannerPreview.style.backgroundPosition = "center";
+            showToast("✅ 背景图已选择，点击底部保存设置后才会上传。", "info");
+        };
+        reader.readAsDataURL(croppedFile);
     };
 
     // 界面背景上传逻辑（9:16 裁剪，仅本地）
     container.querySelector("#btn-trigger-ui-bg").onclick = () => settingUiBgInput.click();
     container.querySelector("#btn-clear-ui-bg").onclick = () => {
-        localStorage.removeItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND);
+        // 使用账号区分键清除
+        localStorage.removeItem(getBackgroundKey(userData.account));
         uiBgPreview.style.backgroundImage = "none";
         uiBgPreview.style.background = "#1a1a1a";
         // 立即应用到侧边栏
@@ -268,12 +255,12 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         const croppedFile = await openImageCropper(file, 9/16, "裁剪界面背景", 3);
         if (!croppedFile) return;
 
-        // 读取为 Base64 并保存到本地
+        // 读取为 Base64 并保存到本地（使用账号区分键）
         const reader = new FileReader();
         reader.onload = (ev) => {
             const base64 = ev.target.result;
             try {
-                localStorage.setItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND, base64);
+                localStorage.setItem(getBackgroundKey(userData.account), base64);
                 uiBgPreview.style.backgroundImage = `url(${base64})`;
                 uiBgPreview.style.backgroundSize = "cover";
                 uiBgPreview.style.backgroundPosition = "center";
@@ -295,6 +282,33 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         btn.disabled = true;
 
         try {
+            // 🚀 优化：如果有待上传的背景图，先上传
+            if (pendingBannerFile) {
+                btn.innerHTML = "⏳ 上传背景图...";
+                try {
+                    const cloudImageUrl = await uploadFile(pendingBannerFile, "banner");
+                    if (cloudImageUrl) {
+                        bannerUrl = cloudImageUrl;
+                        // 保存到本地缓存
+                        if (pendingBannerDataUrl) {
+                            try {
+                                localStorage.setItem(getBannerCacheKey(userData.account), pendingBannerDataUrl);
+                            } catch (storageErr) {
+                                console.warn("背景图本地缓存失败:", storageErr);
+                            }
+                        }
+                    }
+                    pendingBannerFile = null;
+                    pendingBannerDataUrl = null;
+                } catch (uploadErr) {
+                    showToast("❌ 背景图上传失败: " + uploadErr.message, "error");
+                    btn.innerHTML = "保存所有设置"; 
+                    btn.disabled = false;
+                    return;
+                }
+            }
+            
+            btn.innerHTML = "⏳ 保存设置...";
             const birthday = birthdayInput.value || null;
             const updateData = {
                 name: container.querySelector("#setting-name").value.trim(),

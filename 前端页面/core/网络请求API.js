@@ -37,7 +37,7 @@ function proxyImages(obj) {
     if (Array.isArray(obj)) return obj.map(proxyImages);
     if (typeof obj === 'object') {
         for (let key in obj) {
-            if ((key === 'coverUrl' || key === 'avatar' || key === 'avatarDataUrl' || key === 'from_avatar') 
+            if ((key === 'coverUrl' || key === 'avatar' || key === 'avatarDataUrl' || key === 'from_avatar' || key === 'bannerUrl') 
                 && typeof obj[key] === 'string') {
                 
                 let originalUrl = obj[key];
@@ -116,10 +116,16 @@ async function request(endpoint, options = {}) {
         fetchOptions.body = options.body;
     }
 
+    // 🚀 超时控制：使用 AbortController 实现请求超时
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), API.TIMEOUT);
+    fetchOptions.signal = controller.signal;
+
     // ⚡ P1性能优化：封装请求 Promise（支持去重）
     const requestPromise = (async () => {
         try {
             const response = await fetch(url, fetchOptions);
+            clearTimeout(timeoutId);  // 清除超时计时器
             let responseData = await response.json().catch(() => ({}));
 
             if (!response.ok) {
@@ -167,6 +173,13 @@ async function request(endpoint, options = {}) {
             // 入口数据挂载代理
             responseData = proxyImages(responseData);
             return responseData;
+        } catch (error) {
+            clearTimeout(timeoutId);  // 清除超时计时器
+            // 🚀 超时错误特殊处理
+            if (error.name === 'AbortError') {
+                throw new Error('网络请求超时，请检查网络连接');
+            }
+            throw error;
         } finally {
             // 清除请求去重记录
             pendingRequests.delete(cacheKey);

@@ -5,18 +5,18 @@ import { createTopNav } from "../components/顶部导航组件.js";
 import { loadSidebarContent } from "./侧边栏数据引擎.js";
 import { createItemDetailView } from "../market/资源详情页面组件.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { CACHE } from "./全局配置.js";
+import { CACHE, getBackgroundKey } from "./全局配置.js";
 
 const Store = {
     save(key, value) { localStorage.setItem(`ComfyCommunitySidebar_${key}`, value); },
     load(key, defaultValue) { return localStorage.getItem(`ComfyCommunitySidebar_${key}`) || defaultValue; }
 };
 
-// 工具背景图本地存储管理
+// 工具背景图本地存储管理（账号隔离）
 const BackgroundStore = {
-    save(base64) { localStorage.setItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND, base64); },
-    load() { return localStorage.getItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND) || null; },
-    clear() { localStorage.removeItem(CACHE.LOCAL_KEYS.SIDEBAR_BACKGROUND); }
+    save(base64) { localStorage.setItem(getBackgroundKey(), base64); },
+    load() { return localStorage.getItem(getBackgroundKey()) || null; },
+    clear() { localStorage.removeItem(getBackgroundKey()); }
 };
 
 function buildSidebarDOM() {

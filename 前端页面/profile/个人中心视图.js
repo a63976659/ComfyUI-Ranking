@@ -11,6 +11,51 @@ import { openRechargeModal } from "../market/资金与钱包_充值组件.js";
 import { openWithdrawModal } from "../market/资金与钱包_提现组件.js"; 
 import { buildProfileHTML } from "./个人中心_UI模板.js";   
 import { openTipModal } from "./个人中心_赞赏组件.js";     
+import { getBannerCacheKey } from "../core/全局配置.js";
+
+
+// ==========================================
+// 🖼️ 个人资料卡背景图云端同步
+// ==========================================
+// 作用：当本地无缓存但云端有背景图时，下载并缓存到本地
+async function syncBannerCache(account, bannerUrl) {
+    if (!bannerUrl || !account) return;
+    
+    const cacheKey = getBannerCacheKey(account);
+    const localCache = localStorage.getItem(cacheKey);
+    
+    // 本地已有缓存，无需同步
+    if (localCache) return;
+    
+    try {
+        // 处理代理 URL（云端 URL 可能需要通过本地代理访问）
+        let fetchUrl = bannerUrl;
+        if (bannerUrl.startsWith('http') && !bannerUrl.includes('/community_hub/image')) {
+            fetchUrl = `/community_hub/image?url=${encodeURIComponent(bannerUrl)}`;
+        }
+        
+        const response = await fetch(fetchUrl);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const blob = await response.blob();
+        
+        // 转换为 Base64 并存储
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                localStorage.setItem(cacheKey, reader.result);
+                // 触发界面刷新，显示新缓存的背景图
+                window.dispatchEvent(new CustomEvent("comfy-banner-synced", { detail: { account } }));
+            } catch (storageErr) {
+                console.warn("背景图本地缓存失败:", storageErr);
+            }
+        };
+        reader.onerror = () => console.warn("背景图读取失败");
+        reader.readAsDataURL(blob);
+    } catch (err) {
+        console.warn(`背景图下载失败: ${err.message}`);
+    }
+}
 
 export function showUserProfile(initialUserData, currentUser = null, isMe = true) {
     const container = document.createElement("div");
@@ -23,6 +68,24 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
     let isSettingsView = false;
     let activeTab = localStorage.getItem(`Profile_ActiveTab_${isMe}`) || "published";
     let userData = initialUserData;
+
+    // 🖼️ 监听背景图同步完成事件，自动刷新显示
+    const bannerSyncHandler = (e) => {
+        if (isMe && e.detail?.account === userData.account && !isSettingsView) {
+            console.log(`✨ 背景图同步完成，刷新界面`);
+            render();
+        }
+    };
+    window.addEventListener("comfy-banner-synced", bannerSyncHandler);
+    
+    // 组件销毁时移除事件监听
+    const observer = new MutationObserver(() => {
+        if (!document.body.contains(container)) {
+            window.removeEventListener("comfy-banner-synced", bannerSyncHandler);
+            observer.disconnect();
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
 
     function render() {
         container.innerHTML = ""; 
@@ -217,7 +280,7 @@ export function openUserProfileModal(userData) {
     const view = showUserProfile(userData, userData, true);
     window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
 
-    // 【修改点】：同步拉取云端 JSON 资料表与 SQL 金融账本
+    // 同步拉取云端 JSON 资料表与 SQL 金融账本
     Promise.all([
         api.getUserProfile(userData.account).catch(() => ({ data: {} })),
         api.getWallet(userData.account).catch(() => ({}))
@@ -235,7 +298,14 @@ export function openUserProfileModal(userData) {
                 storage.setItem("ComfyCommunity_User", JSON.stringify(savedObj));
             }
         } catch(e){}
-        if (view.updateData) view.updateData(freshData); 
+        
+        // 🖼️ 同步个人资料卡背景图：云端有但本地无缓存时自动下载
+        if (freshData.bannerUrl) {
+            syncBannerCache(userData.account, freshData.bannerUrl);
+        }
+        
+        // 立即更新界面，显示云端背景图（通过代理 URL）
+        if (view.updateData) view.updateData(freshData);
     }).catch(err => console.warn("后台更新本人资料失败", err));
 }
 
