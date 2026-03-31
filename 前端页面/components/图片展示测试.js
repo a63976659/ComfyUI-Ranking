@@ -799,6 +799,7 @@ class CyberImageViewer {
     /**
      * 粒子消散动画 - 当前图片碎裂成粒子飘散（灰飞烟灭效果）
      * 使用更多更小的粒子，波浪扩散效果
+     * 支持多种路径类型：弧线(40%)、S形(30%)、直线(30%)
      */
     async _playParticleDisperseAnimation(clickX, clickY) {
         const currentAnimId = this._animationId; // 记录当前动画ID
@@ -832,7 +833,7 @@ class CyberImageViewer {
         const scale = Math.min(containerWidth / imgWidth, containerHeight / imgHeight, 1);
         const displayWidth = imgWidth * scale;
         const displayHeight = imgHeight * scale;
-        
+
         console.log('💨 粒子容器尺寸:', displayWidth, 'x', displayHeight);
 
         // 粒子网格配置 - 使用与载入动画相同的正方形逻辑
@@ -858,7 +859,7 @@ class CyberImageViewer {
         particlesContainer.style.top = `${(containerHeight - displayHeight) / 2}px`;
 
         const particles = [];
-        
+
         // 计算波浪扩散的中心点（如果没有提供点击位置，使用中心）
         const centerX = clickX !== undefined ? (clickX - rect.left - (containerWidth - displayWidth) / 2) : displayWidth / 2;
         const centerY = clickY !== undefined ? (clickY - rect.top - (containerHeight - displayHeight) / 2) : displayHeight / 2;
@@ -866,24 +867,15 @@ class CyberImageViewer {
         // 创建粒子
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
-                const particle = document.createElement('div');
-                particle.className = 'cyber-particle';
-                particle.style.width = `${particleWidth}px`;
-                particle.style.height = `${particleHeight}px`;
-                particle.style.left = `${c * particleSide}px`;
-                particle.style.top = `${r * particleSide}px`;
-                
-                // 注意：URL已经由_proxyImageUrl处理过，直接使用，不要再次编码
-                particle.style.backgroundImage = `url("${imgSrc}")`;
-                particle.style.backgroundSize = `${displayWidth}px ${displayHeight}px`;
-                particle.style.backgroundPosition = `-${c * particleSide}px -${r * particleSide}px`;
-                particle.style.backgroundRepeat = 'no-repeat';
+                // 随机决定路径类型：弧线(40%)、S形(30%)、直线(30%)
+                const pathTypeRandom = Math.random();
+                const pathType = pathTypeRandom < 0.4 ? 'arc' : (pathTypeRandom < 0.7 ? 's-curve' : 'straight');
 
                 // 计算粒子到中心点的距离（用于波浪效果）
                 const particleCenterX = c * particleWidth + particleWidth / 2;
                 const particleCenterY = r * particleHeight + particleHeight / 2;
                 const distanceToCenter = Math.sqrt(
-                    Math.pow(particleCenterX - centerX, 2) + 
+                    Math.pow(particleCenterX - centerX, 2) +
                     Math.pow(particleCenterY - centerY, 2)
                 );
                 const maxDistance = Math.sqrt(displayWidth * displayWidth + displayHeight * displayHeight);
@@ -898,52 +890,165 @@ class CyberImageViewer {
                 const angle = Math.atan2(particleCenterY - centerY, particleCenterX - centerX);
                 const randomAngleOffset = (Math.random() - 0.5) * 2 * Math.PI * 0.3; // ±30%角度随机偏移
                 const finalAngle = angle + randomAngleOffset;
-                
+
                 // 消散距离：使用整个视口作为动画舞台，粒子向屏幕四面八方飞散
                 const baseDistance = Math.min(window.innerWidth, window.innerHeight) * 0.5 + Math.random() * Math.min(window.innerWidth, window.innerHeight) * 0.5;
                 const distanceMultiplier = 0.5 + distanceRatio * 1.5;
                 const finalDistance = baseDistance * distanceMultiplier * (1 + (Math.random() - 0.5) * 0.6); // ±30%距离随机偏移
-                
+
                 const disperseX = Math.cos(finalAngle) * finalDistance;
                 const disperseY = Math.sin(finalAngle) * finalDistance;
-                
+
                 // 旋转 - 更大角度的旋转
                 const randomRotate = (Math.random() - 0.5) * 720;
-
-                // 保存动画参数供后续使用
-                particle.dataset.disperseX = disperseX;
-                particle.dataset.disperseY = disperseY;
-                particle.dataset.rotate = randomRotate;
 
                 // 计算动画时长和延迟
                 const totalDuration = 0.25 + Math.random() * 0.25; // 0.25-0.5秒
                 const delay = Math.random() * 100; // 0-100ms随机延迟
                 const shapeDuration = totalDuration * 0.3; // 形变占前30%
 
-                // 初始状态（正常显示）- 方块形状
-                particle.style.transform = 'translate(0, 0) rotate(0deg) scale(1)';
-                particle.style.opacity = '1';
-                particle.style.borderRadius = '0'; // 初始为方块形状
-                particle.style.transition = `
-                    transform ${totalDuration}s ease-in ${delay}ms,
-                    opacity ${totalDuration}s ease-in ${delay}ms,
-                    border-radius ${shapeDuration}s ease-out ${delay}ms
-                `;
-                
-                // 移除边框效果
-                particle.style.border = 'none';
-                particle.style.outline = 'none';
-                particle.style.boxShadow = 'none';
+                let particle, particleInner;
 
-                particlesContainer.appendChild(particle);
-                particles.push({ 
-                    element: particle, 
-                    delay: delay,
-                    duration: totalDuration * 1000, // 转换为毫秒
-                    disperseX,
-                    disperseY,
-                    rotate: randomRotate
-                });
+                if (pathType === 'arc' || pathType === 's-curve') {
+                    // 弧线和S形路径：使用两层div嵌套实现
+                    // 外层控制X轴位移，内层控制Y轴位移 + 形变效果
+                    particle = document.createElement('div');
+                    particle.className = 'cyber-particle';
+                    particle.style.position = 'absolute';
+                    particle.style.width = `${particleWidth}px`;
+                    particle.style.height = `${particleHeight}px`;
+                    particle.style.left = `${c * particleSide}px`;
+                    particle.style.top = `${r * particleSide}px`;
+                    particle.style.overflow = 'visible';
+                    particle.style.border = 'none';
+                    particle.style.outline = 'none';
+                    particle.style.boxShadow = 'none';
+
+                    // 内层div：包含背景图，控制Y轴和形变
+                    particleInner = document.createElement('div');
+                    particleInner.style.width = '100%';
+                    particleInner.style.height = '100%';
+                    particleInner.style.backgroundImage = `url("${imgSrc}")`;
+                    particleInner.style.backgroundSize = `${displayWidth}px ${displayHeight}px`;
+                    particleInner.style.backgroundPosition = `-${c * particleSide}px -${r * particleSide}px`;
+                    particleInner.style.backgroundRepeat = 'no-repeat';
+                    particleInner.style.border = 'none';
+                    particleInner.style.outline = 'none';
+                    particleInner.style.boxShadow = 'none';
+
+                    particle.appendChild(particleInner);
+
+                    // 设置不同的easing组合来产生曲线效果
+                    if (pathType === 'arc') {
+                        // 弧线路径：X轴和Y轴使用不同的easing
+                        // 随机选择弧线方向（向左弧或向右弧）
+                        const arcDirection = Math.random() < 0.5 ? 1 : -1;
+                        const xEasing = arcDirection > 0 ? 'ease-in' : 'ease-out';
+                        const yEasing = arcDirection > 0 ? 'ease-out' : 'ease-in';
+
+                        // 外层：控制X轴位移
+                        particle.style.transform = 'translateX(0)';
+                        particle.style.transition = `transform ${totalDuration}s ${xEasing} ${delay}ms`;
+
+                        // 内层：控制Y轴位移 + 旋转 + 缩放 + 透明度 + 圆角
+                        particleInner.style.transform = 'translateY(0) rotate(0deg) scale(1)';
+                        particleInner.style.opacity = '1';
+                        particleInner.style.borderRadius = '0';
+                        particleInner.style.transition = `
+                            transform ${totalDuration}s ${yEasing} ${delay}ms,
+                            opacity ${totalDuration}s ease-in ${delay}ms,
+                            border-radius ${shapeDuration}s ease-out ${delay}ms
+                        `;
+
+                        // 保存动画参数
+                        particle.dataset.pathType = 'arc';
+                        particle.dataset.disperseX = disperseX;
+                        particle.dataset.disperseY = disperseY;
+                        particle.dataset.rotate = randomRotate;
+
+                    } else {
+                        // S形路径：使用cubic-bezier产生过冲效果
+                        // S形：X轴使用标准easing，Y轴使用带过冲的cubic-bezier
+                        const sCurveEasing = 'cubic-bezier(0.68, -0.6, 0.32, 1.6)';
+
+                        // 外层：控制X轴位移
+                        particle.style.transform = 'translateX(0)';
+                        particle.style.transition = `transform ${totalDuration}s ease-in-out ${delay}ms`;
+
+                        // 内层：控制Y轴位移（使用S形曲线easing）+ 其他效果
+                        particleInner.style.transform = 'translateY(0) rotate(0deg) scale(1)';
+                        particleInner.style.opacity = '1';
+                        particleInner.style.borderRadius = '0';
+                        particleInner.style.transition = `
+                            transform ${totalDuration}s ${sCurveEasing} ${delay}ms,
+                            opacity ${totalDuration}s ease-in ${delay}ms,
+                            border-radius ${shapeDuration}s ease-out ${delay}ms
+                        `;
+
+                        // 保存动画参数
+                        particle.dataset.pathType = 's-curve';
+                        particle.dataset.disperseX = disperseX;
+                        particle.dataset.disperseY = disperseY;
+                        particle.dataset.rotate = randomRotate;
+                    }
+
+                    particlesContainer.appendChild(particle);
+                    particles.push({
+                        element: particle,
+                        innerElement: particleInner,
+                        delay: delay,
+                        duration: totalDuration * 1000, // 转换为毫秒
+                        disperseX,
+                        disperseY,
+                        rotate: randomRotate,
+                        pathType
+                    });
+
+                } else {
+                    // 直线路径：保持原有逻辑（单层div）
+                    particle = document.createElement('div');
+                    particle.className = 'cyber-particle';
+                    particle.style.width = `${particleWidth}px`;
+                    particle.style.height = `${particleHeight}px`;
+                    particle.style.left = `${c * particleSide}px`;
+                    particle.style.top = `${r * particleSide}px`;
+
+                    particle.style.backgroundImage = `url("${imgSrc}")`;
+                    particle.style.backgroundSize = `${displayWidth}px ${displayHeight}px`;
+                    particle.style.backgroundPosition = `-${c * particleSide}px -${r * particleSide}px`;
+                    particle.style.backgroundRepeat = 'no-repeat';
+
+                    // 保存动画参数供后续使用
+                    particle.dataset.disperseX = disperseX;
+                    particle.dataset.disperseY = disperseY;
+                    particle.dataset.rotate = randomRotate;
+
+                    // 初始状态（正常显示）- 方块形状
+                    particle.style.transform = 'translate(0, 0) rotate(0deg) scale(1)';
+                    particle.style.opacity = '1';
+                    particle.style.borderRadius = '0'; // 初始为方块形状
+                    particle.style.transition = `
+                        transform ${totalDuration}s ease-in ${delay}ms,
+                        opacity ${totalDuration}s ease-in ${delay}ms,
+                        border-radius ${shapeDuration}s ease-out ${delay}ms
+                    `;
+
+                    // 移除边框效果
+                    particle.style.border = 'none';
+                    particle.style.outline = 'none';
+                    particle.style.boxShadow = 'none';
+
+                    particlesContainer.appendChild(particle);
+                    particles.push({
+                        element: particle,
+                        delay: delay,
+                        duration: totalDuration * 1000, // 转换为毫秒
+                        disperseX,
+                        disperseY,
+                        rotate: randomRotate,
+                        pathType
+                    });
+                }
             }
         }
 
@@ -957,12 +1062,21 @@ class CyberImageViewer {
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 console.log('🎭 开始粒子消散动画');
-                particles.forEach(({ element, disperseX, disperseY, rotate }) => {
-                    // 消散为粒子点（scale=0），像灰烬一样消失
-                    // 形变为圆形，同时位移、旋转、缩放
-                    element.style.borderRadius = '50%';
-                    element.style.transform = `translate(${disperseX}px, ${disperseY}px) rotate(${rotate}deg) scale(0)`;
-                    element.style.opacity = '0';
+                particles.forEach(({ element, innerElement, disperseX, disperseY, rotate, pathType }) => {
+                    if (pathType === 'arc' || pathType === 's-curve') {
+                        // 两层div结构：外层控制X，内层控制Y + 形变
+                        // 外层X轴位移
+                        element.style.transform = `translateX(${disperseX}px)`;
+                        // 内层Y轴位移 + 旋转 + 缩放 + 形变
+                        innerElement.style.borderRadius = '50%';
+                        innerElement.style.transform = `translateY(${disperseY}px) rotate(${rotate}deg) scale(0)`;
+                        innerElement.style.opacity = '0';
+                    } else {
+                        // 直线路径：单层div，同时设置所有属性
+                        element.style.borderRadius = '50%';
+                        element.style.transform = `translate(${disperseX}px, ${disperseY}px) rotate(${rotate}deg) scale(0)`;
+                        element.style.opacity = '0';
+                    }
                 });
             });
         });
