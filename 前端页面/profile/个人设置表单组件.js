@@ -562,6 +562,10 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                 }
             } catch(e){}
 
+            // 主动清除该用户的 SWR 缓存，确保头像等信息立即刷新
+            const profileCacheKey = "ComfyCommunity_ProfileCache_" + userData.account;
+            localStorage.removeItem(profileCacheKey);
+
             showToast("设置已保存并同步至云端！", "success");
             if (onSaveSuccessCallback) onSaveSuccessCallback(newUserData);
         } catch (err) {

@@ -12,6 +12,7 @@
 // ==========================================
 
 import { t } from "./用户体验增强.js";
+import { openImageViewer } from "./图片展示测试.js";
 
 // 🔧 动态生成SVG占位图（支持多语言）
 function createPlaceholderSVG(text) {
@@ -102,6 +103,7 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
                 <button class="btn-zoom-out" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold;">-</button>
                 <button class="btn-zoom-reset" style="background: #333; color: #fff; border: 1px solid #555; height: 28px; padding: 0 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">${t('common.reset')}</button>
                 <button class="btn-zoom-in" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold;">+</button>
+                <button class="btn-fullscreen" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold; display: flex; align-items: center; justify-content: center; font-size: 14px; margin-left: 5px;" title="全屏播放">⛶</button>
             </div>
             <div class="sliders-wrapper" style="opacity: 0.2; transition: 0.3s; position: absolute; width: 100%; height: 100%; top:0; left:0; pointer-events: none;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.2">
                 <input type="range" class="slider-x" min="-400" max="400" value="0" style="position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); width: 80%; pointer-events: auto; z-index: 10;">
@@ -219,6 +221,59 @@ export function setupImageSandboxEvents(detailView) {
     btnIn.onclick = () => zoom(0.2); 
     btnOut.onclick = () => zoom(-0.2);
     btnReset.onclick = () => { scale = 1; sliderX.value = 0; sliderY.value = 0; syncTransform(); };
+    
+    // ⛶ 全屏播放按钮事件
+    const btnFullscreen = viewport.querySelector('.btn-fullscreen');
+    if (btnFullscreen) {
+        btnFullscreen.onclick = (e) => {
+            e.stopPropagation();
+            
+            // 收集当前viewport的所有图片URL
+            const dataImages = viewport.getAttribute('data-images');
+            let imageUrls = [];
+            
+            if (dataImages) {
+                try {
+                    imageUrls = JSON.parse(dataImages);
+                } catch (e) {
+                    // 单图模式
+                    const img = viewport.querySelector('.target-img');
+                    if (img && img.src) {
+                        imageUrls = [img.src];
+                    }
+                }
+            } else {
+                // 无data-images属性，取当前img的src
+                const img = viewport.querySelector('.target-img');
+                if (img && img.src) {
+                    imageUrls = [img.src];
+                }
+            }
+            
+            // 获取当前图片索引
+            const currentIndex = parseInt(viewport.getAttribute('data-current') || '0', 10);
+            
+            // 🔍 调试日志：输出收集到的图片URL
+            console.log('🖼️ 全屏播放图片:', imageUrls, '当前索引:', currentIndex);
+            
+            if (imageUrls.length > 0) {
+                // 打开全屏图像播放器（使用静态import，避免动态import路径问题）
+                try {
+                    openImageViewer(imageUrls, currentIndex, { opaque: true });
+                } catch (err) {
+                    console.error('无法打开图像播放器:', err);
+                    // 显示用户可见的错误提示
+                    import('./UI交互提示组件.js').then(module => {
+                        module.showToast('图像播放器加载失败，请刷新页面重试', 'error');
+                    }).catch(() => {
+                        alert('图像播放器加载失败，请刷新页面重试');
+                    });
+                }
+            } else {
+                console.warn('⚠️ 没有可播放的图片URL');
+            }
+        };
+    }
     
     viewport.addEventListener('wheel', (e) => { e.preventDefault(); zoom(e.deltaY > 0 ? -0.1 : 0.1); });
     sliderX.addEventListener('input', syncTransform); 

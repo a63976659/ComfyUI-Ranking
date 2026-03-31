@@ -181,7 +181,13 @@ const CACHE_INVALIDATION_MAP = {
     },
     // 用户相关
     "/api/users": {
-        "PUT": ["api_/api/users", "ComfyRanking_ProfileCache_"],         // 更新用户，清除用户缓存
+        "PUT": [
+            "api_/api/users",
+            "ComfyRanking_ProfileCache_",
+            "ComfyCommunity_ProfileCache_",  // 新增：SWR头像缓存
+            "api_/api/creators",
+            "ComfyRanking_ListCache_",       // 新增：所有列表缓存（含头像字段）
+        ],
         "POST": ["api_/api/users"]                                        // 用户相关操作
     },
     // 钱包相关
