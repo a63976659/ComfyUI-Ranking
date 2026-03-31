@@ -69,10 +69,6 @@ const VIEWER_STYLES = `
     visibility: visible;
 }
 
-.cyber-main-image.visible {
-    opacity: 1;
-}
-
 /* 方块动画容器 */
 .cyber-blocks-container {
     position: absolute;
@@ -603,6 +599,7 @@ class CyberImageViewer {
      * 使用与粒子消散相同的网格参数和背景图裁切方式
      */
     _playBlockAssemblyAnimation() {
+        const currentAnimId = this._animationId; // 记录当前动画ID
         const img = this.elements.mainImage;
         const wrapper = this.elements.wrapper;
         const imgSrc = img.src;
@@ -726,6 +723,11 @@ class CyberImageViewer {
         // 触发方块聚合动画 - 使用双重requestAnimationFrame确保浏览器已渲染初始状态
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
+                // 检查动画是否已被中断
+                if (currentAnimId !== this._animationId) {
+                    console.log('⛔ 方块聚合动画被中断，跳过动画触发');
+                    return;
+                }
                 console.log('🎭 开始方块聚合动画');
                 blocks.forEach(({ element }) => {
                     // 目标状态：聚合到正确位置
@@ -742,6 +744,16 @@ class CyberImageViewer {
 
         // 动画完成后显示完整图片并清理方块
         setTimeout(() => {
+            // 检查动画是否已被中断
+            if (currentAnimId !== this._animationId) {
+                // 动画已被中断，只做清理
+                console.log('⛔ 方块动画被中断，执行清理');
+                if (blocksContainer.parentNode) {
+                    blocksContainer.parentNode.removeChild(blocksContainer);
+                }
+                return;
+            }
+            
             console.log('✨ 方块动画完成，显示原图');
             
             // 先确保图片src正确设置
@@ -763,6 +775,14 @@ class CyberImageViewer {
 
             // 等待方块淡出完成后移除容器，然后恢复transition
             setTimeout(() => {
+                // 内层timeout也要检查
+                if (currentAnimId !== this._animationId) {
+                    if (blocksContainer.parentNode) {
+                        blocksContainer.parentNode.removeChild(blocksContainer);
+                    }
+                    return;
+                }
+                
                 if (blocksContainer.parentNode) {
                     blocksContainer.parentNode.removeChild(blocksContainer);
                 }
@@ -781,6 +801,7 @@ class CyberImageViewer {
      * 使用更多更小的粒子，波浪扩散效果
      */
     async _playParticleDisperseAnimation(clickX, clickY) {
+        const currentAnimId = this._animationId; // 记录当前动画ID
         const img = this.elements.mainImage;
         const wrapper = this.elements.wrapper;
         const imgSrc = img.src;
@@ -954,13 +975,17 @@ class CyberImageViewer {
         return new Promise(resolve => {
             setTimeout(() => {
                 console.log('✨ 粒子消散动画完成');
+                // 无论是否被中断，都要清理粒子容器
                 if (particlesContainer.parentNode) {
                     particlesContainer.parentNode.removeChild(particlesContainer);
                 }
-                // 动画完成后，确保原图保持隐藏状态
-                img.style.opacity = '0';
-                img.style.visibility = 'hidden';
-                img.classList.remove('visible');
+                // 只在未被中断时才操作img状态
+                if (currentAnimId === this._animationId) {
+                    // 动画完成后，确保原图保持隐藏状态
+                    img.style.opacity = '0';
+                    img.style.visibility = 'hidden';
+                    img.classList.remove('visible');
+                }
                 resolve();
             }, animationDuration);
         });
