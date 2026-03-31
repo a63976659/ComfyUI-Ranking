@@ -136,7 +136,8 @@ ComfyUI-Ranking/
 
 ## 🎨 界面预览
 
-<img width="804" alt="排行榜界面" src="https://github.com/user-attachments/assets/66eadc32-8092-4933-86d0-7d5fc0a4855d" />
+
+<img width="500" height="1000" alt="ComfyUI排行榜" src="https://github.com/user-attachments/assets/6a2792b1-5034-4742-b075-abbefbcd37d2" />
 
 ---
 
