@@ -97,7 +97,7 @@ const requestCancelManager = {
 };
 
 // 导出给外部使用
-export { requestCancelManager };
+export { requestCancelManager, invalidateRelatedCache };
 
 // 🚀 P3优化：请求队列管理（限制并发数）
 const requestQueue = {
@@ -249,6 +249,7 @@ function invalidateRelatedCache(endpoint, method = null) {
 // 🚀 统一缓存：所有头像字段都走同一个缓存代理，无需重复下载
 const IMAGE_PROXY_FIELDS = [
     'coverUrl',           // 封面图
+    'cover_image',        // 帖子封面图（后端字段名）
     'avatar',             // 通用头像
     'avatarDataUrl',      // 头像数据 URL
     'from_avatar',        // 消息发送者头像
@@ -258,6 +259,9 @@ const IMAGE_PROXY_FIELDS = [
     'author_avatar',      // 帖子/评论作者头像
     'target_avatar',      // 私信目标用户头像
 ];
+
+// 🚀 新增：需要对数组元素进行代理的图片字段
+const IMAGE_PROXY_ARRAY_FIELDS = ['images'];
 
 // 🚀 导出图片代理函数，供其他组件在缓存读取后调用
 export function proxyImages(obj) {
@@ -281,6 +285,24 @@ export function proxyImages(obj) {
                 } else {
                     obj[key] = originalUrl;
                 }
+            } else if (IMAGE_PROXY_ARRAY_FIELDS.includes(key) && Array.isArray(obj[key])) {
+                // 🚀 新增：处理图片URL数组字段（如帖子的images数组）
+                obj[key] = obj[key].map(url => {
+                    if (typeof url === 'string') {
+                        let originalUrl = url;
+                        // 复用相同的URL清洗逻辑
+                        while (originalUrl.startsWith('/community_hub/image?url=')) {
+                            try { originalUrl = decodeURIComponent(originalUrl.replace('/community_hub/image?url=', '')); }
+                            catch(e) { break; }
+                        }
+                        // 只有外部网络链接才挂上代理
+                        if (originalUrl.startsWith('http')) {
+                            return `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
+                        }
+                        return originalUrl;
+                    }
+                    return url;
+                });
             } else {
                 obj[key] = proxyImages(obj[key]);
             }
@@ -531,11 +553,11 @@ export const api = {
     async publishItem(data) { return request("/api/items", { method: "POST", body: data }); },
     async updateItem(itemId, author, data) { return request(`/api/items/${itemId}?author=${author}`, { method: "PUT", body: data }); },
     async getItems(type, sort, limit) { return request(`/api/items?type=${type}&sort=${sort}&limit=${limit}`); },
-    async deleteItem(itemId, author) { return request(`/api/items/${itemId}?author=${author}`, { method: "DELETE" }); },
+    async deleteItem(itemId) { return request(`/api/items/${itemId}`, { method: "DELETE" }); },
     async recordItemUse(itemId) { return request(`/api/items/${itemId}/use`, { method: "POST" }); },
     async toggleInteraction(itemId, userId, actionType, isActive) { return request("/api/interactions/toggle", { method: "POST", body: { item_id: itemId, user_id: userId, action_type: actionType, is_active: isActive } }); },
     async postComment(itemId, author, content, replyTo = null, parentId = null) { return request("/api/comments", { method: "POST", body: { item_id: itemId, author, content, reply_to_user: replyTo, parent_id: parentId } }); },
-    async deleteComment(itemId, commentId, author) { return request(`/api/comments/${itemId}/${commentId}?author=${author}`, { method: "DELETE" }); },
+    async deleteComment(itemId, commentId) { return request(`/api/comments/${itemId}/${commentId}`, { method: "DELETE" }); },
     async getMessages(account) { return request(`/api/messages/${account}`); },
     async markMessagesRead(account) { return request(`/api/messages/${account}/read`, { method: "POST" }); },
     async sendPrivateMessage(sender, receiver, content) { return request("/api/messages/private", { method: "POST", body: { sender, receiver, content } }); },

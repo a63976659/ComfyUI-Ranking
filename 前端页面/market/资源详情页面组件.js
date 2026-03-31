@@ -15,6 +15,8 @@ import { setupResourceInstall } from "./资源安装引擎.js";
 import { renderTipBoardHTML } from "../components/打赏等级工具.js";
 import { t } from "../components/用户体验增强.js";
 import { removeCache } from "../components/性能优化工具.js";
+import { invalidateRelatedCache } from "../core/网络请求API.js";
+import { showToast } from "../components/UI交互提示组件.js";
 
 // 🔄 P7后悔模式：渲染退款按钮
 async function renderRefundButton(container, itemData, currentUser) {
@@ -165,6 +167,103 @@ function burnLocalFiles(itemId) {
     console.log(`🔥 已焚毁资源 ${itemId} 的本地数据`);
 }
 
+// ==========================================
+// 🗑️ 删除内容功能
+// ==========================================
+
+/**
+ * 检查当前用户是否有权限删除内容（作者或管理员）
+ */
+function canDeleteItem(itemData, currentUser) {
+    if (!currentUser) return false;
+    // 作者本人可以删除
+    if (itemData.author === currentUser.account) return true;
+    // 管理员可以删除
+    if (currentUser.is_admin) return true;
+    return false;
+}
+
+/**
+ * 显示删除确认弹窗
+ */
+function showDeleteConfirm(itemData, currentUser, onSuccess) {
+    const overlay = document.createElement("div");
+    Object.assign(overlay.style, {
+        position: "fixed", top: "0", left: "0", right: "0", bottom: "0",
+        background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: "10000"
+    });
+    
+    overlay.innerHTML = `
+        <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 420px; width: 90%; color: #fff; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
+            <div style="font-size: 18px; font-weight: bold; margin-bottom: 20px; color: #F44336; display: flex; align-items: center; gap: 10px;">
+                ⚠️ 确认删除
+            </div>
+            
+            <div style="background: #2a2d3e; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+                <div style="font-size: 14px; margin-bottom: 10px;">内容：<strong>${itemData.title || '未命名资源'}</strong></div>
+                <div style="font-size: 13px; color: #888;">类型：${itemData.type || '未知'}</div>
+            </div>
+            
+            <div style="background: rgba(244,67,54,0.1); border: 1px solid rgba(244,67,54,0.3); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                <div style="font-size: 13px; color: #FF9800; line-height: 1.8;">
+                    <div>🚨 <strong>删除后果（不可恢复）：</strong></div>
+                    <div style="margin-left: 20px; margin-top: 5px;">
+                        • 该内容将从市场永久移除<br>
+                        • 所有相关评论将被删除<br>
+                        • 已购买用户将无法再下载
+                    </div>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                <button id="btn-cancel-delete" style="background: #555; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: 0.2s;" onmouseover="this.style.background='#666'" onmouseout="this.style.background='#555'">
+                    取消
+                </button>
+                <button id="btn-confirm-delete" style="background: #F44336; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#D32F2F'" onmouseout="this.style.background='#F44336'">
+                    确认删除
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector("#btn-cancel-delete").onclick = () => overlay.remove();
+    
+    overlay.querySelector("#btn-confirm-delete").onclick = async () => {
+        const confirmBtn = overlay.querySelector("#btn-confirm-delete");
+        confirmBtn.disabled = true;
+        confirmBtn.innerText = "删除中...";
+        
+        try {
+            const res = await api.deleteItem(itemData.id);
+            if (res.status === "success") {
+                // 清除相关缓存
+                invalidateRelatedCache(`/api/items/${itemData.id}`, "DELETE");
+                
+                overlay.remove();
+                showToast("内容已删除", "success");
+                
+                // 返回列表页
+                window.dispatchEvent(new CustomEvent("comfy-route-view", { 
+                    detail: { view: "market", type: itemData.type || "tool" } 
+                }));
+                
+                if (onSuccess) onSuccess();
+            } else {
+                alert("删除失败：" + (res.detail || "未知错误"));
+                overlay.remove();
+            }
+        } catch (e) {
+            alert("删除请求失败：" + (e.message || "网络错误"));
+            overlay.remove();
+        }
+    };
+    
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+
 export function createItemDetailView(itemData, currentUser) {
     const container = document.createElement("div");
     Object.assign(container.style, {
@@ -182,10 +281,19 @@ export function createItemDetailView(itemData, currentUser) {
     const boardData = itemData.tip_board || [];
     const boardHtml = renderTipBoardHTML(boardData, 10, "该资源暂无专属打赏，快来成为首个赞赏人吧！", "normal");
 
+    // 🗑️ 判断是否有权限删除
+    const showDeleteBtn = canDeleteItem(itemData, currentUser);
+    const deleteBtnHtml = showDeleteBtn ? `
+        <button id="btn-delete-item" style="background: #F44336; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(244,67,54,0.3); transition: 0.2s; margin-left: 10px;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🗑️ 删除</button>
+    ` : '';
+
     let authorInfoHtml = `
-        <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             <div><strong>作者：</strong> <span id="detail-author-name">${authorName}</span></div>
-            <button id="btn-tip-item" style="background: #E91E63; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(233,30,99,0.3); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 赞赏鼓励该作品</button>
+            <div style="display: flex; align-items: center;">
+                <button id="btn-tip-item" style="background: #E91E63; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(233,30,99,0.3); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 赞赏鼓励该作品</button>
+                ${deleteBtnHtml}
+            </div>
         </div>
         <div style="margin-top: 10px; color: #888;">感谢 硊影科技 的支持！</div>
             
@@ -257,6 +365,15 @@ export function createItemDetailView(itemData, currentUser) {
             // 打赏成功后刷新局部或整体详情 (由框架重新渲染)
         }, itemData.id); 
     };
+
+    // 🗑️ 绑定删除按钮事件
+    const btnDeleteItem = container.querySelector("#btn-delete-item");
+    if (btnDeleteItem) {
+        btnDeleteItem.onclick = () => {
+            if (!currentUser) return alert("请先登录您的账号！");
+            showDeleteConfirm(itemData, currentUser);
+        };
+    }
 
     api.getUserProfile(itemData.author).then(res => {
         const freshName = res.data.name || itemData.author;

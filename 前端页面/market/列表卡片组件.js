@@ -183,10 +183,11 @@ export function createItemCard(itemData, currentUser = null) {
     commentsContainer.style.height = "250px"; 
     
     // 🚀 核心修改：传入一个回调函数，当组件内部发送/删除留言时，外部的数字能实时响应刷新！
+    // 🚀 P0安全修复：传递 itemData.author 作为 contentAuthor，使内容作者可以删除其内容下的评论
     const commentUI = createCommentSection(itemData.id, itemData.commentsData || [], currentUser, (newCount) => {
         const badge = summaryView.querySelector(".card-comment-count");
         if (badge) badge.innerText = `💬 ${newCount}`;
-    });
+    }, itemData.author);
     
     commentsContainer.appendChild(commentUI);
     detailView.appendChild(commentsContainer);

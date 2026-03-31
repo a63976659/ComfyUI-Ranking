@@ -9,7 +9,7 @@
 //   - 打赏等级工具.js (打赏榜单)
 // ==========================================
 
-import { api } from "../core/网络请求API.js";
+import { api, proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
 import { renderTipLevelHTML } from "../components/打赏等级工具.js";
@@ -71,7 +71,8 @@ async function loadPostDetail(container, postId, currentUser) {
     
     try {
         const res = await api.getPostDetail(postId);
-        const post = res.data;
+        let post = res.data;
+        post = proxyImages(post);  // 新增：对帖子数据应用图片代理
         
         if (!post) {
             contentArea.innerHTML = `
@@ -374,7 +375,8 @@ async function loadComments(container, postId, currentUser) {
     
     try {
         const res = await api.getPostComments(postId);
-        const comments = res.data || [];
+        let comments = res.data || [];
+        comments = proxyImages(comments);  // 新增：对评论数据应用图片代理
         
         if (comments.length === 0) {
             commentsList.innerHTML = `

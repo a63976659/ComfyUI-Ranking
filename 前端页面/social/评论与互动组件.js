@@ -39,7 +39,8 @@ export function setupToggleButton(btnElement, initialState, initialCount, active
 }
 
 // 🚀 核心修改：在参数末尾接收外部传进来的 onCountChange 回调函数
-export function createCommentSection(itemId, commentsData, currentUser, onCountChange) {
+// 🚀 P0安全修复：新增 contentAuthor 参数用于判断内容作者权限
+export function createCommentSection(itemId, commentsData, currentUser, onCountChange, contentAuthor = null) {
     const container = document.createElement("div");
     Object.assign(container.style, {
         display: "flex", flexDirection: "column", height: "100%", backgroundColor: "#1e1e1e", borderRadius: "4px"
@@ -90,8 +91,12 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             const avatarSize = isSubReply ? "24px" : "32px";
             const replyLabel = comment.replyToUserName ? `<span style="color: #888;">${t('social.reply_to')} <span style="color: #2196F3;">@${comment.replyToUserName}</span>：</span>` : "";
             
-            const isMine = currentUser && currentUser.account === comment.author;
-            const deleteBtnHtml = isMine ? `<span class="delete-btn" style="color: #F44336; cursor: pointer; margin-left: 10px; font-size: 10px;">${t('common.delete')}</span>` : "";
+            // 🚀 P0安全修复：权限判断 - 评论作者、内容作者或管理员可删除
+            const isCommentAuthor = currentUser && currentUser.account === comment.author;
+            const isContentAuthor = currentUser && contentAuthor && currentUser.account === contentAuthor;
+            const isAdmin = currentUser && currentUser.isAdmin === true;
+            const canDelete = isCommentAuthor || isContentAuthor || isAdmin;
+            const deleteBtnHtml = canDelete ? `<span class="delete-btn" style="color: #F44336; cursor: pointer; margin-left: 10px; font-size: 10px;">${t('common.delete')}</span>` : "";
 
             // 🚀 SWR 缓存优先获取头像
             const account = comment.author;
@@ -133,11 +138,12 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
                 inputField.focus();
             };
 
-            if (isMine) {
+            if (canDelete) {
                 itemDiv.querySelector(".delete-btn").onclick = async () => {
                     if (confirm(t('social.delete_comment_confirm'))) {
                         try {
-                            await api.deleteComment(itemId, comment.id, currentUser.account);
+                            // 🚀 P0安全修复：删除评论不再传递author，后端从JWT中获取
+                            await api.deleteComment(itemId, comment.id);
                             comment.isDeleted = true;
                             renderList(); 
                             triggerCountUpdate();

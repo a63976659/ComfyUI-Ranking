@@ -181,7 +181,8 @@ export function createCreatorCard(creatorData, currentUser = null) {
     tipBoardContainer.appendChild(tipBoardUI);
 
     const boardContainer = detailView.querySelector(`#board-${chartContainerId}`);
-    const commentUI = createCommentSection(creatorData.account, creatorData.commentsData || [], currentUser);
+    // 🚀 P0安全修复：传递创作者账号作为 contentAuthor，使创作者可以删除其主页下的评论
+    const commentUI = createCommentSection(creatorData.account, creatorData.commentsData || [], currentUser, null, creatorData.account);
     boardContainer.appendChild(commentUI);
 
     let isChartRendered = false; let chartInstance = null;
