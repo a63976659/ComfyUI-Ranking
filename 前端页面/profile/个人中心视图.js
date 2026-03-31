@@ -265,10 +265,20 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                     try {
                         const response = await api.runAdminScript(currentUser.account, scriptName);
                         const output = response.output || response.message || JSON.stringify(response, null, 2);
-                        resultArea.innerHTML = `<span style="color: #3fb950;">✅ ${t('admin.exec_success')}：</span>\n\n${output}`;
+                        // 使用安全的DOM操作替代innerHTML，防止XSS
+                        resultArea.innerHTML = `<span style="color: #3fb950;">✅ ${t('admin.exec_success')}：</span>`;
+                        const outputNode = document.createElement('pre');
+                        outputNode.style.cssText = 'margin: 8px 0 0 0; white-space: pre-wrap; word-break: break-all; font-family: monospace;';
+                        outputNode.textContent = '\n' + output;
+                        resultArea.appendChild(outputNode);
                     } catch (error) {
                         console.error("Script execution failed:", error);
-                        resultArea.innerHTML = `<span style="color: #f85149;">❌ ${t('admin.exec_failed')}：</span>\n\n${error.message}`;
+                        // 使用安全的DOM操作替代innerHTML，防止XSS
+                        resultArea.innerHTML = `<span style="color: #f85149;">❌ ${t('admin.exec_failed')}：</span>`;
+                        const errorNode = document.createElement('pre');
+                        errorNode.style.cssText = 'margin: 8px 0 0 0; white-space: pre-wrap; word-break: break-all; font-family: monospace;';
+                        errorNode.textContent = '\n' + error.message;
+                        resultArea.appendChild(errorNode);
                     } finally {
                         btnAdminRunScript.innerText = `▶️ ${t('admin.execute')}`;
                         btnAdminRunScript.disabled = false;

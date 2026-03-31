@@ -8,6 +8,7 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
+import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 
 /**
  * 📝 创建任务详情视图
@@ -119,12 +120,11 @@ function renderTaskDetail(contentEl, task, currentUser) {
             ${escapeHtml(task.title)}
         </h2>
         
-        <!-- 发布者信息 -->
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; padding: 10px; background: #1e1e1e; border-radius: 8px;">
-            <img src="${task.publisher_avatar || 'https://via.placeholder.com/40'}" 
-                 style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #333; cursor: pointer;" id="publisher-avatar">
+        <!-- 发布者信息（SWR 缓存头像） -->
+        <div id="task-detail-publisher" style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; padding: 10px; background: #1e1e1e; border-radius: 8px;">
+            <div class="swr-avatar-container" style="width: 40px; height: 40px;"></div>
             <div style="flex: 1;">
-                <div style="color: #fff; font-size: 14px; font-weight: 500;">${escapeHtml(task.publisher_name || task.publisher)}</div>
+                <div class="swr-name" style="color: #fff; font-size: 14px; font-weight: 500;">${escapeHtml(task.publisher_name || task.publisher)}</div>
                 <div style="color: #888; font-size: 11px;">${t('task.published_at')} ${formatTime(task.created_at)}</div>
             </div>
             ${isPublisher && ["open", "in_progress", "submitted"].includes(task.status) ? `
@@ -188,7 +188,7 @@ ${escapeHtml(task.description)}</div>
             <div style="margin-bottom: 20px; padding: 12px; background: rgba(33,150,243,0.1); border: 1px solid rgba(33,150,243,0.3); border-radius: 8px;">
                 <div style="font-size: 13px; font-weight: bold; color: #2196F3; margin-bottom: 8px;">👷 ${t('task.assignee')}</div>
                 <div style="display: flex; align-items: center; gap: 10px;">
-                    <img src="${task.assignee_avatar || 'https://via.placeholder.com/32'}" 
+                    <img src="${task.assignee_avatar || PLACEHOLDERS.AVATAR_SMALL}"
                          style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">
                     <span style="color: #fff;">${escapeHtml(task.assignee_name || task.assignee)}</span>
                 </div>
@@ -217,7 +217,7 @@ ${escapeHtml(task.description)}</div>
                 <div id="applicants-list" style="display: flex; flex-direction: column; gap: 8px;">
                     ${task.applicants.map(app => `
                         <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: #1e1e1e; border-radius: 8px;">
-                            <img src="${app.avatar || 'https://via.placeholder.com/32'}" 
+                            <img src="${app.avatar || PLACEHOLDERS.AVATAR_SMALL}"
                                  style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">
                             <div style="flex: 1;">
                                 <div style="color: #fff; font-size: 13px;">${escapeHtml(app.name || app.account)}</div>
@@ -236,6 +236,45 @@ ${escapeHtml(task.description)}</div>
         <div id="action-buttons" style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">
         </div>
     `;
+    
+    // 🚀 SWR 头像渲染：发布者头像
+    const publisherContainer = contentEl.querySelector("#task-detail-publisher");
+    if (publisherContainer) {
+        const avatarContainer = publisherContainer.querySelector(".swr-avatar-container");
+        const nameEl = publisherContainer.querySelector(".swr-name");
+        
+        const account = task.publisher;
+        const cached = getCachedProfile(account);
+        const avatar = cached?.avatar || task.publisher_avatar || '';
+        const name = cached?.name || task.publisher_name || account || '';
+        const initial = (name || 'U')[0].toUpperCase();
+        
+        // 渲染初始头像
+        if (avatarContainer) {
+            avatarContainer.innerHTML = avatar 
+                ? `<img class="swr-avatar" src="${avatar}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #333; cursor: pointer;">` 
+                : `<div class="swr-avatar" style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; font-weight: bold; cursor: pointer;">${initial}</div>`;
+        }
+        if (nameEl) nameEl.textContent = name;
+        
+        // 后台静默校对
+        getProfileWithSWR(account, api.getUserProfile, (profile) => {
+            const avatarEl = avatarContainer?.querySelector('.swr-avatar');
+            if (avatarEl && profile.avatar) {
+                if (avatarEl.tagName === 'IMG') {
+                    avatarEl.src = profile.avatar;
+                } else {
+                    avatarEl.outerHTML = `<img class="swr-avatar" src="${profile.avatar}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #333; cursor: pointer;">`;
+                }
+            }
+            if (nameEl && profile.name) nameEl.textContent = profile.name;
+        });
+        
+        // 点击头像打开个人中心
+        avatarContainer?.addEventListener('click', () => {
+            import("../profile/个人中心视图.js").then(m => m.openOtherUserProfileModal(task.publisher, currentUser));
+        });
+    }
     
     // 渲染操作按钮
     renderActionButtons(contentEl.querySelector("#action-buttons"), task, currentUser, isPublisher, isAssignee, hasApplied);

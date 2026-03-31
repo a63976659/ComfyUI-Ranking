@@ -205,13 +205,21 @@ export const UI = {
         BORDER_LIGHT: "#555"
     },
     
-    // 图片占位图
+    // 图片占位图（🚀 关键修复：全部改为内联 SVG，避免外部网络请求）
     PLACEHOLDERS: {
-        AVATAR: "https://via.placeholder.com/150",
-        COVER: "https://via.placeholder.com/400x260",
+        // 头像占位图（👤 图标）
+        AVATAR: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Crect fill='%23333' width='150' height='150' rx='75'/%3E%3Ctext x='75' y='100' text-anchor='middle' fill='%23888' font-size='60'%3E👤%3C/text%3E%3C/svg%3E`,
+        // 封面占位图（🖼️ 图标）
+        COVER: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260'%3E%3Crect fill='%23222' width='400' height='260'/%3E%3Ctext x='200' y='140' text-anchor='middle' fill='%23666' font-size='48'%3E🖼️%3C/text%3E%3C/svg%3E`,
+        // 小头像占位图（用于列表）
+        AVATAR_SMALL: `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect fill='%23333' width='40' height='40' rx='20'/%3E%3Ctext x='20' y='26' text-anchor='middle' fill='%23888' font-size='16'%3E👤%3C/text%3E%3C/svg%3E`,
+        // 加载占位图
         LOADING: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Crect fill='%231a1a1a' width='100' height='100'/%3E%3C/svg%3E"
     }
 };
+
+// 🚀 导出 PLACEHOLDERS 便于直接使用
+export const PLACEHOLDERS = UI.PLACEHOLDERS;
 
 
 // ==========================================
@@ -395,6 +403,135 @@ export function getTipLevelConfig() {
 
 
 // ==========================================
+// 🚀 SWR 头像缓存工具（跨组件共享）
+// ==========================================
+// 实现原理：
+//   1. 从 localStorage 读取缓存，0延迟渲染
+//   2. 后台静默校对云端数据
+//   3. 有更新时自动刷新 DOM
+// 缓存键：ComfyCommunity_ProfileCache_{account}
+
+const PROFILE_CACHE_PREFIX = "ComfyCommunity_ProfileCache_";
+const _pendingProfileRequests = new Map();  // 防止 N+1 并发请求
+
+/**
+ * 🚀 获取缓存的用户资料（同步）
+ * @param {string} account - 用户账号
+ * @returns {Object|null} 缓存的用户资料
+ */
+export function getCachedProfile(account) {
+    if (!account) return null;
+    try {
+        const cached = localStorage.getItem(PROFILE_CACHE_PREFIX + account);
+        if (!cached) return null;
+        const profile = JSON.parse(cached);
+        // 🚀 统一字段映射：将 avatarDataUrl 映射为 avatar
+        if (profile && profile.avatarDataUrl && !profile.avatar) {
+            profile.avatar = profile.avatarDataUrl;
+        }
+        return profile;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 🚀 保存用户资料到缓存
+ * @param {string} account - 用户账号
+ * @param {Object} profile - 用户资料
+ */
+export function setCachedProfile(account, profile) {
+    if (!account || !profile) return;
+    try {
+        localStorage.setItem(PROFILE_CACHE_PREFIX + account, JSON.stringify(profile));
+    } catch {}
+}
+
+/**
+ * 🚀 SWR 模式获取用户资料（先返回缓存，后台校对）
+ * @param {string} account - 用户账号
+ * @param {Function} apiFn - API 调用函数 (account) => Promise<{data: profile}>
+ * @param {Function} onUpdate - 数据更新时的回调 (profile) => void
+ * @returns {Object|null} 初始缓存数据
+ */
+export function getProfileWithSWR(account, apiFn, onUpdate) {
+    if (!account) return null;
+    
+    // 第一轨：同步返回缓存
+    const cached = getCachedProfile(account);
+    
+    // 第二轨：异步静默校对（防止 N+1 并发）
+    if (!_pendingProfileRequests.has(account)) {
+        const promise = apiFn(account).then(res => {
+            const profile = res.data || res;
+            // 🚀 统一字段映射：将 avatarDataUrl 映射为 avatar
+            if (profile && profile.avatarDataUrl && !profile.avatar) {
+                profile.avatar = profile.avatarDataUrl;
+            }
+            setCachedProfile(account, profile);
+            if (onUpdate && typeof onUpdate === 'function') {
+                onUpdate(profile);
+            }
+            return profile;
+        }).catch(() => null).finally(() => {
+            _pendingProfileRequests.delete(account);
+        });
+        _pendingProfileRequests.set(account, promise);
+    }
+    
+    return cached;
+}
+
+/**
+ * 🚀 渲染带 SWR 缓存的头像+名称 HTML
+ * @param {Object} options
+ * @param {string} options.account - 用户账号
+ * @param {string} options.fallbackAvatar - 备用头像 URL（从原始数据中获取）
+ * @param {string} options.fallbackName - 备用名称
+ * @param {number} options.avatarSize - 头像尺寸 (px)
+ * @param {Function} options.apiFn - API 调用函数
+ * @param {string} options.containerId - 唯一容器 ID（用于 DOM 更新）
+ * @returns {string} HTML 字符串
+ */
+export function renderAvatarWithSWR(options) {
+    const { account, fallbackAvatar, fallbackName, avatarSize = 24, apiFn, containerId } = options;
+    
+    // 从缓存获取
+    const cached = getCachedProfile(account);
+    const avatar = cached?.avatar || cached?.avatarDataUrl || fallbackAvatar || '';
+    const name = cached?.name || fallbackName || account || '';
+    
+    // 后台静默校对并更新 DOM
+    if (apiFn && containerId) {
+        setTimeout(() => {
+            getProfileWithSWR(account, apiFn, (profile) => {
+                const container = document.getElementById(containerId);
+                if (!container) return;
+                
+                const avatarImg = container.querySelector('.swr-avatar');
+                const nameSpan = container.querySelector('.swr-name');
+                
+                if (avatarImg && profile.avatar) {
+                    avatarImg.src = profile.avatar;
+                }
+                if (nameSpan && profile.name) {
+                    nameSpan.textContent = profile.name;
+                }
+            });
+        }, 0);
+    }
+    
+    // 生成初始 HTML（无头像时显示首字母背景）
+    const initial = (name || account || 'U')[0].toUpperCase();
+    const avatarHtml = avatar 
+        ? `<img class="swr-avatar" src="${avatar}" style="width: ${avatarSize}px; height: ${avatarSize}px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #333;">` 
+        : `<div class="swr-avatar" style="width: ${avatarSize}px; height: ${avatarSize}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${Math.floor(avatarSize * 0.5)}px; font-weight: bold; flex-shrink: 0;">${initial}</div>`;
+    
+    return `<span id="${containerId}" style="display: inline-flex; align-items: center; gap: 6px;">${avatarHtml}<span class="swr-name">${name}</span></span>`;
+}
+
+
+// ==========================================
 // 📦 导出默认配置对象
 // ==========================================
 export default {
@@ -412,5 +549,9 @@ export default {
     isFeatureEnabled,
     getCurrentAccount,
     getBackgroundKey,
-    getBannerCacheKey
+    getBannerCacheKey,
+    getCachedProfile,
+    setCachedProfile,
+    getProfileWithSWR,
+    renderAvatarWithSWR
 };

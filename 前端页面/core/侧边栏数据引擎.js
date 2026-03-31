@@ -17,6 +17,7 @@
 // ==========================================
 
 import { api } from "./网络请求API.js";
+import { proxyImages } from "./网络请求API.js";
 import { createItemCard } from "../market/列表卡片组件.js";
 import { createCreatorCard } from "../market/创作者卡片组件.js";
 import { 
@@ -103,11 +104,12 @@ export async function loadSidebarContent({
             }
         } catch (error) {
             console.error("讨论区加载失败:", error);
-            contentArea.innerHTML = `
-                <div style='text-align:center; padding: 40px 20px; color:#F44336;'>
-                    ❌ 讨论区加载失败: ${error.message}
-                </div>
-            `;
+            // 使用安全的DOM操作替代innerHTML，防止XSS
+            contentArea.innerHTML = '';
+            const errorDiv = document.createElement('div');
+            errorDiv.style.cssText = 'text-align:center; padding: 40px 20px; color:#F44336;';
+            errorDiv.textContent = `❌ 讨论区加载失败: ${error.message}`;
+            contentArea.appendChild(errorDiv);
         }
         return;
     }
@@ -121,11 +123,12 @@ export async function loadSidebarContent({
             contentArea.appendChild(tasksView);
         } catch (error) {
             console.error("任务榜加载失败:", error);
-            contentArea.innerHTML = `
-                <div style='text-align:center; padding: 40px 20px; color:#F44336;'>
-                    ❌ 任务榜加载失败: ${error.message}
-                </div>
-            `;
+            // 使用安全的DOM操作替代innerHTML，防止XSS
+            contentArea.innerHTML = '';
+            const errorDiv = document.createElement('div');
+            errorDiv.style.cssText = 'text-align:center; padding: 40px 20px; color:#F44336;';
+            errorDiv.textContent = `❌ 任务榜加载失败: ${error.message}`;
+            contentArea.appendChild(errorDiv);
         }
         return;
     }
@@ -232,16 +235,17 @@ export async function loadSidebarContent({
     const cachedData = getCache(cacheKey);
     
     if (cachedData && !keyword) {
-        // 缓存命中，直接使用
-        state.allData = cachedData;
+        // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
+        const proxiedData = proxyImages(cachedData);
+        state.allData = proxiedData;
         state.isFullyLoaded = true;
         
         // 首屏渲染（仅第一页）
-        const firstPage = cachedData.slice(0, pageSize);
+        const firstPage = proxiedData.slice(0, pageSize);
         renderBatch(firstPage, false);
         
         // 如果有更多数据，启动分页加载器
-        if (cachedData.length > pageSize) {
+        if (proxiedData.length > pageSize) {
             _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword);
         }
         
@@ -290,15 +294,21 @@ export async function loadSidebarContent({
             state.allData = cachedData;
             renderBatch(cachedData.slice(0, pageSize), false);
         } else {
-            contentArea.innerHTML = `
-                <div style='text-align:center; padding: 40px 20px; color:#F44336;'>
-                    ❌ 数据加载失败: ${error.message}
-                    <br><br>
-                    <button onclick="location.reload()" style="padding:8px 16px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer;">
-                        🔄 点击重试
-                    </button>
-                </div>
-            `;
+            // 使用安全的DOM操作替代innerHTML，防止XSS
+            contentArea.innerHTML = '';
+            const errorDiv = document.createElement('div');
+            errorDiv.style.cssText = 'text-align:center; padding: 40px 20px; color:#F44336;';
+            const errorText = document.createElement('div');
+            errorText.textContent = `❌ 数据加载失败: ${error.message}`;
+            errorDiv.appendChild(errorText);
+            const br = document.createElement('br');
+            errorDiv.appendChild(br);
+            const retryBtn = document.createElement('button');
+            retryBtn.style.cssText = 'padding:8px 16px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer; margin-top:16px;';
+            retryBtn.textContent = '🔄 点击重试';
+            retryBtn.onclick = () => location.reload();
+            errorDiv.appendChild(retryBtn);
+            contentArea.appendChild(errorDiv);
         }
     }
 }

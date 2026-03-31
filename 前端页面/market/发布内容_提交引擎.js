@@ -2,6 +2,35 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
+import { removeCache } from "../components/性能优化工具.js";
+
+/**
+ * 🟢 根据发布类型清除对应缓存（精确清除，不影响其他页面）
+ * @param {string} type - 发布类型: tool/app/recommend/recommend_tool/recommend_app/recommend_link
+ */
+function clearItemCacheByType(type) {
+    // 确定当前类型对应的 tab
+    let tab = 'recommends';
+    if (type === 'tool' || type === 'recommend_tool') {
+        tab = 'tools';
+    } else if (type === 'app' || type === 'recommend_app') {
+        tab = 'apps';
+    }
+    
+    // 清除 API 缓存
+    removeCache('api_/api/items');
+    removeCache(`api_/api/items?type=${type.replace('recommend_', '')}`);
+    removeCache('api_/api/creators');  // 创作者列表也需要刷新
+    
+    // 清除侧边栏数据引擎缓存（只清除对应类型）
+    const sorts = ['latest', 'popular', 'rating', 'hot'];
+    for (const sort of sorts) {
+        removeCache(`ListCache_${tab}_${sort}`);
+        removeCache(`ListCache_creators_${sort}`);  // 创作者列表
+    }
+    
+    console.log(`🗑️ 已清除 [${tab}] 类型的列表缓存`);
+}
 
 /**
  * 🟢 新增核心逻辑：利用 HTML5 Canvas 纯前端裁剪并压缩头像
@@ -195,6 +224,10 @@ export async function handlePublishSubmit(params) {
             await api.publishItem(submitData);
             showToast(`🎉 ${t('publish.publish_success')}`, "success");
         }
+        
+        // 🚀 精确清除：只清除当前发布类型的缓存
+        clearItemCacheByType(type);
+        
         if (onSuccessCallback) onSuccessCallback();
     } catch (err) {
         showToast(`${t('common.operation_failed')}: ` + err.message, "error");

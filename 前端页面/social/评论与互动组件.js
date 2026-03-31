@@ -1,6 +1,7 @@
 // 前端页面/social/评论与互动组件.js
 import { api } from "../core/网络请求API.js";
 import { t } from "../components/用户体验增强.js";
+import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 
 export function setupToggleButton(btnElement, initialState, initialCount, activeText, inactiveText, activeColor, apiCallback) {
     let isActive = initialState;
@@ -72,6 +73,9 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
         }
     };
 
+    // 内联 SVG 默认头像
+    const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Ccircle cx='18' cy='18' r='18' fill='%23333'/%3E%3Ccircle cx='18' cy='14' r='6' fill='%23666'/%3E%3Cpath d='M6 32c0-6.6 5.4-12 12-12s12 5.4 12 12' fill='%23666'/%3E%3C/svg%3E";
+
     function renderCommentItem(comment, isSubReply = false) {
         const itemDiv = document.createElement("div");
         Object.assign(itemDiv.style, { display: "flex", gap: "8px", marginBottom: "12px", paddingLeft: isSubReply ? "35px" : "0px" });
@@ -89,13 +93,17 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             const isMine = currentUser && currentUser.account === comment.author;
             const deleteBtnHtml = isMine ? `<span class="delete-btn" style="color: #F44336; cursor: pointer; margin-left: 10px; font-size: 10px;">${t('common.delete')}</span>` : "";
 
-            const avatarSrc = comment.avatar || "https://via.placeholder.com/150";
+            // 🚀 SWR 缓存优先获取头像
+            const account = comment.author;
+            const cached = getCachedProfile(account);
+            const avatar = cached?.avatar || comment.avatar || '';
+            const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
 
             itemDiv.innerHTML = `
-                <img src="${avatarSrc}" style="width: ${avatarSize}; height: ${avatarSize}; border-radius: 50%; object-fit: cover;">
+                <img class="swr-avatar" src="${avatarSrc}" style="width: ${avatarSize}; height: ${avatarSize}; border-radius: 50%; object-fit: cover; background: #333;">
                 <div style="flex: 1;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                        <span style="color: #aaa; font-weight: bold; font-size: 11px;">${comment.authorName || comment.author}</span>
+                        <span class="swr-name" style="color: #aaa; font-weight: bold; font-size: 11px;">${comment.authorName || comment.author}</span>
                     </div>
                     <div style="line-height: 1.4; word-break: break-all;">${replyLabel}${comment.content}</div>
                     <div style="display: flex; gap: 15px; margin-top: 4px; font-size: 10px; color: #777;">
@@ -103,6 +111,18 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
                     </div>
                 </div>
             `;
+
+            // 🚀 后台SWR校对头像
+            getProfileWithSWR(account, api.getUserProfile, (profile) => {
+                const avatarEl = itemDiv.querySelector('.swr-avatar');
+                const nameEl = itemDiv.querySelector('.swr-name');
+                if (avatarEl && profile.avatar) {
+                    avatarEl.src = profile.avatar;
+                }
+                if (nameEl && profile.name) {
+                    nameEl.textContent = profile.name;
+                }
+            });
 
             itemDiv.querySelector(".reply-btn").onclick = () => {
                 currentReplyTarget = { 

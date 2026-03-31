@@ -56,9 +56,13 @@ async def download_app_handler(request):
         
         # 🚀 核心修复：创建 SSL 上下文，解决 HTTPS 连接问题
         import ssl
+        import os
         ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+        # ⚠️ 安全警告：仅在网络环境导致证书验证失败时，通过环境变量临时关闭
+        if os.environ.get("DISABLE_SSL_VERIFY", "").lower() in ("1", "true"):
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            print("⚠️ SSL证书验证已关闭，请仅在调试环境使用")
         
         req = urllib.request.Request(
             proxy_api_url, 

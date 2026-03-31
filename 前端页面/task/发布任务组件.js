@@ -8,6 +8,19 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
+import { removeCache } from "../components/性能优化工具.js";
+
+/**
+ * 🚀 清除任务列表缓存
+ */
+function clearTaskListCache() {
+    removeCache('api_/api/tasks');
+    const sorts = ['latest', 'popular', 'hot'];
+    for (const sort of sorts) {
+        removeCache(`ListCache_tasks_${sort}`);
+    }
+    console.log('🗑️ 已清除任务列表缓存');
+}
 
 /**
  * 📝 创建发布任务视图
@@ -302,6 +315,10 @@ export function createPublishTaskView(currentUser) {
             });
             
             showToast(t('task.publish_success'), "success");
+            
+            // 🚀 清除任务列表缓存，确保返回列表时能看到新任务
+            clearTaskListCache();
+            
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
             
         } catch (err) {

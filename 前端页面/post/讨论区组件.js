@@ -15,10 +15,12 @@
 // ==========================================
 
 import { api } from "../core/网络请求API.js";
+import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { setCache, getCache, createSkeleton } from "../components/性能优化工具.js";
 import { applyCardAnimation } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
+import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 
 // 缓存配置
 const CACHE_KEY = "PostsCache";
@@ -108,8 +110,9 @@ export function createPostsView(currentUser) {
         if (!append && page === 1) {
             const cachedData = getCache(CACHE_KEY);
             if (cachedData && cachedData.length > 0) {
-                allPostsData = cachedData;
-                renderPostsFromCache(cachedData);
+                // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
+                allPostsData = proxyImages(cachedData);
+                renderPostsFromCache(allPostsData);
                 // 后台静默更新
                 silentRefresh();
                 return;
@@ -182,8 +185,9 @@ export function createPostsView(currentUser) {
             if (!append) {
                 const cachedData = getCache(CACHE_KEY);
                 if (cachedData && cachedData.length > 0) {
-                    allPostsData = cachedData;
-                    renderPostsFromCache(cachedData);
+                    // 🚀 缓存数据也需要过一遍图片代理
+                    allPostsData = proxyImages(cachedData);
+                    renderPostsFromCache(allPostsData);
                     showToast(t('post.network_cache'), "warning");
                 } else {
                     postsGrid.innerHTML = `
@@ -299,14 +303,8 @@ function createPostCard(post) {
                 ${escapeHtml(post.title)}
             </div>
             
-            <!-- 作者信息 -->
-            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
-                <img src="${post.author_avatar || 'https://via.placeholder.com/24'}" 
-                     style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444;">
-                <span style="font-size: 11px; color: #999; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                    ${escapeHtml(post.author_name || post.author)}
-                </span>
-            </div>
+            <!-- 作者信息（SWR 缓存头像） -->
+            <div id="post-author-${post.id}" style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;"></div>
             
             <!-- 互动数据 -->
             <div style="display: flex; align-items: center; gap: 12px; font-size: 11px; color: #888;">
@@ -315,6 +313,38 @@ function createPostCard(post) {
             </div>
         </div>
     `;
+    
+    // 🚀 SWR 头像渲染：先从缓存读取，后台静默校对
+    setTimeout(() => {
+        const authorContainer = card.querySelector(`#post-author-${post.id}`);
+        if (!authorContainer) return;
+        
+        const account = post.author;
+        const cached = getCachedProfile(account);
+        const avatar = cached?.avatar || post.author_avatar || '';
+        const name = cached?.name || post.author_name || account || '';
+        
+        // 内联 SVG 默认头像（用户剪影图标）
+        const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Ccircle cx='18' cy='18' r='18' fill='%23333'/%3E%3Ccircle cx='18' cy='14' r='6' fill='%23666'/%3E%3Cpath d='M6 32c0-6.6 5.4-12 12-12s12 5.4 12 12' fill='%23666'/%3E%3C/svg%3E";
+        
+        // 渲染头像（始终使用 img 标签）
+        const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
+        const avatarHtml = `<img class="swr-avatar" src="${avatarSrc}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
+        
+        authorContainer.innerHTML = `${avatarHtml}<span class="swr-name" style="font-size: 11px; color: #999; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(name)}</span>`;
+        
+        // 后台静默校对
+        getProfileWithSWR(account, api.getUserProfile, (profile) => {
+            const avatarEl = authorContainer.querySelector('.swr-avatar');
+            const nameEl = authorContainer.querySelector('.swr-name');
+            if (avatarEl && profile.avatar) {
+                avatarEl.src = profile.avatar;
+            }
+            if (nameEl && profile.name) {
+                nameEl.textContent = profile.name;
+            }
+        });
+    }, 0);
     
     // 悬停效果
     card.onmouseover = () => {

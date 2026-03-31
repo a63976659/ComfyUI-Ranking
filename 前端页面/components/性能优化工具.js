@@ -191,6 +191,194 @@ export function maskAmount(amount, hide = false) {
 }
 
 // ==========================================
+// 🚀 P4优化：骨架屏加载器
+// ==========================================
+// 特点：
+//   - 多种卡片样式（列表卡片、创作者卡片、帖子卡片）
+//   - 自动动画效果
+//   - 可配置数量
+
+/**
+ * 🚀 P4优化：创建骨架屏元素
+ * @param {string} type - 类型: 'item' | 'creator' | 'post' | 'task'
+ * @param {number} count - 数量
+ * @returns {HTMLElement} 骨架屏容器
+ */
+export function createSkeletonLoader(type = 'item', count = 6) {
+    const container = document.createElement('div');
+    container.className = 'skeleton-loader-container';
+    container.style.cssText = 'display: grid; gap: 16px; padding: 16px;';
+    
+    // 根据类型设置网格布局
+    const gridConfig = {
+        item: 'repeat(auto-fill, minmax(280px, 1fr))',
+        creator: 'repeat(auto-fill, minmax(200px, 1fr))',
+        post: '1fr',
+        task: '1fr'
+    };
+    container.style.gridTemplateColumns = gridConfig[type] || gridConfig.item;
+    
+    // 创建骨架屏卡片
+    for (let i = 0; i < count; i++) {
+        container.appendChild(createSkeletonCard(type));
+    }
+    
+    // 添加动画样式
+    injectSkeletonStyles();
+    
+    return container;
+}
+
+/**
+ * 创建单个骨架屏卡片
+ */
+function createSkeletonCard(type) {
+    const card = document.createElement('div');
+    card.className = 'skeleton-card';
+    
+    const templates = {
+        item: `
+            <div class="skeleton-image"></div>
+            <div class="skeleton-content">
+                <div class="skeleton-line" style="width: 80%"></div>
+                <div class="skeleton-line" style="width: 60%"></div>
+                <div class="skeleton-line short" style="width: 40%"></div>
+            </div>
+        `,
+        creator: `
+            <div class="skeleton-avatar"></div>
+            <div class="skeleton-content">
+                <div class="skeleton-line" style="width: 70%"></div>
+                <div class="skeleton-line short" style="width: 50%"></div>
+            </div>
+        `,
+        post: `
+            <div class="skeleton-header">
+                <div class="skeleton-avatar small"></div>
+                <div class="skeleton-meta">
+                    <div class="skeleton-line" style="width: 120px"></div>
+                    <div class="skeleton-line short" style="width: 80px"></div>
+                </div>
+            </div>
+            <div class="skeleton-body">
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line" style="width: 90%"></div>
+                <div class="skeleton-line" style="width: 75%"></div>
+            </div>
+        `,
+        task: `
+            <div class="skeleton-content">
+                <div class="skeleton-line" style="width: 70%"></div>
+                <div class="skeleton-line" style="width: 90%"></div>
+                <div class="skeleton-line short" style="width: 30%"></div>
+            </div>
+            <div class="skeleton-badge"></div>
+        `
+    };
+    
+    card.innerHTML = templates[type] || templates.item;
+    return card;
+}
+
+/**
+ * 注入骨架屏样式（只注入一次）
+ */
+let skeletonStylesInjected = false;
+function injectSkeletonStyles() {
+    if (skeletonStylesInjected) return;
+    skeletonStylesInjected = true;
+    
+    const style = document.createElement('style');
+    style.textContent = `
+        .skeleton-card {
+            background: var(--comfy-input-bg, #2a2a2a);
+            border-radius: 8px;
+            padding: 12px;
+            overflow: hidden;
+        }
+        .skeleton-image {
+            width: 100%;
+            height: 160px;
+            background: linear-gradient(90deg, #333 25%, #444 50%, #333 75%);
+            background-size: 200% 100%;
+            animation: skeleton-shimmer 1.5s infinite;
+            border-radius: 6px;
+            margin-bottom: 12px;
+        }
+        .skeleton-avatar {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: linear-gradient(90deg, #333 25%, #444 50%, #333 75%);
+            background-size: 200% 100%;
+            animation: skeleton-shimmer 1.5s infinite;
+            margin: 0 auto 12px;
+        }
+        .skeleton-avatar.small {
+            width: 40px;
+            height: 40px;
+        }
+        .skeleton-line {
+            height: 14px;
+            background: linear-gradient(90deg, #333 25%, #444 50%, #333 75%);
+            background-size: 200% 100%;
+            animation: skeleton-shimmer 1.5s infinite;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+        .skeleton-line.short {
+            height: 12px;
+        }
+        .skeleton-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .skeleton-meta {
+            flex: 1;
+        }
+        .skeleton-badge {
+            width: 80px;
+            height: 28px;
+            background: linear-gradient(90deg, #333 25%, #444 50%, #333 75%);
+            background-size: 200% 100%;
+            animation: skeleton-shimmer 1.5s infinite;
+            border-radius: 14px;
+            margin-top: 12px;
+        }
+        @keyframes skeleton-shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+/**
+ * 🚀 P4优化：显示骨架屏并在数据加载完成后替换
+ * @param {HTMLElement} container - 容器元素
+ * @param {string} type - 骨架屏类型
+ * @param {number} count - 骨架屏数量
+ * @returns {Function} 替换函数，调用时传入实际内容
+ */
+export function showSkeletonUntilLoaded(container, type = 'item', count = 6) {
+    const skeleton = createSkeletonLoader(type, count);
+    container.innerHTML = '';
+    container.appendChild(skeleton);
+    
+    // 返回替换函数
+    return (actualContent) => {
+        skeleton.remove();
+        if (typeof actualContent === 'string') {
+            container.innerHTML = actualContent;
+        } else if (actualContent instanceof HTMLElement) {
+            container.appendChild(actualContent);
+        }
+    };
+}
+
+// ==========================================
 // 📦 缓存管理器
 // ==========================================
 // 特点：
@@ -229,12 +417,25 @@ export function setCache(key, value, ttl = DEFAULT_TTL, persist = true) {
         try {
             localStorage.setItem(fullKey, JSON.stringify(cacheData));
         } catch (e) {
-            // localStorage 满了，清理过期项
-            _cleanExpiredStorage();
-            try {
-                localStorage.setItem(fullKey, JSON.stringify(cacheData));
-            } catch {
-                console.warn("⚠️ localStorage 存储失败:", key);
+            // 捕获 QuotaExceededError：先清理过期项再重试
+            if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+                console.warn('⚠️ localStorage 已满，尝试清理过期缓存...');
+                _cleanExpiredStorage();
+                try {
+                    localStorage.setItem(fullKey, JSON.stringify(cacheData));
+                } catch {
+                    // 清理过期项后仍失败，进行 LRU 淘汰
+                    console.warn('⚠️ 过期项已清理但主存仍不足，尝试 LRU 淘汰...');
+                    _evictOldestStorage();
+                    try {
+                        localStorage.setItem(fullKey, JSON.stringify(cacheData));
+                    } catch {
+                        // LRU 淘汰后仍失败，降级到仅内存缓存，不阻塞业务
+                        console.warn(`⚠️ localStorage 持久化失败，降级到仅内存缓存: ${key}`);
+                    }
+                }
+            } else {
+                console.warn('⚠️ localStorage 存储失败:', key, e.message);
             }
         }
     }
@@ -278,6 +479,52 @@ export function getCache(key) {
     }
     
     return null;
+}
+
+/**
+ * 🚀 P3优化：获取缓存（带元信息，支持离线模式）
+ * @param {string} key - 缓存键
+ * @param {boolean} ignoreExpiry - 是否忽略过期时间（离线模式使用）
+ * @returns {{value: any, expired: boolean, found: boolean}} 缓存结果
+ */
+export function getCacheWithMeta(key, ignoreExpiry = false) {
+    const fullKey = CACHE_PREFIX + key;
+    const now = Date.now();
+    
+    // 优先从内存获取
+    if (memoryCache.has(fullKey)) {
+        const cached = memoryCache.get(fullKey);
+        const expired = now >= cached.expireAt;
+        
+        if (!expired || ignoreExpiry) {
+            _updateLRU(fullKey);
+            return { value: cached.value, expired, found: true };
+        }
+        // 过期且不忽略，清除
+        memoryCache.delete(fullKey);
+    }
+    
+    // 降级到 localStorage
+    try {
+        const stored = localStorage.getItem(fullKey);
+        if (stored) {
+            const cached = JSON.parse(stored);
+            const expired = now >= cached.expireAt;
+            
+            if (!expired || ignoreExpiry) {
+                // 回填内存缓存
+                memoryCache.set(fullKey, cached);
+                _updateLRU(fullKey);
+                return { value: cached.value, expired, found: true };
+            }
+            // 过期且不忽略，清除
+            localStorage.removeItem(fullKey);
+        }
+    } catch (e) {
+        console.warn("⚠️ 缓存读取失败:", key);
+    }
+    
+    return { value: null, expired: false, found: false };
 }
 
 /**
@@ -327,24 +574,65 @@ function _enforceCacheLimit() {
 }
 
 // 清理过期的 localStorage 条目
-function _cleanExpiredStorage() {
+// @param {boolean} aggressive - 是否激进模式（同时清除所有项而非仅过期项）
+function _cleanExpiredStorage(aggressive = false) {
     try {
         const now = Date.now();
         const keysToRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
             if (key && key.startsWith(CACHE_PREFIX)) {
-                try {
-                    const cached = JSON.parse(localStorage.getItem(key));
-                    if (cached.expireAt < now) {
+                if (aggressive) {
+                    // 激进模式：清除所有缓存项
+                    keysToRemove.push(key);
+                } else {
+                    try {
+                        const cached = JSON.parse(localStorage.getItem(key));
+                        if (cached.expireAt < now) {
+                            keysToRemove.push(key);
+                        }
+                    } catch {
                         keysToRemove.push(key);
                     }
-                } catch {
-                    keysToRemove.push(key);
                 }
             }
         }
         keysToRemove.forEach(k => localStorage.removeItem(k));
+        if (keysToRemove.length > 0) {
+            console.log(`🧹 清理 localStorage 过期缓存: ${keysToRemove.length} 个项`);
+        }
+    } catch {}
+}
+
+// LRU 淘汰：按最近使用时间删除最旧的 localStorage 缓存项
+function _evictOldestStorage() {
+    try {
+        // 收集所有属于本模块的 localStorage 缓存项，按过期时间排序
+        const entries = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith(CACHE_PREFIX)) {
+                try {
+                    const cached = JSON.parse(localStorage.getItem(key));
+                    entries.push({ key, expireAt: cached.expireAt || 0 });
+                } catch {
+                    // 无法解析的项直接删除
+                    localStorage.removeItem(key);
+                }
+            }
+        }
+        
+        if (entries.length === 0) return;
+        
+        // 按过期时间升序排序（最小 = 最早过期 = 最旧）
+        entries.sort((a, b) => a.expireAt - b.expireAt);
+        
+        // 淘汰最旧的 1/3 项目，为新内容腾出空间
+        const evictCount = Math.max(1, Math.ceil(entries.length / 3));
+        for (let i = 0; i < evictCount; i++) {
+            localStorage.removeItem(entries[i].key);
+        }
+        console.warn(`⚠️ LRU 淘汰: 删除了 ${evictCount} 个最旧 localStorage 缓存项`);
     } catch {}
 }
 
@@ -1233,4 +1521,329 @@ export async function toWebPBatch(urls) {
     if (!supported) return urls;
     
     return urls.map(url => toWebP(url));
+}
+
+// ==========================================
+// 🧹 P1优化：全局事件管理器
+// ==========================================
+// 特点：
+//   - 统一管理所有 addEventListener
+//   - 统一管理所有 setInterval/setTimeout
+//   - 支持一键清理，防止内存泄漏
+//   - 支持按组件分类管理
+
+const eventManager = {
+    // 存储所有注册的监听器 {componentId: [{target, event, handler, options}]}
+    _listeners: new Map(),
+    // 存储所有定时器 {componentId: Set<timerId>}
+    _timers: new Map(),
+    // 全局定时器（无组件关联）
+    _globalTimers: new Set(),
+    
+    /**
+     * 注册事件监听器
+     * @param {string} componentId - 组件ID，用于分类管理
+     * @param {EventTarget} target - 监听目标
+     * @param {string} event - 事件类型
+     * @param {Function} handler - 处理函数
+     * @param {Object} options - 监听选项
+     */
+    addEventListener(componentId, target, event, handler, options = {}) {
+        if (!target || !event || !handler) return;
+        
+        target.addEventListener(event, handler, options);
+        
+        if (!this._listeners.has(componentId)) {
+            this._listeners.set(componentId, []);
+        }
+        this._listeners.get(componentId).push({ target, event, handler, options });
+    },
+    
+    /**
+     * 移除指定组件的所有事件监听器
+     * @param {string} componentId - 组件ID
+     */
+    removeEventListeners(componentId) {
+        const listeners = this._listeners.get(componentId);
+        if (!listeners) return;
+        
+        listeners.forEach(({ target, event, handler, options }) => {
+            try {
+                target.removeEventListener(event, handler, options);
+            } catch (e) {
+                // 目标已销毁，忽略
+            }
+        });
+        
+        this._listeners.delete(componentId);
+        console.log(`🧹 已清理 ${componentId} 的事件监听器`);
+    },
+    
+    /**
+     * 注册 setInterval
+     * @param {string} componentId - 组件ID
+     * @param {Function} fn - 回调函数
+     * @param {number} delay - 间隔时间
+     * @returns {number} 定时器ID
+     */
+    setInterval(componentId, fn, delay) {
+        const id = setInterval(fn, delay);
+        
+        if (componentId) {
+            if (!this._timers.has(componentId)) {
+                this._timers.set(componentId, new Set());
+            }
+            this._timers.get(componentId).add(id);
+        } else {
+            this._globalTimers.add(id);
+        }
+        
+        return id;
+    },
+    
+    /**
+     * 注册 setTimeout
+     * @param {string} componentId - 组件ID
+     * @param {Function} fn - 回调函数
+     * @param {number} delay - 延迟时间
+     * @returns {number} 定时器ID
+     */
+    setTimeout(componentId, fn, delay) {
+        const id = setTimeout(() => {
+            fn();
+            // 执行后自动清除
+            if (componentId) {
+                const timers = this._timers.get(componentId);
+                if (timers) timers.delete(id);
+            } else {
+                this._globalTimers.delete(id);
+            }
+        }, delay);
+        
+        if (componentId) {
+            if (!this._timers.has(componentId)) {
+                this._timers.set(componentId, new Set());
+            }
+            this._timers.get(componentId).add(id);
+        } else {
+            this._globalTimers.add(id);
+        }
+        
+        return id;
+    },
+    
+    /**
+     * 清除指定组件的所有定时器
+     * @param {string} componentId - 组件ID
+     */
+    clearTimers(componentId) {
+        const timers = this._timers.get(componentId);
+        if (!timers) return;
+        
+        timers.forEach(id => {
+            clearInterval(id);
+            clearTimeout(id);
+        });
+        
+        this._timers.delete(componentId);
+        console.log(`⏱️ 已清理 ${componentId} 的定时器`);
+    },
+    
+    /**
+     * 清理指定组件的所有资源（事件 + 定时器）
+     * @param {string} componentId - 组件ID
+     */
+    cleanup(componentId) {
+        this.removeEventListeners(componentId);
+        this.clearTimers(componentId);
+    },
+    
+    /**
+     * 清理所有资源
+     */
+    cleanupAll() {
+        // 清理所有组件的事件监听器
+        this._listeners.forEach((_, componentId) => {
+            this.removeEventListeners(componentId);
+        });
+        
+        // 清理所有组件的定时器
+        this._timers.forEach((_, componentId) => {
+            this.clearTimers(componentId);
+        });
+        
+        // 清理全局定时器
+        this._globalTimers.forEach(id => {
+            clearInterval(id);
+            clearTimeout(id);
+        });
+        this._globalTimers.clear();
+        
+        console.log('🧹 已清理所有事件和定时器');
+    },
+    
+    /**
+     * 获取统计信息
+     * @returns {Object} 统计信息
+     */
+    getStats() {
+        let totalListeners = 0;
+        let totalTimers = 0;
+        
+        this._listeners.forEach(arr => totalListeners += arr.length);
+        this._timers.forEach(set => totalTimers += set.size);
+        totalTimers += this._globalTimers.size;
+        
+        return {
+            components: this._listeners.size,
+            listeners: totalListeners,
+            timers: totalTimers
+        };
+    }
+};
+
+// 导出事件管理器
+export { eventManager };
+
+// ==========================================
+// 🚀 P4优化：虚拟滚动列表
+// ==========================================
+// 特点：
+//   - 只渲染可见区域内的元素
+//   - 支持固定高度和动态高度
+//   - 滚动性能优化（节流 + RAF）
+
+/**
+ * 🚀 P4优化：创建虚拟滚动列表
+ * @param {Object} config - 配置
+ * @param {HTMLElement} config.container - 容器元素
+ * @param {Array} config.items - 数据数组
+ * @param {number} config.itemHeight - 单个元素高度（px）
+ * @param {Function} config.renderItem - 渲染单个元素的函数 (item, index) => HTMLElement
+ * @param {number} [config.overscan=3] - 上下预渲染的额外元素数
+ * @returns {Object} 虚拟滚动实例
+ */
+export function createVirtualList(config) {
+    const { container, items, itemHeight, renderItem, overscan = 3 } = config;
+    
+    // 创建内部结构
+    const wrapper = document.createElement('div');
+    wrapper.className = 'virtual-list-wrapper';
+    wrapper.style.cssText = 'height: 100%; overflow-y: auto; position: relative;';
+    
+    const content = document.createElement('div');
+    content.className = 'virtual-list-content';
+    content.style.cssText = `height: ${items.length * itemHeight}px; position: relative;`;
+    
+    const viewport = document.createElement('div');
+    viewport.className = 'virtual-list-viewport';
+    viewport.style.cssText = 'position: absolute; left: 0; right: 0;';
+    
+    content.appendChild(viewport);
+    wrapper.appendChild(content);
+    container.innerHTML = '';
+    container.appendChild(wrapper);
+    
+    // 状态
+    let currentItems = items;
+    let visibleRange = { start: 0, end: 0 };
+    let scrollTicking = false;
+    
+    // 计算可见范围
+    function calculateVisibleRange() {
+        const scrollTop = wrapper.scrollTop;
+        const viewportHeight = wrapper.clientHeight;
+        
+        const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
+        const endIndex = Math.min(
+            currentItems.length - 1,
+            Math.ceil((scrollTop + viewportHeight) / itemHeight) + overscan
+        );
+        
+        return { start: startIndex, end: endIndex };
+    }
+    
+    // 渲染可见元素
+    function render() {
+        const newRange = calculateVisibleRange();
+        
+        // 范围未变化，跳过渲染
+        if (newRange.start === visibleRange.start && newRange.end === visibleRange.end) {
+            return;
+        }
+        
+        visibleRange = newRange;
+        viewport.innerHTML = '';
+        viewport.style.top = `${visibleRange.start * itemHeight}px`;
+        
+        for (let i = visibleRange.start; i <= visibleRange.end && i < currentItems.length; i++) {
+            const element = renderItem(currentItems[i], i);
+            if (element) {
+                element.style.height = `${itemHeight}px`;
+                element.style.boxSizing = 'border-box';
+                viewport.appendChild(element);
+            }
+        }
+    }
+    
+    // 滚动处理（节流 + RAF）
+    function onScroll() {
+        if (!scrollTicking) {
+            requestAnimationFrame(() => {
+                render();
+                scrollTicking = false;
+            });
+            scrollTicking = true;
+        }
+    }
+    
+    wrapper.addEventListener('scroll', onScroll, { passive: true });
+    
+    // 初始渲染
+    render();
+    
+    // 返回控制接口
+    return {
+        /**
+         * 更新数据
+         * @param {Array} newItems - 新数据
+         */
+        updateItems(newItems) {
+            currentItems = newItems;
+            content.style.height = `${newItems.length * itemHeight}px`;
+            visibleRange = { start: -1, end: -1 };  // 强制重新渲染
+            render();
+        },
+        
+        /**
+         * 滚动到指定位置
+         * @param {number} index - 目标索引
+         */
+        scrollToIndex(index) {
+            wrapper.scrollTop = index * itemHeight;
+        },
+        
+        /**
+         * 获取当前可见范围
+         */
+        getVisibleRange() {
+            return { ...visibleRange };
+        },
+        
+        /**
+         * 强制重新渲染
+         */
+        refresh() {
+            visibleRange = { start: -1, end: -1 };
+            render();
+        },
+        
+        /**
+         * 销毁虚拟列表
+         */
+        destroy() {
+            wrapper.removeEventListener('scroll', onScroll);
+            container.innerHTML = '';
+        }
+    };
 }

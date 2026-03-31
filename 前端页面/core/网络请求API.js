@@ -10,9 +10,10 @@
 //   - 所有业务组件 (调用 API)
 // ==========================================
 // 🏗️ P2架构优化：使用配置中心常量
+// 🚀 P3优化：离线模式支持
 // ==========================================
 
-import { setCache, getCache, removeCache } from "../components/性能优化工具.js";
+import { setCache, getCache, removeCache, getCacheWithMeta } from "../components/性能优化工具.js";
 import { API, CACHE } from "./全局配置.js";
 import { getToken } from "./状态管理.js";
 
@@ -22,6 +23,128 @@ const BASE_URL = API.BASE_URL;
 // ⚡ P1性能优化：请求去重（相同GET请求只发一次）
 const pendingRequests = new Map();
 
+// 🚀 P3优化：网络状态监控
+let isOnline = navigator.onLine;
+window.addEventListener('online', () => { isOnline = true; console.log('🌐 网络已恢复'); });
+window.addEventListener('offline', () => { isOnline = false; console.log('📴 网络已断开'); });
+
+// 🚀 P4优化：请求取消管理器
+const requestCancelManager = {
+    _controllers: new Map(),  // {componentId: Set<AbortController>}
+    
+    /**
+     * 创建并注册 AbortController
+     * @param {string} componentId - 组件 ID
+     * @returns {AbortController}
+     */
+    create(componentId = '_global') {
+        if (!this._controllers.has(componentId)) {
+            this._controllers.set(componentId, new Set());
+        }
+        const controller = new AbortController();
+        this._controllers.get(componentId).add(controller);
+        return controller;
+    },
+    
+    /**
+     * 移除已完成的 controller
+     */
+    remove(componentId, controller) {
+        const controllers = this._controllers.get(componentId);
+        if (controllers) {
+            controllers.delete(controller);
+        }
+    },
+    
+    /**
+     * 取消指定组件的所有请求
+     * @param {string} componentId - 组件 ID
+     */
+    cancelAll(componentId) {
+        const controllers = this._controllers.get(componentId);
+        if (controllers) {
+            for (const controller of controllers) {
+                controller.abort();
+            }
+            controllers.clear();
+            console.log(`🚫 已取消组件 [${componentId}] 的所有请求`);
+        }
+    },
+    
+    /**
+     * 取消所有请求
+     */
+    cancelAllGlobal() {
+        for (const [componentId, controllers] of this._controllers) {
+            for (const controller of controllers) {
+                controller.abort();
+            }
+            controllers.clear();
+        }
+        console.log('🚫 已取消所有进行中的请求');
+    },
+    
+    /**
+     * 获取统计信息
+     */
+    getStats() {
+        let total = 0;
+        for (const controllers of this._controllers.values()) {
+            total += controllers.size;
+        }
+        return { components: this._controllers.size, activeRequests: total };
+    }
+};
+
+// 导出给外部使用
+export { requestCancelManager };
+
+// 🚀 P3优化：请求队列管理（限制并发数）
+const requestQueue = {
+    maxConcurrent: 6,  // 浏览器同域名默认限制 6 个并发
+    running: 0,
+    pending: [],
+    
+    async add(fn) {
+        // 如果还有槽位，直接执行
+        if (this.running < this.maxConcurrent) {
+            this.running++;
+            try {
+                return await fn();
+            } finally {
+                this.running--;
+                this._processNext();
+            }
+        }
+        
+        // 否则加入队列等待
+        return new Promise((resolve, reject) => {
+            this.pending.push(async () => {
+                try {
+                    resolve(await fn());
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+    },
+    
+    _processNext() {
+        if (this.pending.length > 0 && this.running < this.maxConcurrent) {
+            const next = this.pending.shift();
+            this.running++;
+            next().finally(() => {
+                this.running--;
+                this._processNext();
+            });
+        }
+    },
+    
+    getStats() {
+        return { running: this.running, pending: this.pending.length };
+    }
+};
+
 // 🏗️ P2架构优化：使用配置中心的缓存配置
 const CACHE_CONFIG = {
     "/api/items": CACHE.TTL.LIST_DATA,
@@ -30,15 +153,120 @@ const CACHE_CONFIG = {
     "/api/wallet/": CACHE.TTL.WALLET,
 }; 
 
+// 🚀 P1优化：精确缓存失效映射（按 HTTP 方法细分）
+// 根据修改的 endpoint 和 HTTP 方法精确清除相关缓存
+const CACHE_INVALIDATION_MAP = {
+    // 任务相关
+    "/api/tasks": {
+        "POST": ["api_/api/tasks", "ComfyRanking_ListCache_tasks"],      // 创建任务，清除列表缓存
+        "PUT": ["api_/api/tasks"],                                        // 更新任务，清除列表缓存
+        "DELETE": ["api_/api/tasks", "ComfyRanking_ListCache_tasks"]    // 删除任务，清除列表缓存
+    },
+    // 帖子相关
+    "/api/posts": {
+        "POST": ["api_/api/posts", "ComfyRanking_ListCache_posts"],      // 创建帖子，清除列表缓存
+        "PUT": ["api_/api/posts"],                                        // 更新帖子，清除列表缓存
+        "DELETE": ["api_/api/posts", "ComfyRanking_ListCache_posts"]    // 删除帖子，清除列表缓存
+    },
+    // 评论相关
+    "/api/comments": {
+        "POST": ["api_/api/comments", "api_/api/posts", "api_/api/items"],  // 创建评论，清除评论和相关内容缓存
+        "DELETE": ["api_/api/comments", "api_/api/posts", "api_/api/items"] // 删除评论，清除评论和相关内容缓存
+    },
+    // 商品相关
+    "/api/items": {
+        "POST": ["api_/api/items", "api_/api/creators"],                 // 创建商品，清除商品列表和创作者列表
+        "PUT": ["api_/api/items"],                                        // 更新商品，仅清除商品列表（不碰创作者）
+        "DELETE": ["api_/api/items", "api_/api/creators"]                // 删除商品，清除商品列表和创作者列表
+    },
+    // 用户相关
+    "/api/users": {
+        "PUT": ["api_/api/users", "ComfyRanking_ProfileCache_"],         // 更新用户，清除用户缓存
+        "POST": ["api_/api/users"]                                        // 用户相关操作
+    },
+    // 钱包相关
+    "/api/wallet": {
+        "POST": ["api_/api/wallet"],                                      // 钱包操作（打赏、购买等）
+        "PUT": ["api_/api/wallet"]                                        // 更新钱包
+    },
+    // 私信相关
+    "/api/messages": {
+        "POST": ["api_/api/messages", "ComfyRanking_ChatHistory_"]       // 发送消息，清除消息缓存
+    }
+};
+
+/**
+ * 🚀 P1优化：精确清除相关缓存（支持按 HTTP 方法细分）
+ * @param {string} endpoint - 请求的 endpoint
+ * @param {string} method - HTTP 方法（可选，向后兼容）
+ */
+function invalidateRelatedCache(endpoint, method = null) {
+    // 查找匹配的缓存失效规则
+    let patterns = [];
+    for (const [pattern, methodMap] of Object.entries(CACHE_INVALIDATION_MAP)) {
+        if (endpoint.startsWith(pattern)) {
+            // 如果传入了 method，使用对应方法的规则
+            if (method && methodMap[method]) {
+                patterns = methodMap[method];
+            } else if (method) {
+                // 如果该 method 没有定义规则，使用空数组（不清除）
+                patterns = [];
+            } else {
+                // 向后兼容：未传 method 时，合并所有方法的规则
+                const allPatterns = new Set();
+                Object.values(methodMap).forEach(arr => arr.forEach(p => allPatterns.add(p)));
+                patterns = Array.from(allPatterns);
+            }
+            break;
+        }
+    }
+    
+    // 如果没有匹配规则，使用默认策略（清除所有列表缓存）
+    if (patterns.length === 0) {
+        patterns = ["ComfyRanking_ListCache_"];
+    }
+    
+    let cleared = 0;
+    Object.keys(localStorage).forEach(key => {
+        for (const pattern of patterns) {
+            // 自动补上缓存前缀，确保能匹配到实际的 localStorage 键
+            // localStorage 中的 key 形如 "ComfyRanking_api_/api/tasks?..."
+            const prefixedPattern = pattern.startsWith(CACHE.PREFIX) ? pattern : CACHE.PREFIX + pattern;
+            if (key.startsWith(prefixedPattern)) {
+                localStorage.removeItem(key);
+                cleared++;
+                break;
+            }
+        }
+    });
+    
+    if (cleared > 0) {
+        console.log(`🗑️ 精确清除缓存: ${cleared} 个项 (${endpoint}${method ? ` ${method}` : ''})`);
+    }
+} 
+
 // 🟢 入口清洗：接收云端数据时，转换为本地代理，并带【自愈机制】清理被污染的历史数据
-function proxyImages(obj) {
+// 🚀 统一缓存：所有头像字段都走同一个缓存代理，无需重复下载
+const IMAGE_PROXY_FIELDS = [
+    'coverUrl',           // 封面图
+    'avatar',             // 通用头像
+    'avatarDataUrl',      // 头像数据 URL
+    'from_avatar',        // 消息发送者头像
+    'bannerUrl',          // 背景图
+    'publisher_avatar',   // 任务发布者头像
+    'assignee_avatar',    // 任务接单者头像
+    'author_avatar',      // 帖子/评论作者头像
+    'target_avatar',      // 私信目标用户头像
+];
+
+// 🚀 导出图片代理函数，供其他组件在缓存读取后调用
+export function proxyImages(obj) {
     if (!obj) return obj;
     if (typeof obj === 'string') return obj;
     if (Array.isArray(obj)) return obj.map(proxyImages);
     if (typeof obj === 'object') {
         for (let key in obj) {
-            if ((key === 'coverUrl' || key === 'avatar' || key === 'avatarDataUrl' || key === 'from_avatar' || key === 'bannerUrl') 
-                && typeof obj[key] === 'string') {
+            if (IMAGE_PROXY_FIELDS.includes(key) && typeof obj[key] === 'string') {
                 
                 let originalUrl = obj[key];
                 // 自动修复：一层一层剥开已经被污染的多重代理前缀
@@ -91,6 +319,9 @@ async function request(endpoint, options = {}) {
     const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
     if (token) headers["Authorization"] = `Bearer ${token}`;
     
+    // 🚀 P4优化：组件级请求取消支持
+    const componentId = options.componentId || '_global';
+    
     // ⚡ P1性能优化：GET 请求缓存检查
     const cacheKey = `api_${endpoint}`;
     if (method === "GET" && !options.noCache) {
@@ -98,6 +329,16 @@ async function request(endpoint, options = {}) {
         if (cached) {
             return proxyImages(cached);
         }
+    }
+    
+    // 🚀 P3优化：离线模式支持
+    if (!isOnline && method === "GET") {
+        const { value, expired, found } = getCacheWithMeta(cacheKey, true);  // 忽略过期
+        if (found) {
+            console.log(`📴 离线模式：返回${expired ? '过期' : ''}缓存 (${endpoint})`);
+            return proxyImages(value);
+        }
+        throw new Error('网络已断开，且无本地缓存');
     }
     
     // ⚡ P1性能优化：请求去重（相同GET请求只发一次）
@@ -116,87 +357,114 @@ async function request(endpoint, options = {}) {
         fetchOptions.body = options.body;
     }
 
-    // 🚀 超时控制：使用 AbortController 实现请求超时
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), API.TIMEOUT);
-    fetchOptions.signal = controller.signal;
-
-    // ⚡ P1性能优化：封装请求 Promise（支持去重）
+    // 🚀 P1优化：重试配置
+    const maxRetries = options.retries ?? (method === "GET" ? 2 : 0);  // GET 默认重试 2 次
+    const retryDelay = options.retryDelay ?? 1000;  // 初始延迟 1 秒
+    
+    // ⚡ P1性能优化：封装请求 Promise（支持去重 + 重试）
     const requestPromise = (async () => {
-        try {
-            const response = await fetch(url, fetchOptions);
-            clearTimeout(timeoutId);  // 清除超时计时器
-            let responseData = await response.json().catch(() => ({}));
+        let lastError = null;
+        
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            // 🚀 P1优化：指数退避延迟
+            if (attempt > 0) {
+                const delay = retryDelay * Math.pow(2, attempt - 1);  // 1s, 2s, 4s...
+                console.log(`🔄 请求重试 (${attempt}/${maxRetries})...`);
+                await new Promise(r => setTimeout(r, delay));
+            }
+                    
+            // 🚀 P4优化：使用请求取消管理器（支持超时 + 组件级取消）
+            const controller = requestCancelManager.create(componentId);
+            const timeoutId = setTimeout(() => controller.abort(), API.TIMEOUT);
+            const currentFetchOptions = { ...fetchOptions, signal: controller.signal };
+                    
+            try {
+                // 🚀 P3优化：使用请求队列限制并发
+                const response = await requestQueue.add(() => fetch(url, currentFetchOptions));
+                clearTimeout(timeoutId);  // 清除超时计时器
+                requestCancelManager.remove(componentId, controller);  // 🚀 P4: 移除已完成的 controller
+                let responseData = await response.json().catch(() => ({}));
 
-            if (!response.ok) {
-                let errorMsg = `请求失败 (${response.status})`;
+                if (!response.ok) {
+                    let errorMsg = `请求失败 (${response.status})`;
+                    
+                    // 🚀 核心修改：增加对 FastAPI 422 报错数组的解析
+                    if (Array.isArray(responseData.detail)) {
+                        errorMsg = "数据格式错误: " + responseData.detail.map(e => `${e.loc[e.loc.length-1]} (${e.type})`).join(", ");
+                    } else if (typeof responseData.detail === "string") {
+                        errorMsg = responseData.detail;
+                    } else if (responseData.message) {
+                        errorMsg = responseData.message;
+                    } else if (responseData.error) {
+                        errorMsg = responseData.error;
+                    }
+                    
+                    // 🚀 P1优化：4xx 错误不重试，5xx 错误可重试
+                    if (response.status >= 400 && response.status < 500) {
+                        throw new Error(errorMsg);
+                    }
+                    
+                    lastError = new Error(errorMsg);
+                    continue;  // 5xx 错误重试
+                }
+
+                // 🚀 P1优化：精确清除相关缓存（替代暴力清空）
+                if (["POST", "PUT", "DELETE"].includes(method)) {
+                    invalidateRelatedCache(endpoint, method);
+                }
+
+                // ⚡ P1性能优化：GET 请求结果缓存
+                if (method === "GET") {
+                    const ttl = _getCacheTTL(endpoint);
+                    if (ttl > 0) {
+                        setCache(cacheKey, responseData, ttl, false); // 只存内存，不存 localStorage
+                    }
+                }
+
+                // 入口数据挂载代理
+                responseData = proxyImages(responseData);
+                return responseData;
+            } catch (error) {
+                clearTimeout(timeoutId);  // 清除超时计时器
                 
-                // 🚀 核心修改：增加对 FastAPI 422 报错数组的解析
-                if (Array.isArray(responseData.detail)) {
-                    errorMsg = "数据格式错误: " + responseData.detail.map(e => `${e.loc[e.loc.length-1]} (${e.type})`).join(", ");
-                } else if (typeof responseData.detail === "string") {
-                    errorMsg = responseData.detail;
-                } else if (responseData.message) {
-                    errorMsg = responseData.message;
-                } else if (responseData.error) {
-                    errorMsg = responseData.error;
+                // 🔧 P1优化：可重试的错误类型
+                const isRetryable = (
+                    error.name === 'AbortError' ||  // 超时
+                    (error instanceof TypeError && error.message.includes('fetch'))  // 网络错误
+                );
+                
+                if (isRetryable && attempt < maxRetries) {
+                    lastError = error;
+                    continue;  // 重试
                 }
-                throw new Error(errorMsg);
-            }
-
-            // 🚀 核心自愈修复：监听所有数据修改动作，强制销毁脏缓存！
-            if (["POST", "PUT", "DELETE"].includes(method)) {
-                // 清除旧版缓存
-                Object.keys(localStorage).forEach(key => {
-                    if (key.startsWith("ComfyCommunity_ListCache") || 
-                        key.startsWith("ComfyCommunity_ProfileCache") || 
-                        key.startsWith("ComfyCommunity_ChatHistory")) {
-                        localStorage.removeItem(key);
-                    }
-                });
-                // 清除新版缓存
-                Object.keys(localStorage).forEach(key => {
-                    if (key.startsWith("ComfyRanking_api_") || key.startsWith("ComfyRanking_ListCache_")) {
-                        localStorage.removeItem(key);
-                    }
-                });
-            }
-
-            // ⚡ P1性能优化：GET 请求结果缓存
-            if (method === "GET") {
-                const ttl = _getCacheTTL(endpoint);
-                if (ttl > 0) {
-                    setCache(cacheKey, responseData, ttl, false); // 只存内存，不存 localStorage
+                
+                // 🔧 P3优化：错误分类处理，提供更清晰的错误信息
+                if (error.name === 'AbortError') {
+                    throw new Error('网络请求超时，请检查网络连接');
                 }
+                if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('Failed to fetch'))) {
+                    throw new Error('网络连接失败，请检查网络');
+                }
+                if (error instanceof SyntaxError) {
+                    throw new Error('服务器响应格式错误');
+                }
+                throw error;
             }
-
-            // 入口数据挂载代理
-            responseData = proxyImages(responseData);
-            return responseData;
-        } catch (error) {
-            clearTimeout(timeoutId);  // 清除超时计时器
-            
-            // 🔧 P3优化：错误分类处理，提供更清晰的错误信息
-            if (error.name === 'AbortError') {
-                throw new Error('网络请求超时，请检查网络连接');
-            }
-            if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('Failed to fetch'))) {
-                throw new Error('网络连接失败，请检查网络');
-            }
-            if (error instanceof SyntaxError) {
-                throw new Error('服务器响应格式错误');
-            }
-            throw error;
-        } finally {
-            // 清除请求去重记录
-            pendingRequests.delete(cacheKey);
         }
+        
+        // 所有重试都失败
+        throw lastError || new Error('请求失败');
     })();
     
     // 记录进行中的请求
     if (method === "GET") {
         pendingRequests.set(cacheKey, requestPromise);
     }
+    
+    // 确保请求完成后清除去重记录
+    requestPromise.finally(() => {
+        pendingRequests.delete(cacheKey);
+    });
     
     return requestPromise;
 }

@@ -11,6 +11,17 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
+import { removeCache } from "../components/性能优化工具.js";
+
+// 📦 清除帖子列表缓存
+function clearPostListCache() {
+    removeCache('api_/api/posts');
+    const sorts = ['latest', 'popular', 'hot'];
+    for (const sort of sorts) {
+        removeCache(`ListCache_posts_${sort}`);
+    }
+    console.log('🗑️ 已清除帖子列表缓存');
+}
 
 // 🖼️ 图片压缩配置
 const IMAGE_MAX_SIZE = 1920;    // 最大宽/高
@@ -291,6 +302,10 @@ export function createPublishPostView(currentUser) {
             });
             
             showToast(t('post.publish_success'), "success");
+            
+            // 🚀 清除帖子列表缓存，确保返回列表时能看到新帖子
+            clearPostListCache();
+            
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
             
         } catch (err) {
