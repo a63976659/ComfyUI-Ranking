@@ -16,6 +16,7 @@ import { renderTipLevelHTML } from "../components/打赏等级工具.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t } from "../components/用户体验增强.js";
 import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { removeCache } from "../components/性能优化工具.js";
 
 /**
  * 📄 创建帖子详情视图
@@ -590,6 +591,15 @@ function showEditPostDialog(post, currentUser, container) {
             await api.updatePost(post.id, { title, content });
             showToast(t('post.edit_success'), "success");
             overlay.remove();
+            
+            // 🚀 清除帖子列表缓存，确保返回列表时能看到更新
+            removeCache('api_/api/posts');
+            const sorts = ['latest', 'popular', 'hot'];
+            for (const sort of sorts) {
+                removeCache(`ListCache_posts_${sort}`);
+            }
+            // 🔄 触发列表刷新
+            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload"));
             
             // 刷新详情页
             loadPostDetail(container, post.id, currentUser);

@@ -9,6 +9,7 @@ import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { PLACEHOLDERS } from "../core/全局配置.js";
+import { removeCache } from "../components/性能优化工具.js";
 
 /**
  * 📝 创建任务详情视图
@@ -624,6 +625,15 @@ function showEditTaskDialog(task, currentUser, contentEl) {
             await api.updateTask(task.id, { title, description, referenceLink });
             showToast(t('task.edit_success'), "success");
             modal.remove();
+            
+            // 🚀 清除任务列表缓存，确保返回列表时能看到更新
+            removeCache('api_/api/tasks');
+            const sorts = ['latest', 'popular', 'hot'];
+            for (const sort of sorts) {
+                removeCache(`ListCache_tasks_${sort}`);
+            }
+            // 🔄 触发列表刷新
+            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload"));
             
             // 刷新详情页
             loadTaskDetail(contentEl.closest("div"), task.id, currentUser);

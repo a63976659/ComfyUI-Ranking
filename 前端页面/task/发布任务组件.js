@@ -318,6 +318,8 @@ export function createPublishTaskView(currentUser) {
             
             // 🚀 清除任务列表缓存，确保返回列表时能看到新任务
             clearTaskListCache();
+            // 🔄 触发列表刷新，确保新内容立即显示
+            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload"));
             
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
             

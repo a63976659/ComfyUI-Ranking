@@ -93,6 +93,84 @@ function processAvatar(file) {
 }
 
 /**
+ * 上传前图片压缩处理
+ * - 转为 JPG 格式
+ * - 超过 5MB 时进行质量压缩，不改变宽高比例
+ * @param {File} file - 原始图片文件
+ * @returns {Promise<File>} - 处理后的文件
+ */
+async function compressImageForUpload(file) {
+    // 如果不是图片文件，直接返回
+    if (!file.type || !file.type.startsWith('image/')) {
+        return file;
+    }
+    
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            
+            const canvas = document.createElement('canvas');
+            // 保持原始宽高，不改变比例
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            
+            const ctx = canvas.getContext('2d');
+            // 白色背景（JPG不支持透明）
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            
+            const maxSize = 5 * 1024 * 1024; // 5MB
+            
+            // 如果原文件已经是JPG且小于5MB，直接返回
+            if ((file.type === 'image/jpeg' || file.type === 'image/jpg') && file.size <= maxSize) {
+                resolve(file);
+                return;
+            }
+            
+            // 先尝试高质量JPG
+            let quality = 0.92;
+            
+            const tryCompress = () => {
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        reject(new Error('图片压缩失败'));
+                        return;
+                    }
+                    
+                    if (blob.size <= maxSize || quality <= 0.3) {
+                        // 压缩到5MB以下或已达最低质量
+                        const compressedFile = new File([blob], 
+                            file.name.replace(/\.[^.]+$/, '.jpg'), 
+                            { type: 'image/jpeg' }
+                        );
+                        console.log(`📦 图片压缩: ${(file.size/1024/1024).toFixed(2)}MB → ${(compressedFile.size/1024/1024).toFixed(2)}MB (quality: ${quality.toFixed(2)})`);
+                        resolve(compressedFile);
+                    } else {
+                        // 还是太大，降低质量继续压缩
+                        quality -= 0.1;
+                        tryCompress();
+                    }
+                }, 'image/jpeg', quality);
+            };
+            
+            tryCompress();
+        };
+        
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            // 加载失败，返回原文件
+            resolve(file);
+        };
+        
+        img.src = url;
+    });
+}
+
+/**
  * 🟢 新增：全局统一的文件上传包装器（供个人设置等其它组件调用）
  * 会在上传前自动拦截并处理头像图片
  */
@@ -201,7 +279,9 @@ export async function handlePublishSubmit(params) {
             
             for (let i = 0; i < imageFiles.length; i++) {
                 submitBtn.innerHTML = `⏳ ${t('publish.uploading_images', { current: i + 1, total: imageFiles.length })}`;
-                const uploadRes = await api.uploadFile(imageFiles[i], "cover");
+                // 上传前压缩：转JPG，超5MB压缩
+                const processedFile = await compressImageForUpload(imageFiles[i]);
+                const uploadRes = await api.uploadFile(processedFile, "cover");
                 uploadedUrls.push(uploadRes.url);
             }
             

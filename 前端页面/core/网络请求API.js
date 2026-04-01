@@ -415,7 +415,9 @@ async function request(endpoint, options = {}) {
                     
             // 🚀 P4优化：使用请求取消管理器（支持超时 + 组件级取消）
             const controller = requestCancelManager.create(componentId);
-            const timeoutId = setTimeout(() => controller.abort(), API.TIMEOUT);
+            // P2优化：支持通过 options 传入自定义超时
+            const timeout = options.timeout ?? API.TIMEOUT;
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
             const currentFetchOptions = { ...fetchOptions, signal: controller.signal };
                     
             try {
@@ -566,7 +568,13 @@ export const api = {
     async uploadFile(file, fileType) {
         const formData = new FormData();
         formData.append("file", file); formData.append("file_type", fileType);
-        return request("/api/upload", { method: "POST", body: formData });
+        console.log(`📤 开始上传文件: ${file.name}, 大小: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
+        return request("/api/upload", { 
+            method: "POST", 
+            body: formData,
+            timeout: 120000,  // P2: 120秒上传专用超时
+            retries: 1        // P3: 允许1次重试
+        });
     },
     async publishItem(data) { return request("/api/items", { method: "POST", body: data }); },
     async updateItem(itemId, author, data) { return request(`/api/items/${itemId}?author=${author}`, { method: "PUT", body: data }); },
