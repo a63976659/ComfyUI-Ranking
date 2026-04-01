@@ -267,7 +267,7 @@ const IMAGE_PROXY_FIELDS = [
 ];
 
 // 🚀 新增：需要对数组元素进行代理的图片字段
-const IMAGE_PROXY_ARRAY_FIELDS = ['images'];
+const IMAGE_PROXY_ARRAY_FIELDS = ['images', 'imageUrls'];
 
 // 🚀 导出图片代理函数，供其他组件在缓存读取后调用
 export function proxyImages(obj) {

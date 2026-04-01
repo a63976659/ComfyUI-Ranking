@@ -72,9 +72,14 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     if (imageUrls.length === 0) return '';
     
     const firstUrl = imageUrls[0];
-    const imgSrc = lazyLoad ? getPlaceholderSVG() : firstUrl;
-    const dataAttr = lazyLoad ? `data-src="${firstUrl}"` : '';
-    const lazyClass = lazyLoad ? 'lazy-image lazy-loading' : '';
+    
+    // 🚀 本地代理URL已缓存，无需懒加载（从磁盘读取几乎瞬时）
+    const isLocalProxy = firstUrl && firstUrl.startsWith('/community_hub/image?url=');
+    const shouldLazy = lazyLoad && !isLocalProxy;
+    
+    const imgSrc = shouldLazy ? getPlaceholderSVG() : firstUrl;
+    const dataAttr = shouldLazy ? `data-src="${firstUrl}"` : '';
+    const lazyClass = shouldLazy ? 'lazy-image lazy-loading' : '';
     
     // 🖼️ 多图模式：显示左右切换按钮和计数器
     const hasMultiple = imageUrls.length > 1;

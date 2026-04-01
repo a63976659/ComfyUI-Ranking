@@ -373,7 +373,7 @@ class CyberImageViewer {
         // 自动播放状态管理
         this._autoPlayEnabled = false;
         this._autoPlayTimerId = null;
-        this._autoPlayInterval = 5000; // 默认5秒展示时间
+        this._autoPlayInterval = 1000; // 默认1秒展示时间
         this._autoPlayStateChangeCallbacks = []; // 状态变化回调
     }
 
@@ -663,8 +663,8 @@ class CyberImageViewer {
         // 检查是否被中断
         if (currentAnimId !== this._animationId) return;
         
-        // 2. 载出动画完全结束后，等待1秒间隔（项目规范）
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // 2. 载出动画完全结束后，立即切换下一张（不等待）
+        // await new Promise(resolve => setTimeout(resolve, 0));
         
         // 再次检查
         if (currentAnimId !== this._animationId) return;
