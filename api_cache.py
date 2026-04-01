@@ -16,7 +16,10 @@ IMAGE_CACHE_DIR = os.path.join(CACHE_ROOT_DIR, "images")
 os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
 
 async def cache_image_handler(request):
-    """本地 API：异步拦截图片请求，防阻塞实现硬盘级永久缓存"""
+    """本地 API：异步拦截图片请求，防阻塞实现硬盘级永久缓存
+    
+    核心原则：本地缓存文件永远优先，网络下载是 fallback
+    """
     url = request.query.get("url")
     if not url:
         return web.Response(status=400, text="Missing url")
@@ -32,27 +35,32 @@ async def cache_image_handler(request):
     if not url.startswith('http'):
         raise web.HTTPFound(location=url)
 
+    # 生成缓存路径
     url_hash = hashlib.md5(url.encode('utf-8')).hexdigest()
+    # 根据URL后缀确定扩展名，默认jpg
     ext = url.split('.')[-1].split('?')[0]
     if len(ext) > 4 or not ext.isalnum(): 
         ext = "jpg" 
         
     local_path = os.path.join(IMAGE_CACHE_DIR, f"{url_hash}.{ext}")
 
-    # 如果硬盘里有，直接 0 延迟返回
-    if os.path.exists(local_path):
+    # 🚀 优先级1：本地缓存存在且有效，直接返回（零延迟）
+    if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
         content_type, _ = mimetypes.guess_type(local_path)
         return web.FileResponse(local_path, headers={'Content-Type': content_type or 'image/jpeg'})
 
-    # 如果没有，则使用 aiohttp 异步拉取
+    # 优先级2：本地无缓存或缓存无效，尝试从网络下载
     try:
         async with aiohttp.ClientSession() as session:
             # 伪装 User-Agent 防止被拦截
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
             # 加入 ssl=False 彻底解决 ComfyUI 整合包证书报错问题
-            async with session.get(url, headers=headers, ssl=False, timeout=15) as response:
+            # 超时时间30秒，与前端保持一致
+            async with session.get(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 if response.status == 200:
                     content = await response.read()
+                    # 确保缓存目录存在
+                    os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
                     with open(local_path, "wb") as f:
                         f.write(content)
                     
@@ -61,12 +69,17 @@ async def cache_image_handler(request):
                     content_type, _ = mimetypes.guess_type(local_path)
                     return web.FileResponse(local_path, headers={'Content-Type': content_type or 'image/jpeg'})
                 else:
-                    print(f"[ComfyUI-Ranking] ⚠️ 图片下载失败 (状态码: {response.status})，退回直连: {url}")
-                    raise web.HTTPFound(location=url)
-    except web.HTTPFound:
-        # 如果是主动抛出的重定向，直接向上抛出，不再被当做真实错误打印
-        raise
+                    # 网络请求失败，返回对应状态码
+                    print(f"[ComfyUI-Ranking] ⚠️ 图片下载失败 (状态码: {response.status}): {url[:80]}...")
+                    return web.Response(status=response.status, text=f"Image download failed: HTTP {response.status}")
     except Exception as e:
-        # 捕获真实错误并在控制台打印
-        print(f"[ComfyUI-Ranking] 🚨 缓存拉取异常: {str(e)} -> 已降级为云端代理直连")
-        raise web.HTTPFound(location=url)
+        # 网络异常（超时、无网络等）优雅处理
+        print(f"[ComfyUI-Ranking] ⚠️ 图片下载失败: {url[:80]}... 错误: {str(e)}")
+        # 如果存在0字节的损坏缓存文件，清理掉以便下次重试
+        if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
+            try:
+                os.remove(local_path)
+                print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
+            except:
+                pass
+        return web.Response(status=504, text="Image download failed: Network error")
