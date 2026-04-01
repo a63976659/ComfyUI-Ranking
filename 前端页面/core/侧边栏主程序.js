@@ -122,11 +122,20 @@ function buildSidebarDOM() {
             <a href="https://space.bilibili.com/2114638644" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#00A1D6'" onmouseout="this.style.color='#888'">📺 Bilibili</a>
         </div>
         <div style="display: flex; justify-content: center; align-items: center; gap: 10px; color: #555;">
-            <span>MIT License Copyright (c) 2026 猪的飞行梦</span>
+            <span>MIT License Copyright (c) 2026 <a href="#" id="easter-egg-trigger" style="color: #888; text-decoration: none; cursor: pointer; transition: color 0.2s;" onmouseover="this.style.color='#ffb0c0'" onmouseout="this.style.color='#888'">猪的飞行梦</a></span>
             <span style="color: #444;">|</span>
             <span>v1.2.0-Alpha</span>
         </div>
     `;
+    
+    // 彩蛋触发
+    const easterEggLink = footerContainer.querySelector('#easter-egg-trigger');
+    if (easterEggLink) {
+        easterEggLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            import('../components/彩蛋动画引擎.js').then(mod => mod.openEasterEggPage());
+        });
+    }
     
     // 监听从设置页面触发的背景更新事件
     window.addEventListener("comfy-sidebar-bg-update", () => {
