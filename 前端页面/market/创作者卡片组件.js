@@ -136,7 +136,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
                     <div class="creator-name-link" title="访问 TA 的主页" style="font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; color: #FFD700; text-shadow: 0 1px 4px rgba(0,0,0,0.8), 0 0 8px rgba(255,215,0,0.3);" onmouseover="this.style.color='#FFA500'" onmouseout="this.style.color='#FFD700'">${creatorData.name}</div>
                     <div style="font-size: 12px; color: #FF6B6B; margin-left: auto; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">被使用 ${creatorData.downloads || 0} 次</div>
                 </div>
-                <div style="font-size: 12px; color: ${hasBanner ? '#ccc' : '#aaa'}; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 10px;">${creatorData.shortDesc}</div>
+                <div style="font-size: 12px; color: ${hasBanner ? '#ccc' : '#aaa'}; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 10px;">${creatorData.shortDesc && creatorData.shortDesc !== "null" ? creatorData.shortDesc : t('profile.no_intro') || "这个人很懒，什么都没写..."}</div>
                 <div style="background: rgba(34,34,34,${hasBanner ? '0.8' : '1'}); border-radius: 6px; padding: 8px 10px; border: 1px dashed #555;">
                     <div style="display: flex; gap: 15px; font-size: 12px; color: #eee; justify-content: space-between; margin-bottom: 8px;">
                         <span style="color: #FF5722;">👍 获赞: <strong>${creatorData.likes}</strong></span>
@@ -163,7 +163,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
     Object.assign(detailView.style, { display: "none", marginTop: "12px", paddingTop: "12px", borderTop: "1px dashed #555" });
 
     detailView.innerHTML = `
-        <div style="background: #1e1e1e; padding: 8px; border-radius: 4px; font-size: 12px; color: #ccc; margin-bottom: 15px; line-height: 1.5;">${creatorData.fullDesc}</div>
+        <div style="background: #1e1e1e; padding: 8px; border-radius: 4px; font-size: 12px; color: #ccc; margin-bottom: 15px; line-height: 1.5;">${creatorData.fullDesc && creatorData.fullDesc !== "null" ? creatorData.fullDesc : t('profile.no_intro') || "这个人很懒，什么都没写..."}</div>
         <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #aaa;">📈 下载量增长趋势</div>
         <div id="${chartContainerId}" style="width: 100%; height: 180px; background: #222; border-radius: 4px; margin-bottom: 15px;"></div>
         <div id="tipboard-${chartContainerId}"></div>
