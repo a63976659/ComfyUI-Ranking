@@ -9,6 +9,7 @@ import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 import { renderTipBoardHTML, isMaxTipLevel } from "../components/打赏等级工具.js";
 import { t } from "../components/用户体验增强.js";
+import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 
 export function createItemCard(itemData, currentUser = null) {
     const card = document.createElement("div");
@@ -32,14 +33,60 @@ export function createItemCard(itemData, currentUser = null) {
     summaryView.style.cursor = "pointer";
     
     // 🚀 核心修改：为评论计数的 span 加上专属的 class，并填入过滤后的真实数量
+    // 🚀 布局重构：第1行标题+使用次数，第2行描述，第3行互动数据+发布者信息
     summaryView.innerHTML = `
-        <div style="font-weight: bold; font-size: 14px; margin-bottom: 4px; color: #4CAF50;">${itemData.title}</div>
+        <!-- 第1行: 标题 + 使用次数 -->
+        <div style="display: flex; align-items: center; margin-bottom: 4px;">
+            <div style="font-weight: bold; font-size: 14px; color: #4CAF50; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${itemData.title}</div>
+            <span style="margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 2px;">🔥 ${itemData.uses || 0}</span>
+        </div>
+        <!-- 第2行: 描述 -->
         <div style="font-size: 12px; color: #aaa; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 8px;">${itemData.shortDesc}</div>
-        <div style="display: flex; gap: 10px; font-size: 11px; color: #888;">
+        <!-- 第3行: 互动数据 + 发布者信息 -->
+        <div style="display: flex; align-items: center; gap: 10px; font-size: 11px; color: #888;">
             <span>👍 ${itemData.likes || 0}</span> <span>⭐ ${itemData.favorites || 0}</span> <span class="card-comment-count">💬 ${initialCommentCount}</span>
-            <span style="margin-left: auto; background: #444; padding: 2px 6px; border-radius: 4px; color: #fff;">${t('market.uses')}: ${itemData.uses || 0}</span>
+            <span style="margin-left: auto; display: flex; align-items: center; gap: 4px; cursor: pointer;" class="card-author-info">
+                <img class="card-author-avatar" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect fill='%23333' width='40' height='40' rx='20'/%3E%3Ctext x='20' y='25' text-anchor='middle' fill='%23666' font-size='16'%3E%3F%3C/text%3E%3C/svg%3E" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover;">
+                <span class="card-author-name" style="font-size: 12px; color: #aaa; transition: color 0.2s;">${itemData.author || '未知'}</span>
+            </span>
         </div>
     `;
+
+    // 🚀 添加发布者信息异步加载逻辑（使用SWR缓存机制）
+    const authorInfoEl = summaryView.querySelector('.card-author-info');
+    const authorAvatarEl = summaryView.querySelector('.card-author-avatar');
+    const authorNameEl = summaryView.querySelector('.card-author-name');
+
+    if (authorInfoEl && itemData.author) {
+        // 点击跳转到发布者主页
+        authorInfoEl.onclick = (e) => {
+            e.stopPropagation();
+            openOtherUserProfileModal(itemData.author, currentUser);
+        };
+        
+        // hover效果：发布者名称颜色变亮
+        authorInfoEl.onmouseenter = () => {
+            if (authorNameEl) authorNameEl.style.color = '#4CAF50';
+        };
+        authorInfoEl.onmouseleave = () => {
+            if (authorNameEl) authorNameEl.style.color = '#aaa';
+        };
+        
+        // 同步读取缓存，0延迟渲染
+        const cached = getCachedProfile(itemData.author);
+        if (cached) {
+            if (cached.name) authorNameEl.textContent = cached.name;
+            if (cached.avatar) authorAvatarEl.src = cached.avatar;
+        } else {
+            authorNameEl.textContent = itemData.author;
+        }
+        
+        // SWR后台校对，自动更新DOM和缓存
+        getProfileWithSWR(itemData.author, api.getUserProfile, (profile) => {
+            if (profile.name) authorNameEl.textContent = profile.name;
+            if (profile.avatar) authorAvatarEl.src = profile.avatar;
+        });
+    }
 
     const detailView = document.createElement("div");
     Object.assign(detailView.style, { display: "none", marginTop: "12px", paddingTop: "12px", borderTop: "1px dashed #555" });
@@ -73,17 +120,18 @@ export function createItemCard(itemData, currentUser = null) {
     detailView.appendChild(authorInfo);
 
     const nameDOM = authorInfo.querySelector('.author-name-link');
-    const authorCacheKey = `ComfyCommunity_ProfileCache_${itemData.author}`;
-    const cachedAuthorStr = localStorage.getItem(authorCacheKey);
     
-    if (cachedAuthorStr) { try { nameDOM.innerText = JSON.parse(cachedAuthorStr).name || itemData.author; } catch(e) {} }
+    // 使用SWR缓存机制加载作者名称
+    const cached = getCachedProfile(itemData.author);
+    if (cached && cached.name) {
+        nameDOM.textContent = cached.name;
+    }
+    
+    getProfileWithSWR(itemData.author, api.getUserProfile, (profile) => {
+        if (profile.name) nameDOM.textContent = profile.name;
+    });
+    
     nameDOM.onclick = (e) => { e.stopPropagation(); openOtherUserProfileModal(itemData.author, currentUser); };
-
-    api.getUserProfile(itemData.author).then(res => {
-        const freshName = res.data.name || itemData.author;
-        if (nameDOM.innerText !== freshName) { nameDOM.innerText = freshName; }
-        localStorage.setItem(authorCacheKey, JSON.stringify(res.data));
-    }).catch(() => { if (!cachedAuthorStr) { nameDOM.innerText = itemData.author; } });
 
     const actionArea = document.createElement("div");
     Object.assign(actionArea.style, { display: "flex", gap: "8px", marginBottom: "12px" });

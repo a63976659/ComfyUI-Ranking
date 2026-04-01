@@ -345,7 +345,19 @@ async function request(endpoint, options = {}) {
     const headers = { ...options.headers };
     if (!(options.body instanceof FormData)) { headers["Content-Type"] = "application/json"; }
     const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
-    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (token) {
+        // 验证 Token 是否为有效的三段式 JWT 格式
+        const tokenParts = token.split(".");
+        if (tokenParts.length === 3) {
+            headers["Authorization"] = `Bearer ${token}`;
+        } else {
+            console.warn("⚠️ 检测到无效 Token 格式，已自动清除，请重新登录");
+            localStorage.removeItem("ComfyCommunity_Token");
+            localStorage.removeItem("ComfyCommunity_User");
+            sessionStorage.removeItem("ComfyCommunity_Token");
+            sessionStorage.removeItem("ComfyCommunity_User");
+        }
+    }
     
     // 🚀 P4优化：组件级请求取消支持
     const componentId = options.componentId || '_global';
