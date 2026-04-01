@@ -9,7 +9,7 @@
 //   - 🔄 P7后悔模式：退款功能
 // ==========================================
 
-import { api } from "../core/网络请求API.js";
+import { api, proxyImages } from "../core/网络请求API.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 import { setupResourceInstall } from "./资源安装引擎.js";
 import { renderTipBoardHTML } from "../components/打赏等级工具.js";
@@ -265,6 +265,9 @@ function showDeleteConfirm(itemData, currentUser, onSuccess) {
 }
 
 export function createItemDetailView(itemData, currentUser) {
+    // 确保图片URL走本地缓存代理
+    itemData = proxyImages(itemData);
+    
     const container = document.createElement("div");
     Object.assign(container.style, {
         display: "flex", flexDirection: "column", gap: "15px", color: "#ccc", 

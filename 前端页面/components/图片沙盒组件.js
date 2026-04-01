@@ -33,7 +33,7 @@ function getErrorSVG() { return createErrorSVG(t('image.load_failed')); }
 function getTimeoutSVG() { return createTimeoutSVG(t('image.load_timeout')); }
 
 // 🔧 P3优化：带超时机制的图片加载器
-const IMAGE_LOAD_TIMEOUT = 15000;  // 15秒超时
+const IMAGE_LOAD_TIMEOUT = 30000;  // 30秒超时
 
 function loadImageWithTimeout(url, timeout = IMAGE_LOAD_TIMEOUT) {
     return new Promise((resolve, reject) => {

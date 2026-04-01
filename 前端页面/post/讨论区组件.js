@@ -323,13 +323,12 @@ function createPostCard(post) {
         const cached = getCachedProfile(account);
         const avatar = cached?.avatar || post.author_avatar || '';
         const name = cached?.name || post.author_name || account || '';
+        const initial = (name || 'U')[0].toUpperCase();
         
-        // 内联 SVG 默认头像（用户剪影图标）
-        const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Ccircle cx='18' cy='18' r='18' fill='%23333'/%3E%3Ccircle cx='18' cy='14' r='6' fill='%23666'/%3E%3Cpath d='M6 32c0-6.6 5.4-12 12-12s12 5.4 12 12' fill='%23666'/%3E%3C/svg%3E";
-        
-        // 渲染头像（始终使用 img 标签）
-        const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
-        const avatarHtml = `<img class="swr-avatar" src="${avatarSrc}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
+        // 渲染初始头像
+        const avatarHtml = avatar 
+            ? `<img class="swr-avatar" src="${avatar}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">` 
+            : `<div class="swr-avatar" style="width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 9px; font-weight: bold;">${initial}</div>`;
         
         authorContainer.innerHTML = `${avatarHtml}<span class="swr-name" style="font-size: 11px; color: #999; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(name)}</span>`;
         
@@ -338,7 +337,11 @@ function createPostCard(post) {
             const avatarEl = authorContainer.querySelector('.swr-avatar');
             const nameEl = authorContainer.querySelector('.swr-name');
             if (avatarEl && profile.avatar) {
-                avatarEl.src = profile.avatar;
+                if (avatarEl.tagName === 'IMG') {
+                    avatarEl.src = profile.avatar;
+                } else {
+                    avatarEl.outerHTML = `<img class="swr-avatar" src="${profile.avatar}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
+                }
             }
             if (nameEl && profile.name) {
                 nameEl.textContent = profile.name;

@@ -285,7 +285,7 @@ export function proxyImages(obj) {
                     catch(e) { break; }
                 }
 
-                // 只有最终剥离出来的确实是外部网络链接，才挂上代理
+                // 只有最终剥离出来的确实是外部网络链接（包括云端代理URL），才挂上本地缓存代理
                 if (originalUrl.startsWith('http')) {
                     obj[key] = `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
                 } else {
@@ -301,7 +301,7 @@ export function proxyImages(obj) {
                             try { originalUrl = decodeURIComponent(originalUrl.replace('/community_hub/image?url=', '')); }
                             catch(e) { break; }
                         }
-                        // 只有外部网络链接才挂上代理
+                        // 只有外部网络链接（包括云端代理URL）才挂上本地缓存代理
                         if (originalUrl.startsWith('http')) {
                             return `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
                         }
@@ -415,9 +415,7 @@ async function request(endpoint, options = {}) {
                     
             // 🚀 P4优化：使用请求取消管理器（支持超时 + 组件级取消）
             const controller = requestCancelManager.create(componentId);
-            // P2优化：支持通过 options 传入自定义超时
-            const timeout = options.timeout ?? API.TIMEOUT;
-            const timeoutId = setTimeout(() => controller.abort(), timeout);
+            const timeoutId = setTimeout(() => controller.abort(), API.TIMEOUT);
             const currentFetchOptions = { ...fetchOptions, signal: controller.signal };
                     
             try {
@@ -567,14 +565,9 @@ export const api = {
     async getCreators(sort, limit) { return request(`/api/creators?sort=${sort}&limit=${limit}`); },
     async uploadFile(file, fileType) {
         const formData = new FormData();
-        formData.append("file", file); formData.append("file_type", fileType);
-        console.log(`📤 开始上传文件: ${file.name}, 大小: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
-        return request("/api/upload", { 
-            method: "POST", 
-            body: formData,
-            timeout: 120000,  // P2: 120秒上传专用超时
-            retries: 1        // P3: 允许1次重试
-        });
+        formData.append("file", file);
+        formData.append("file_type", fileType);
+        return request("/api/upload", { method: "POST", body: formData });
     },
     async publishItem(data) { return request("/api/items", { method: "POST", body: data }); },
     async updateItem(itemId, author, data) { return request(`/api/items/${itemId}?author=${author}`, { method: "PUT", body: data }); },

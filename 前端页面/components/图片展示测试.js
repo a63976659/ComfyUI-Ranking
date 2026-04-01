@@ -296,6 +296,38 @@ const VIEWER_STYLES = `
     font-family: monospace;
 }
 
+/* 自动播放按钮 */
+.cyber-autoplay-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 8px;
+    width: 40px;
+    height: 40px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    color: #fff;
+    margin-right: 15px;
+}
+
+.cyber-autoplay-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.05);
+}
+
+.cyber-autoplay-btn.active {
+    background: rgba(0, 255, 150, 0.2);
+    color: #00ff96;
+}
+
+.cyber-autoplay-btn svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+}
+
 /* 图片加载错误状态 */
 .cyber-error-state {
     display: flex;
@@ -338,6 +370,11 @@ class CyberImageViewer {
         this.elements = {};
         // 动画ID计数器，用于快速点击中断动画
         this._animationId = 0;
+        // 自动播放状态管理
+        this._autoPlayEnabled = false;
+        this._autoPlayTimerId = null;
+        this._autoPlayInterval = 5000; // 默认5秒展示时间
+        this._autoPlayStateChangeCallbacks = []; // 状态变化回调
     }
 
     /**
@@ -411,10 +448,20 @@ class CyberImageViewer {
                     <span class="total">${this.imageUrls.length}</span>
                 </div>
                 <div class="cyber-thumbnails"></div>
-                <div class="cyber-keyboard-hint">
-                    <span><span class="cyber-key">←</span> 上一张</span>
-                    <span><span class="cyber-key">→</span> 下一张</span>
-                    <span><span class="cyber-key">ESC</span> 关闭</span>
+                <div style="display: flex; align-items: center; gap: 15px;">
+                    <button class="cyber-autoplay-btn" title="自动播放 (空格)">
+                        <svg viewBox="0 0 24 24" class="autoplay-icon-play">
+                            <path d="M8 5v14l11-7z"/>
+                        </svg>
+                        <svg viewBox="0 0 24 24" class="autoplay-icon-pause" style="display: none;">
+                            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                        </svg>
+                    </button>
+                    <div class="cyber-keyboard-hint">
+                        <span><span class="cyber-key">←</span> 上一张</span>
+                        <span><span class="cyber-key">→</span> 下一张</span>
+                        <span><span class="cyber-key">ESC</span> 关闭</span>
+                    </div>
                 </div>
             </div>
 
@@ -433,7 +480,10 @@ class CyberImageViewer {
             preloadContainer: this.container.querySelector('.cyber-preload'),
             navLeft: this.container.querySelector('.cyber-nav-zone.left'),
             navRight: this.container.querySelector('.cyber-nav-zone.right'),
-            closeBtn: this.container.querySelector('.cyber-close-btn')
+            closeBtn: this.container.querySelector('.cyber-close-btn'),
+            autoPlayBtn: this.container.querySelector('.cyber-autoplay-btn'),
+            autoPlayIconPlay: this.container.querySelector('.autoplay-icon-play'),
+            autoPlayIconPause: this.container.querySelector('.autoplay-icon-pause')
         };
 
         // 绑定事件
@@ -449,6 +499,220 @@ class CyberImageViewer {
     }
 
     /**
+     * 设置自动播放间隔时间（毫秒）
+     * @param {number} interval - 间隔时间（毫秒）
+     */
+    setAutoPlayInterval(interval) {
+        this._autoPlayInterval = Math.max(2000, Math.min(interval, 30000)); // 限制2-30秒
+    }
+
+    /**
+     * 获取自动播放状态
+     * @returns {boolean} 是否正在自动播放
+     */
+    getAutoPlayEnabled() {
+        return this._autoPlayEnabled;
+    }
+
+    /**
+     * 切换自动播放状态
+     */
+    toggleAutoPlay() {
+        if (this._autoPlayEnabled) {
+            this._stopAutoPlay();
+        } else {
+            this._startAutoPlay();
+        }
+    }
+
+    /**
+     * 开始自动播放
+     */
+    _startAutoPlay() {
+        if (this._autoPlayEnabled) return;
+        
+        console.log('▶️ 自动播放开始');
+        this._autoPlayEnabled = true;
+        this._updateAutoPlayUI();
+        
+        // 如果当前没有动画，立即开始第一张图片的计时
+        if (!this.isAnimating) {
+            this._scheduleNextAutoPlay();
+        }
+    }
+
+    /**
+     * 停止自动播放
+     */
+    _stopAutoPlay() {
+        if (!this._autoPlayEnabled) return;
+        
+        console.log('⏸️ 自动播放停止');
+        this._autoPlayEnabled = false;
+        
+        // 清除定时器
+        if (this._autoPlayTimerId) {
+            clearTimeout(this._autoPlayTimerId);
+            this._autoPlayTimerId = null;
+        }
+        
+        this._updateAutoPlayUI();
+    }
+
+    /**
+     * 更新自动播放按钮UI状态
+     */
+    _updateAutoPlayUI() {
+        const btn = this.elements.autoPlayBtn;
+        const playIcon = this.elements.autoPlayIconPlay;
+        const pauseIcon = this.elements.autoPlayIconPause;
+        
+        if (this._autoPlayEnabled) {
+            btn.classList.add('active');
+            btn.title = '暂停自动播放 (空格)';
+            playIcon.style.display = 'none';
+            pauseIcon.style.display = 'block';
+        } else {
+            btn.classList.remove('active');
+            btn.title = '自动播放 (空格)';
+            playIcon.style.display = 'block';
+            pauseIcon.style.display = 'none';
+        }
+        
+        // 触发状态变化回调
+        this._autoPlayStateChangeCallbacks.forEach(cb => cb(this._autoPlayEnabled));
+    }
+
+    /**
+     * 注册自动播放状态变化回调
+     * @param {Function} callback - 回调函数，参数为新的自动播放状态
+     */
+    onAutoPlayStateChange(callback) {
+        this._autoPlayStateChangeCallbacks.push(callback);
+    }
+
+    /**
+     * 调度下一次自动播放
+     * 自动播放流程：等待展示时间 → 触发载出动画 → 等待1秒 → 切换到下一张 → 触发载入动画 → 重复
+     */
+    _scheduleNextAutoPlay() {
+        // 清除之前的定时器
+        if (this._autoPlayTimerId) {
+            clearTimeout(this._autoPlayTimerId);
+            this._autoPlayTimerId = null;
+        }
+        
+        if (!this._autoPlayEnabled) return;
+        
+        const currentAnimId = this._animationId;
+        
+        console.log(`⏱️ 自动播放：等待 ${this._autoPlayInterval}ms 后切换`);
+        
+        this._autoPlayTimerId = setTimeout(() => {
+            // 检查动画ID守卫
+            if (currentAnimId !== this._animationId) {
+                console.log('⛔ 自动播放定时器：动画已被中断，跳过本次切换');
+                return;
+            }
+            
+            // 检查是否还在自动播放状态
+            if (!this._autoPlayEnabled) {
+                console.log('⛔ 自动播放定时器：自动播放已停止，跳过本次切换');
+                return;
+            }
+            
+            // 检查是否正在动画中
+            if (this.isAnimating) {
+                console.log('⏳ 自动播放：当前正在动画中，等待下次调度');
+                this._scheduleNextAutoPlay();
+                return;
+            }
+            
+            console.log('🔄 自动播放：执行切换');
+            
+            // 执行切换（使用屏幕中心作为波浪起点）
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            
+            // 使用 _autoPlayNext 方法进行切换，它会处理循环和动画完成后的调度
+            this._autoPlayNext(centerX, centerY);
+            
+        }, this._autoPlayInterval);
+    }
+
+    /**
+     * 自动播放下一张（内部方法）
+     * 流程：粒子消散（载出）→ 等待1秒 → 新图片方块合并（载入）→ 调度下一次
+     */
+    async _autoPlayNext(clickX, clickY) {
+        if (!this._autoPlayEnabled) return;
+        
+        // 递增动画ID，用于中断检测
+        this._animationId++;
+        const currentAnimId = this._animationId;
+        
+        // 计算下一张索引（循环播放）
+        const nextIndex = this.currentIndex < this.imageUrls.length - 1 ? this.currentIndex + 1 : 0;
+        
+        console.log('🔄 自动播放切换到图片索引:', nextIndex);
+        this.isAnimating = true;
+        
+        // 1. 执行粒子消散动画（载出）
+        await this._playParticleDisperseAnimation(clickX, clickY);
+        
+        // 检查是否被中断
+        if (currentAnimId !== this._animationId) return;
+        
+        // 2. 载出动画完全结束后，等待1秒间隔（项目规范）
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // 再次检查
+        if (currentAnimId !== this._animationId) return;
+        if (!this._autoPlayEnabled) return;
+        
+        // 3. 更新索引并加载新图片（这会触发方块合并动画）
+        this.currentIndex = nextIndex;
+        await this._loadImage(this.currentIndex);
+        
+        // 4. 动画完成后，调度下一次自动播放
+        // 使用方块动画完成后的回调来确保时序正确
+        this._waitForBlockAnimationAndSchedule(currentAnimId);
+    }
+
+    /**
+     * 等待方块动画完成后调度下一次自动播放
+     * @param {number} expectedAnimId - 期望的动画ID
+     */
+    _waitForBlockAnimationAndSchedule(expectedAnimId) {
+        const checkAndSchedule = () => {
+            // 检查动画ID守卫
+            if (expectedAnimId !== this._animationId) {
+                console.log('⛔ 自动播放等待：动画已被中断');
+                return;
+            }
+            
+            // 检查是否还在自动播放状态
+            if (!this._autoPlayEnabled) {
+                console.log('⛔ 自动播放等待：自动播放已停止');
+                return;
+            }
+            
+            // 如果动画还在进行，继续等待
+            if (this.isAnimating) {
+                setTimeout(checkAndSchedule, 100);
+                return;
+            }
+            
+            // 动画完成，调度下一次
+            console.log('✅ 自动播放：图片展示完成，调度下一次');
+            this._scheduleNextAutoPlay();
+        };
+        
+        // 开始检查
+        checkAndSchedule();
+    }
+
+    /**
      * 绑定事件处理
      */
     _bindEvents() {
@@ -458,20 +722,35 @@ class CyberImageViewer {
                 this.close();
             } else if (e.key === 'ArrowLeft') {
                 // 键盘导航使用屏幕中心作为波浪起点
+                this._stopAutoPlay(); // 手动切换时停止自动播放
                 this.prev(window.innerWidth / 2, window.innerHeight / 2);
             } else if (e.key === 'ArrowRight') {
                 // 键盘导航使用屏幕中心作为波浪起点
+                this._stopAutoPlay(); // 手动切换时停止自动播放
                 this.next(window.innerWidth / 2, window.innerHeight / 2);
+            } else if (e.key === ' ') {
+                // 空格键切换自动播放状态
+                e.preventDefault(); // 阻止页面滚动
+                this.toggleAutoPlay();
             }
         };
         document.addEventListener('keydown', this._keydownHandler);
 
         // 点击导航区域 - 传递点击位置用于波浪效果
-        this.elements.navLeft.addEventListener('click', (e) => this.prev(e.clientX, e.clientY));
-        this.elements.navRight.addEventListener('click', (e) => this.next(e.clientX, e.clientY));
+        this.elements.navLeft.addEventListener('click', (e) => {
+            this._stopAutoPlay(); // 手动切换时停止自动播放
+            this.prev(e.clientX, e.clientY);
+        });
+        this.elements.navRight.addEventListener('click', (e) => {
+            this._stopAutoPlay(); // 手动切换时停止自动播放
+            this.next(e.clientX, e.clientY);
+        });
 
         // 关闭按钮
         this.elements.closeBtn.addEventListener('click', () => this.close());
+
+        // 自动播放按钮
+        this.elements.autoPlayBtn.addEventListener('click', () => this.toggleAutoPlay());
 
         // 阻止右键菜单
         this.container.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -491,7 +770,10 @@ class CyberImageViewer {
             const thumb = document.createElement('div');
             thumb.className = 'cyber-thumb' + (i === this.currentIndex ? ' active' : '');
             thumb.innerHTML = `<img src="${this.imageUrls[i]}" alt="">`;
-            thumb.addEventListener('click', (e) => this.goTo(i, e.clientX, e.clientY));
+            thumb.addEventListener('click', (e) => {
+                this._stopAutoPlay(); // 手动切换时停止自动播放
+                this.goTo(i, e.clientX, e.clientY);
+            });
             this.elements.thumbnails.appendChild(thumb);
         }
 
@@ -591,6 +873,11 @@ class CyberImageViewer {
             img.getBoundingClientRect();
             // 执行方块合并载入动画
             this._playBlockAssemblyAnimation();
+            
+            // 如果处于自动播放状态，在方块动画完成后调度下一次
+            if (this._autoPlayEnabled) {
+                this._waitForBlockAnimationAndSchedule(this._animationId);
+            }
         });
     }
 
@@ -1237,6 +1524,9 @@ class CyberImageViewer {
      * 关闭查看器
      */
     close() {
+        // 停止自动播放并清除定时器
+        this._stopAutoPlay();
+        
         // 清理事件监听
         document.removeEventListener('keydown', this._keydownHandler);
 

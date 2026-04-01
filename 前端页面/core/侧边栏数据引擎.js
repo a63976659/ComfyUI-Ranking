@@ -265,9 +265,11 @@ export async function loadSidebarContent({
             const itemType = tab === "tools" ? "tool" : (tab === "apps" ? "app" : "recommend");
             response = await api.getItems(itemType, sort, 200);  // 获取较多数据
             realData = response.data || [];
+            realData = proxyImages(realData);  // 确保图片走本地缓存代理
         } else if (tab === "creators") {
             response = await api.getCreators(sort, 100);
             realData = response.data || [];
+            realData = proxyImages(realData);  // 确保图片走本地缓存代理
         }
         
         // 存入缓存
@@ -399,16 +401,19 @@ export async function preloadAdjacentTabs(currentTab, sort) {
         if (!cached) {
             try {
                 let response;
+                let data;
                 if (tab === "creators") {
                     response = await api.getCreators(sort, 100);
+                    data = proxyImages(response.data || []);  // 确保图片走本地缓存代理
                 } else if (tab === "posts" || tab === "tasks") {
                     // 讨论区/任务榜使用独立组件，不需要预加载
                     continue;
                 } else {
                     const itemType = tab === "tools" ? "tool" : (tab === "apps" ? "app" : "recommend");
                     response = await api.getItems(itemType, sort, 200);
+                    data = proxyImages(response.data || []);  // 确保图片走本地缓存代理
                 }
-                setCache(cacheKey, response.data || [], CACHE_EXPIRE_TIME, true);
+                setCache(cacheKey, data, CACHE_EXPIRE_TIME, true);
             } catch {
                 // 静默失败，不影响用户体验
             }

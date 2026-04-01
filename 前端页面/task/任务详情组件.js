@@ -5,7 +5,7 @@
 // 功能：展示任务详情、申请接单、提交成果、验收等操作
 // ==========================================
 
-import { api } from "../core/网络请求API.js";
+import { api, proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { PLACEHOLDERS } from "../core/全局配置.js";
@@ -69,7 +69,8 @@ async function loadTaskDetail(container, taskId, currentUser) {
     
     try {
         const res = await api.getTaskDetail(taskId);
-        const task = res.data;
+        let task = res.data;
+        task = proxyImages(task);  // 对任务数据应用图片代理，确保走本地缓存
         
         loadingEl.style.display = "none";
         contentEl.style.display = "block";
@@ -632,8 +633,6 @@ function showEditTaskDialog(task, currentUser, contentEl) {
             for (const sort of sorts) {
                 removeCache(`ListCache_tasks_${sort}`);
             }
-            // 🔄 触发列表刷新
-            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload"));
             
             // 刷新详情页
             loadTaskDetail(contentEl.closest("div"), task.id, currentUser);

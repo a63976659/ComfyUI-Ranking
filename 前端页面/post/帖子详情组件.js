@@ -598,8 +598,6 @@ function showEditPostDialog(post, currentUser, container) {
             for (const sort of sorts) {
                 removeCache(`ListCache_posts_${sort}`);
             }
-            // 🔄 触发列表刷新
-            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload"));
             
             // 刷新详情页
             loadPostDetail(container, post.id, currentUser);
