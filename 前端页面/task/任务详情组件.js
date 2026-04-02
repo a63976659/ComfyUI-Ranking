@@ -9,7 +9,7 @@ import { api, proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
-import { removeCache } from "../components/性能优化工具.js";
+import { removeCache, findInListCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
 import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
@@ -72,25 +72,45 @@ async function loadTaskDetail(container, taskId, currentUser) {
     const loadingEl = container.querySelector("#task-loading");
     const contentEl = container.querySelector("#task-content");
     
+    let task = null;
+    let fromCache = false;
+    
     try {
         const res = await api.getTaskDetail(taskId);
-        let task = res.data;
-        task = proxyImages(task);  // 对任务数据应用图片代理，确保走本地缓存
-        
-        loadingEl.style.display = "none";
-        contentEl.style.display = "block";
-        
-        renderTaskDetail(contentEl, task, currentUser);
-        
-        // 👀 记录浏览量（fire-and-forget，不阻塞渲染）
-        recordTaskView(contentEl, taskId);
-        
+        task = res.data;
     } catch (err) {
         console.error("加载任务详情失败:", err);
+        // 📴 从列表缓存回退
+        const cached = findInListCache("TasksCache_", taskId);
+        if (cached) {
+            console.warn("📴 从列表缓存回退加载任务详情:", taskId);
+            task = cached;
+            fromCache = true;
+        }
+    }
+    
+    if (!task) {
         loadingEl.innerHTML = `
             <div style="font-size: 32px; margin-bottom: 15px;">⚠️</div>
-            <div style="color: #F44336;">${t('common.load_failed')}: ${err.message}</div>
+            <div style="color: #F44336;">${t('common.load_failed')}</div>
         `;
+        return;
+    }
+    
+    task = proxyImages(task);
+    loadingEl.style.display = "none";
+    contentEl.style.display = "block";
+    renderTaskDetail(contentEl, task, currentUser);
+    
+    if (fromCache) {
+        const toast = document.createElement('div');
+        toast.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#FF9800; color:white; padding:10px 20px; border-radius:4px; z-index:10000; font-size:14px;';
+        toast.textContent = '⚠️ 网络连接失败，展示的是缓存的数据';
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    } else {
+        // 只有在线加载成功时才记录浏览量
+        recordTaskView(contentEl, taskId);
     }
 }
 

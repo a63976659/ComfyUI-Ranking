@@ -9,7 +9,7 @@
 // ==========================================
 
 import { renderTipBoardHTML } from "../components/打赏等级工具.js";
-import { CACHE, getBannerCacheKey, isAdmin } from "../core/全局配置.js";
+import { CACHE, getBannerCacheKey, isAdmin, PLACEHOLDERS } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 
 export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs) {
@@ -87,7 +87,7 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                 
                 <!-- 用户信息区域 -->
                 <div style="display: flex; align-items: flex-start; gap: 15px; position: relative;">
-                    <img src="${userData.avatarDataUrl || userData.avatar || 'https://via.placeholder.com/150'}" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid #4CAF50; object-fit: cover; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+                    <img src="${userData.avatarDataUrl || userData.avatar || PLACEHOLDERS.AVATAR}" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid #4CAF50; object-fit: cover; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
                     <div style="flex: 1; padding-right: 150px;">
                         <div style="font-size: 20px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; text-shadow: 0 2px 4px rgba(0,0,0,0.6);">
                             ${userData.name}

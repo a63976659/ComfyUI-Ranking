@@ -25,6 +25,7 @@ import {
     createSkeleton, 
     setCache, 
     getCache,
+    getCacheWithMeta,
     lazyLoadImages 
 } from "../components/性能优化工具.js";
 import { applyCardAnimation, getAnimationTypeForTab } from "../components/动画音效引擎.js";
@@ -232,9 +233,11 @@ export async function loadSidebarContent({
     };
     
     // ========== 尝试从缓存加载 ==========
-    const cachedData = getCache(cacheKey);
+    // 获取完整缓存信息（包含过期状态）
+    const { value: cachedData, expired: isCacheExpired, found: hasCacheData } = getCacheWithMeta(cacheKey, true);
     
-    if (cachedData && !keyword) {
+    // 只有有效缓存才直接返回
+    if (hasCacheData && !isCacheExpired && !keyword) {
         // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
         const proxiedData = proxyImages(cachedData);
         state.allData = proxiedData;
@@ -291,27 +294,39 @@ export async function loadSidebarContent({
     } catch (error) {
         console.error("数据加载失败:", error);
         
-        // 尝试从缓存恢复（即使过期）
-        if (cachedData) {
+        // 🚀 回退到任何可用缓存（包括过期的）
+        if (hasCacheData && cachedData) {
+            console.warn(`📴 网络失败，降级显示${isCacheExpired ? '过期' : ''}缓存`);
             state.allData = cachedData;
             renderBatch(cachedData.slice(0, pageSize), false);
-        } else {
-            // 使用安全的DOM操作替代innerHTML，防止XSS
-            contentArea.innerHTML = '';
-            const errorDiv = document.createElement('div');
-            errorDiv.style.cssText = 'text-align:center; padding: 40px 20px; color:#F44336;';
-            const errorText = document.createElement('div');
-            errorText.textContent = `❌ 数据加载失败: ${error.message}`;
-            errorDiv.appendChild(errorText);
-            const br = document.createElement('br');
-            errorDiv.appendChild(br);
-            const retryBtn = document.createElement('button');
-            retryBtn.style.cssText = 'padding:8px 16px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer; margin-top:16px;';
-            retryBtn.textContent = '🔄 点击重试';
-            retryBtn.onclick = () => location.reload();
-            errorDiv.appendChild(retryBtn);
-            contentArea.appendChild(errorDiv);
+            
+            // 如果是过期缓存，显示提示
+            if (isCacheExpired) {
+                const toastDiv = document.createElement('div');
+                toastDiv.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#FF9800; color:white; padding:10px 20px; border-radius:4px; z-index:10000; font-size:14px;';
+                toastDiv.textContent = '⚠️ 网络连接失败，展示的是上次缓存的数据';
+                document.body.appendChild(toastDiv);
+                setTimeout(() => toastDiv.remove(), 3000);
+            }
+            return;
         }
+        
+        // 无任何缓存，显示原有的错误信息
+        // 使用安全的DOM操作替代innerHTML，防止XSS
+        contentArea.innerHTML = '';
+        const errorDiv = document.createElement('div');
+        errorDiv.style.cssText = 'text-align:center; padding: 40px 20px; color:#F44336;';
+        const errorText = document.createElement('div');
+        errorText.textContent = `❌ 数据加载失败: ${error.message}`;
+        errorDiv.appendChild(errorText);
+        const br = document.createElement('br');
+        errorDiv.appendChild(br);
+        const retryBtn = document.createElement('button');
+        retryBtn.style.cssText = 'padding:8px 16px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer; margin-top:16px;';
+        retryBtn.textContent = '🔄 点击重试';
+        retryBtn.onclick = () => location.reload();
+        errorDiv.appendChild(retryBtn);
+        contentArea.appendChild(errorDiv);
     }
 }
 

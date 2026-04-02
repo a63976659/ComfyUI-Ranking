@@ -64,6 +64,7 @@ export const CACHE = {
     // 各类数据缓存时间
     TTL: {
         LIST_DATA: 5 * 60 * 1000,      // 列表数据：5分钟
+        DETAIL_DATA: 3 * 60 * 1000,    // 详情数据：3分钟
         USER_PROFILE: 2 * 60 * 1000,   // 用户资料：2分钟
         WALLET: 30 * 1000,              // 钱包数据：30秒
         CREATORS: 5 * 60 * 1000,        // 创作者列表：5分钟

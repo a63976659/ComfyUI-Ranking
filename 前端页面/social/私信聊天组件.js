@@ -1,6 +1,6 @@
 import { api } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
-import { CACHE } from "../core/全局配置.js";
+import { CACHE, PLACEHOLDERS } from "../core/全局配置.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t } from "../components/用户体验增强.js";
 
@@ -83,7 +83,7 @@ export function openChatModal(currentUser, targetAccount = null) {
         list.forEach(chat => {
             const acc = chat.target_account || chat.account || chat.receiver || chat.sender;
             const name = chat.target_name || chat.name || acc;
-            const avatar = chat.avatar || chat.target_avatar || "https://via.placeholder.com/40/333/FFF?text=U";
+            const avatar = chat.avatar || chat.target_avatar || PLACEHOLDERS.AVATAR_SMALL;
             const lastMsg = chat.last_message || "";
             const unread = chat.unread_count || 0;
 
@@ -140,8 +140,8 @@ export function openChatModal(currentUser, targetAccount = null) {
 
     const renderMsgs = (msgs, targetAvatar) => {
         messagesArea.innerHTML = "";
-        const myAvatar = currentUser.avatar || currentUser.avatarDataUrl || "https://via.placeholder.com/36/2196F3/FFF?text=Me";
-        const otherAvatar = targetAvatar || "https://via.placeholder.com/36/444/FFF?text=U";
+        const myAvatar = currentUser.avatar || currentUser.avatarDataUrl || PLACEHOLDERS.AVATAR_SMALL;
+        const otherAvatar = targetAvatar || PLACEHOLDERS.AVATAR_SMALL;
         
         msgs.forEach(msg => {
             const isMe = msg.sender === currentUser.account;
@@ -215,7 +215,7 @@ export function openChatModal(currentUser, targetAccount = null) {
 
         currentChatTarget = targetAccount;
         const displayName = targetName && targetName !== "undefined" ? targetName : targetAccount;
-        const avatar = targetAvatar || "https://via.placeholder.com/40/444/FFF?text=U";
+        const avatar = targetAvatar || PLACEHOLDERS.AVATAR_SMALL;
         
         // 🚀 新增：保存当前聊天对象信息
         currentTargetInfo = { account: targetAccount, name: displayName, avatar };

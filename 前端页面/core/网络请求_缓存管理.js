@@ -17,6 +17,9 @@ const CACHE_CONFIG = {
     "/api/creators": CACHE.TTL.CREATORS,
     "/api/users/": CACHE.TTL.USER_PROFILE,
     "/api/wallet/": CACHE.TTL.WALLET,
+    "/api/tasks": CACHE.TTL.DETAIL_DATA,
+    "/api/posts": CACHE.TTL.DETAIL_DATA,
+    "/api/disputes": CACHE.TTL.DETAIL_DATA,
 }; 
 
 // 🚀 P1优化：精确缓存失效映射（按 HTTP 方法细分）

@@ -1706,6 +1706,36 @@ const eventManager = {
 export { eventManager };
 
 // ==========================================
+// 🔍 列表缓存查找工具（详情页离线回退用）
+// ==========================================
+
+/**
+ * 🔍 从列表缓存中查找指定项（详情页离线回退用）
+ * @param {string} prefix - 缓存Key前缀（如 "TasksCache_"、"PostsCache_"）
+ * @param {string} id - 要查找的项目ID
+ * @returns {Object|null} 找到的项目数据，或null
+ */
+export function findInListCache(prefix, id) {
+    try {
+        const fullPrefix = "ComfyRanking_" + prefix;
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith(fullPrefix)) {
+                const raw = JSON.parse(localStorage.getItem(key));
+                const items = raw?.value;
+                if (Array.isArray(items)) {
+                    const found = items.find(item => item.id === id);
+                    if (found) return found;
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("列表缓存查找失败:", e);
+    }
+    return null;
+}
+
+// ==========================================
 // 🚀 P4优化：虚拟滚动列表
 // ==========================================
 // 特点：

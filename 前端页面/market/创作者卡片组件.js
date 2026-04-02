@@ -11,7 +11,7 @@
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { createCommentSection } from "../social/评论与互动组件.js";
 import { renderTipLevelHTML } from "../components/打赏等级工具.js";
-import { getBannerCacheKey } from "../core/全局配置.js";
+import { getBannerCacheKey, PLACEHOLDERS } from "../core/全局配置.js";
 import { getSettings } from "../components/全局设置组件.js";
 import { t } from "../components/用户体验增强.js";
 
@@ -110,7 +110,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
     const summaryView = document.createElement("div");
     summaryView.style.cursor = "pointer";
 
-    const avatarSrc = creatorData.avatar || "https://via.placeholder.com/150";
+    const avatarSrc = creatorData.avatar || PLACEHOLDERS.AVATAR;
     
     // ⚙️ 读取设置：是否显示创作者背景图
     const settings = getSettings();

@@ -3,7 +3,7 @@ import { api } from "../core/网络请求API.js";
 import { openChatModal } from "./私信聊天组件.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
-import { CACHE } from "../core/全局配置.js";
+import { CACHE, PLACEHOLDERS } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 
 // 🚀 本地存储键管理
@@ -93,7 +93,7 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             
             html += `
                 <div class="notif-item" data-account="${msg.from_user}" data-type="${msg.type}" data-item-id="${msg.target_item_id || ''}" style="padding: 12px; border-radius: 8px; background: ${bg}; border: ${border}; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; transition: 0.2s;" onmouseover="this.style.transform='scale(1.01)'" onmouseout="this.style.transform='scale(1)'">
-                    <img src="${msg.from_avatar || 'https://via.placeholder.com/150'}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1px solid #555;">
+                    <img src="${msg.from_avatar || PLACEHOLDERS.AVATAR}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1px solid #555;">
                     <div style="flex: 1; min-width: 0;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                             ${nameLabel}

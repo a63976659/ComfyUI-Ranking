@@ -271,7 +271,7 @@ async function request(endpoint, options = {}) {
                 if (method === "GET") {
                     const ttl = _getCacheTTL(endpoint);
                     if (ttl > 0) {
-                        setCache(cacheKey, responseData, ttl, false); // 只存内存，不存 localStorage
+                        setCache(cacheKey, responseData, ttl, true); // 持久化到 localStorage，支持离线回退
                     }
                 }
 
@@ -307,7 +307,16 @@ async function request(endpoint, options = {}) {
             }
         }
         
-        // 所有重试都失败
+        // 所有重试都失败，尝试回退到过期缓存
+        if (method === "GET") {
+            const fallback = getCacheWithMeta(cacheKey, true);  // true = 允许过期
+            if (fallback.found) {
+                console.warn(`📴 网络请求失败，回退到本地缓存: ${endpoint}`);
+                const proxyFn4 = await getProxyImages();
+                return proxyFn4(fallback.value);  // 返回过期缓存数据
+            }
+        }
+        // 仍无缓存，才抛异常
         throw lastError || new Error('请求失败');
     })();
     

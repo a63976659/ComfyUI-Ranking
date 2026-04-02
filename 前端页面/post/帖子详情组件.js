@@ -16,7 +16,7 @@ import { renderTipLevelHTML } from "../components/打赏等级工具.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t } from "../components/用户体验增强.js";
 import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
-import { removeCache } from "../components/性能优化工具.js";
+import { removeCache, findInListCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml } from "../components/互动工具函数.js";
 
@@ -72,29 +72,43 @@ export function createPostDetailView(postId, currentUser) {
 async function loadPostDetail(container, postId, currentUser) {
     const contentArea = container.querySelector("#post-content");
     
+    let post = null;
+    let fromCache = false;
+    
     try {
         const res = await api.getPostDetail(postId);
-        let post = res.data;
-        post = proxyImages(post);  // 新增：对帖子数据应用图片代理
-        
-        if (!post) {
-            contentArea.innerHTML = `
-                <div style="text-align: center; padding: 60px; color: #F44336;">
-                    <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
-                    ${t('post.not_exist')}
-                </div>
-            `;
-            return;
+        post = res.data;
+    } catch (err) {
+        console.error("加载帖子详情失败:", err);
+        // 📴 从列表缓存回退
+        const cached = findInListCache("PostsCache_", postId);
+        if (cached) {
+            console.warn("📴 从列表缓存回退加载帖子详情:", postId);
+            post = cached;
+            fromCache = true;
         }
-        
-        // 准备图片列表
-        const images = post.images && post.images.length > 0 ? post.images : (post.cover_image ? [post.cover_image] : []);
-        
-        // 检查当前用户是否已点赞/收藏
-        const isLiked = post.liked_by?.includes(currentUser?.account) || false;
-        const isFavorited = post.favorited_by?.includes(currentUser?.account) || false;
-        
+    }
+    
+    if (!post) {
         contentArea.innerHTML = `
+            <div style="text-align: center; padding: 60px; color: #F44336;">
+                <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
+                ${t('post.not_exist')}
+            </div>
+        `;
+        return;
+    }
+    
+    post = proxyImages(post);  // 对帖子数据应用图片代理
+    
+    // 准备图片列表
+    const images = post.images && post.images.length > 0 ? post.images : (post.cover_image ? [post.cover_image] : []);
+    
+    // 检查当前用户是否已点赞/收藏
+    const isLiked = post.liked_by?.includes(currentUser?.account) || false;
+    const isFavorited = post.favorited_by?.includes(currentUser?.account) || false;
+    
+    contentArea.innerHTML = `
             <!-- 图片展示区 -->
             <div id="images-area" style="margin-bottom: 15px;">
                 ${getCoverSandboxHTML(images)}
@@ -248,18 +262,16 @@ async function loadPostDetail(container, postId, currentUser) {
         // 加载评论
         loadComments(contentArea, postId, currentUser);
         
-        // 👀 记录浏览量（fire-and-forget，不阻塞渲染）
-        recordPostView(contentArea, postId);
-        
-    } catch (err) {
-        console.error("加载帖子详情失败:", err);
-        contentArea.innerHTML = `
-            <div style="text-align: center; padding: 60px; color: #F44336;">
-                <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
-                ${t('post.load_detail_failed')}: ${err.message}
-            </div>
-        `;
-    }
+        if (fromCache) {
+            const toast = document.createElement('div');
+            toast.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#FF9800; color:white; padding:10px 20px; border-radius:4px; z-index:10000; font-size:14px;';
+            toast.textContent = '⚠️ 网络连接失败，展示的是缓存的数据';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        } else {
+            // 👀 记录浏览量（fire-and-forget，不阻塞渲染）
+            recordPostView(contentArea, postId);
+        }
 }
 
 /**

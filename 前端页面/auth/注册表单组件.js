@@ -2,9 +2,10 @@ import { api } from "../core/网络请求API.js";
 import { regionData, getSortedCountries } from "./国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
+import { PLACEHOLDERS } from "../core/全局配置.js";
 
-const DEFAULT_AVATAR_MALE = "https://via.placeholder.com/150/2196F3/FFFFFF?text=Male";
-const DEFAULT_AVATAR_FEMALE = "https://via.placeholder.com/150/E91E63/FFFFFF?text=Female";
+const DEFAULT_AVATAR_MALE = PLACEHOLDERS.AVATAR;
+const DEFAULT_AVATAR_FEMALE = PLACEHOLDERS.AVATAR;
 
 // 计算年龄工具函数
 function calculateAge(birthDate) {

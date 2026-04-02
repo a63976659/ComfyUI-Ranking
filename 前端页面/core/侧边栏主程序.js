@@ -1,5 +1,11 @@
 // 前端页面/core/侧边栏主程序.js
-import { app } from "../../../scripts/app.js"; 
+// ==========================================
+// 🎯 侧边栏功能主体模块
+// ==========================================
+// 职责：构建侧边栏 DOM、管理 Tab/排序/搜索交互
+// 由 侧边栏入口注册.js 动态加载
+// ==========================================
+
 import { createPublishView } from "../market/发布内容组件.js";
 import { createPublishTaskView } from "../task/发布任务组件.js";  // 🎯 新增：任务发布
 import { createPublishPostView } from "../post/发布帖子组件.js";  // 🎯 新增：帖子发布
@@ -31,7 +37,7 @@ const BackgroundStore = {
     clear() { localStorage.removeItem(getBackgroundKey()); }
 };
 
-function buildSidebarDOM() {
+export function buildSidebarDOM() {
     const container = document.createElement("div");
     
     // 加载本地背景图
@@ -396,41 +402,3 @@ function buildSidebarDOM() {
     return container;
 }
 
-let globalSidebarDOM = null;
-let globalSidebarContainer = null;  // 🌐 保存容器引用，用于语言切换时替换
-let pendingLanguageRefresh = false;  // 🌐 语言切换待刷新标志
-
-// 🌐 语言切换监听器：标记需要刷新，待返回主界面时执行
-document.addEventListener('comfy-language-change', () => {
-    pendingLanguageRefresh = true;
-});
-
-// 🌐 返回主界面时检查是否需要刷新语言
-window.addEventListener('comfy-route-back', () => {
-    if (pendingLanguageRefresh && globalSidebarContainer) {
-        pendingLanguageRefresh = false;
-        // 延迟执行，确保当前视图已关闭
-        setTimeout(() => {
-            globalSidebarDOM = buildSidebarDOM();
-            globalSidebarContainer.innerHTML = '';
-            globalSidebarContainer.appendChild(globalSidebarDOM);
-        }, 50);
-    }
-});
-
-app.registerExtension({
-    name: "Comfy.CommunityLeaderboardSidebar",
-    async setup(app) {
-        if (!globalSidebarDOM) globalSidebarDOM = buildSidebarDOM();
-        if (app.extensionManager && app.extensionManager.registerSidebarTab) {
-            app.extensionManager.registerSidebarTab({
-                id: "comfyui-ranking-sidebar", title: "社区精选", icon: "pi pi-trophy", type: "custom",
-                render: (container) => { 
-                    globalSidebarContainer = container;  // 🌐 保存容器引用
-                    container.innerHTML = ''; 
-                    container.appendChild(globalSidebarDOM); 
-                }
-            });
-        }
-    }
-});

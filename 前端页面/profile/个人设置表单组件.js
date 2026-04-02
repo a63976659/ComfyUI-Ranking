@@ -4,7 +4,7 @@ import { regionData, getSortedCountries } from "../auth/国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { uploadFile } from "../market/发布内容_提交引擎.js";
 import { openImageCropper } from "../components/图片裁剪组件.js";
-import { CACHE, getBackgroundKey, getBannerCacheKey } from "../core/全局配置.js";
+import { CACHE, getBackgroundKey, getBannerCacheKey, PLACEHOLDERS } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 
 // 计算年龄工具函数
@@ -37,7 +37,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         <div style="margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #444; font-weight: bold; font-size: 16px;">⚙️ ${t('settings_form.title')}</div>
         <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;">
             <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 5px; background: #2a2a2a; padding: 10px; border-radius: 6px; border: 1px dashed #555;">
-                <img id="setting-avatar-preview" src="${userData.avatarDataUrl || "https://via.placeholder.com/150/555/FFF?text=Avatar"}" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid #666;">
+                <img id="setting-avatar-preview" src="${userData.avatarDataUrl || PLACEHOLDERS.AVATAR}" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid #666;">
                 <div>
                     <button id="btn-trigger-avatar" style="padding: 6px 12px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; margin-bottom: 5px;">${t('settings_form.change_avatar')}</button>
                     <div style="font-size: 11px; color: #888;">${t('settings_form.avatar_hint')}</div>

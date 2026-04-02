@@ -4,6 +4,7 @@ import { createItemCard } from "../market/列表卡片组件.js";
 import { getAcquiredItems, checkItemStatus } from "../market/资源安装引擎.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
+import { PLACEHOLDERS } from "../core/全局配置.js";
 
 export async function renderProfileListContent(tabId, domElement, userData, currentUser, openOtherUserModalCb) {
     const isMe = currentUser && currentUser.account === userData.account;
@@ -101,7 +102,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                 });
                 
                 // 封面图
-                const coverUrl = localItem.coverBase64 || "https://via.placeholder.com/60x40/333/888?text=No+Cover";
+                const coverUrl = localItem.coverBase64 || PLACEHOLDERS.COVER;
                 
                 // 状态标签
                 let statusBadge = "";
@@ -180,7 +181,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                     gap: "12px"
                 });
                 
-                const coverUrl = localItem.coverBase64 || "https://via.placeholder.com/60x40/333/888?text=No+Cover";
+                const coverUrl = localItem.coverBase64 || PLACEHOLDERS.COVER;
                 const typeLabel = (localItem.type === "tool" || localItem.type === "recommend_tool") ? "🔧 工具" : "📱 应用";
                 
                 itemDiv.innerHTML = `

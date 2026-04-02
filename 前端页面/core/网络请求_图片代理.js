@@ -35,7 +35,8 @@ export function proxyImages(obj) {
                 
                 let originalUrl = obj[key];
                 // 自动修复：一层一层剥开已经被污染的多重代理前缀
-                while (originalUrl.startsWith('/community_hub/image?url=')) {
+                let _unwrap = 0;
+                while (originalUrl.startsWith('/community_hub/image?url=') && _unwrap++ < 10) {
                     try { originalUrl = decodeURIComponent(originalUrl.replace('/community_hub/image?url=', '')); }
                     catch(e) { break; }
                 }
@@ -52,7 +53,8 @@ export function proxyImages(obj) {
                     if (typeof url === 'string') {
                         let originalUrl = url;
                         // 复用相同的URL清洗逻辑
-                        while (originalUrl.startsWith('/community_hub/image?url=')) {
+                        let _unwrap = 0;
+                        while (originalUrl.startsWith('/community_hub/image?url=') && _unwrap++ < 10) {
                             try { originalUrl = decodeURIComponent(originalUrl.replace('/community_hub/image?url=', '')); }
                             catch(e) { break; }
                         }
@@ -77,7 +79,8 @@ export function unproxyImages(obj) {
     if (!obj) return obj;
     if (typeof obj === 'string') {
         let str = obj;
-        while (str.startsWith('/community_hub/image?url=')) {
+        let _unwrap = 0;
+        while (str.startsWith('/community_hub/image?url=') && _unwrap++ < 10) {
             try { str = decodeURIComponent(str.replace('/community_hub/image?url=', '')); }
             catch(e) { break; }
         }
