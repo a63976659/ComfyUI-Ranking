@@ -82,8 +82,8 @@ const VIEWER_STYLES = `
     z-index: 20;
     /* 确保方块容器在wrapper中正确居中定位 */
     box-sizing: border-box;
-    /* 添加 overflow: hidden 裁切超出边界的方块 */
-    overflow: hidden;
+    /* overflow: visible 允许方块从容器外飞入 */
+    overflow: visible;
 }
 
 /* 单个方块 */
@@ -1086,7 +1086,7 @@ class CyberImageViewer {
     /**
      * 粒子消散动画 - 当前图片碎裂成粒子飘散（灰飞烟灭效果）
      * 使用更多更小的粒子，波浪扩散效果
-     * 支持多种路径类型：弧线(40%)、S形(30%)、直线(30%)
+     * 支持多种路径类型：弧线(90%)、S形(5%)、直线(5%)
      */
     async _playParticleDisperseAnimation(clickX, clickY) {
         const currentAnimId = this._animationId; // 记录当前动画ID
@@ -1154,9 +1154,9 @@ class CyberImageViewer {
         // 创建粒子
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
-                // 随机决定路径类型：弧线(40%)、S形(30%)、直线(30%)
+                // 随机决定路径类型：弧线(90%)、S形(5%)、直线(5%)
                 const pathTypeRandom = Math.random();
-                const pathType = pathTypeRandom < 0.4 ? 'arc' : (pathTypeRandom < 0.7 ? 's-curve' : 'straight');
+                const pathType = pathTypeRandom < 0.9 ? 'arc' : (pathTypeRandom < 0.95 ? 's-curve' : 'straight');
 
                 // 计算粒子到中心点的距离（用于波浪效果）
                 const particleCenterX = c * particleWidth + particleWidth / 2;
@@ -1175,7 +1175,7 @@ class CyberImageViewer {
 
                 // 消散方向：从中心向外，加上随机偏移
                 const angle = Math.atan2(particleCenterY - centerY, particleCenterX - centerX);
-                const randomAngleOffset = (Math.random() - 0.5) * 2 * Math.PI * 0.3; // ±30%角度随机偏移
+                const randomAngleOffset = (Math.random() - 0.5) * 2 * Math.PI * 0.6; // ±60%角度随机偏移
                 const finalAngle = angle + randomAngleOffset;
 
                 // 消散距离：使用整个视口作为动画舞台，粒子向屏幕四面八方飞散
@@ -1190,7 +1190,7 @@ class CyberImageViewer {
                 const randomRotate = (Math.random() - 0.5) * 720;
 
                 // 计算动画时长和延迟
-                const totalDuration = 0.25 + Math.random() * 0.25; // 0.25-0.5秒
+                const totalDuration = 0.75 + Math.random() * 0.375; // 0.75-1.125秒
                 const delay = Math.random() * 100; // 0-100ms随机延迟
                 const shapeDuration = totalDuration * 0.3; // 形变占前30%
 
