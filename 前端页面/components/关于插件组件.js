@@ -88,6 +88,13 @@ export async function showAboutInfo(currentUser) {
 
 ComfyUI 社区精选是一款专为 ComfyUI 打造的现代化、Web3.0 级别生态引擎，致力于聚合全网优质的插件、应用与工作流，让节点的获取与分享变得前所未有地简单。
 
+
+
+注意！！！
+
+账号登录问题：之前注册的账号无法登录的，请修改密码后再登录。
+登录账号错误：可能是你的浏览器自动帮你填入别的网站账号密码，账号是字符（字母、数字、符号）没有中文。
+
 <a href="https://space.bilibili.com/2114638644" target="_blank" style="text-decoration: none; display: inline-block; margin-top: 15px;">
     <img src="https://img.shields.io/badge/bilibili-猪的飞行梦-00A1D6?logo=bilibili&logoColor=white" alt="Bilibili" style="border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
 </a>`
