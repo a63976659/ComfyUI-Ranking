@@ -267,7 +267,7 @@ const IMAGE_PROXY_FIELDS = [
 ];
 
 // 🚀 新增：需要对数组元素进行代理的图片字段
-const IMAGE_PROXY_ARRAY_FIELDS = ['images', 'imageUrls'];
+const IMAGE_PROXY_ARRAY_FIELDS = ['images', 'imageUrls', 'reference_images', 'deliverables'];
 
 // 🚀 导出图片代理函数，供其他组件在缓存读取后调用
 export function proxyImages(obj) {
@@ -415,7 +415,7 @@ async function request(endpoint, options = {}) {
                     
             // 🚀 P4优化：使用请求取消管理器（支持超时 + 组件级取消）
             const controller = requestCancelManager.create(componentId);
-            const timeoutId = setTimeout(() => controller.abort(), API.TIMEOUT);
+            const timeoutId = setTimeout(() => controller.abort(), options.timeout || API.TIMEOUT);
             const currentFetchOptions = { ...fetchOptions, signal: controller.signal };
                     
             try {
@@ -567,7 +567,7 @@ export const api = {
         const formData = new FormData();
         formData.append("file", file);
         formData.append("file_type", fileType);
-        return request("/api/upload", { method: "POST", body: formData });
+        return request("/api/upload", { method: "POST", body: formData, timeout: 120000, retries: 2 });
     },
     async publishItem(data) { return request("/api/items", { method: "POST", body: data }); },
     async updateItem(itemId, author, data) { return request(`/api/items/${itemId}?author=${author}`, { method: "PUT", body: data }); },

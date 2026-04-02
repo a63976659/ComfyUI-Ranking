@@ -170,7 +170,7 @@ ${escapeHtml(task.description)}</div>
             <div style="margin-bottom: 20px;" class="ref-images-sandbox">
                 <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">🖼️ ${t('task.reference_images')}</div>
                 <div style="--sandbox-title-display: none">
-                    ${getCoverSandboxHTML(task.reference_images, false).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
+                    ${getCoverSandboxHTML(task.reference_images, true).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
                 </div>
             </div>
         ` : ""}
@@ -202,7 +202,7 @@ ${escapeHtml(task.description)}</div>
             <div style="margin-bottom: 20px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;" class="deliverables-sandbox">
                 <div style="font-size: 13px; font-weight: bold; color: #FF9800; margin-bottom: 8px;">📦 ${t('task.deliverables')}</div>
                 <div style="--sandbox-title-display: none">
-                    ${getCoverSandboxHTML(task.deliverables, false).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
+                    ${getCoverSandboxHTML(task.deliverables, true).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
                 </div>
                 ${task.submit_note ? `<div style="margin-top: 10px; color: #ccc; font-size: 12px;">${t('task.note')}: ${escapeHtml(task.submit_note)}</div>` : ""}
             </div>

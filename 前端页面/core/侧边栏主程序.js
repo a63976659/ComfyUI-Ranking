@@ -206,8 +206,12 @@ function buildSidebarDOM() {
     // 监听进入任务编辑页面的请求
     window.addEventListener("comfy-route-edit-task", (e) => {
         const { taskData, currentUser } = e.detail;
-        const view = createPublishTaskView(currentUser, taskData);
-        showInlineView(view);
+        try {
+            const view = createPublishTaskView(currentUser, taskData);
+            showInlineView(view);
+        } catch (err) {
+            console.error('创建编辑任务视图失败:', err);
+        }
     });
 
     // 监听进入帖子编辑页面的请求

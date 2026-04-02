@@ -228,18 +228,6 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     const btnAddImage = container.querySelector("#btn-add-image");
     let selectedImages = [];
     
-    // 编辑模式：加载已有的参考图片
-    if (isEditMode && editTaskData.reference_images && editTaskData.reference_images.length > 0) {
-        editTaskData.reference_images.forEach(url => {
-            selectedImages.push({
-                file: null,  // 已有图片没有文件对象
-                dataUrl: url,
-                isExisting: true  // 标记为已有图片
-            });
-        });
-        renderImagePreview();
-    }
-    
     btnAddImage.onclick = () => {
         if (selectedImages.length >= 6) {
             showToast(t('task.max_6_images'), "warning");
@@ -288,6 +276,18 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
         
         btnAddImage.style.display = selectedImages.length >= 6 ? "none" : "block";
     };
+    
+    // 编辑模式：加载已有的参考图片
+    if (isEditMode && editTaskData.reference_images && editTaskData.reference_images.length > 0) {
+        editTaskData.reference_images.forEach(url => {
+            selectedImages.push({
+                file: null,
+                dataUrl: url,
+                isExisting: true
+            });
+        });
+        renderImagePreview();
+    }
     
     // 发布/保存按钮
     container.querySelector("#btn-publish").onclick = async () => {
