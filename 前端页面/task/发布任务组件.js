@@ -9,6 +9,7 @@ import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { removeCache } from "../components/性能优化工具.js";
+import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
 
 /**
  * 🚀 清除任务列表缓存
@@ -24,8 +25,13 @@ function clearTaskListCache() {
 
 /**
  * 📝 创建发布任务视图
+ * @param {Object|string} currentUser - 当前用户
+ * @param {Object} editTaskData - 编辑模式时的任务数据（可选）
  */
-export function createPublishTaskView(currentUser) {
+export function createPublishTaskView(currentUser, editTaskData = null) {
+    const isEditMode = !!editTaskData;
+    const isLockedStatus = editTaskData && ["in_progress", "submitted"].includes(editTaskData.status);
+    
     const container = document.createElement("div");
     Object.assign(container.style, {
         display: "flex",
@@ -45,10 +51,23 @@ export function createPublishTaskView(currentUser) {
     tomorrow.setDate(tomorrow.getDate() + 1);
     const minDate = tomorrow.toISOString().split("T")[0];
     
-    // 默认截止日期（7天后）
-    const defaultDeadline = new Date();
-    defaultDeadline.setDate(defaultDeadline.getDate() + 7);
-    const defaultDate = defaultDeadline.toISOString().split("T")[0];
+    // 默认截止日期（7天后）或编辑模式下的原截止日期
+    let defaultDate;
+    if (isEditMode && editTaskData.deadline) {
+        const editDeadline = new Date(editTaskData.deadline);
+        defaultDate = editDeadline.toISOString().split("T")[0];
+    } else {
+        const defaultDeadline = new Date();
+        defaultDeadline.setDate(defaultDeadline.getDate() + 7);
+        defaultDate = defaultDeadline.toISOString().split("T")[0];
+    }
+    
+    // 编辑模式下的字段值
+    const editTitle = isEditMode ? (editTaskData.title || '') : '';
+    const editDescription = isEditMode ? (editTaskData.description || '') : '';
+    const editRefLink = isEditMode ? (editTaskData.reference_link || '') : '';
+    const editTotalPrice = isEditMode ? (editTaskData.total_price || '') : '';
+    const editDepositRatio = isEditMode ? (editTaskData.deposit_ratio || 30) : 30;
     
     container.innerHTML = `
         <!-- 顶部导航 -->
@@ -56,7 +75,7 @@ export function createPublishTaskView(currentUser) {
             <button id="btn-back" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px;" onmouseover="this.style.background='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'">
                 <span>⬅</span> ${t('common.back')}
             </button>
-            <span style="flex: 1; text-align: center; font-size: 15px; font-weight: bold; color: #fff;">📝 ${t('task.publish')}</span>
+            <span style="flex: 1; text-align: center; font-size: 15px; font-weight: bold; color: #fff;">📝 ${isEditMode ? (t('task.edit_task') || '编辑任务') : t('task.publish')}</span>
             <div style="width: 60px;"></div>
         </div>
         
@@ -68,7 +87,7 @@ export function createPublishTaskView(currentUser) {
                 <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
                     📌 ${t('task.task_title')} <span style="color: #F44336;">*</span>
                 </label>
-                <input type="text" id="task-title" maxlength="50" placeholder="${t('task.title_placeholder')}" 
+                <input type="text" id="task-title" maxlength="50" placeholder="${t('task.title_placeholder')}" value="${editTitle}" 
                        style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
             </div>
             
@@ -78,9 +97,9 @@ export function createPublishTaskView(currentUser) {
                     📄 ${t('task.description')} <span style="color: #F44336;">*</span>
                 </label>
                 <textarea id="task-description" rows="6" maxlength="2000" placeholder="${t('task.description_placeholder')}"
-                          style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; resize: none; box-sizing: border-box; line-height: 1.5;"></textarea>
+                          style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; resize: none; box-sizing: border-box; line-height: 1.5;">${editDescription}</textarea>
                 <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
-                    <span id="desc-count">0</span>/2000
+                    <span id="desc-count">${editDescription.length}</span>/2000
                 </div>
             </div>
             
@@ -102,7 +121,7 @@ export function createPublishTaskView(currentUser) {
                 <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
                     🔗 ${t('task.reference_link_optional')}
                 </label>
-                <input type="url" id="ref-link" placeholder="https://..." 
+                <input type="url" id="ref-link" placeholder="https://..." value="${editRefLink}" 
                        style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
             </div>
             
@@ -114,11 +133,11 @@ export function createPublishTaskView(currentUser) {
                         💰 ${t('task.total_price')} <span style="color: #F44336;">*</span>
                     </label>
                     <div style="position: relative;">
-                        <input type="number" id="total-price" min="0" step="10" placeholder="100" 
-                               style="width: 100%; padding: 10px 12px; padding-right: 40px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #FF9800; font-size: 16px; font-weight: bold; box-sizing: border-box;">
+                        <input type="number" id="total-price" min="0" step="10" placeholder="100" value="${editTotalPrice}" ${isLockedStatus ? 'disabled' : ''}
+                               style="width: 100%; padding: 10px 12px; padding-right: 40px; background: ${isLockedStatus ? '#2a2a2a' : '#1e1e1e'}; border: 1px solid #333; border-radius: 8px; color: ${isLockedStatus ? '#666' : '#FF9800'}; font-size: 16px; font-weight: bold; box-sizing: border-box; cursor: ${isLockedStatus ? 'not-allowed' : 'auto'};">
                         <span style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: #888; font-size: 12px;">${t('common.credits')}</span>
                     </div>
-                    <div style="font-size: 11px; color: #666; margin-top: 4px;">${t('task.min_10_credits')}</div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">${isLockedStatus ? '⚠️ 任务进行中，价格不可修改' : t('task.min_10_credits')}</div>
                 </div>
                 
                 <!-- 订金比例 -->
@@ -126,13 +145,13 @@ export function createPublishTaskView(currentUser) {
                     <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
                         📊 ${t('task.deposit_ratio')} <span style="color: #F44336;">*</span>
                     </label>
-                    <select id="deposit-ratio" style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; cursor: pointer;">
-                        <option value="10">10%</option>
-                        <option value="20">20%</option>
-                        <option value="30" selected>30%</option>
-                        <option value="50">50%</option>
+                    <select id="deposit-ratio" ${isLockedStatus ? 'disabled' : ''} style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? '#2a2a2a' : '#1e1e1e'}; border: 1px solid #333; border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; cursor: ${isLockedStatus ? 'not-allowed' : 'pointer'};">
+                        <option value="10" ${editDepositRatio == 10 ? 'selected' : ''}>10%</option>
+                        <option value="20" ${editDepositRatio == 20 ? 'selected' : ''}>20%</option>
+                        <option value="30" ${editDepositRatio == 30 ? 'selected' : ''}>30%</option>
+                        <option value="50" ${editDepositRatio == 50 ? 'selected' : ''}>50%</option>
                     </select>
-                    <div style="font-size: 11px; color: #666; margin-top: 4px;">${t('task.deposit_deducted_on_assign')}</div>
+                    <div style="font-size: 11px; color: #666; margin-top: 4px;">${isLockedStatus ? '⚠️ 任务进行中，订金比例不可修改' : t('task.deposit_deducted_on_assign')}</div>
                 </div>
             </div>
             
@@ -151,13 +170,14 @@ export function createPublishTaskView(currentUser) {
                 <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
                     ⏰ ${t('task.deadline')} <span style="color: #F44336;">*</span>
                 </label>
-                <input type="date" id="deadline" min="${minDate}" value="${defaultDate}"
-                       style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
+                <input type="date" id="deadline" min="${minDate}" value="${defaultDate}" ${isLockedStatus ? 'disabled' : ''}
+                       style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? '#2a2a2a' : '#1e1e1e'}; border: 1px solid #333; border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; box-sizing: border-box; cursor: ${isLockedStatus ? 'not-allowed' : 'auto'};">
+                ${isLockedStatus ? '<div style="font-size: 11px; color: #666; margin-top: 4px;">⚠️ 任务进行中，截止日期不可修改</div>' : ''}
             </div>
             
             <!-- 提交按钮 -->
             <button id="btn-publish" style="margin-top: 10px; padding: 14px; background: linear-gradient(135deg, #FF9800, #F57C00); border: none; color: #fff; border-radius: 10px; cursor: pointer; font-size: 15px; font-weight: bold; box-shadow: 0 4px 12px rgba(255,152,0,0.3);">
-                🚀 ${t('task.publish_task')}
+                🚀 ${isEditMode ? '保存修改' : t('task.publish_task')}
             </button>
             
             <!-- 提示 -->
@@ -208,6 +228,18 @@ export function createPublishTaskView(currentUser) {
     const btnAddImage = container.querySelector("#btn-add-image");
     let selectedImages = [];
     
+    // 编辑模式：加载已有的参考图片
+    if (isEditMode && editTaskData.reference_images && editTaskData.reference_images.length > 0) {
+        editTaskData.reference_images.forEach(url => {
+            selectedImages.push({
+                file: null,  // 已有图片没有文件对象
+                dataUrl: url,
+                isExisting: true  // 标记为已有图片
+            });
+        });
+        renderImagePreview();
+    }
+    
     btnAddImage.onclick = () => {
         if (selectedImages.length >= 6) {
             showToast(t('task.max_6_images'), "warning");
@@ -257,7 +289,7 @@ export function createPublishTaskView(currentUser) {
         btnAddImage.style.display = selectedImages.length >= 6 ? "none" : "block";
     };
     
-    // 发布按钮
+    // 发布/保存按钮
     container.querySelector("#btn-publish").onclick = async () => {
         const title = container.querySelector("#task-title").value.trim();
         const description = descInput.value.trim();
@@ -275,7 +307,7 @@ export function createPublishTaskView(currentUser) {
             showToast(t('task.please_enter_description'), "warning");
             return;
         }
-        if (totalPrice < 0) {
+        if (!isEditMode && totalPrice < 0) {
             showToast(t('task.price_min_10'), "warning");
             return;
         }
@@ -289,34 +321,65 @@ export function createPublishTaskView(currentUser) {
             publishBtn.disabled = true;
             publishBtn.textContent = `⏳ ${t('task.uploading_images')}...`;
             
-            // 上传参考图片
+            // 上传参考图片（只上传新选择的图片）
             const referenceImages = [];
             for (let i = 0; i < selectedImages.length; i++) {
-                publishBtn.textContent = `⏳ ${t('task.upload_progress', { current: i + 1, total: selectedImages.length })}...`;
-                try {
-                    const res = await api.uploadFile(selectedImages[i].file, "task");
-                    referenceImages.push(res.url);
-                } catch (uploadErr) {
-                    console.error("图片上传失败:", uploadErr);
+                if (selectedImages[i].isExisting) {
+                    // 已有图片直接使用URL
+                    referenceImages.push(selectedImages[i].dataUrl);
+                } else {
+                    // 新图片需要上传 - 添加压缩
+                    publishBtn.textContent = `⏳ ${t('task.upload_progress', { current: i + 1, total: selectedImages.length })}...`;
+                    try {
+                        const processedFile = await compressImageForUpload(selectedImages[i].file);
+                        const res = await api.uploadFile(processedFile, "task");
+                        referenceImages.push(res.url);
+                    } catch (uploadErr) {
+                        console.error("图片上传失败:", uploadErr);
+                    }
                 }
             }
             
-            publishBtn.textContent = `⏳ ${t('task.publishing')}...`;
+            if (isEditMode) {
+                // 编辑模式：更新任务
+                publishBtn.textContent = `⏳ ${t('common.saving')}...`;
+                
+                const updateData = {
+                    title,
+                    description,
+                    referenceImages,
+                    referenceLink: refLink || null
+                };
+                
+                // 只有在非锁定状态下才更新价格相关字段
+                if (!isLockedStatus) {
+                    updateData.totalPrice = totalPrice;
+                    updateData.depositRatio = depositRatio;
+                    updateData.deadline = deadline;
+                }
+                
+                await api.updateTask(editTaskData.id, updateData);
+                
+                showToast(t('task.edit_success') || '任务修改成功', "success");
+            } else {
+                // 新建模式：创建任务
+                publishBtn.textContent = `⏳ ${t('task.publishing')}...`;
+                
+                await api.createTask({
+                    title,
+                    description,
+                    referenceImages,
+                    referenceLink: refLink || null,
+                    totalPrice,
+                    depositRatio,
+                    deadline,
+                    publisher: currentUser.account || currentUser
+                });
+                
+                showToast(t('task.publish_success'), "success");
+            }
             
-            const res = await api.createTask({
-                title,
-                description,
-                referenceImages,
-                referenceLink: refLink || null,
-                totalPrice,
-                depositRatio,
-                deadline,
-                publisher: currentUser.account || currentUser
-            });
-            
-            showToast(t('task.publish_success'), "success");
-            
-            // 🚀 清除任务列表缓存，确保返回列表时能看到新任务
+            // 🚀 清除任务列表缓存，确保返回列表时能看到更新
             clearTaskListCache();
             // 🔄 触发列表刷新，确保新内容立即显示
             window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload"));
@@ -324,12 +387,12 @@ export function createPublishTaskView(currentUser) {
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
             
         } catch (err) {
-            console.error("发布任务失败:", err);
-            showToast(err.message || t('task.publish_failed'), "error");
+            console.error(isEditMode ? "修改任务失败:" : "发布任务失败:", err);
+            showToast(err.message || (isEditMode ? t('task.edit_failed') || '修改失败' : t('task.publish_failed')), "error");
         } finally {
             const publishBtn = container.querySelector("#btn-publish");
             publishBtn.disabled = false;
-            publishBtn.textContent = `🚀 ${t('task.publish_task')}`;
+            publishBtn.textContent = `🚀 ${isEditMode ? '保存修改' : t('task.publish_task')}`;
         }
     };
     

@@ -54,6 +54,7 @@ export async function showAboutInfo(currentUser) {
     
     const aboutData = {
         author: "感谢支持",
+        isSystemPage: true,
         title: "ComfyUI 社区精选 (Community Hub)",
         fullDesc: `ComfyUI精选社区 ${stageLabel}开启！ 当前版本：${versionString}
 

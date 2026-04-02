@@ -203,6 +203,20 @@ function buildSidebarDOM() {
         showInlineView(publishView);
     });
 
+    // 监听进入任务编辑页面的请求
+    window.addEventListener("comfy-route-edit-task", (e) => {
+        const { taskData, currentUser } = e.detail;
+        const view = createPublishTaskView(currentUser, taskData);
+        showInlineView(view);
+    });
+
+    // 监听进入帖子编辑页面的请求
+    window.addEventListener("comfy-route-edit-post", (e) => {
+        const { postData, currentUser } = e.detail;
+        const view = createPublishPostView(currentUser, postData);
+        showInlineView(view);
+    });
+
     let currentTab = Store.load("activeTab", "tools");
     let currentSort = Store.load("activeSort", "time");
     let currentRenderToken = 0;

@@ -17,6 +17,7 @@ import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t } from "../components/用户体验增强.js";
 import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { removeCache } from "../components/性能优化工具.js";
+import { globalModal } from "../components/全局弹窗管理器.js";
 
 /**
  * 📄 创建帖子详情视图
@@ -211,7 +212,9 @@ async function loadPostDetail(container, postId, currentUser) {
         if (btnEdit) {
             btnEdit.onclick = (e) => {
                 e.stopPropagation();
-                showEditPostDialog(post, currentUser, container);
+                window.dispatchEvent(new CustomEvent("comfy-route-edit-post", { 
+                    detail: { postData: post, currentUser } 
+                }));
             };
         }
         
@@ -315,48 +318,33 @@ function bindInteractionEvents(container, post, currentUser) {
  * 🎁 显示打赏对话框
  */
 function showTipDialog(post, currentUser, container) {
-    const existing = document.querySelector('.tip-dialog-overlay');
-    if (existing) existing.remove();
-    
-    const overlay = document.createElement("div");
-    overlay.className = "tip-dialog-overlay";
-    Object.assign(overlay.style, {
-        position: "fixed", top: "0", left: "0", width: "100%", height: "100%",
-        background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center",
-        justifyContent: "center", zIndex: "10000"
-    });
-    
-    overlay.innerHTML = `
-        <div style="background: #1e1e1e; border: 1px solid #444; border-radius: 12px; padding: 20px; width: 280px;">
-            <div style="font-size: 16px; font-weight: bold; color: #fff; margin-bottom: 15px; text-align: center;">${t('post.tip_dialog_title')}</div>
-            <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
-                <button class="tip-amount" data-amount="10" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
-                <button class="tip-amount" data-amount="50" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">50 ${t('task.points')}</button>
-                <button class="tip-amount" data-amount="100" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">100 ${t('task.points')}</button>
-                <button class="tip-amount" data-amount="500" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">500 ${t('task.points')}</button>
-            </div>
-            <div style="display: flex; gap: 10px;">
-                <button id="tip-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-            </div>
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
+            <button class="tip-amount" data-amount="10" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
+            <button class="tip-amount" data-amount="50" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">50 ${t('task.points')}</button>
+            <button class="tip-amount" data-amount="100" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">100 ${t('task.points')}</button>
+            <button class="tip-amount" data-amount="500" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">500 ${t('task.points')}</button>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button id="tip-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
         </div>
     `;
-    
-    document.body.appendChild(overlay);
-    
-    // 点击遮罩关闭
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-    
+
+    globalModal.openModal(`🎁 ${t('post.tip_dialog_title')}`, content, { width: "300px" });
+
     // 取消按钮
-    overlay.querySelector("#tip-cancel").onclick = () => overlay.remove();
-    
+    content.querySelector("#tip-cancel").onclick = () => globalModal.closeTopModal();
+
     // 打赏金额按钮
-    overlay.querySelectorAll(".tip-amount").forEach(btn => {
+    content.querySelectorAll(".tip-amount").forEach(btn => {
         btn.onclick = async () => {
             const amount = parseInt(btn.dataset.amount);
             try {
                 await api.tipPost(post.id, amount, false);
                 showToast(t('post.tip_success', { amount }), "success");
-                overlay.remove();
+                globalModal.closeTopModal();
                 // 刷新页面
                 loadPostDetail(container.parentElement, post.id, currentUser);
             } catch (err) {
@@ -530,103 +518,13 @@ function escapeHtml(str) {
 }
 
 /**
- * ✏️ 显示编辑帖子对话框
- */
-function showEditPostDialog(post, currentUser, container) {
-    const existing = document.querySelector('.edit-post-overlay');
-    if (existing) existing.remove();
-    
-    const overlay = document.createElement("div");
-    overlay.className = "edit-post-overlay";
-    Object.assign(overlay.style, {
-        position: "fixed", top: "0", left: "0", width: "100%", height: "100%",
-        background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center",
-        justifyContent: "center", zIndex: "10000"
-    });
-    
-    overlay.innerHTML = `
-        <div style="background: #1e1e1e; border: 1px solid #444; border-radius: 12px; padding: 20px; width: 90%; max-width: 400px; max-height: 80vh; overflow-y: auto;">
-            <div style="font-size: 16px; font-weight: bold; color: #fff; margin-bottom: 15px;">${t('post.edit_title')}</div>
-            
-            <div style="margin-bottom: 12px;">
-                <label style="font-size: 12px; color: #888; display: block; margin-bottom: 4px;">${t('post.title_label')}</label>
-                <input type="text" id="edit-title" value="${escapeHtml(post.title)}" style="width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box;">
-            </div>
-            
-            <div style="margin-bottom: 15px;">
-                <label style="font-size: 12px; color: #888; display: block; margin-bottom: 4px;">${t('post.content_label')}</label>
-                <textarea id="edit-content" style="width: 100%; height: 150px; padding: 10px; background: #2a2a2a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; resize: vertical; box-sizing: border-box;">${escapeHtml(post.content)}</textarea>
-            </div>
-            
-            <div style="display: flex; gap: 10px;">
-                <button id="edit-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="edit-save" style="flex: 1; background: #4CAF50; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.save')}</button>
-            </div>
-        </div>
-    `;
-    
-    document.body.appendChild(overlay);
-    
-    // 点击遮罩关闭
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-    
-    // 取消按钮
-    overlay.querySelector("#edit-cancel").onclick = () => overlay.remove();
-    
-    // 保存按钮
-    overlay.querySelector("#edit-save").onclick = async () => {
-        const title = overlay.querySelector("#edit-title").value.trim();
-        const content = overlay.querySelector("#edit-content").value.trim();
-        
-        if (!title) {
-            showToast(t('post.error_no_title'), "warning");
-            return;
-        }
-        
-        try {
-            const saveBtn = overlay.querySelector("#edit-save");
-            saveBtn.disabled = true;
-            saveBtn.textContent = t('common.saving');
-            
-            await api.updatePost(post.id, { title, content });
-            showToast(t('post.edit_success'), "success");
-            overlay.remove();
-            
-            // 🚀 清除帖子列表缓存，确保返回列表时能看到更新
-            removeCache('api_/api/posts');
-            const sorts = ['latest', 'popular', 'hot'];
-            for (const sort of sorts) {
-                removeCache(`ListCache_posts_${sort}`);
-            }
-            
-            // 刷新详情页
-            loadPostDetail(container, post.id, currentUser);
-        } catch (err) {
-            showToast(t('post.edit_failed') + ": " + err.message, "error");
-            const saveBtn = overlay.querySelector("#edit-save");
-            saveBtn.disabled = false;
-            saveBtn.textContent = t('common.save');
-        }
-    };
-}
-
-/**
  * 🗑️ 显示删除确认对话框
  */
 function showDeleteConfirmDialog(post, container) {
-    const existing = document.querySelector('.delete-confirm-overlay');
-    if (existing) existing.remove();
-    
-    const overlay = document.createElement("div");
-    overlay.className = "delete-confirm-overlay";
-    Object.assign(overlay.style, {
-        position: "fixed", top: "0", left: "0", width: "100%", height: "100%",
-        background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center",
-        justifyContent: "center", zIndex: "10000"
-    });
-    
-    overlay.innerHTML = `
-        <div style="background: #1e1e1e; border: 1px solid #444; border-radius: 12px; padding: 20px; width: 280px; text-align: center;">
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="text-align: center;">
             <div style="font-size: 40px; margin-bottom: 15px;">⚠️</div>
             <div style="font-size: 16px; font-weight: bold; color: #fff; margin-bottom: 10px;">${t('post.delete_confirm_title')}</div>
             <div style="font-size: 13px; color: #888; margin-bottom: 20px;">${t('post.delete_confirm_desc')}</div>
@@ -636,31 +534,28 @@ function showDeleteConfirmDialog(post, container) {
             </div>
         </div>
     `;
-    
-    document.body.appendChild(overlay);
-    
-    // 点击遮罩关闭
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-    
+
+    globalModal.openModal(t('post.delete_confirm_title'), content, { width: "300px" });
+
     // 取消按钮
-    overlay.querySelector("#delete-cancel").onclick = () => overlay.remove();
-    
+    content.querySelector("#delete-cancel").onclick = () => globalModal.closeTopModal();
+
     // 确认删除按钮
-    overlay.querySelector("#delete-confirm").onclick = async () => {
+    content.querySelector("#delete-confirm").onclick = async () => {
         try {
-            const confirmBtn = overlay.querySelector("#delete-confirm");
+            const confirmBtn = content.querySelector("#delete-confirm");
             confirmBtn.disabled = true;
             confirmBtn.textContent = t('common.deleting');
-            
+
             await api.deletePost(post.id);
             showToast(t('post.delete_success'), "success");
-            overlay.remove();
-            
+            globalModal.closeTopModal();
+
             // 返回列表页
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
         } catch (err) {
             showToast(t('post.delete_failed') + ": " + err.message, "error");
-            const confirmBtn = overlay.querySelector("#delete-confirm");
+            const confirmBtn = content.querySelector("#delete-confirm");
             confirmBtn.disabled = false;
             confirmBtn.textContent = t('common.delete');
         }

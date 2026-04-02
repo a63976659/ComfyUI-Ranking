@@ -99,7 +99,7 @@ function processAvatar(file) {
  * @param {File} file - 原始图片文件
  * @returns {Promise<File>} - 处理后的文件
  */
-async function compressImageForUpload(file) {
+export async function compressImageForUpload(file) {
     // 如果不是图片文件，直接返回
     if (!file.type || !file.type.startsWith('image/')) {
         return file;

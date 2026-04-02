@@ -9,6 +9,7 @@ import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { createDisputeDetailView } from "./申诉详情组件.js";
 import { t } from "../components/用户体验增强.js";
+import { globalModal } from "../components/全局弹窗管理器.js";
 
 /**
  * 创建管理员仲裁视图
@@ -136,25 +137,23 @@ async function renderDisputeList(container, currentUser, statusFilter = null) {
 }
 
 function showDisputeModal(disputeId, currentUser, onClose) {
-    const overlay = document.createElement("div");
-    overlay.style.cssText = "position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 9999; display: flex; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box;";
-
-    const modal = document.createElement("div");
-    modal.style.cssText = "background: var(--comfy-menu-bg); border-radius: 16px; width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto; position: relative;";
-
-    // 加载申诉详情
-    loadDisputeModalContent(modal, disputeId, currentUser, () => {
-        overlay.remove();
+    // 创建初始加载内容
+    const content = document.createElement("div");
+    content.style.cssText = "padding: 40px; text-align: center; color: #888;";
+    content.innerHTML = `⏳ ${t('common.loading')}`;
+    
+    // 打开弹窗
+    globalModal.openModal(`⚖️ ${t('dispute.title')}`, content, { width: "600px" });
+    
+    // 异步加载申诉详情内容
+    loadDisputeModalContent(content, disputeId, currentUser, () => {
+        globalModal.closeTopModal();
         onClose && onClose();
     });
-
-    overlay.appendChild(modal);
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-    document.body.appendChild(overlay);
 }
 
-async function loadDisputeModalContent(modal, disputeId, currentUser, onClose) {
-    modal.innerHTML = `<div style="padding: 40px; text-align: center; color: #888;">⏳ ${t('common.loading')}</div>`;
+async function loadDisputeModalContent(content, disputeId, currentUser, onClose) {
+    content.innerHTML = `<div style="padding: 40px; text-align: center; color: #888;">⏳ ${t('common.loading')}</div>`;
 
     try {
         const res = await api.getDisputeDetail(disputeId);
@@ -169,13 +168,8 @@ async function loadDisputeModalContent(modal, disputeId, currentUser, onClose) {
 
         const canResolve = dispute.status !== "resolved";
 
-        modal.innerHTML = `
+        content.innerHTML = `
             <style>
-                .modal-header { padding: 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; }
-                .modal-title { font-size: 18px; font-weight: bold; color: var(--input-text); }
-                .modal-close { background: none; border: none; color: #888; font-size: 24px; cursor: pointer; }
-                
-                .modal-body { padding: 16px; }
                 .modal-section { margin-bottom: 16px; }
                 .modal-section-title { font-weight: bold; color: var(--input-text); margin-bottom: 8px; font-size: 14px; }
                 .modal-section-content { background: var(--comfy-input-bg); padding: 12px; border-radius: 8px; color: var(--input-text); font-size: 14px; line-height: 1.6; }
@@ -207,12 +201,7 @@ async function loadDisputeModalContent(modal, disputeId, currentUser, onClose) {
                 .resolve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
             </style>
             
-            <div class="modal-header">
-                <div class="modal-title">⚖️ ${t('dispute.title')}</div>
-                <button class="modal-close" id="closeBtn">×</button>
-            </div>
-            
-            <div class="modal-body">
+            <div>
                 <div class="modal-section">
                     <div class="modal-section-title">📋 ${t('dispute.related_task')}</div>
                     <div class="modal-section-content">${dispute.task_title || t('common.unknown_task')}</div>
@@ -297,19 +286,16 @@ async function loadDisputeModalContent(modal, disputeId, currentUser, onClose) {
             </div>
         `;
 
-        // 关闭
-        modal.querySelector("#closeBtn").onclick = onClose;
-
         // 裁决逻辑
         if (canResolve) {
             let selectedResolution = null;
             let ratio = 50;
 
-            const options = modal.querySelectorAll(".resolve-option");
-            const splitRatioEl = modal.querySelector("#splitRatio");
-            const ratioSlider = modal.querySelector("#ratioSlider");
-            const ratioValue = modal.querySelector("#ratioValue");
-            const resolveBtn = modal.querySelector("#resolveBtn");
+            const options = content.querySelectorAll(".resolve-option");
+            const splitRatioEl = content.querySelector("#splitRatio");
+            const ratioSlider = content.querySelector("#ratioSlider");
+            const ratioValue = content.querySelector("#ratioValue");
+            const resolveBtn = content.querySelector("#resolveBtn");
 
             options.forEach(opt => {
                 opt.onclick = () => {
@@ -329,7 +315,7 @@ async function loadDisputeModalContent(modal, disputeId, currentUser, onClose) {
 
             resolveBtn.onclick = async () => {
                 if (!selectedResolution) return;
-                const note = modal.querySelector("#resolveNote").value.trim();
+                const note = content.querySelector("#resolveNote").value.trim();
                 resolveBtn.disabled = true;
                 resolveBtn.textContent = `${t('common.processing')}...`;
 
@@ -346,7 +332,7 @@ async function loadDisputeModalContent(modal, disputeId, currentUser, onClose) {
         }
 
     } catch (err) {
-        modal.innerHTML = `<div style="padding: 40px; text-align: center; color: #f44;">❌ ${err.message}</div>`;
+        content.innerHTML = `<div style="padding: 40px; text-align: center; color: #f44;">❌ ${err.message}</div>`;
     }
 }
 

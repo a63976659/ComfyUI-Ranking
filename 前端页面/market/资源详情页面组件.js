@@ -378,12 +378,15 @@ export function createItemDetailView(itemData, currentUser) {
         };
     }
 
-    api.getUserProfile(itemData.author).then(res => {
-        const freshName = res.data.name || itemData.author;
-        const nameEl = container.querySelector("#detail-author-name");
-        if (nameEl) nameEl.innerText = freshName;
-        localStorage.setItem(authorCacheKey, JSON.stringify(res.data));
-    }).catch(() => {});
+    // 🐛 Bug修复：跳过系统页面的作者信息查询（如关于页面）
+    if (!itemData.isSystemPage) {
+        api.getUserProfile(itemData.author).then(res => {
+            const freshName = res.data.name || itemData.author;
+            const nameEl = container.querySelector("#detail-author-name");
+            if (nameEl) nameEl.innerText = freshName;
+            localStorage.setItem(authorCacheKey, JSON.stringify(res.data));
+        }).catch(() => {});
+    }
 
     // 🔄 P7后悔模式：异步加载退款按钮状态
     renderRefundButton(container, itemData, currentUser);

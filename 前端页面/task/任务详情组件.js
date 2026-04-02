@@ -10,6 +10,9 @@ import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { PLACEHOLDERS } from "../core/全局配置.js";
 import { removeCache } from "../components/性能优化工具.js";
+import { globalModal } from "../components/全局弹窗管理器.js";
+import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
+import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
 
 /**
  * 📝 创建任务详情视图
@@ -101,9 +104,10 @@ function renderTaskDetail(contentEl, task, currentUser) {
     
     const status = statusStyles[task.status] || { bg: "#666", textKey: "common.unknown" };
     const statusText = t(status.textKey);
-    const isPublisher = currentUser === task.publisher;
-    const isAssignee = currentUser === task.assignee;
-    const hasApplied = (task.applicants || []).some(a => a.account === currentUser);
+    const currentAccount = typeof currentUser === 'string' ? currentUser : currentUser?.account;
+    const isPublisher = currentAccount === task.publisher;
+    const isAssignee = currentAccount === task.assignee;
+    const hasApplied = (task.applicants || []).some(a => a.account === currentAccount);
     
     contentEl.innerHTML = `
         <!-- 状态 + 价格 -->
@@ -163,15 +167,10 @@ ${escapeHtml(task.description)}</div>
         
         <!-- 参考图片 -->
         ${(task.reference_images && task.reference_images.length > 0) ? `
-            <div style="margin-bottom: 20px;">
+            <div style="margin-bottom: 20px;" class="ref-images-sandbox">
                 <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">🖼️ ${t('task.reference_images')}</div>
-                <div id="ref-images" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
-                    ${task.reference_images.map((img, i) => `
-                        <div style="position: relative; padding-top: 100%; background: #111; border-radius: 6px; overflow: hidden; cursor: pointer;" data-img-index="${i}">
-                            <img src="${img}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;"
-                                 onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22100%22%3E%3Crect fill=%22%23222%22 width=%22100%22 height=%22100%22/%3E%3C/svg%3E'">
-                        </div>
-                    `).join("")}
+                <div style="--sandbox-title-display: none">
+                    ${getCoverSandboxHTML(task.reference_images, false).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
                 </div>
             </div>
         ` : ""}
@@ -200,14 +199,10 @@ ${escapeHtml(task.description)}</div>
         
         <!-- 交付成果（如果有） -->
         ${(task.deliverables && task.deliverables.length > 0) ? `
-            <div style="margin-bottom: 20px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;">
+            <div style="margin-bottom: 20px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;" class="deliverables-sandbox">
                 <div style="font-size: 13px; font-weight: bold; color: #FF9800; margin-bottom: 8px;">📦 ${t('task.deliverables')}</div>
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
-                    ${task.deliverables.map(img => `
-                        <div style="position: relative; padding-top: 100%; background: #111; border-radius: 6px; overflow: hidden;">
-                            <img src="${img}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;">
-                        </div>
-                    `).join("")}
+                <div style="--sandbox-title-display: none">
+                    ${getCoverSandboxHTML(task.deliverables, false).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
                 </div>
                 ${task.submit_note ? `<div style="margin-top: 10px; color: #ccc; font-size: 12px;">${t('task.note')}: ${escapeHtml(task.submit_note)}</div>` : ""}
             </div>
@@ -245,7 +240,9 @@ ${escapeHtml(task.description)}</div>
     
     // 绑定编辑按钮
     contentEl.querySelector("#btn-edit-task")?.addEventListener("click", () => {
-        showEditTaskDialog(task, currentUser, contentEl);
+        window.dispatchEvent(new CustomEvent("comfy-route-edit-task", { 
+            detail: { taskData: task, currentUser } 
+        }));
     });
     
     // 绑定删除按钮（仅open状态可删除）
@@ -253,7 +250,7 @@ ${escapeHtml(task.description)}</div>
         showDeleteTaskConfirm(task, contentEl);
     });
     
-    // 绑定申请者列表的选择按钮
+    // 绑定申请者列表的选择按鈕
     contentEl.querySelectorAll(".btn-assign").forEach(btn => {
         btn.onclick = async () => {
             const assignee = btn.dataset.account;
@@ -269,6 +266,9 @@ ${escapeHtml(task.description)}</div>
             }
         };
     });
+    
+    // 绑定图片沙盒交互（缩放、拖动、轮播等）
+    setupImageSandboxEvents(contentEl);
 }
 
 /**
@@ -434,50 +434,31 @@ function bindActionEvents(container, task, currentUser) {
  * 📤 显示提交成果对话框
  */
 function showSubmitDialog(task, currentUser) {
-    // 创建模态框
-    const modal = document.createElement("div");
-    Object.assign(modal.style, {
-        position: "fixed",
-        top: "0",
-        left: "0",
-        right: "0",
-        bottom: "0",
-        background: "rgba(0,0,0,0.8)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: "10000"
-    });
-    
-    modal.innerHTML = `
-        <div style="background: #1e1e1e; border-radius: 12px; padding: 20px; max-width: 400px; width: 90%;">
-            <h3 style="margin: 0 0 15px 0; color: #fff; font-size: 16px;">📤 ${t('task.submit_work')}</h3>
-            
-            <div style="margin-bottom: 15px;">
-                <label style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.deliverable_images')} *</label>
-                <input type="file" id="deliverable-files" multiple accept="image/*" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; border-radius: 6px; color: #fff;">
-                <div style="font-size: 11px; color: #888; margin-top: 4px;">${t('task.support_multiple_images')}</div>
-            </div>
-            
-            <div style="margin-bottom: 20px;">
-                <label style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.note_optional')}</label>
-                <textarea id="submit-note" rows="3" placeholder="${t('task.note_placeholder')}" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box;"></textarea>
-            </div>
-            
-            <div style="display: flex; gap: 10px;">
-                <button id="btn-cancel-modal" style="flex: 1; padding: 10px; background: #333; border: 1px solid #555; color: #fff; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="btn-confirm-submit" style="flex: 1; padding: 10px; background: #4CAF50; border: none; color: #fff; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
-            </div>
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="margin-bottom: 15px;">
+            <label style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.deliverable_images')} *</label>
+            <input type="file" id="deliverable-files" multiple accept="image/*" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; border-radius: 6px; color: #fff;">
+            <div style="font-size: 11px; color: #888; margin-top: 4px;">${t('task.support_multiple_images')}</div>
+        </div>
+        
+        <div style="margin-bottom: 20px;">
+            <label style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.note_optional')}</label>
+            <textarea id="submit-note" rows="3" placeholder="${t('task.note_placeholder')}" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box;"></textarea>
+        </div>
+        
+        <div style="display: flex; gap: 10px;">
+            <button id="btn-cancel-modal" style="flex: 1; padding: 10px; background: #333; border: 1px solid #555; color: #fff; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button id="btn-confirm-submit" style="flex: 1; padding: 10px; background: #4CAF50; border: none; color: #fff; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
         </div>
     `;
     
-    document.body.appendChild(modal);
+    content.querySelector("#btn-cancel-modal").onclick = () => globalModal.closeTopModal();
     
-    modal.querySelector("#btn-cancel-modal").onclick = () => modal.remove();
-    
-    modal.querySelector("#btn-confirm-submit").onclick = async () => {
-        const files = modal.querySelector("#deliverable-files").files;
-        const note = modal.querySelector("#submit-note").value;
+    content.querySelector("#btn-confirm-submit").onclick = async () => {
+        const files = content.querySelector("#deliverable-files").files;
+        const note = content.querySelector("#submit-note").value;
         
         if (!files || files.length === 0) {
             showToast(t('task.please_upload_deliverables'), "warning");
@@ -485,7 +466,7 @@ function showSubmitDialog(task, currentUser) {
         }
         
         try {
-            const confirmBtn = modal.querySelector("#btn-confirm-submit");
+            const confirmBtn = content.querySelector("#btn-confirm-submit");
             confirmBtn.disabled = true;
             confirmBtn.textContent = `⏳ ${t('common.uploading')}...`;
             
@@ -494,7 +475,8 @@ function showSubmitDialog(task, currentUser) {
             for (let i = 0; i < files.length; i++) {
                 confirmBtn.textContent = `⏳ ${t('common.upload_progress', { current: i + 1, total: files.length })}...`;
                 try {
-                    const res = await api.uploadFile(files[i], "task");
+                    const processedFile = await compressImageForUpload(files[i]);
+                    const res = await api.uploadFile(processedFile, "task");
                     deliverables.push(res.url);
                 } catch (uploadErr) {
                     console.error("图片上传失败:", uploadErr);
@@ -513,15 +495,17 @@ function showSubmitDialog(task, currentUser) {
             await api.submitTask(task.id, deliverables, note || null);
             
             showToast(t('task.submit_success_waiting'), "success");
-            modal.remove();
+            globalModal.closeTopModal();
             location.reload();
         } catch (err) {
             showToast(err.message || t('task.submit_failed'), "error");
-            const confirmBtn = modal.querySelector("#btn-confirm-submit");
+            const confirmBtn = content.querySelector("#btn-confirm-submit");
             confirmBtn.disabled = false;
             confirmBtn.textContent = t('common.confirm_submit');
         }
     };
+    
+    globalModal.openModal(`📤 ${t('task.submit_work')}`, content, { width: "450px" });
 }
 
 /**
@@ -558,109 +542,19 @@ function escapeHtml(str) {
               .replace(/'/g, "&#039;");
 }
 
-/**
- * ✏️ 显示编辑任务对话框
- */
-function showEditTaskDialog(task, currentUser, contentEl) {
-    const isOpen = task.status === "open";
-    
-    const modal = document.createElement("div");
-    Object.assign(modal.style, {
-        position: "fixed", top: "0", left: "0", right: "0", bottom: "0",
-        background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center",
-        justifyContent: "center", zIndex: "10000", padding: "20px", boxSizing: "border-box"
-    });
-    
-    modal.innerHTML = `
-        <div style="background: #1e1e1e; border-radius: 12px; padding: 20px; max-width: 500px; width: 100%; max-height: 80vh; overflow-y: auto;">
-            <div style="font-size: 16px; font-weight: bold; color: #fff; margin-bottom: 15px;">✏️ ${t('task.edit_task')}</div>
-            
-            <div style="margin-bottom: 12px;">
-                <label style="font-size: 12px; color: #888; display: block; margin-bottom: 4px;">${t('task.title_label')}</label>
-                <input type="text" id="edit-title" value="${escapeHtml(task.title)}" style="width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box;">
-            </div>
-            
-            <div style="margin-bottom: 12px;">
-                <label style="font-size: 12px; color: #888; display: block; margin-bottom: 4px;">${t('task.description_label')}</label>
-                <textarea id="edit-description" style="width: 100%; height: 120px; padding: 10px; background: #2a2a2a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; resize: vertical; box-sizing: border-box;">${escapeHtml(task.description)}</textarea>
-            </div>
-            
-            <div style="margin-bottom: 12px;">
-                <label style="font-size: 12px; color: #888; display: block; margin-bottom: 4px;">${t('task.reference_link')} (${t('common.optional')})</label>
-                <input type="text" id="edit-link" value="${escapeHtml(task.reference_link || '')}" style="width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box;">
-            </div>
-            
-            ${!isOpen ? `
-            <div style="background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 6px; padding: 10px; margin-bottom: 15px;">
-                <div style="color: #FF9800; font-size: 12px;">⚠️ ${t('task.edit_limited_notice')}</div>
-            </div>
-            ` : ''}
-            
-            <div style="display: flex; gap: 10px;">
-                <button id="edit-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="edit-save" style="flex: 1; background: #4CAF50; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.save')}</button>
-            </div>
-        </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.querySelector("#edit-cancel").onclick = () => modal.remove();
-    
-    modal.querySelector("#edit-save").onclick = async () => {
-        const title = modal.querySelector("#edit-title").value.trim();
-        const description = modal.querySelector("#edit-description").value.trim();
-        const referenceLink = modal.querySelector("#edit-link").value.trim();
-        
-        if (!title) {
-            showToast(t('task.title_required'), "warning");
-            return;
-        }
-        
-        try {
-            const saveBtn = modal.querySelector("#edit-save");
-            saveBtn.disabled = true;
-            saveBtn.textContent = t('common.saving');
-            
-            await api.updateTask(task.id, { title, description, referenceLink });
-            showToast(t('task.edit_success'), "success");
-            modal.remove();
-            
-            // 🚀 清除任务列表缓存，确保返回列表时能看到更新
-            removeCache('api_/api/tasks');
-            const sorts = ['latest', 'popular', 'hot'];
-            for (const sort of sorts) {
-                removeCache(`ListCache_tasks_${sort}`);
-            }
-            
-            // 刷新详情页
-            loadTaskDetail(contentEl.closest("div"), task.id, currentUser);
-        } catch (err) {
-            showToast(err.message || t('task.edit_failed'), "error");
-            const saveBtn = modal.querySelector("#edit-save");
-            saveBtn.disabled = false;
-            saveBtn.textContent = t('common.save');
-        }
-    };
-}
+
 
 /**
  * 🗑️ 显示删除任务确认对话框
  */
 function showDeleteTaskConfirm(task, contentEl) {
-    const modal = document.createElement("div");
-    Object.assign(modal.style, {
-        position: "fixed", top: "0", left: "0", right: "0", bottom: "0",
-        background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center",
-        justifyContent: "center", zIndex: "10000"
-    });
-    
-    modal.innerHTML = `
-        <div style="background: #1e1e1e; border: 1px solid #444; border-radius: 12px; padding: 20px; width: 280px; text-align: center;">
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="text-align: center;">
             <div style="font-size: 40px; margin-bottom: 15px;">⚠️</div>
-            <div style="font-size: 16px; font-weight: bold; color: #fff; margin-bottom: 10px;">${t('task.delete_confirm_title')}</div>
-            <div style="font-size: 13px; color: #888; margin-bottom: 20px;">${t('task.delete_confirm_desc')}</div>
+            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.delete_confirm_title')}</div>
+            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.delete_confirm_desc')}</div>
             <div style="display: flex; gap: 10px;">
                 <button id="delete-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
                 <button id="delete-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
@@ -668,103 +562,71 @@ function showDeleteTaskConfirm(task, contentEl) {
         </div>
     `;
     
-    document.body.appendChild(modal);
+    content.querySelector("#delete-cancel").onclick = () => globalModal.closeTopModal();
     
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    modal.querySelector("#delete-cancel").onclick = () => modal.remove();
-    
-    modal.querySelector("#delete-confirm").onclick = async () => {
+    content.querySelector("#delete-confirm").onclick = async () => {
         try {
-            const confirmBtn = modal.querySelector("#delete-confirm");
+            const confirmBtn = content.querySelector("#delete-confirm");
             confirmBtn.disabled = true;
             confirmBtn.textContent = t('common.deleting');
             
             await api.cancelTask(task.id);
             showToast(t('task.delete_success'), "success");
-            modal.remove();
+            globalModal.closeTopModal();
             
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
         } catch (err) {
             showToast(err.message || t('task.delete_failed'), "error");
-            const confirmBtn = modal.querySelector("#delete-confirm");
+            const confirmBtn = content.querySelector("#delete-confirm");
             confirmBtn.disabled = false;
             confirmBtn.textContent = t('common.delete');
         }
     };
+    
+    globalModal.openModal(t('common.delete'), content, { width: "300px" });
 }
 
 /**
  * ⚖️ 显示申诉对话框（支持上传证据）
  */
 function showDisputeDialog(task, currentUser) {
-    const modal = document.createElement("div");
-    Object.assign(modal.style, {
-        position: "fixed",
-        top: "0",
-        left: "0",
-        right: "0",
-        bottom: "0",
-        background: "rgba(0,0,0,0.8)",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        zIndex: "10000",
-        padding: "20px",
-        boxSizing: "border-box"
-    });
-    
-    modal.innerHTML = `
-        <div style="background: #1e1e1e; border-radius: 16px; width: 100%; max-width: 480px; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
-            <!-- 头部 -->
-            <div style="padding: 16px 20px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 18px; font-weight: bold; color: #fff;">⚖️ ${t('dispute.start')}</span>
-                <button id="btn-close-dispute" style="background: none; border: none; color: #888; font-size: 24px; cursor: pointer;">×</button>
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="margin-bottom: 16px;">
+            <label style="display: block; color: #ccc; margin-bottom: 8px; font-size: 14px;">${t('dispute.reason')} <span style="color: #f44;">*</span></label>
+            <textarea id="dispute-reason" placeholder="${t('dispute.reason_placeholder')}" style="width: 100%; height: 120px; background: #2a2a2a; border: 1px solid #444; border-radius: 8px; color: #fff; padding: 12px; resize: none; box-sizing: border-box; font-size: 14px; line-height: 1.5;"></textarea>
+        </div>
+        
+        <div style="margin-bottom: 16px;">
+            <label style="display: block; color: #ccc; margin-bottom: 8px; font-size: 14px;">${t('dispute.evidence_optional')}</label>
+            <div id="evidence-upload-area" style="border: 2px dashed #444; border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; color: #888; transition: all 0.2s;">
+                📷 ${t('dispute.click_upload_evidence')}
             </div>
-            
-            <!-- 内容 -->
-            <div style="padding: 20px;">
-                <div style="margin-bottom: 16px;">
-                    <label style="display: block; color: #ccc; margin-bottom: 8px; font-size: 14px;">${t('dispute.reason')} <span style="color: #f44;">*</span></label>
-                    <textarea id="dispute-reason" placeholder="${t('dispute.reason_placeholder')}" style="width: 100%; height: 120px; background: #2a2a2a; border: 1px solid #444; border-radius: 8px; color: #fff; padding: 12px; resize: none; box-sizing: border-box; font-size: 14px; line-height: 1.5;"></textarea>
-                </div>
-                
-                <div style="margin-bottom: 16px;">
-                    <label style="display: block; color: #ccc; margin-bottom: 8px; font-size: 14px;">${t('dispute.evidence_optional')}</label>
-                    <div id="evidence-upload-area" style="border: 2px dashed #444; border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; color: #888; transition: all 0.2s;">
-                        📷 ${t('dispute.click_upload_evidence')}
-                    </div>
-                    <input type="file" id="evidence-file-input" accept="image/*" multiple style="display: none;">
-                    <div id="evidence-preview" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;"></div>
-                </div>
-                
-                <div style="background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
-                    <div style="color: #FF9800; font-size: 13px;">
-                        ⚠️ ${t('dispute.notice_title')}：
-                        <ul style="margin: 8px 0 0 16px; padding: 0; line-height: 1.6;">
-                            <li>${t('dispute.notice_1')}</li>
-                            <li>${t('dispute.notice_2')}</li>
-                            <li>${t('dispute.notice_3')}</li>
-                        </ul>
-                    </div>
-                </div>
-                
-                <button id="btn-submit-dispute" style="width: 100%; padding: 14px; background: linear-gradient(135deg, #F44336, #D32F2F); border: none; border-radius: 8px; color: #fff; font-size: 15px; font-weight: bold; cursor: pointer;">
-                    ${t('dispute.submit')}
-                </button>
+            <input type="file" id="evidence-file-input" accept="image/*" multiple style="display: none;">
+            <div id="evidence-preview" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;"></div>
+        </div>
+        
+        <div style="background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+            <div style="color: #FF9800; font-size: 13px;">
+                ⚠️ ${t('dispute.notice_title')}：
+                <ul style="margin: 8px 0 0 16px; padding: 0; line-height: 1.6;">
+                    <li>${t('dispute.notice_1')}</li>
+                    <li>${t('dispute.notice_2')}</li>
+                    <li>${t('dispute.notice_3')}</li>
+                </ul>
             </div>
         </div>
+        
+        <button id="btn-submit-dispute" style="width: 100%; padding: 14px; background: linear-gradient(135deg, #F44336, #D32F2F); border: none; border-radius: 8px; color: #fff; font-size: 15px; font-weight: bold; cursor: pointer;">
+            ${t('dispute.submit')}
+        </button>
     `;
     
-    document.body.appendChild(modal);
-    
-    // 关闭按钮
-    modal.querySelector("#btn-close-dispute").onclick = () => modal.remove();
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    
     // 上传逻辑
-    const uploadArea = modal.querySelector("#evidence-upload-area");
-    const fileInput = modal.querySelector("#evidence-file-input");
-    const preview = modal.querySelector("#evidence-preview");
+    const uploadArea = content.querySelector("#evidence-upload-area");
+    const fileInput = content.querySelector("#evidence-file-input");
+    const preview = content.querySelector("#evidence-preview");
     const evidenceFiles = [];
     
     uploadArea.onclick = () => fileInput.click();
@@ -799,14 +661,14 @@ function showDisputeDialog(task, currentUser) {
     }
     
     // 提交申诉
-    modal.querySelector("#btn-submit-dispute").onclick = async () => {
-        const reason = modal.querySelector("#dispute-reason").value.trim();
+    content.querySelector("#btn-submit-dispute").onclick = async () => {
+        const reason = content.querySelector("#dispute-reason").value.trim();
         if (!reason) {
             showToast(t('dispute.please_enter_reason'), "warning");
             return;
         }
         
-        const btn = modal.querySelector("#btn-submit-dispute");
+        const btn = content.querySelector("#btn-submit-dispute");
         btn.disabled = true;
         btn.textContent = `•• ${t('common.submitting')}...`;
         
@@ -815,7 +677,8 @@ function showDisputeDialog(task, currentUser) {
             const evidenceUrls = [];
             for (let i = 0; i < evidenceFiles.length; i++) {
                 btn.textContent = `•• ${t('common.upload_image_progress', { current: i + 1, total: evidenceFiles.length })}...`;
-                const res = await api.uploadFile(evidenceFiles[i], "dispute");
+                const processedFile = await compressImageForUpload(evidenceFiles[i]);
+                const res = await api.uploadFile(processedFile, "dispute");
                 evidenceUrls.push(res.url);
             }
             
@@ -824,7 +687,7 @@ function showDisputeDialog(task, currentUser) {
             await api.disputeTask(task.id, reason, evidenceUrls);
             
             showToast(t('dispute.submit_success'), "success");
-            modal.remove();
+            globalModal.closeTopModal();
             location.reload();
         } catch (err) {
             showToast(err.message || t('dispute.submit_failed'), "error");
@@ -832,4 +695,6 @@ function showDisputeDialog(task, currentUser) {
             btn.textContent = t('dispute.submit');
         }
     };
+    
+    globalModal.openModal(`⚖️ ${t('dispute.start')}`, content, { width: "480px" });
 }

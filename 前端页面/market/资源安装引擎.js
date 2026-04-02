@@ -127,6 +127,12 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
 
         // 防线 2：事务级扣费 (天然解决问题 3，意外中断不重扣)
         let purchaseRes = null;  // ☁️ 保存购买响应（包含网盘密码）
+        // 🐛 Bug修复：防御性校验，防止 itemId 为空
+        if (!itemData.id) {
+            console.warn('⚠️ 资源安装: itemData.id 为空，已拦截无效请求');
+            inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 获取失败：资源ID无效</span>`;
+            return;
+        }
         try {
             purchaseRes = await api.purchaseItem(currentUser.account, itemData.id);
             

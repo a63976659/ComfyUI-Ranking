@@ -79,8 +79,12 @@ function compressImage(file) {
 
 /**
  * ✏️ 创建发布帖子视图
+ * @param {Object|string} currentUser - 当前用户
+ * @param {Object} editPostData - 编辑模式时的帖子数据（可选）
  */
-export function createPublishPostView(currentUser) {
+export function createPublishPostView(currentUser, editPostData = null) {
+    const isEditMode = !!editPostData;
+    
     const container = document.createElement("div");
     Object.assign(container.style, {
         display: "flex",
@@ -94,6 +98,11 @@ export function createPublishPostView(currentUser) {
         boxSizing: "border-box"
     });
     
+    // 编辑模式下的字段值
+    const editTitle = isEditMode ? (editPostData.title || '') : '';
+    const editContent = isEditMode ? (editPostData.content || '') : '';
+    const editImageUrls = isEditMode ? (editPostData.images || editPostData.image_urls || []) : [];
+    
     container.innerHTML = `
         <!-- 顶部标题栏 -->
         <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px; border-bottom: 1px solid #444; background: #1a1a1a;">
@@ -101,10 +110,10 @@ export function createPublishPostView(currentUser) {
                 <button id="btn-back-publish" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
                     <span style="font-size: 14px;">⬅</span> ${t('common.back')}
                 </button>
-                <span style="font-size: 16px; font-weight: bold; color: #fff;">✏️ ${t('post.publish')}</span>
+                <span style="font-size: 16px; font-weight: bold; color: #fff;">✏️ ${isEditMode ? '编辑帖子' : t('post.publish')}</span>
             </div>
             <button id="btn-submit-post" style="background: #4CAF50; border: none; color: #fff; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
-                🚀 ${t('common.publish')}
+                🚀 ${isEditMode ? '保存修改' : t('common.publish')}
             </button>
         </div>
         
@@ -130,9 +139,9 @@ export function createPublishPostView(currentUser) {
                 <label style="display: block; font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 8px;">
                     📝 ${t('post.title_label')} <span style="color: #F44336;">*</span>
                 </label>
-                <input type="text" id="title-input" placeholder="${t('post.title_placeholder')}" maxlength="50" style="width: 100%; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
+                <input type="text" id="title-input" value="${editTitle}" placeholder="${t('post.title_placeholder')}" maxlength="50" style="width: 100%; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
                 <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
-                    <span id="title-count">0</span>/50
+                    <span id="title-count">${editTitle.length}</span>/50
                 </div>
             </div>
             
@@ -141,9 +150,9 @@ export function createPublishPostView(currentUser) {
                 <label style="display: block; font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 8px;">
                     ✍️ ${t('post.content_label')}
                 </label>
-                <textarea id="content-input" placeholder="${t('post.content_placeholder')}" maxlength="2000" style="width: 100%; height: 200px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box; outline: none; resize: none; line-height: 1.6;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'"></textarea>
+                <textarea id="content-input" placeholder="${t('post.content_placeholder')}" maxlength="2000" style="width: 100%; height: 200px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box; outline: none; resize: none; line-height: 1.6;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">${editContent}</textarea>
                 <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
-                    <span id="content-count">0</span>/2000
+                    <span id="content-count">${editContent.length}</span>/2000
                 </div>
             </div>
             
@@ -159,6 +168,7 @@ export function createPublishPostView(currentUser) {
     
     // 状态
     let imageFiles = [];
+    let existingImageUrls = [];  // 编辑模式下已有的图片URL
     
     // DOM 引用
     const imagesInput = container.querySelector("#images-input");
@@ -168,6 +178,12 @@ export function createPublishPostView(currentUser) {
     const titleCount = container.querySelector("#title-count");
     const contentCount = container.querySelector("#content-count");
     const submitBtn = container.querySelector("#btn-submit-post");
+    
+    // 编辑模式：加载已有的图片
+    if (isEditMode && editImageUrls.length > 0) {
+        existingImageUrls = [...editImageUrls];
+        renderExistingImagePreviews();
+    }
     
     // 返回按钮
     container.querySelector("#btn-back-publish").onclick = () => {
@@ -184,14 +200,121 @@ export function createPublishPostView(currentUser) {
     
     // 图片选择
     imagesInput.onchange = (e) => {
-        const files = Array.from(e.target.files).slice(0, 9);
-        if (files.length === 0) return;
+        const files = Array.from(e.target.files);
+        const totalImages = existingImageUrls.length + imageFiles.length;
+        const remaining = 9 - totalImages;
         
-        imageFiles = files;
-        renderImagePreviews();
+        if (remaining <= 0) {
+            showToast(t('post.max_9_images'), "warning");
+            return;
+        }
+        
+        const toAdd = files.slice(0, remaining);
+        if (toAdd.length === 0) return;
+        
+        imageFiles = [...imageFiles, ...toAdd];
+        
+        if (isEditMode) {
+            renderExistingImagePreviews();
+        } else {
+            renderImagePreviews();
+        }
     };
     
-    // 渲染图片预览
+    // 渲染已有图片预览（编辑模式）
+    function renderExistingImagePreviews() {
+        const totalImages = existingImageUrls.length + imageFiles.length;
+        
+        if (totalImages === 0) {
+            imagesPreview.innerHTML = `
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: #666; font-size: 13px;">
+                    <div style="font-size: 32px; margin-bottom: 8px;">📷</div>
+                    ${t('post.click_upload')}
+                </div>
+            `;
+            return;
+        }
+        
+        imagesPreview.innerHTML = "";
+        
+        // 渲染已有图片
+        existingImageUrls.forEach((url, idx) => {
+            const wrapper = document.createElement("div");
+            Object.assign(wrapper.style, {
+                position: "relative",
+                width: "80px",
+                height: "80px"
+            });
+            
+            wrapper.innerHTML = `
+                <img src="${url}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
+                ${idx === 0 ? `<span style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
+                <button data-existing-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+            `;
+            
+            wrapper.querySelector("button").onclick = (e) => {
+                e.stopPropagation();
+                existingImageUrls = existingImageUrls.filter((_, i) => i !== idx);
+                renderExistingImagePreviews();
+            };
+            
+            imagesPreview.appendChild(wrapper);
+        });
+        
+        // 渲染新上传图片
+        imageFiles.forEach((file, idx) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const wrapper = document.createElement("div");
+                Object.assign(wrapper.style, {
+                    position: "relative",
+                    width: "80px",
+                    height: "80px"
+                });
+                
+                const totalIdx = existingImageUrls.length + idx;
+                wrapper.innerHTML = `
+                    <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${totalIdx === 0 ? '#4CAF50' : '#444'};">
+                    ${totalIdx === 0 ? `<span style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
+                    <button data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+                `;
+                
+                wrapper.querySelector("button").onclick = (e) => {
+                    e.stopPropagation();
+                    imageFiles = imageFiles.filter((_, i) => i !== idx);
+                    renderExistingImagePreviews();
+                };
+                
+                imagesPreview.appendChild(wrapper);
+            };
+            reader.readAsDataURL(file);
+        });
+        
+        // 添加"添加更多"按钮
+        if (totalImages < 9) {
+            const addBtn = document.createElement("div");
+            Object.assign(addBtn.style, {
+                width: "80px",
+                height: "80px",
+                border: "2px dashed #444",
+                borderRadius: "6px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                color: "#666",
+                fontSize: "24px"
+            });
+            addBtn.textContent = "+";
+            addBtn.onclick = (e) => {
+                e.stopPropagation();
+                imagesInput.click();
+            };
+            imagesPreview.appendChild(addBtn);
+        }
+    }
+    
+    // 渲染图片预览（新建模式）
     function renderImagePreviews() {
         if (imageFiles.length === 0) {
             imagesPreview.innerHTML = `
@@ -256,13 +379,14 @@ export function createPublishPostView(currentUser) {
         }
     }
     
-    // 提交发布
+    // 提交发布/保存
     submitBtn.onclick = async () => {
         const title = titleInput.value.trim();
         const content = contentInput.value.trim();
         
         // 验证
-        if (imageFiles.length === 0) {
+        const totalImages = existingImageUrls.length + imageFiles.length;
+        if (totalImages === 0) {
             showToast(t('post.error_no_image'), "warning");
             return;
         }
@@ -275,7 +399,7 @@ export function createPublishPostView(currentUser) {
             submitBtn.disabled = true;
             submitBtn.textContent = `⏳ ${t('post.compressing_images')}...`;
             
-            // 🖼️ 先压缩所有图片
+            // 🖼️ 先压缩所有新图片
             const compressedFiles = [];
             for (let i = 0; i < imageFiles.length; i++) {
                 submitBtn.textContent = `🖼️ ${t('post.compressing_progress', { current: i + 1, total: imageFiles.length })}...`;
@@ -291,19 +415,35 @@ export function createPublishPostView(currentUser) {
                 uploadedUrls.push(res.url);
             }
             
-            // 发布帖子
-            submitBtn.textContent = `⏳ ${t('post.publishing')}...`;
-            await api.createPost({
-                title,
-                content,
-                cover_image: uploadedUrls[0],
-                images: uploadedUrls,
-                author: currentUser.account
-            });
+            // 合并已有图片和新上传的图片
+            const allImages = [...existingImageUrls, ...uploadedUrls];
             
-            showToast(t('post.publish_success'), "success");
+            if (isEditMode) {
+                // 编辑模式：更新帖子
+                submitBtn.textContent = `⏳ ${t('common.saving')}...`;
+                await api.updatePost(editPostData.id, {
+                    title,
+                    content,
+                    cover_image: allImages[0],
+                    images: allImages
+                });
+                
+                showToast(t('post.edit_success'), "success");
+            } else {
+                // 新建模式：发布帖子
+                submitBtn.textContent = `⏳ ${t('post.publishing')}...`;
+                await api.createPost({
+                    title,
+                    content,
+                    cover_image: allImages[0],
+                    images: allImages,
+                    author: currentUser.account
+                });
+                
+                showToast(t('post.publish_success'), "success");
+            }
             
-            // 🚀 清除帖子列表缓存，确保返回列表时能看到新帖子
+            // 🚀 清除帖子列表缓存，确保返回列表时能看到更新
             clearPostListCache();
             // 🔄 触发列表刷新，确保新内容立即显示
             window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload"));
@@ -311,10 +451,10 @@ export function createPublishPostView(currentUser) {
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
             
         } catch (err) {
-            showToast(t('post.publish_failed') + ": " + err.message, "error");
+            showToast((isEditMode ? t('post.edit_failed') : t('post.publish_failed')) + ": " + err.message, "error");
         } finally {
             submitBtn.disabled = false;
-            submitBtn.textContent = `🚀 ${t('common.publish')}`;
+            submitBtn.textContent = `🚀 ${isEditMode ? '保存修改' : t('common.publish')}`;
         }
     };
     

@@ -210,6 +210,11 @@ export function createItemCard(itemData, currentUser = null) {
     tipArea.querySelector(`#btn-tip-item-${itemData.id}`).onclick = (e) => {
         e.stopPropagation();
         if (!currentUser) return showToast(t('feedback.login_required'), "warning");
+        // 🐛 Bug修复：防御性校验，防止 itemId 为空
+        if (!itemData.id) {
+            console.warn('⚠️ 列表卡片: itemData.id 为空，已拦截无效打赏请求');
+            return showToast("资源ID无效，无法打赏", "error");
+        }
         openTipModal(currentUser, { account: itemData.author }, (newBalance) => {
             currentUser.balance = newBalance;
         }, itemData.id);

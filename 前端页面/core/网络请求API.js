@@ -596,13 +596,24 @@ export const api = {
         return request(`/api/wallet/${account}/task-stats`);
     },
     
-    async tipUser(senderAccount, targetAccount, amount, isAnonymous, itemId = null) { 
+    async tipUser(senderAccount, targetAccount, amount, isAnonymous, itemId = null) {
+        // 🐛 Bug修复：itemId 可选，但记录日志便于排查
+        if (itemId === undefined) {
+            console.warn('⚠️ tipUser: itemId 为 undefined，将按无关联项目处理');
+        }
         return request("/api/wallet/tip", { 
             method: "POST", 
             body: { sender_account: senderAccount, target_account: targetAccount, amount: amount, is_anonymous: isAnonymous, item_id: itemId } 
         }); 
     }, 
-    async purchaseItem(account, itemId) { return request("/api/wallet/purchase", { method: "POST", body: { account: account, item_id: itemId } }); },
+    async purchaseItem(account, itemId) {
+        // 🐛 Bug修复：防御性校验，防止 itemId 为空导致请求 /purchase/undefined
+        if (!itemId) {
+            console.warn('⚠️ purchaseItem: itemId 为空，已拦截无效请求');
+            return { success: false, error: 'itemId 不能为空' };
+        }
+        return request("/api/wallet/purchase", { method: "POST", body: { account: account, item_id: itemId } });
+    },
     async submitWithdraw(data) { return request("/api/wallet/withdraw", { method: "POST", body: data }); },
     async postSystemAnnouncement(adminAccount, contentText) {
         if (!contentText || !contentText.trim()) throw new Error("公告内容不能为空！");
