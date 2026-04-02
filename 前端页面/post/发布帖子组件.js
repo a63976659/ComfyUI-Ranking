@@ -16,7 +16,8 @@ import { removeCache } from "../components/性能优化工具.js";
 // 📦 清除帖子列表缓存
 function clearPostListCache() {
     removeCache('api_/api/posts');
-    const sorts = ['latest', 'popular', 'hot'];
+    // 帖子排序值：latest, likes, favorites, views, daily_views
+    const sorts = ['latest', 'likes', 'favorites', 'views', 'daily_views'];
     for (const sort of sorts) {
         removeCache(`ListCache_posts_${sort}`);
     }

@@ -78,7 +78,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
     container.innerHTML = `
         <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #FF9800; display: flex; align-items: center; gap: 6px;">
             ${title}
-            <span style="font-size: 10px; color: #888; font-weight: normal;">(共${tipBoard.length}人)</span>
+            <span style="font-size: 10px; color: #888; font-weight: normal;">(${t('creator.tip_board.count', {count: tipBoard.length})})</span>
         </div>
         <div style="max-height: 200px; overflow-y: auto;">${listHtml}</div>
     `;
@@ -132,20 +132,20 @@ export function createCreatorCard(creatorData, currentUser = null) {
             ${hasBanner ? '<div style="position: absolute; inset: 0; background: rgba(0,0,0,0.2); border-radius: 8px;"></div>' : ''}
             <div style="position: relative; z-index: 1;">
                 <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px; padding: 5px 0;">
-                    <img class="creator-avatar-link" src="${avatarSrc}" title="访问 TA 的主页" style="width: 50px; height: 50px; border-radius: 50%; border: 2px solid ${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}; object-fit: cover; cursor: pointer; transition: 0.2s; ${hasBanner ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.3);' : ''}" onmouseover="this.style.borderColor='#4CAF50'" onmouseout="this.style.borderColor='${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}'">
-                    <div class="creator-name-link" title="访问 TA 的主页" style="font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; color: #FFD700; text-shadow: 0 1px 4px rgba(0,0,0,0.8), 0 0 8px rgba(255,215,0,0.3);" onmouseover="this.style.color='#FFA500'" onmouseout="this.style.color='#FFD700'">${creatorData.name}</div>
-                    <div style="font-size: 12px; color: #FF6B6B; margin-left: auto; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">被使用 ${creatorData.downloads || 0} 次</div>
+                    <img class="creator-avatar-link" src="${avatarSrc}" title="${t('creator.visit_profile')}" style="width: 50px; height: 50px; border-radius: 50%; border: 2px solid ${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}; object-fit: cover; cursor: pointer; transition: 0.2s; ${hasBanner ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.3);' : ''}" onmouseover="this.style.borderColor='#4CAF50'" onmouseout="this.style.borderColor='${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}'">
+                    <div class="creator-name-link" title="${t('creator.visit_profile')}" style="font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; color: #FFD700; text-shadow: 0 1px 4px rgba(0,0,0,0.8), 0 0 8px rgba(255,215,0,0.3);" onmouseover="this.style.color='#FFA500'" onmouseout="this.style.color='#FFD700'">${creatorData.name}</div>
+                    <div style="font-size: 12px; color: #FF6B6B; margin-left: auto; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">${t('creator.usage_count', {count: creatorData.downloads || 0})}</div>
                 </div>
                 <div style="font-size: 12px; color: ${hasBanner ? '#ccc' : '#aaa'}; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 10px;">${creatorData.shortDesc && creatorData.shortDesc !== "null" ? creatorData.shortDesc : t('profile.no_intro') || "这个人很懒，什么都没写..."}</div>
                 <div style="background: rgba(34,34,34,${hasBanner ? '0.8' : '1'}); border-radius: 6px; padding: 8px 10px; border: 1px dashed #555;">
                     <div style="display: flex; gap: 15px; font-size: 12px; color: #eee; justify-content: space-between; margin-bottom: 8px;">
-                        <span style="color: #FF5722;">👍 获赞: <strong>${creatorData.likes}</strong></span>
-                        <span style="color: #FFC107;">⭐ 收藏: <strong>${creatorData.favorites}</strong></span>
-                        <span style="color: #4CAF50;">👥 粉丝: <strong>${creatorData.followers}</strong></span>
+                        <span style="color: #FF5722;">👍 ${t('creator.stats.likes')}: <strong>${creatorData.likes}</strong></span>
+                        <span style="color: #FFC107;">⭐ ${t('creator.stats.favorites')}: <strong>${creatorData.favorites}</strong></span>
+                        <span style="color: #4CAF50;">👥 ${t('creator.stats.followers')}: <strong>${creatorData.followers}</strong></span>
                     </div>
                     <div style="display: flex; gap: 15px; font-size: 12px; color: #ccc; justify-content: center; border-top: 1px solid #333; padding-top: 8px;">
-                        <span style="color: #2196F3;">🛠️ 产出工具: <strong>${creatorData.toolsCount}</strong> 个</span>
-                        <span style="color: #9C27B0;">📦 产出应用: <strong>${creatorData.appsCount}</strong> 个</span>
+                        <span style="color: #2196F3;">🛠️ ${t('creator.output.tools')}: <strong>${creatorData.toolsCount}</strong> ${t('creator.output.unit')}</span>
+                        <span style="color: #9C27B0;">📦 ${t('creator.output.apps')}: <strong>${creatorData.appsCount}</strong> ${t('creator.output.unit')}</span>
                     </div>
                 </div>
             </div>
@@ -164,10 +164,10 @@ export function createCreatorCard(creatorData, currentUser = null) {
 
     detailView.innerHTML = `
         <div style="background: #1e1e1e; padding: 8px; border-radius: 4px; font-size: 12px; color: #ccc; margin-bottom: 15px; line-height: 1.5;">${creatorData.fullDesc && creatorData.fullDesc !== "null" ? creatorData.fullDesc : t('profile.no_intro') || "这个人很懒，什么都没写..."}</div>
-        <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #aaa;">📈 下载量增长趋势</div>
+        <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #aaa;">${t('creator.chart.download_trend')}</div>
         <div id="${chartContainerId}" style="width: 100%; height: 180px; background: #222; border-radius: 4px; margin-bottom: 15px;"></div>
         <div id="tipboard-${chartContainerId}"></div>
-        <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; margin-top: 15px; color: #aaa;">💬 创作者留言板</div>
+        <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; margin-top: 15px; color: #aaa;">${t('creator.message_board')}</div>
         <div id="board-${chartContainerId}" style="height: 250px; border: 1px solid #444; border-radius: 4px; overflow: hidden;"></div>
     `;
 
@@ -175,7 +175,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
     const tipBoardContainer = detailView.querySelector(`#tipboard-${chartContainerId}`);
     const tipBoardUI = createTipBoardSection(
         creatorData.tip_board, 
-        "🎁 赞赏贡献总榜",
+        t('creator.tip_board.title'),
         (account) => openOtherUserProfileModal(account, currentUser)
     );
     tipBoardContainer.appendChild(tipBoardUI);
@@ -191,7 +191,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
         if (isChartRendered) return;
         const chartDom = detailView.querySelector(`#${chartContainerId}`);
         if (!chartDom) return;
-        chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#888;">正在加载图表...</div>`;
+        chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#888;">${t('creator.chart.loading')}</div>`;
         loadECharts().then(echarts => {
             chartDom.innerHTML = ""; 
             chartInstance = echarts.init(chartDom, 'dark', { backgroundColor: 'transparent' });
@@ -204,14 +204,14 @@ export function createCreatorCard(creatorData, currentUser = null) {
                 xAxis: { type: 'category', data: trendData.months, axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#444' } } },
                 yAxis: { type: 'value', splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888', fontSize: 10 }, minInterval: 1 },
                 series: [
-                    { name: '工具下载', type: 'line', data: trendData.tools, smooth: true, itemStyle: { color: '#4CAF50' }, lineStyle: { width: 2, type: 'dashed' } },
-                    { name: '应用下载', type: 'line', data: trendData.apps, smooth: true, itemStyle: { color: '#2196F3' }, lineStyle: { width: 2, type: 'dashed' } },
+                    { name: t('creator.chart.series.tools'), type: 'line', data: trendData.tools, smooth: true, itemStyle: { color: '#4CAF50' }, lineStyle: { width: 2, type: 'dashed' } },
+                    { name: t('creator.chart.series.apps'), type: 'line', data: trendData.apps, smooth: true, itemStyle: { color: '#2196F3' }, lineStyle: { width: 2, type: 'dashed' } },
                     // 【核心修改】：添加第 3 根趋势折线 —— 推荐资源的点击与获取量
-                    { name: '推荐获取', type: 'line', data: trendData.recommends, smooth: true, itemStyle: { color: '#FF9800' }, lineStyle: { width: 2, type: 'dashed' } }
+                    { name: t('creator.chart.series.recommends'), type: 'line', data: trendData.recommends, smooth: true, itemStyle: { color: '#FF9800' }, lineStyle: { width: 2, type: 'dashed' } }
                 ]
             });
             isChartRendered = true;
-        }).catch(err => { chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#F44336;">图表库加载失败</div>`; });
+        }).catch(err => { chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#F44336;">${t('creator.chart.load_failed')}</div>`; });
     }
 
     summaryView.onclick = () => {

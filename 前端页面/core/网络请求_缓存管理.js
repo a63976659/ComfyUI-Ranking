@@ -80,7 +80,7 @@ const CACHE_INVALIDATION_MAP = {
  */
 export function invalidateRelatedCache(endpoint, method = null) {
     // 检测是否为互动操作（view/like/favorite/tip）
-    const isInteraction = /\/(view|like|favorite|tip)$/.test(endpoint);
+    const isInteraction = /\/(view|like|favorite|tip|use)$/.test(endpoint);
     
     // 查找匹配的缓存失效规则
     let patterns = [];

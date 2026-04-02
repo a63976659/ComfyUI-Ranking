@@ -76,8 +76,8 @@ export function buildSidebarDOM() {
             <option value="likes">${t('market.like')}</option>
             <option value="favorites">${t('market.favorites')}</option>
             <option value="tips">💰 ${t('market.tips_ranking') || '近期打赏榜'}</option>
-            <option value="views">🔥 浏览总量</option>
-            <option value="daily_views">🔥 今日热门</option>
+            <option value="views">${t('market.views')}</option>
+            <option value="daily_views">${t('market.daily_views')}</option>
         </select>
         <!-- 任务榜筛选控件（状态+排序） -->
         <select id="task-status-filter" style="display: none; background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
@@ -92,10 +92,19 @@ export function buildSidebarDOM() {
             <option value="latest">${t('task.sort_latest')}</option>
             <option value="price">${t('task.sort_price')}</option>
             <option value="deadline">${t('task.sort_deadline')}</option>
-            <option value="views">🔥 浏览总量</option>
-            <option value="daily_views">🔥 今日热门</option>
-            <option value="likes">👍 最多点赞</option>
-            <option value="favorites">⭐ 最多收藏</option>
+            <option value="views">${t('task.sort_views')}</option>
+            <option value="daily_views">${t('task.sort_daily_views')}</option>
+            <option value="likes">${t('task.sort_likes')}</option>
+            <option value="favorites">${t('task.sort_favorites')}</option>
+        </select>
+        <!-- 🎯 讨论区排序控件（专用） -->
+        <select id="posts-sort-select" style="display: none; background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
+            <option value="latest">${t('post.sort_latest')}</option>
+            <option value="likes">${t('post.sort_likes')}</option>
+            <option value="favorites">${t('post.sort_favorites')}</option>
+            <option value="tips">${t('post.sort_tips')}</option>
+            <option value="views">${t('post.sort_views')}</option>
+            <option value="daily_views">${t('post.sort_daily_views')}</option>
         </select>
         <input type="text" id="hub-search-input" placeholder="🔍 ${t('common.search')}..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
         <button id="btn-open-publish" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">➕ ${t('market.publish')}</button>
@@ -238,13 +247,14 @@ export function buildSidebarDOM() {
     let currentRenderToken = 0;
     const getRenderToken = () => currentRenderToken;
 
-    const triggerLoad = () => {
+    const triggerLoad = (forceRefresh = false) => {
         currentRenderToken++; 
         loadSidebarContent({
             tab: currentTab, sort: currentSort,
             keyword: sortContainer.querySelector("#hub-search-input").value.trim().toLowerCase(),
             contentArea: contentArea, currentUser: topNav.getCurrentUser(),
-            renderToken: currentRenderToken, getRenderToken: getRenderToken
+            renderToken: currentRenderToken, getRenderToken: getRenderToken,
+            force: forceRefresh
         });
     };
 
@@ -252,7 +262,9 @@ export function buildSidebarDOM() {
     window.addEventListener("comfy-user-login", triggerLoad);
     
     // 监听子组件请求刷新列表
-    window.addEventListener("comfy-trigger-sidebar-reload", () => { triggerLoad(); });
+    window.addEventListener("comfy-trigger-sidebar-reload", (e) => { 
+        triggerLoad(e.detail?.force ?? false); 
+    });
 
     sortContainer.querySelector("#btn-open-publish").onclick = () => {
         const currentUser = topNav.getCurrentUser();
@@ -342,23 +354,34 @@ export function buildSidebarDOM() {
         const hubSortSelect = sortContainer.querySelector("#hub-sort-select");
         const taskStatusFilter = sortContainer.querySelector("#task-status-filter");
         const taskSortSelect = sortContainer.querySelector("#task-sort-select");
+        const postsSortSelect = sortContainer.querySelector("#posts-sort-select");
         const publishBtn = sortContainer.querySelector("#btn-open-publish");
         
         if (tabId === "tasks") {
             // 任务榜：隐藏通用排序，显示任务筛选
             hubSortSelect.style.display = "none";
+            postsSortSelect.style.display = "none";
             taskStatusFilter.style.display = "block";
             taskSortSelect.style.display = "block";
             publishBtn.style.display = "block";
         } else if (tabId === "creators") {
             // 🎯 创作者界面：隐藏发布按钮
             hubSortSelect.style.display = "block";
+            postsSortSelect.style.display = "none";
             taskStatusFilter.style.display = "none";
             taskSortSelect.style.display = "none";
             publishBtn.style.display = "none";
+        } else if (tabId === "posts") {
+            // 🎯 讨论区：显示讨论区排序，隐藏通用排序和任务筛选
+            hubSortSelect.style.display = "none";
+            postsSortSelect.style.display = "block";
+            taskStatusFilter.style.display = "none";
+            taskSortSelect.style.display = "none";
+            publishBtn.style.display = "block";
         } else {
-            // 其他Tab：显示通用排序，隐藏任务筛选
+            // 其他Tab：显示通用排序，隐藏任务筛选和讨论区排序
             hubSortSelect.style.display = "block";
+            postsSortSelect.style.display = "none";
             taskStatusFilter.style.display = "none";
             taskSortSelect.style.display = "none";
             publishBtn.style.display = "block";
@@ -386,6 +409,15 @@ export function buildSidebarDOM() {
             detail: {
                 status: sortContainer.querySelector("#task-status-filter").value,
                 sort: sortContainer.querySelector("#task-sort-select").value
+            }
+        }));
+    };
+
+    // 🎯 讨论区排序控件事件绑定
+    sortContainer.querySelector("#posts-sort-select").onchange = () => {
+        window.dispatchEvent(new CustomEvent("comfy-posts-filter-change", {
+            detail: {
+                sort: sortContainer.querySelector("#posts-sort-select").value
             }
         }));
     };

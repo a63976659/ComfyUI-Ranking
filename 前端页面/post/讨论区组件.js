@@ -45,8 +45,9 @@ let currentFilterHandler = null;
 /**
  * 💬 创建讨论区视图
  */
-export function createPostsView(currentUser) {
+export function createPostsView(currentUser, keyword = "") {
     currentUserCache = currentUser;
+    const searchKeyword = keyword.toLowerCase();
     
     const container = document.createElement("div");
     Object.assign(container.style, {
@@ -62,13 +63,6 @@ export function createPostsView(currentUser) {
     });
     
     container.innerHTML = `
-        <!-- 🎯 排序筛选栏 -->
-        <div id="posts-filter-bar" style="display: flex; align-items: center; justify-content: flex-end; padding: 10px 15px; border-bottom: 1px solid #333; background: #1a1a1a; gap: 10px;">
-            <select id="posts-sort-select" style="background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px 10px; font-size: 12px; cursor: pointer;">
-                ${SORT_OPTIONS.map(opt => `<option value="${opt.value}">${opt.label}</option>`).join('')}
-            </select>
-        </div>
-        
         <!-- 🎯 瀑布流容器（发布按钮已移至顶部统一发布按钮） -->
         <div id="posts-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 15px; overflow-y: auto; flex: 1;">
             <!-- 加载占位 -->
@@ -96,16 +90,38 @@ export function createPostsView(currentUser) {
     const postsGrid = container.querySelector("#posts-grid");
     const loadMoreWrapper = container.querySelector("#load-more-wrapper");
     const loadMoreBtn = container.querySelector("#btn-load-more");
-    const sortSelect = container.querySelector("#posts-sort-select");
     
     // 获取缓存Key（包含排序参数）
     const getCacheKey = () => `${CACHE_KEY_PREFIX}_${currentSort}`;
     
-    // 🎯 监听排序变化
-    sortSelect.onchange = (e) => {
-        currentSort = e.target.value;
-        currentPage = 1;
-        loadPosts(1, false);
+    // 🔄 本地排序函数
+    const sortPostsLocally = (posts, sortBy) => {
+        const sorted = [...posts]; // 不修改原数组
+        switch (sortBy) {
+            case "likes":
+                sorted.sort((a, b) => (b.likes || 0) - (a.likes || 0));
+                break;
+            case "favorites":
+                sorted.sort((a, b) => (b.favorites || 0) - (a.favorites || 0));
+                break;
+            case "views":
+                sorted.sort((a, b) => (b.views || 0) - (a.views || 0));
+                break;
+            case "daily_views":
+                sorted.sort((a, b) => (b.daily_views || 0) - (a.daily_views || 0));
+                break;
+            case "tips":
+                sorted.sort((a, b) => {
+                    const sumA = (a.tip_board || []).reduce((s, t) => s + (t.amount || 0), 0);
+                    const sumB = (b.tip_board || []).reduce((s, t) => s + (t.amount || 0), 0);
+                    return sumB - sumA;
+                });
+                break;
+            default: // latest
+                sorted.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+                break;
+        }
+        return sorted;
     };
     
     // 🎯 监听外部筛选变化事件（与任务榜保持一致）
@@ -113,9 +129,18 @@ export function createPostsView(currentUser) {
         const { sort } = e.detail;
         if (sort) {
             currentSort = sort;
-            sortSelect.value = sort;
             currentPage = 1;
-            loadPosts(1, false);
+            
+            // 🚀 本地排序优先：已有数据时直接本地排序渲染
+            if (allPostsData.length > 0) {
+                const sorted = sortPostsLocally(allPostsData, currentSort);
+                renderPostsFromCache(sorted);
+                // 后台静默刷新最新数据
+                silentRefresh();
+            } else {
+                // 无数据时走正常网络加载
+                loadPosts(1, false);
+            }
         }
     };
     
@@ -193,7 +218,16 @@ export function createPostsView(currentUser) {
                 postsGrid.innerHTML = "";
             }
             
-            if (posts.length === 0 && page === 1) {
+            // 🔍 搜索过滤
+            let displayPosts = posts;
+            if (searchKeyword) {
+                displayPosts = posts.filter(post => {
+                    const text = `${post.title||''} ${post.content||''} ${post.author_name||''} ${post.author||''}`.toLowerCase();
+                    return text.includes(searchKeyword);
+                });
+            }
+            
+            if (displayPosts.length === 0 && page === 1) {
                 postsGrid.innerHTML = `
                     <div style="grid-column: span 2; text-align: center; padding: 60px 20px; color: #666;">
                         <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
@@ -207,7 +241,7 @@ export function createPostsView(currentUser) {
             
             // 渲染帖子卡片
             const cards = [];
-            posts.forEach(post => {
+            displayPosts.forEach(post => {
                 const card = createPostCard(post);
                 cards.push(card);
                 postsGrid.appendChild(card);
@@ -221,9 +255,10 @@ export function createPostsView(currentUser) {
                 });
             }
             
-            // 显示/隐藏加载更多
+            // 显示/隐藏加载更多（基于过滤后的数据）
             const loadedCount = page * PAGE_SIZE;
-            if (loadedCount < total) {
+            const filteredTotal = searchKeyword ? displayPosts.length : total;
+            if (loadedCount < filteredTotal) {
                 loadMoreWrapper.style.display = "block";
             } else {
                 loadMoreWrapper.style.display = "none";
@@ -256,7 +291,16 @@ export function createPostsView(currentUser) {
     const renderPostsFromCache = (posts) => {
         postsGrid.innerHTML = "";
         
-        if (posts.length === 0) {
+        // 🔍 搜索过滤
+        let filteredPosts = posts;
+        if (searchKeyword) {
+            filteredPosts = posts.filter(post => {
+                const text = `${post.title||''} ${post.content||''} ${post.author_name||''} ${post.author||''}`.toLowerCase();
+                return text.includes(searchKeyword);
+            });
+        }
+        
+        if (filteredPosts.length === 0) {
             postsGrid.innerHTML = `
                 <div style="grid-column: span 2; text-align: center; padding: 60px 20px; color: #666;">
                     <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
@@ -269,7 +313,7 @@ export function createPostsView(currentUser) {
         }
         
         // 渲染第一页
-        const firstPage = posts.slice(0, PAGE_SIZE);
+        const firstPage = filteredPosts.slice(0, PAGE_SIZE);
         const cards = [];
         firstPage.forEach(post => {
             const card = createPostCard(post);
@@ -284,7 +328,7 @@ export function createPostsView(currentUser) {
         });
         
         // 显示加载更多
-        if (posts.length > PAGE_SIZE) {
+        if (filteredPosts.length > PAGE_SIZE) {
             loadMoreWrapper.style.display = "block";
         } else {
             loadMoreWrapper.style.display = "none";

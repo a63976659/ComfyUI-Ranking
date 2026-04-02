@@ -98,7 +98,16 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         }
 
         if (!editItemData.type.startsWith("recommend")) {
-            if (editItemData.link && editItemData.link.includes("huggingface.co")) {
+            if (editItemData.is_netdisk && editItemData.link) {
+                // ☁️ 网盘资源：优先检查网盘标志
+                resTypeSelect.value = "netdisk";
+                const inputNetdiskLink = container.querySelector("#pub-netdisk-link");
+                if (inputNetdiskLink) inputNetdiskLink.value = editItemData.link;
+                const inputNetdiskPassword = container.querySelector("#pub-netdisk-password");
+                if (inputNetdiskPassword && editItemData.netdisk_password) {
+                    inputNetdiskPassword.value = editItemData.netdisk_password;
+                }
+            } else if (editItemData.link && editItemData.link.includes("huggingface.co")) {
                 resTypeSelect.value = "json";
                 container.querySelector("#json-file-hint").style.display = "inline";
             } else if (editItemData.link) {
@@ -172,6 +181,9 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
             }
         }
     };
+
+    // ☁️ 编辑模式下：定义完 updateFormView 后，立即刷新表单UI状态
+    if (isEditMode) updateFormView();
 
     typeSelect.onchange = updateFormView;
     recommendTypeSelect.onchange = updateFormView;

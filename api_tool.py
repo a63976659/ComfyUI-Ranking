@@ -137,7 +137,11 @@ async def install_private_tool_handler(request):
                 for member in namelist:
                     if member.startswith(top_level_dir):
                         target_path = member.replace(top_level_dir, "", 1)
-                        if not target_path: continue 
+                        if not target_path: continue
+                        # 防止路径穿越攻击
+                        if ".." in target_path or target_path.startswith("/") or target_path.startswith("\\"):
+                            print(f"[ComfyUI-Ranking] ⚠️ 跳过不安全路径: {target_path}")
+                            continue
                             
                         source = zip_ref.open(member)
                         dest_path = os.path.join(extract_target_path, target_path)

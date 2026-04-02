@@ -4,10 +4,27 @@ import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { api } from "../core/网络请求API.js"; 
 import { openUserProfileModal } from "../profile/个人中心视图.js";
 import { CACHE } from "../core/全局配置.js";
+import { removeCache } from "../components/性能优化工具.js";
 
 // ==========================================
 // 📦 已获取资源记录管理
 // ==========================================
+
+/**
+ * 🗑️ 清除使用量相关缓存（触发列表刷新）
+ */
+function clearUsesCache() {
+    removeCache('api_/api/items');
+    removeCache('api_/api/creators');
+    const tabs = ['tools', 'apps', 'recommends', 'creators'];
+    const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views'];
+    for (const tab of tabs) {
+        for (const sort of sorts) {
+            removeCache(`ListCache_${tab}_${sort}`);
+        }
+    }
+    console.log('📊 缓存已清除，触发列表强制刷新');
+}
 
 /**
  * 保存已获取的资源记录到本地
@@ -168,6 +185,45 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             }
         }
 
+        // ☁️ 优先处理网盘资源（不论是工具还是应用）
+        const isNetdisk = purchaseRes?.is_netdisk || itemData.is_netdisk;
+        const netdiskPassword = purchaseRes?.netdisk_password || itemData.netdisk_password;
+        
+        if (isNetdisk) {
+            // 网盘资源：显示链接和密码
+            api.recordItemUse(itemData.id).then(() => {
+                clearUsesCache();
+                window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
+            }).catch(err => console.warn('📊 使用量记录失败:', err));
+            saveAcquiredItem(itemData);
+            
+            if (netdiskPassword) {
+                inlineStatusBox.innerHTML = `
+                    <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，网盘资源信息如下：</div>
+                    <div style="background: #1a1d2e; padding: 12px; border-radius: 6px; border: 1px solid #2d334a;">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <span style="color: #2196F3;">🔗 网盘链接：</span>
+                            <a href="${itemData.link}" target="_blank" style="color: #4CAF50; word-break: break-all;">点击打开</a>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="color: #FF9800;">🔐 提取码：</span>
+                            <code style="background: #333; padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;">${netdiskPassword}</code>
+                            <button onclick="navigator.clipboard.writeText('${netdiskPassword}'); this.innerText='✅ 已复制'" style="padding: 4px 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">📋 复制</button>
+                        </div>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 11px; color: #888;">💡 提示：请复制提取码后前往网盘下载资源</div>
+                `;
+            } else {
+                inlineStatusBox.innerHTML = `
+                    <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，请前往网盘下载：</div>
+                    <a href="${itemData.link}" target="_blank" style="color: #2196F3;">🔗 打开网盘链接</a>
+                `;
+            }
+            btnUse.innerHTML = `✅ 已获取`;
+            btnUse.style.background = "#4CAF50";
+            return;  // ← 提前返回，不进入 Git 安装流程
+        }
+
         if (isTool) {
             const installPromptText = isFree 
                 ? "✅ 授权通过！是否通过 Git 自动将此工具克隆安装到本地 <b>custom_nodes</b> 文件夹？" 
@@ -183,9 +239,6 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             inlineStatusBox.querySelector('#btn-cancel-install').onclick = () => inlineStatusBox.style.display = "none";
             inlineStatusBox.querySelector('#btn-confirm-install').onclick = async () => {
                 inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在后台静默安装 (关闭侧边栏不影响进度)...</span>`;
-                
-                // 【需求2修改核心】：只有不是免单情况才涨使用量
-                if (!alreadyOwned) { try { await api.incrementItemUse(itemData.id); } catch(err) {} }
                 
                 try {
                     // 🚀 双轨分流引擎：免费走直连 Clone，付费走云端防盗版 ZIP 覆写
@@ -211,6 +264,13 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                             localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
                         }
                         
+                        // 记录使用量（后端自动去重）
+                        try {
+                            await api.recordItemUse(itemData.id);
+                            clearUsesCache();
+                            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
+                        } catch(err) { console.warn('📊 使用量记录失败:', err); }
+                        
                         // 🚀 保存到已获取记录
                         saveAcquiredItem(itemData);
                         
@@ -225,22 +285,23 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
         } else if (isApp) {
             inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 授权通过，正在安全鉴权并热加载入工作区...</span>`;
             
-            // 【需求2修改核心】：只有不是免单情况才涨使用量
-            if (!alreadyOwned) { api.incrementItemUse(itemData.id).catch(()=>{}); }
-            
             // 附带 account 凭证，解决问题 2 (一键鉴权加载)
-            fetch("/community_hub/download_app", { 
-                method: "POST", 
-                headers: { "Content-Type": "application/json" }, 
-                body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account }) 
-            })
-            .then(res => res.json())
-            .then(data => {
+            try {
+                const res = await fetch("/community_hub/download_app", { 
+                    method: "POST", 
+                    headers: { "Content-Type": "application/json" }, 
+                    body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account }) 
+                });
+                if (!res.ok) {
+                    const errText = await res.text().catch(() => '未知服务端错误');
+                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败 (${res.status})：${errText}</span>`;
+                    return;
+                }
+                const data = await res.json();
                 if (data.error) { 
                     inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${data.error}</span>`; 
                     showToast(`工作流加载失败：${data.error}`, "error");
-                } 
-                else {
+                } else {
                     app.loadGraphData(data.data); 
                     inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-weight: bold;">✅ 工作流已加载到画布！</div><div style="color: #888; margin-top: 4px;">由于本地节点差异可能出现飘红，请使用管理器补全节点。</div>`;
                     showToast(`✅ 工作流 [${itemData.title}] 已成功加载到画布！`, "success");
@@ -250,6 +311,12 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
                     }
                     
+                    // 记录使用量（后端自动去重）
+                    api.recordItemUse(itemData.id).then(() => {
+                        clearUsesCache();
+                        window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
+                    }).catch(err => console.warn('📊 使用量记录失败:', err));
+                    
                     // 🚀 保存到已获取记录
                     saveAcquiredItem(itemData);
                     
@@ -257,12 +324,17 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     btnUse.innerHTML = `✅ 已下载`;
                     btnUse.style.background = "#4CAF50";
                 }
-            })
-            .catch(() => { inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务或云端拦截。</span>`; });
+            } catch(err) {
+                console.error('❌ 应用下载失败:', err);
+                inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务：${err.message || '网络错误'}</span>`;
+            }
         } else {
             // ☁️ 网盘链接或纯链接模式
-            // 【需求2修改核心】：只有不是免单情况才涨使用量
-            if (!alreadyOwned) { api.incrementItemUse(itemData.id).catch(()=>{}); }
+            // 记录使用量（后端自动去重）
+            api.recordItemUse(itemData.id).then(() => {
+                clearUsesCache();
+                window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
+            }).catch(err => console.warn('📊 使用量记录失败:', err));
             
             // ☁️ 从购买响应中获取网盘信息（安全：只有购买成功后才返回）
             const isNetdisk = purchaseRes?.is_netdisk || itemData.is_netdisk;

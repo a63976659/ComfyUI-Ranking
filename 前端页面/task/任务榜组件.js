@@ -58,8 +58,9 @@ const SORT_OPTIONS = [
 /**
  * 📝 创建任务榜视图
  */
-export function createTasksView(currentUser) {
+export function createTasksView(currentUser, keyword = "") {
     currentUserCache = currentUser;
+    const searchKeyword = keyword.toLowerCase();
     
     const container = document.createElement("div");
     Object.assign(container.style, {
@@ -115,10 +116,36 @@ export function createTasksView(currentUser) {
     // 🎯 监听外部筛选变化事件
     const handleFilterChange = (e) => {
         const { status, sort } = e.detail;
-        currentStatus = status;
-        currentSort = sort;
-        currentPage = 1;
-        loadTasks(1, false);
+        
+        // 状态变化时，需要重新加载数据（因为后端按状态过滤）
+        if (status !== undefined && status !== currentStatus) {
+            currentStatus = status;
+            currentPage = 1;
+            loadTasks(1, false);
+            return;
+        }
+        
+        // 排序变化时，本地排序优先
+        if (sort) {
+            currentSort = sort;
+            currentPage = 1;
+            
+            // 🚀 本地排序优先：已有数据时直接本地排序渲染
+            if (allTasksData.length > 0) {
+                // 先应用状态过滤（如果有），再排序
+                let filtered = allTasksData;
+                if (currentStatus) {
+                    filtered = allTasksData.filter(t => t.status === currentStatus);
+                }
+                const sorted = sortTasksLocally(filtered, currentSort);
+                renderTasksFromCache(sorted);
+                // 后台静默刷新最新数据
+                silentRefresh();
+            } else {
+                // 无数据时走正常网络加载
+                loadTasks(1, false);
+            }
+        }
     };
     
     // 🔧 修复内存泄漏：先移除旧的监听器，再添加新的
@@ -130,6 +157,35 @@ export function createTasksView(currentUser) {
     
     // 获取缓存Key
     const getCacheKey = () => `${CACHE_KEY_PREFIX}_${currentStatus}_${currentSort}`;
+    
+    // 🔄 本地排序函数
+    const sortTasksLocally = (tasks, sortBy) => {
+        const sorted = [...tasks];
+        switch (sortBy) {
+            case "likes":
+                sorted.sort((a, b) => (b.likes || 0) - (a.likes || 0));
+                break;
+            case "favorites":
+                sorted.sort((a, b) => (b.favorites || 0) - (a.favorites || 0));
+                break;
+            case "views":
+                sorted.sort((a, b) => (b.views || 0) - (a.views || 0));
+                break;
+            case "daily_views":
+                sorted.sort((a, b) => (b.daily_views || 0) - (a.daily_views || 0));
+                break;
+            case "price":
+                sorted.sort((a, b) => (b.price || 0) - (a.price || 0));
+                break;
+            case "deadline":
+                sorted.sort((a, b) => (a.deadline || Infinity) - (b.deadline || Infinity));
+                break;
+            default: // latest
+                sorted.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+                break;
+        }
+        return sorted;
+    };
     
     // 显示骨架屏
     const showSkeleton = () => {
@@ -179,7 +235,16 @@ export function createTasksView(currentUser) {
                 tasksList.innerHTML = "";
             }
             
-            if (tasks.length === 0 && page === 1) {
+            // 🔍 搜索过滤
+            let displayTasks = tasks;
+            if (searchKeyword) {
+                displayTasks = tasks.filter(task => {
+                    const text = `${task.title||''} ${task.description||''} ${task.publisher_name||''} ${task.publisher||''}`.toLowerCase();
+                    return text.includes(searchKeyword);
+                });
+            }
+            
+            if (displayTasks.length === 0 && page === 1) {
                 tasksList.innerHTML = `
                     <div style="text-align: center; padding: 60px 20px; color: #666;">
                         <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
@@ -193,7 +258,7 @@ export function createTasksView(currentUser) {
             
             // 渲染任务卡片
             const cards = [];
-            tasks.forEach(task => {
+            displayTasks.forEach(task => {
                 const card = createTaskCard(task);
                 cards.push(card);
                 tasksList.appendChild(card);
@@ -207,9 +272,10 @@ export function createTasksView(currentUser) {
                 });
             }
             
-            // 显示/隐藏加载更多
+            // 显示/隐藏加载更多（基于过滤后的数据）
             const loadedCount = page * PAGE_SIZE;
-            if (loadedCount < total) {
+            const filteredTotal = searchKeyword ? displayTasks.length : total;
+            if (loadedCount < filteredTotal) {
                 loadMoreWrapper.style.display = "block";
             } else {
                 loadMoreWrapper.style.display = "none";
@@ -242,7 +308,16 @@ export function createTasksView(currentUser) {
     const renderTasksFromCache = (tasks) => {
         tasksList.innerHTML = "";
         
-        if (tasks.length === 0) {
+        // 🔍 搜索过滤
+        let filteredTasks = tasks;
+        if (searchKeyword) {
+            filteredTasks = tasks.filter(task => {
+                const text = `${task.title||''} ${task.description||''} ${task.publisher_name||''} ${task.publisher||''}`.toLowerCase();
+                return text.includes(searchKeyword);
+            });
+        }
+        
+        if (filteredTasks.length === 0) {
             tasksList.innerHTML = `
                 <div style="text-align: center; padding: 60px 20px; color: #666;">
                     <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
@@ -255,7 +330,7 @@ export function createTasksView(currentUser) {
         }
         
         // 渲染第一页
-        const firstPage = tasks.slice(0, PAGE_SIZE);
+        const firstPage = filteredTasks.slice(0, PAGE_SIZE);
         const cards = [];
         firstPage.forEach(task => {
             const card = createTaskCard(task);
@@ -270,7 +345,7 @@ export function createTasksView(currentUser) {
         });
         
         // 显示加载更多
-        if (tasks.length > PAGE_SIZE) {
+        if (filteredTasks.length > PAGE_SIZE) {
             loadMoreWrapper.style.display = "block";
         } else {
             loadMoreWrapper.style.display = "none";

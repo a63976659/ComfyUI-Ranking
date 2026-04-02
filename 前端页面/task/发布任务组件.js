@@ -16,7 +16,8 @@ import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
  */
 function clearTaskListCache() {
     removeCache('api_/api/tasks');
-    const sorts = ['latest', 'popular', 'hot'];
+    // 任务榜排序值：latest, price, deadline, views, daily_views, likes, favorites
+    const sorts = ['latest', 'price', 'deadline', 'views', 'daily_views', 'likes', 'favorites'];
     for (const sort of sorts) {
         removeCache(`ListCache_tasks_${sort}`);
     }

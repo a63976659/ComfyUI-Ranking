@@ -160,10 +160,17 @@ function burnLocalFiles(itemId) {
     removeCache(`ItemOwnership_${itemId}`);
     
     // 清除列表缓存（强制下次刷新）
-    removeCache('ItemsCache_all');
-    removeCache('ItemsCache_tools');
-    removeCache('ItemsCache_apps');
-    removeCache('ItemsCache_recommended');
+    removeCache('api_/api/items');
+    removeCache('api_/api/creators');
+    
+    // 清除工具/应用/推荐列表缓存（使用标准 ListCache 格式）
+    const tabs = ['tools', 'apps', 'recommends'];
+    const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views'];
+    for (const tab of tabs) {
+        for (const sort of sorts) {
+            removeCache(`ListCache_${tab}_${sort}`);
+        }
+    }
     
     console.log(`🔥 已焚毁资源 ${itemId} 的本地数据`);
 }
@@ -393,12 +400,17 @@ export function createItemDetailView(itemData, currentUser) {
         </div>
     `;
 
+    // 🚀 创建安装状态容器
+    const inlineStatusBox = document.createElement("div");
+    inlineStatusBox.id = "inline-status-box";
+    Object.assign(inlineStatusBox.style, { display: "none", marginTop: "15px", padding: "12px", background: "#1e1e1e", borderRadius: "6px", border: "1px solid #333", fontSize: "13px" });
+    container.appendChild(inlineStatusBox);
+
     container.querySelector("#btn-back-detail").onclick = () => window.dispatchEvent(new CustomEvent("comfy-route-back"));
     
     // 🚀 绑定安装/更新按钮事件
     const btnUseItem = container.querySelector("#btn-use-item");
-    const inlineStatusBox = container.querySelector("#inline-status-box");
-    if (btnUseItem && inlineStatusBox) {
+    if (btnUseItem) {
         setupResourceInstall(btnUseItem, itemData, currentUser, inlineStatusBox);
     }
     
