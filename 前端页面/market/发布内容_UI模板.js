@@ -112,6 +112,17 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
             <textarea id="pub-full" rows="36" placeholder="${t('publish.full_desc_placeholder')}" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; resize: vertical; box-sizing: border-box;"></textarea>
         </div>
 
+        <!-- 原创作品勾选框 -->
+        <div style="margin-bottom: 15px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="is-original-checkbox" ${safeData.is_original ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #4CAF50;" />
+                <span style="font-size: 13px; color: #ccc;">🎨 标记为原创作品</span>
+            </label>
+            <div style="font-size: 11px; color: #888; margin-top: 6px; padding-left: 24px;">
+                原创内容将获得特殊标识展示，请勿标记非原创内容
+            </div>
+        </div>
+
         <button id="btn-submit-publish" style="width: 100%; padding: 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 15px; transition: 0.3s; margin-bottom: 20px;">${submitBtnText}</button>
     `;
 }

@@ -289,12 +289,17 @@ export async function handlePublishSubmit(params) {
             imageUrls = uploadedUrls;     // 全部图片URL
         }
 
+        // 获取原创作品勾选状态
+        const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
+        const isOriginal = isOriginalCheckbox?.checked || false;
+
         submitBtn.innerHTML = `⏳ ${t('publish.syncing')}`;
         const submitData = { 
             type, title, shortDesc, fullDesc, price, link: finalLink, coverUrl, imageUrls,  // 🖼️ 添加 imageUrls
             author: currentUser.account, github_token,
             netdisk_password,  // ☁️ 网盘密码（后端加密存储）
-            is_netdisk: isNetdisk  // ☁️ 标记为网盘资源
+            is_netdisk: isNetdisk,  // ☁️ 标记为网盘资源
+            is_original: isOriginal  // 🎨 标记为原创作品
         };
 
         if (isEditMode) {

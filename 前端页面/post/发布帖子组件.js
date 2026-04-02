@@ -102,6 +102,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
     const editTitle = isEditMode ? (editPostData.title || '') : '';
     const editContent = isEditMode ? (editPostData.content || '') : '';
     const editImageUrls = isEditMode ? (editPostData.images || editPostData.image_urls || []) : [];
+    const editIsOriginal = isEditMode ? (editPostData.is_original || false) : false;
     
     container.innerHTML = `
         <!-- 顶部标题栏 -->
@@ -156,6 +157,17 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 </div>
             </div>
             
+            <!-- 原创作品勾选框 -->
+            <div style="margin-bottom: 15px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="is-original-checkbox" ${editIsOriginal ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #4CAF50;" />
+                    <span style="font-size: 13px; color: #ccc;">🎨 标记为原创作品</span>
+                </label>
+                <div style="font-size: 11px; color: #888; margin-top: 6px; padding-left: 24px;">
+                    原创内容将获得特殊标识展示，请勿标记非原创内容
+                </div>
+            </div>
+            
             <!-- 提示信息 -->
             <div style="background: rgba(76,175,80,0.1); border: 1px solid rgba(76,175,80,0.3); border-radius: 6px; padding: 12px; font-size: 12px; color: #aaa; line-height: 1.6;">
                 💡 <strong>${t('post.publish_notice')}：</strong><br>
@@ -178,6 +190,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
     const titleCount = container.querySelector("#title-count");
     const contentCount = container.querySelector("#content-count");
     const submitBtn = container.querySelector("#btn-submit-post");
+    const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
     
     // 编辑模式：加载已有的图片
     if (isEditMode && editImageUrls.length > 0) {
@@ -418,6 +431,9 @@ export function createPublishPostView(currentUser, editPostData = null) {
             // 合并已有图片和新上传的图片
             const allImages = [...existingImageUrls, ...uploadedUrls];
             
+            // 获取原创作品勾选状态
+            const isOriginal = isOriginalCheckbox?.checked || false;
+            
             if (isEditMode) {
                 // 编辑模式：更新帖子
                 submitBtn.textContent = `⏳ ${t('common.saving')}...`;
@@ -425,7 +441,8 @@ export function createPublishPostView(currentUser, editPostData = null) {
                     title,
                     content,
                     cover_image: allImages[0],
-                    images: allImages
+                    images: allImages,
+                    is_original: isOriginal
                 });
                 
                 showToast(t('post.edit_success'), "success");
@@ -437,7 +454,8 @@ export function createPublishPostView(currentUser, editPostData = null) {
                     content,
                     cover_image: allImages[0],
                     images: allImages,
-                    author: currentUser.account
+                    author: currentUser.account,
+                    is_original: isOriginal
                 });
                 
                 showToast(t('post.publish_success'), "success");

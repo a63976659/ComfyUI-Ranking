@@ -23,12 +23,24 @@ import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 
 // 缓存配置
-const CACHE_KEY = "PostsCache";
+const CACHE_KEY_PREFIX = "PostsCache";
 const CACHE_TTL = 1000 * 60 * 30;  // 30分钟缓存
 const PAGE_SIZE = 20;
 
 // 缓存当前用户
 let currentUserCache = null;
+
+// 排序选项
+const SORT_OPTIONS = [
+    { value: "latest", label: "最新" },
+    { value: "likes", label: "最多点赞" },
+    { value: "favorites", label: "最多收藏" },
+    { value: "views", label: "🔥 浏览总量" },
+    { value: "daily_views", label: "🔥 今日热门" }
+];
+
+// 🔧 修复内存泄漏：保存当前筛选事件监听器引用，以便在重新创建时移除
+let currentFilterHandler = null;
 
 /**
  * 💬 创建讨论区视图
@@ -50,6 +62,13 @@ export function createPostsView(currentUser) {
     });
     
     container.innerHTML = `
+        <!-- 🎯 排序筛选栏 -->
+        <div id="posts-filter-bar" style="display: flex; align-items: center; justify-content: flex-end; padding: 10px 15px; border-bottom: 1px solid #333; background: #1a1a1a; gap: 10px;">
+            <select id="posts-sort-select" style="background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px 10px; font-size: 12px; cursor: pointer;">
+                ${SORT_OPTIONS.map(opt => `<option value="${opt.value}">${opt.label}</option>`).join('')}
+            </select>
+        </div>
+        
         <!-- 🎯 瀑布流容器（发布按钮已移至顶部统一发布按钮） -->
         <div id="posts-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 15px; overflow-y: auto; flex: 1;">
             <!-- 加载占位 -->
@@ -71,11 +90,41 @@ export function createPostsView(currentUser) {
     
     // 加载帖子数据
     let currentPage = 1;
+    let currentSort = "latest";
     let allPostsData = [];  // 全量数据缓存
     let isLoadingFromNetwork = false;
     const postsGrid = container.querySelector("#posts-grid");
     const loadMoreWrapper = container.querySelector("#load-more-wrapper");
     const loadMoreBtn = container.querySelector("#btn-load-more");
+    const sortSelect = container.querySelector("#posts-sort-select");
+    
+    // 获取缓存Key（包含排序参数）
+    const getCacheKey = () => `${CACHE_KEY_PREFIX}_${currentSort}`;
+    
+    // 🎯 监听排序变化
+    sortSelect.onchange = (e) => {
+        currentSort = e.target.value;
+        currentPage = 1;
+        loadPosts(1, false);
+    };
+    
+    // 🎯 监听外部筛选变化事件（与任务榜保持一致）
+    const handleFilterChange = (e) => {
+        const { sort } = e.detail;
+        if (sort) {
+            currentSort = sort;
+            sortSelect.value = sort;
+            currentPage = 1;
+            loadPosts(1, false);
+        }
+    };
+    
+    // 🔧 修复内存泄漏：先移除旧的监听器，再添加新的
+    if (currentFilterHandler) {
+        window.removeEventListener("comfy-posts-filter-change", currentFilterHandler);
+    }
+    currentFilterHandler = handleFilterChange;
+    window.addEventListener("comfy-posts-filter-change", handleFilterChange);
     
     // 显示骨架屏
     const showSkeleton = () => {
@@ -106,9 +155,11 @@ export function createPostsView(currentUser) {
     };
     
     const loadPosts = async (page = 1, append = false) => {
+        const cacheKey = getCacheKey();
+        
         // ✅ 优先从本地缓存读取
         if (!append && page === 1) {
-            const cachedData = getCache(CACHE_KEY);
+            const cachedData = getCache(cacheKey);
             if (cachedData && cachedData.length > 0) {
                 // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
                 allPostsData = proxyImages(cachedData);
@@ -125,7 +176,7 @@ export function createPostsView(currentUser) {
             }
             
             isLoadingFromNetwork = true;
-            const res = await api.getPosts(page, PAGE_SIZE);
+            const res = await api.getPosts(page, PAGE_SIZE, currentSort);
             const posts = res.data || [];
             const total = res.total || 0;
             isLoadingFromNetwork = false;
@@ -133,7 +184,7 @@ export function createPostsView(currentUser) {
             // 缓存第一页数据
             if (page === 1) {
                 allPostsData = posts;
-                setCache(CACHE_KEY, posts, CACHE_TTL, true);
+                setCache(cacheKey, posts, CACHE_TTL, true);
             } else {
                 allPostsData = [...allPostsData, ...posts];
             }
@@ -183,7 +234,7 @@ export function createPostsView(currentUser) {
             isLoadingFromNetwork = false;
             // 网络失败时尝试从缓存读取
             if (!append) {
-                const cachedData = getCache(CACHE_KEY);
+                const cachedData = getCache(cacheKey);
                 if (cachedData && cachedData.length > 0) {
                     // 🚀 缓存数据也需要过一遍图片代理
                     allPostsData = proxyImages(cachedData);
@@ -246,12 +297,13 @@ export function createPostsView(currentUser) {
         
         try {
             isLoadingFromNetwork = true;
-            const res = await api.getPosts(1, PAGE_SIZE);
+            const res = await api.getPosts(1, PAGE_SIZE, currentSort);
             const posts = res.data || [];
             isLoadingFromNetwork = false;
             
             // 更新缓存
-            setCache(CACHE_KEY, posts, CACHE_TTL, true);
+            const cacheKey = getCacheKey();
+            setCache(cacheKey, posts, CACHE_TTL, true);
             allPostsData = posts;
         } catch (err) {
             isLoadingFromNetwork = false;
@@ -309,6 +361,8 @@ function createPostCard(post) {
             <!-- 互动数据 -->
             <div style="display: flex; align-items: center; gap: 12px; font-size: 11px; color: #888;">
                 <span>❤️ ${post.likes || 0}</span>
+                <span>⭐ ${post.favorites || 0}</span>
+                <span>🔥 ${post.views || 0}</span>
                 <span style="margin-left: auto; font-size: 10px;">${timeStr}</span>
             </div>
         </div>

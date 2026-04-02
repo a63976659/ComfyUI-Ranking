@@ -8,11 +8,13 @@
 import { api, proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
-import { PLACEHOLDERS } from "../core/全局配置.js";
+import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { removeCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
 import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
+import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
+import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml } from "../components/互动工具函数.js";
 
 /**
  * 📝 创建任务详情视图
@@ -80,6 +82,9 @@ async function loadTaskDetail(container, taskId, currentUser) {
         
         renderTaskDetail(contentEl, task, currentUser);
         
+        // 👀 记录浏览量（fire-and-forget，不阻塞渲染）
+        recordTaskView(contentEl, taskId);
+        
     } catch (err) {
         console.error("加载任务详情失败:", err);
         loadingEl.innerHTML = `
@@ -87,6 +92,37 @@ async function loadTaskDetail(container, taskId, currentUser) {
             <div style="color: #F44336;">${t('common.load_failed')}: ${err.message}</div>
         `;
     }
+}
+
+/**
+ * 👀 记录任务浏览量（带60秒防抖）- 使用公共工具函数
+ */
+async function recordTaskView(contentEl, taskId) {
+    console.log('[浏览量调试] recordTaskView 被调用, taskId:', taskId);
+    console.log('[浏览量调试] api.recordTaskView 类型:', typeof api.recordTaskView);
+    
+    const result = await recordView(api.recordTaskView, taskId, 'task', (res) => {
+        console.log('[浏览量调试] recordTaskView 成功, 响应:', JSON.stringify(res));
+        updateTaskViewStats(contentEl, res.views, res.daily_views);
+        
+        // 验证DOM更新
+        const totalEl = contentEl.querySelector("#task-view-total");
+        console.log('[浏览量调试] DOM更新后 task-view-total:', totalEl?.textContent);
+    });
+    
+    if (!result) {
+        console.warn('[浏览量调试] recordTaskView 返回 null (可能被防抖拦截或请求失败)');
+    }
+}
+
+/**
+ * 👀 更新任务浏览量显示
+ */
+function updateTaskViewStats(contentEl, views, dailyViews) {
+    const totalEl = contentEl.querySelector("#task-view-total");
+    const dailyEl = contentEl.querySelector("#task-view-daily");
+    if (totalEl) totalEl.textContent = views || 0;
+    if (dailyEl) dailyEl.textContent = dailyViews || 0;
 }
 
 /**
@@ -108,6 +144,10 @@ function renderTaskDetail(contentEl, task, currentUser) {
     const isPublisher = currentAccount === task.publisher;
     const isAssignee = currentAccount === task.assignee;
     const hasApplied = (task.applicants || []).some(a => a.account === currentAccount);
+    
+    // 👍 检查当前用户是否已点赞/收藏
+    const isLiked = task.liked_by?.includes(currentAccount) || false;
+    const isFavorited = task.favorited_by?.includes(currentAccount) || false;
     
     contentEl.innerHTML = `
         <!-- 状态 + 价格 -->
@@ -149,6 +189,12 @@ function renderTaskDetail(contentEl, task, currentUser) {
             ` : ""}
         </div>
         
+        <!-- 👀 浏览量统计 -->
+        <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px; padding: 10px; background: #1a1a1a; border-radius: 8px; color: #888; font-size: 12px;">
+            <span style="display: flex; align-items: center; gap: 4px;">🔥 浏览总量: <span id="task-view-total" style="color: #fff; font-weight: 500;">${task.views || 0}</span></span>
+            <span style="display: flex; align-items: center; gap: 4px;">📅 今日浏览: <span id="task-view-daily" style="color: #fff; font-weight: 500;">${task.daily_views || 0}</span></span>
+        </div>
+        
         <!-- 截止日期 -->
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 15px; padding: 10px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;">
             <span style="font-size: 18px;">⏰</span>
@@ -184,6 +230,46 @@ ${escapeHtml(task.description)}</div>
                 </a>
             </div>
         ` : ""}
+        
+        <!-- 👍 互动按钮栏 -->
+        <div id="interaction-bar" style="display: flex; align-items: center; gap: 15px; padding: 15px 0; border-top: 1px solid #333; border-bottom: 1px solid #333; margin-bottom: 15px;">
+            <button id="btn-like" style="background: ${isLiked ? '#FF5722' : '#333'}; border: 1px solid ${isLiked ? '#FF5722' : '#555'}; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+                ❤️ <span id="like-count">${task.likes || 0}</span>
+            </button>
+            <button id="btn-favorite" style="background: ${isFavorited ? '#FFC107' : '#333'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+                ⭐ <span id="favorite-count">${task.favorites || 0}</span>
+            </button>
+            <button id="btn-tip" style="background: #333; border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+                💰 ${t('post.tip_author')}
+            </button>
+        </div>
+        
+        <!-- 💰 打赏榜单 -->
+        <div id="tip-board-area" style="margin-bottom: 15px;">
+            ${renderTipBoard(task.tip_board || [])}
+        </div>
+        
+        <!-- 💬 评论区 -->
+        <div style="margin-bottom: 15px;">
+            <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                💬 ${t('post.comments_title')} <span style="color: #888; font-weight: normal;">(${task.comments || 0})</span>
+            </div>
+            
+            <!-- 评论输入框 -->
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <input type="text" id="comment-input" placeholder="${t('post.comment_placeholder')}" style="flex: 1; padding: 10px 12px; background: #2a2a2a; border: 1px solid #444; border-radius: 20px; color: #fff; font-size: 13px; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
+                <button id="btn-send-comment" style="background: #4CAF50; border: none; color: #fff; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
+                    ${t('common.send')}
+                </button>
+            </div>
+            
+            <!-- 评论列表 -->
+            <div id="comments-list" style="display: flex; flex-direction: column; gap: 10px;">
+                <div style="text-align: center; padding: 20px; color: #888; font-size: 12px;">
+                    ${t('post.comment_loading')}
+                </div>
+            </div>
+        </div>
         
         <!-- 接单者信息（如果有） -->
         ${task.assignee ? `
@@ -235,6 +321,9 @@ ${escapeHtml(task.description)}</div>
         </div>
     `;
     
+    // 设置发布者 dataset，供评论区权限判断使用
+    contentEl.dataset.publisher = task.publisher;
+    
     // 渲染操作按钮
     renderActionButtons(contentEl.querySelector("#action-buttons"), task, currentUser, isPublisher, isAssignee, hasApplied);
     
@@ -250,25 +339,323 @@ ${escapeHtml(task.description)}</div>
         showDeleteTaskConfirm(task, contentEl);
     });
     
-    // 绑定申请者列表的选择按鈕
+    // 绑定申请者列表的选择按钮
     contentEl.querySelectorAll(".btn-assign").forEach(btn => {
-        btn.onclick = async () => {
+        btn.onclick = () => {
             const assignee = btn.dataset.account;
-            if (!confirm(`${t('task.confirm_assign', { assignee: assignee })}\n\n${t('task.confirm_deposit', { amount: task.deposit_amount })}`)) return;
-            
-            try {
-                await api.assignTask(task.id, assignee);
-                showToast(t('task.assign_success'), "success");
-                // 刷新页面
-                loadTaskDetail(contentEl.closest("div"), task.id, currentUser);
-            } catch (err) {
-                showToast(err.message || t('task.assign_failed'), "error");
-            }
+            showAssignConfirmDialog(task, assignee, contentEl, currentUser);
         };
     });
     
     // 绑定图片沙盒交互（缩放、拖动、轮播等）
     setupImageSandboxEvents(contentEl);
+    
+    // 👍 绑定互动事件（点赞/收藏/打赏）
+    bindTaskInteractionEvents(contentEl, task, currentUser);
+    
+    // 💬 加载评论
+    loadTaskComments(contentEl, task.id, currentUser);
+}
+
+/**
+ * 👤 显示接受任务申请确认对话框
+ */
+function showAssignConfirmDialog(task, assignee, contentEl, currentUser) {
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 15px;">👤</div>
+            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.confirm_assign', { assignee: assignee })}</div>
+            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.confirm_deposit', { amount: task.deposit_amount })}</div>
+            <div style="display: flex; gap: 10px;">
+                <button id="assign-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="assign-confirm" style="flex: 1; background: #4CAF50; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm')}</button>
+            </div>
+        </div>
+    `;
+    
+    content.querySelector("#assign-cancel").onclick = () => globalModal.closeTopModal();
+    
+    content.querySelector("#assign-confirm").onclick = async () => {
+        const confirmBtn = content.querySelector("#assign-confirm");
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = `⏳ ${t('common.confirming')}...`;
+        
+        try {
+            await api.assignTask(task.id, assignee);
+            showToast(t('task.assign_success'), "success");
+            globalModal.closeTopModal();
+            loadTaskDetail(contentEl.closest("div"), task.id, currentUser);
+        } catch (err) {
+            showToast(err.message || t('task.assign_failed'), "error");
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = t('common.confirm');
+        }
+    };
+    
+    globalModal.openModal(t('task.choose_assignee'), content, { width: "350px" });
+}
+
+/**
+ * 🙋 显示申请接单对话框
+ */
+function showApplyDialog(task, currentUser) {
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="margin-bottom: 15px;">
+            <div style="color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.apply_message_prompt')}</div>
+            <textarea id="apply-message" rows="4" placeholder="${t('task.apply_message_placeholder') || ''}" style="width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button id="apply-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button id="apply-confirm" style="flex: 1; background: #FF9800; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
+        </div>
+    `;
+    
+    content.querySelector("#apply-cancel").onclick = () => globalModal.closeTopModal();
+    
+    content.querySelector("#apply-confirm").onclick = async () => {
+        const message = content.querySelector("#apply-message").value;
+        const confirmBtn = content.querySelector("#apply-confirm");
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = `⏳ ${t('common.submitting')}...`;
+        
+        try {
+            await api.applyTask(task.id, message);
+            showToast(t('task.apply_success'), "success");
+            globalModal.closeTopModal();
+            // 重新加载任务详情
+            const container = document.querySelector('#task-content')?.parentElement;
+            if (container && currentUser) {
+                loadTaskDetail(container, task.id, currentUser);
+            }
+        } catch (err) {
+            showToast(err.message || t('task.apply_failed'), "error");
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = t('common.confirm_submit');
+        }
+    };
+    
+    globalModal.openModal(t('task.apply_task'), content, { width: "400px" });
+}
+
+/**
+ * ↩️ 显示撤回申请确认对话框
+ */
+function showCancelApplyConfirmDialog(task, currentUser) {
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 15px;">↩️</div>
+            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.confirm_cancel_apply')}</div>
+            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.cancel_apply_warning') || ''}</div>
+            <div style="display: flex; gap: 10px;">
+                <button id="cancel-apply-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="cancel-apply-confirm" style="flex: 1; background: #FF9800; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm')}</button>
+            </div>
+        </div>
+    `;
+    
+    content.querySelector("#cancel-apply-cancel").onclick = () => globalModal.closeTopModal();
+    
+    content.querySelector("#cancel-apply-confirm").onclick = async () => {
+        const confirmBtn = content.querySelector("#cancel-apply-confirm");
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = `⏳ ${t('common.confirming')}...`;
+        
+        try {
+            await api.cancelApplyTask(task.id);
+            showToast(t('task.apply_cancelled'), "success");
+            globalModal.closeTopModal();
+            // 重新加载任务详情
+            const container = document.querySelector('#task-content')?.parentElement;
+            if (container && currentUser) {
+                loadTaskDetail(container, task.id, currentUser);
+            }
+        } catch (err) {
+            showToast(err.message || t('task.cancel_apply_failed'), "error");
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = t('common.confirm');
+        }
+    };
+    
+    globalModal.openModal(t('task.cancel_apply'), content, { width: "350px" });
+}
+
+/**
+ * ❌ 显示取消任务确认对话框
+ */
+function showCancelTaskConfirmDialog(task) {
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 15px;">⚠️</div>
+            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.confirm_cancel_task')}</div>
+            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.cancel_task_warning') || ''}</div>
+            <div style="display: flex; gap: 10px;">
+                <button id="cancel-task-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="cancel-task-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('task.cancel_task')}</button>
+            </div>
+        </div>
+    `;
+    
+    content.querySelector("#cancel-task-cancel").onclick = () => globalModal.closeTopModal();
+    
+    content.querySelector("#cancel-task-confirm").onclick = async () => {
+        const confirmBtn = content.querySelector("#cancel-task-confirm");
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = `⏳ ${t('common.cancelling')}...`;
+        
+        try {
+            await api.cancelTask(task.id);
+            showToast(t('task.task_cancelled'), "success");
+            globalModal.closeTopModal();
+            window.dispatchEvent(new CustomEvent("comfy-route-back"));
+        } catch (err) {
+            showToast(err.message || t('task.cancel_task_failed'), "error");
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = t('task.cancel_task');
+        }
+    };
+    
+    globalModal.openModal(t('task.cancel_task'), content, { width: "350px" });
+}
+
+/**
+ * ✅ 显示验收通过确认对话框
+ */
+function showAcceptConfirmDialog(task, currentUser) {
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 15px;">✅</div>
+            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.confirm_accept')}</div>
+            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.confirm_pay_remaining', { amount: task.total_price - task.deposit_amount })}</div>
+            <div style="display: flex; gap: 10px;">
+                <button id="accept-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="accept-confirm" style="flex: 1; background: #4CAF50; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('task.accept_work')}</button>
+            </div>
+        </div>
+    `;
+    
+    content.querySelector("#accept-cancel").onclick = () => globalModal.closeTopModal();
+    
+    content.querySelector("#accept-confirm").onclick = async () => {
+        const confirmBtn = content.querySelector("#accept-confirm");
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = `⏳ ${t('common.confirming')}...`;
+        
+        try {
+            await api.acceptTask(task.id, true);
+            showToast(t('task.accept_success'), "success");
+            globalModal.closeTopModal();
+            // 重新加载任务详情
+            const container = document.querySelector('#task-content')?.parentElement;
+            if (container && currentUser) {
+                loadTaskDetail(container, task.id, currentUser);
+            }
+        } catch (err) {
+            showToast(err.message || t('common.operation_failed'), "error");
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = t('task.accept_work');
+        }
+    };
+    
+    globalModal.openModal(t('task.accept_work'), content, { width: "350px" });
+}
+
+/**
+ * ❌ 显示验收拒绝对话框
+ */
+function showRejectDialog(task, currentUser) {
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="margin-bottom: 15px;">
+            <div style="color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.reject_reason_prompt')}</div>
+            <textarea id="reject-feedback" rows="4" placeholder="${t('task.reject_reason_placeholder') || ''}" style="width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button id="reject-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button id="reject-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('task.reject_work')}</button>
+        </div>
+    `;
+    
+    content.querySelector("#reject-cancel").onclick = () => globalModal.closeTopModal();
+    
+    content.querySelector("#reject-confirm").onclick = async () => {
+        const feedback = content.querySelector("#reject-feedback").value.trim();
+        if (!feedback) {
+            showToast(t('task.reject_reason_required') || '请输入拒绝原因', "warning");
+            return;
+        }
+        
+        const confirmBtn = content.querySelector("#reject-confirm");
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = `⏳ ${t('common.submitting')}...`;
+        
+        try {
+            await api.acceptTask(task.id, false, feedback);
+            showToast(t('task.work_returned'), "success");
+            globalModal.closeTopModal();
+            // 重新加载任务详情
+            const container = document.querySelector('#task-content')?.parentElement;
+            if (container && currentUser) {
+                loadTaskDetail(container, task.id, currentUser);
+            }
+        } catch (err) {
+            showToast(err.message || t('common.operation_failed'), "error");
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = t('task.reject_work');
+        }
+    };
+    
+    globalModal.openModal(t('task.reject_work'), content, { width: "400px" });
+}
+
+/**
+ * 🗑️ 显示删除评论确认对话框
+ */
+function showDeleteCommentConfirmDialog(taskId, comment, container, currentUser) {
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 15px;">⚠️</div>
+            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('post.delete_comment_confirm') || '确定删除这条评论吗？'}</div>
+            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('post.delete_comment_warning') || '删除后无法恢复'}</div>
+            <div style="display: flex; gap: 10px;">
+                <button id="delete-comment-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="delete-comment-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
+            </div>
+        </div>
+    `;
+    
+    content.querySelector("#delete-comment-cancel").onclick = () => globalModal.closeTopModal();
+    
+    content.querySelector("#delete-comment-confirm").onclick = async () => {
+        const confirmBtn = content.querySelector("#delete-comment-confirm");
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = `⏳ ${t('common.deleting')}...`;
+        
+        try {
+            await api.deleteComment(taskId, comment.id);
+            showToast(t('post.delete_comment_success') || '评论已删除', "success");
+            globalModal.closeTopModal();
+            loadTaskComments(container, taskId, currentUser);
+        } catch (err) {
+            showToast((t('post.delete_comment_failed') || '删除失败') + ": " + err.message, "error");
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = t('common.delete');
+        }
+    };
+    
+    globalModal.openModal(t('common.delete'), content, { width: "350px" });
 }
 
 /**
@@ -349,39 +736,18 @@ function renderActionButtons(container, task, currentUser, isPublisher, isAssign
  */
 function bindActionEvents(container, task, currentUser) {
     // 申请接单
-    container.querySelector("#btn-apply")?.addEventListener("click", async () => {
-        const message = prompt(t('task.apply_message_prompt'));
-        try {
-            await api.applyTask(task.id, message);
-            showToast(t('task.apply_success'), "success");
-            location.reload(); // 简单刷新
-        } catch (err) {
-            showToast(err.message || t('task.apply_failed'), "error");
-        }
+    container.querySelector("#btn-apply")?.addEventListener("click", () => {
+        showApplyDialog(task, currentUser);
     });
     
     // 撤回申请
-    container.querySelector("#btn-cancel-apply")?.addEventListener("click", async () => {
-        if (!confirm(t('task.confirm_cancel_apply'))) return;
-        try {
-            await api.cancelApplyTask(task.id);
-            showToast(t('task.apply_cancelled'), "success");
-            location.reload();
-        } catch (err) {
-            showToast(err.message || t('task.cancel_apply_failed'), "error");
-        }
+    container.querySelector("#btn-cancel-apply")?.addEventListener("click", () => {
+        showCancelApplyConfirmDialog(task, currentUser);
     });
     
     // 取消任务
-    container.querySelector("#btn-cancel-task")?.addEventListener("click", async () => {
-        if (!confirm(t('task.confirm_cancel_task'))) return;
-        try {
-            await api.cancelTask(task.id);
-            showToast(t('task.task_cancelled'), "success");
-            window.dispatchEvent(new CustomEvent("comfy-route-back"));
-        } catch (err) {
-            showToast(err.message || t('task.cancel_task_failed'), "error");
-        }
+    container.querySelector("#btn-cancel-task")?.addEventListener("click", () => {
+        showCancelTaskConfirmDialog(task);
     });
     
     // 提交成果
@@ -390,28 +756,13 @@ function bindActionEvents(container, task, currentUser) {
     });
     
     // 验收通过
-    container.querySelector("#btn-accept")?.addEventListener("click", async () => {
-        if (!confirm(`${t('task.confirm_accept')}\n\n${t('task.confirm_pay_remaining', { amount: task.total_price - task.deposit_amount })}`)) return;
-        try {
-            await api.acceptTask(task.id, true);
-            showToast(t('task.accept_success'), "success");
-            location.reload();
-        } catch (err) {
-            showToast(err.message || t('common.operation_failed'), "error");
-        }
+    container.querySelector("#btn-accept")?.addEventListener("click", () => {
+        showAcceptConfirmDialog(task, currentUser);
     });
     
     // 验收不通过
-    container.querySelector("#btn-reject")?.addEventListener("click", async () => {
-        const feedback = prompt(t('task.reject_reason_prompt'));
-        if (!feedback) return;
-        try {
-            await api.acceptTask(task.id, false, feedback);
-            showToast(t('task.work_returned'), "success");
-            location.reload();
-        } catch (err) {
-            showToast(err.message || t('common.operation_failed'), "error");
-        }
+    container.querySelector("#btn-reject")?.addEventListener("click", () => {
+        showRejectDialog(task, currentUser);
     });
     
     // 发起申诉（增强版：弹窗式，支持上传证据）
@@ -496,7 +847,11 @@ function showSubmitDialog(task, currentUser) {
             
             showToast(t('task.submit_success_waiting'), "success");
             globalModal.closeTopModal();
-            location.reload();
+            // 重新加载任务详情
+            const container = document.querySelector('#task-content')?.parentElement;
+            if (container && currentUser) {
+                loadTaskDetail(container, task.id, currentUser);
+            }
         } catch (err) {
             showToast(err.message || t('task.submit_failed'), "error");
             const confirmBtn = content.querySelector("#btn-confirm-submit");
@@ -506,6 +861,224 @@ function showSubmitDialog(task, currentUser) {
     };
     
     globalModal.openModal(`📤 ${t('task.submit_work')}`, content, { width: "450px" });
+}
+
+/**
+ * 🔗 绑定任务互动事件（点赞/收藏/打赏）- 使用公共工具函数
+ */
+function bindTaskInteractionEvents(container, task, currentUser) {
+    const btnLike = container.querySelector("#btn-like");
+    const btnFavorite = container.querySelector("#btn-favorite");
+    const btnTip = container.querySelector("#btn-tip");
+    const likeCount = container.querySelector("#like-count");
+    const favoriteCount = container.querySelector("#favorite-count");
+    
+    // 点赞 - 使用公共工具函数
+    if (btnLike) {
+        btnLike.onclick = () => {
+            handleToggleLike(api.toggleTaskLike, task.id, btnLike, likeCount, currentUser);
+        };
+    }
+    
+    // 收藏 - 使用公共工具函数
+    if (btnFavorite) {
+        btnFavorite.onclick = () => {
+            handleToggleFavorite(api.toggleTaskFavorite, task.id, btnFavorite, favoriteCount, currentUser);
+        };
+    }
+    
+    // 打赏
+    if (btnTip) {
+        btnTip.onclick = () => {
+            if (!currentUser) {
+                showToast(t('auth.login_required'), "warning");
+                return;
+            }
+            if (currentUser.account === task.publisher) {
+                showToast(t('post.tip_self'), "warning");
+                return;
+            }
+            showTaskTipDialog(task, currentUser, container);
+        };
+    }
+}
+
+/**
+ * 🎁 显示任务打赏对话框
+ */
+function showTaskTipDialog(task, currentUser, container) {
+    const content = document.createElement("div");
+    content.style.color = "#ccc";
+    content.innerHTML = `
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
+            <button class="tip-amount" data-amount="10" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
+            <button class="tip-amount" data-amount="50" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">50 ${t('task.points')}</button>
+            <button class="tip-amount" data-amount="100" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">100 ${t('task.points')}</button>
+            <button class="tip-amount" data-amount="500" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">500 ${t('task.points')}</button>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button id="tip-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+        </div>
+    `;
+
+    globalModal.openModal(`🎁 ${t('post.tip_dialog_title')}`, content, { width: "300px" });
+
+    // 取消按钮
+    content.querySelector("#tip-cancel").onclick = () => globalModal.closeTopModal();
+
+    // 打赏金额按钮
+    content.querySelectorAll(".tip-amount").forEach(btn => {
+        btn.onclick = async () => {
+            const amount = parseInt(btn.dataset.amount);
+            try {
+                await api.tipTask(task.id, amount, false);
+                showToast(t('post.tip_success', { amount }), "success");
+                globalModal.closeTopModal();
+                // 刷新页面
+                loadTaskDetail(container.closest("div"), task.id, currentUser);
+            } catch (err) {
+                showToast(t('post.tip_failed') + ": " + err.message, "error");
+            }
+        };
+    });
+}
+
+/**
+ * 🎁 渲染打赏榜单 - 使用公共工具函数
+ */
+function renderTipBoard(tipBoard) {
+    return renderCommonTipBoardHTML(tipBoard, 5, t('post.no_tips'));
+}
+
+/**
+ * 💬 加载任务评论
+ */
+async function loadTaskComments(container, taskId, currentUser) {
+    const commentsList = container.querySelector("#comments-list");
+    const commentInput = container.querySelector("#comment-input");
+    const sendBtn = container.querySelector("#btn-send-comment");
+    
+    try {
+        const res = await api.getTaskComments(taskId);
+        let comments = res.data || [];
+        comments = proxyImages(comments);
+        
+        if (comments.length === 0) {
+            commentsList.innerHTML = `
+                <div style="text-align: center; padding: 30px; color: #666; font-size: 13px;">
+                    ${t('post.no_comments')}
+                </div>
+            `;
+        } else {
+            // 🚀 SWR 头像渲染：评论作者头像
+            commentsList.innerHTML = comments.map((c, idx) => {
+                const cached = getCachedProfile(c.author);
+                const avatar = cached?.avatar || c.author_avatar || '';
+                const name = cached?.name || c.author_name || c.author || '';
+                const initial = (name || 'U')[0].toUpperCase();
+                
+                const avatarHtml = avatar 
+                    ? `<img class="swr-avatar" src="${avatar}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: #333;">` 
+                    : `<div class="swr-avatar" style="width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold;">${initial}</div>`;
+                
+                // 判断是否有删除权限（评论作者/任务发布者/管理员）
+                const currentAccount = typeof currentUser === 'string' ? currentUser : currentUser?.account;
+                const canDelete = currentUser && (
+                    currentAccount === c.author || 
+                    currentAccount === container.dataset?.publisher ||
+                    currentUser?.isAdmin === true
+                );
+                
+                return `
+                    <div id="task-comment-${idx}" data-account="${escapeHtml(c.author)}" data-comment-id="${c.id || idx}" style="background: #1a1a1a; padding: 12px; border-radius: 8px;">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <div class="swr-avatar-container">${avatarHtml}</div>
+                            <span class="swr-name" style="font-size: 13px; color: #fff; font-weight: 500;">${escapeHtml(name)}</span>
+                            <span style="font-size: 11px; color: #888; margin-left: auto;">${formatTime(c.created_at)}</span>
+                            ${canDelete ? `<button class="btn-delete-comment" data-idx="${idx}" style="background: transparent; border: none; color: #f44; cursor: pointer; font-size: 11px; padding: 2px 6px;">🗑️</button>` : ''}
+                        </div>
+                        <div style="font-size: 13px; color: #ddd; line-height: 1.5; padding-left: 32px;">
+                            ${escapeHtml(c.content)}
+                        </div>
+                    </div>
+                `;
+            }).join("");
+            
+            // 后台静默校对每个评论作者的头像
+            comments.forEach((c, idx) => {
+                getProfileWithSWR(c.author, api.getUserProfile, (profile) => {
+                    const commentEl = commentsList.querySelector(`#task-comment-${idx}`);
+                    if (!commentEl) return;
+                    const avatarContainer = commentEl.querySelector('.swr-avatar-container');
+                    const nameEl = commentEl.querySelector('.swr-name');
+                    const avatarEl = avatarContainer?.querySelector('.swr-avatar');
+                    
+                    if (avatarEl && profile.avatar) {
+                        if (avatarEl.tagName === 'IMG') {
+                            avatarEl.src = profile.avatar;
+                        } else {
+                            avatarEl.outerHTML = `<img class="swr-avatar" src="${profile.avatar}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: #333;">`;
+                        }
+                    }
+                    if (nameEl && profile.name) nameEl.textContent = profile.name;
+                });
+            });
+            
+            // 绑定删除评论按钮事件
+            commentsList.querySelectorAll(".btn-delete-comment").forEach(btn => {
+                btn.onclick = () => {
+                    const idx = parseInt(btn.dataset.idx);
+                    const comment = comments[idx];
+                    if (!comment) return;
+                    showDeleteCommentConfirmDialog(taskId, comment, container, currentUser);
+                };
+            });
+        }
+    } catch (err) {
+        commentsList.innerHTML = `
+            <div style="text-align: center; padding: 20px; color: #F44336; font-size: 12px;">
+                ${t('post.comment_load_failed')}
+            </div>
+        `;
+    }
+    
+    // 发送评论
+    if (sendBtn) {
+        sendBtn.onclick = async () => {
+            if (!currentUser) {
+                showToast(t('auth.login_required'), "warning");
+                return;
+            }
+            const content = commentInput.value.trim();
+            if (!content) {
+                showToast(t('post.comment_required'), "warning");
+                return;
+            }
+            try {
+                sendBtn.disabled = true;
+                sendBtn.textContent = t('post.comment_sending');
+                await api.addTaskComment(taskId, content);
+                commentInput.value = "";
+                showToast(t('post.comment_success'), "success");
+                loadTaskComments(container, taskId, currentUser);
+            } catch (err) {
+                showToast(t('post.comment_failed') + ": " + err.message, "error");
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.textContent = t('common.send');
+            }
+        };
+    }
+    
+    // 回车发送
+    if (commentInput) {
+        commentInput.onkeydown = (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendBtn?.click();
+            }
+        };
+    }
 }
 
 /**
@@ -529,20 +1102,6 @@ function formatDeadline(deadline) {
         return deadline;
     }
 }
-
-/**
- * 🔒 HTML转义
- */
-function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;")
-              .replace(/</g, "&lt;")
-              .replace(/>/g, "&gt;")
-              .replace(/"/g, "&quot;")
-              .replace(/'/g, "&#039;");
-}
-
-
 
 /**
  * 🗑️ 显示删除任务确认对话框
@@ -688,7 +1247,11 @@ function showDisputeDialog(task, currentUser) {
             
             showToast(t('dispute.submit_success'), "success");
             globalModal.closeTopModal();
-            location.reload();
+            // 重新加载任务详情
+            const container = document.querySelector('#task-content')?.parentElement;
+            if (container && currentUser) {
+                loadTaskDetail(container, task.id, currentUser);
+            }
         } catch (err) {
             showToast(err.message || t('dispute.submit_failed'), "error");
             btn.disabled = false;

@@ -149,7 +149,16 @@ export async function openNotificationCenter(currentUser, bellBtn) {
         const remoteMsgs = res.data || [];
         const map = new Map();
         localMsgs.forEach(m => map.set(m.id, m));
-        remoteMsgs.forEach(m => { if (m.created_at * 1000 > clearTime) map.set(m.id, m); });
+        remoteMsgs.forEach(m => { 
+            if (m.created_at * 1000 > clearTime) {
+                // 🔥 修复：保留本地已读标记，防止云端数据覆盖
+                const existing = map.get(m.id);
+                if (existing && existing.is_read && !m.is_read) {
+                    m.is_read = true;
+                }
+                map.set(m.id, m);
+            }
+        });
         
         const merged = Array.from(map.values()).sort((a, b) => b.created_at - a.created_at);
         localStorage.setItem(cacheKey, JSON.stringify(merged));

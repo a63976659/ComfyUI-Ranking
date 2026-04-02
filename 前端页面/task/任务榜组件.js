@@ -48,7 +48,11 @@ const STATUS_FILTERS = [
 const SORT_OPTIONS = [
     { value: "latest", labelKey: "task.sort_latest" },
     { value: "price", labelKey: "task.sort_price" },
-    { value: "deadline", labelKey: "task.sort_deadline" }
+    { value: "deadline", labelKey: "task.sort_deadline" },
+    { value: "views", label: "🔥 浏览总量" },
+    { value: "daily_views", label: "🔥 今日热门" },
+    { value: "likes", label: "❤️ 最多点赞" },
+    { value: "favorites", label: "⭐ 最多收藏" }
 ];
 
 /**
@@ -387,10 +391,13 @@ function createTaskCard(task) {
             <!-- 发布者（SWR 缓存头像） -->
             <div id="task-author-${task.id}" style="display: flex; align-items: center; gap: 6px;"></div>
             
-            <!-- 截止日期 + 申请人数 -->
-            <div style="display: flex; align-items: center; gap: 12px;">
+            <!-- 截止日期 + 申请人数 + 访问量 + 点赞 + 收藏 -->
+            <div style="display: flex; align-items: center; gap: 10px;">
                 <span>⏰ ${deadline}</span>
                 ${task.status === "open" ? `<span>👥 ${(task.applicants || []).length} ${t('task.applicants')}</span>` : ""}
+                <span>🔥 ${task.views || 0}</span>
+                <span>❤️ ${task.likes || 0}</span>
+                <span>⭐ ${task.favorites || 0}</span>
             </div>
         </div>
     `;

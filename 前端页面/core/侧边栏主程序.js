@@ -70,6 +70,8 @@ function buildSidebarDOM() {
             <option value="likes">${t('market.like')}</option>
             <option value="favorites">${t('market.favorites')}</option>
             <option value="tips">💰 ${t('market.tips_ranking') || '近期打赏榜'}</option>
+            <option value="views">🔥 浏览总量</option>
+            <option value="daily_views">🔥 今日热门</option>
         </select>
         <!-- 任务榜筛选控件（状态+排序） -->
         <select id="task-status-filter" style="display: none; background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
@@ -84,6 +86,10 @@ function buildSidebarDOM() {
             <option value="latest">${t('task.sort_latest')}</option>
             <option value="price">${t('task.sort_price')}</option>
             <option value="deadline">${t('task.sort_deadline')}</option>
+            <option value="views">🔥 浏览总量</option>
+            <option value="daily_views">🔥 今日热门</option>
+            <option value="likes">👍 最多点赞</option>
+            <option value="favorites">⭐ 最多收藏</option>
         </select>
         <input type="text" id="hub-search-input" placeholder="🔍 ${t('common.search')}..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
         <button id="btn-open-publish" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">➕ ${t('market.publish')}</button>

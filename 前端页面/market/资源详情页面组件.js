@@ -17,6 +17,7 @@ import { t } from "../components/用户体验增强.js";
 import { removeCache } from "../components/性能优化工具.js";
 import { invalidateRelatedCache } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
+import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML } from "../components/互动工具函数.js";
 
 // 🔄 P7后悔模式：渲染退款按钮
 async function renderRefundButton(container, itemData, currentUser) {
@@ -167,6 +168,25 @@ function burnLocalFiles(itemId) {
     console.log(`🔥 已焚毁资源 ${itemId} 的本地数据`);
 }
 
+/**
+ * 👀 记录资源浏览量（带60秒防抖）- 使用公共工具函数
+ */
+async function recordItemView(container, itemId) {
+    await recordView(api.recordItemView, itemId, 'item', (res) => {
+        updateItemViewStats(container, res.views, res.daily_views);
+    });
+}
+
+/**
+ * 👀 更新资源浏览量显示
+ */
+function updateItemViewStats(container, views, dailyViews) {
+    const totalEl = container.querySelector("#item-view-total");
+    const dailyEl = container.querySelector("#item-view-daily");
+    if (totalEl) totalEl.textContent = views || 0;
+    if (dailyEl) dailyEl.textContent = dailyViews || 0;
+}
+
 // ==========================================
 // 🗑️ 删除内容功能
 // ==========================================
@@ -280,6 +300,11 @@ export function createItemDetailView(itemData, currentUser) {
     let authorName = itemData.author;
     if (cachedAuthorStr) { try { authorName = JSON.parse(cachedAuthorStr).name || itemData.author; } catch(e) {} }
 
+    // 👍 检查当前用户是否已点赞/收藏
+    const currentAccount = currentUser?.account;
+    const isLiked = itemData.liked_by?.includes(currentAccount) || false;
+    const isFavorited = itemData.favorited_by?.includes(currentAccount) || false;
+
     // 🚀 使用统一工具渲染单品赞赏榜单（带星星/月亮/太阳等级）
     const boardData = itemData.tip_board || [];
     const boardHtml = renderTipBoardHTML(boardData, 10, "该资源暂无专属打赏，快来成为首个赞赏人吧！", "normal");
@@ -292,11 +317,28 @@ export function createItemDetailView(itemData, currentUser) {
 
     let authorInfoHtml = `
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-            <div><strong>作者：</strong> <span id="detail-author-name">${authorName}</span></div>
-            <div style="display: flex; align-items: center;">
+            <div>
+                <strong>作者：</strong> <span id="detail-author-name">${authorName}</span>
+                <!-- 原创标识 -->
+                ${itemData.is_original ? `
+                <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; 
+                            background: linear-gradient(135deg, #FF6B35, #FF8F00); border-radius: 12px; 
+                            font-size: 11px; color: #fff; font-weight: 500; margin-left: 8px;">
+                    🎨 原创内容，请勿商用
+                </div>
+                ` : ''}
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <button id="btn-like-item" style="background: ${isLiked ? '#FF5722' : '#333'}; border: 1px solid ${isLiked ? '#FF5722' : '#555'}; color: #fff; padding: 6px 14px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">❤️ <span id="item-like-count">${itemData.likes || 0}</span></button>
+                <button id="btn-favorite-item" style="background: ${isFavorited ? '#FFC107' : '#333'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 6px 14px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">⭐ <span id="item-favorite-count">${itemData.favorites || 0}</span></button>
                 <button id="btn-tip-item" style="background: #E91E63; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(233,30,99,0.3); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 赞赏鼓励该作品</button>
                 ${deleteBtnHtml}
             </div>
+        </div>
+        <!-- 👀 浏览量统计 -->
+        <div style="margin-top: 10px; display: flex; align-items: center; gap: 15px; color: #888; font-size: 12px;">
+            <span style="display: flex; align-items: center; gap: 4px;">🔥 浏览总量: <span id="item-view-total">${itemData.views || 0}</span></span>
+            <span style="display: flex; align-items: center; gap: 4px;">📅 今日浏览: <span id="item-view-daily">${itemData.daily_views || 0}</span></span>
         </div>
         <div style="margin-top: 10px; color: #888;">感谢 硊影科技 的支持！</div>
             
@@ -378,6 +420,24 @@ export function createItemDetailView(itemData, currentUser) {
         };
     }
 
+    // 👍 绑定点赞按钮事件
+    const btnLikeItem = container.querySelector("#btn-like-item");
+    const likeCountEl = container.querySelector("#item-like-count");
+    if (btnLikeItem) {
+        btnLikeItem.onclick = () => {
+            handleToggleLike(api.toggleItemLike, itemData.id, btnLikeItem, likeCountEl, currentUser);
+        };
+    }
+
+    // ⭐ 绑定收藏按钮事件
+    const btnFavoriteItem = container.querySelector("#btn-favorite-item");
+    const favoriteCountEl = container.querySelector("#item-favorite-count");
+    if (btnFavoriteItem) {
+        btnFavoriteItem.onclick = () => {
+            handleToggleFavorite(api.toggleItemFavorite, itemData.id, btnFavoriteItem, favoriteCountEl, currentUser);
+        };
+    }
+
     // 🐛 Bug修复：跳过系统页面的作者信息查询（如关于页面）
     if (!itemData.isSystemPage) {
         api.getUserProfile(itemData.author).then(res => {
@@ -390,6 +450,9 @@ export function createItemDetailView(itemData, currentUser) {
 
     // 🔄 P7后悔模式：异步加载退款按钮状态
     renderRefundButton(container, itemData, currentUser);
+
+    // 👀 记录浏览量（fire-and-forget，不阻塞渲染）
+    recordItemView(container, itemData.id);
 
     return container;
 }

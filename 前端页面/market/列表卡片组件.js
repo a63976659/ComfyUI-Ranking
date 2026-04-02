@@ -10,6 +10,7 @@ import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 import { renderTipBoardHTML, isMaxTipLevel } from "../components/打赏等级工具.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { recordView } from "../components/互动工具函数.js";
 
 export function createItemCard(itemData, currentUser = null) {
     const card = document.createElement("div");
@@ -38,7 +39,10 @@ export function createItemCard(itemData, currentUser = null) {
         <!-- 第1行: 标题 + 使用次数 -->
         <div style="display: flex; align-items: center; margin-bottom: 4px;">
             <div style="font-weight: bold; font-size: 14px; color: #4CAF50; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${itemData.title}</div>
-            <span style="margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 2px;">🔥 ${itemData.uses || 0}</span>
+            <span style="margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px;">
+                <span style="display: flex; align-items: center; gap: 2px;">📥 ${itemData.uses || 0}</span>
+                <span style="display: flex; align-items: center; gap: 2px;">🔥 ${itemData.views || 0}</span>
+            </span>
         </div>
         <!-- 第2行: 描述 -->
         <div style="font-size: 12px; color: #aaa; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 8px;">${itemData.shortDesc}</div>
@@ -221,7 +225,7 @@ export function createItemCard(itemData, currentUser = null) {
     };
 
     let isRendered = false;
-    summaryView.onclick = () => {
+    summaryView.onclick = async () => {
         const isHidden = detailView.style.display === "none";
         detailView.style.display = isHidden ? "block" : "none";
 
@@ -229,6 +233,20 @@ export function createItemCard(itemData, currentUser = null) {
             renderItemTrendChart(detailView.querySelector(`#${chartContainerId}`), itemData);
             setupImageSandboxEvents(detailView);
             isRendered = true;
+            
+            // 🔥 新增：记录浏览量（仅首次展开时记录）
+            try {
+                const { api } = await import("../core/网络请求API.js");
+                recordView(api.recordItemView.bind(api), itemData.id, 'item', (res) => {
+                    // 更新卡片上的浏览量显示
+                    if (res && res.views !== undefined) {
+                        const viewsEl = summaryView.querySelector('span:nth-child(2) span:nth-child(2)');
+                        if (viewsEl) viewsEl.textContent = `🔥 ${res.views}`;
+                    }
+                });
+            } catch (e) {
+                console.warn('记录浏览量失败:', e);
+            }
         }
     };
 

@@ -18,6 +18,7 @@ import { t } from "../components/用户体验增强.js";
 import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { removeCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
+import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml } from "../components/互动工具函数.js";
 
 /**
  * 📄 创建帖子详情视图
@@ -100,9 +101,18 @@ async function loadPostDetail(container, postId, currentUser) {
             </div>
             
             <!-- 标题 -->
-            <div style="font-size: 18px; font-weight: bold; color: #fff; margin-bottom: 12px; line-height: 1.4;">
+            <div style="font-size: 18px; font-weight: bold; color: #fff; margin-bottom: 8px; line-height: 1.4;">
                 ${escapeHtml(post.title)}
             </div>
+            
+            <!-- 原创标识 -->
+            ${post.is_original ? `
+            <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; 
+                        background: linear-gradient(135deg, #FF6B35, #FF8F00); border-radius: 12px; 
+                        font-size: 11px; color: #fff; font-weight: 500; margin-bottom: 12px;">
+                🎨 原创内容，请勿商用
+            </div>
+            ` : ''}
             
             <!-- 作者信息（SWR 缓存头像） -->
             <div id="author-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; padding: 10px; background: #1a1a1a; border-radius: 8px; cursor: pointer;">
@@ -135,6 +145,11 @@ async function loadPostDetail(container, postId, currentUser) {
                 <button id="btn-tip" style="background: #333; border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
                     ${t('post.tip_author')}
                 </button>
+                <!-- 👀 浏览量统计（纯展示） -->
+                <div style="display: flex; align-items: center; gap: 12px; margin-left: auto; color: #888; font-size: 13px;">
+                    <span style="display: flex; align-items: center; gap: 4px;">🔥 <span id="post-view-total">${post.views || 0}</span></span>
+                    <span style="display: flex; align-items: center; gap: 4px;">📅 <span id="post-view-daily">${post.daily_views || 0}</span></span>
+                </div>
             </div>
             
             <!-- 打赏榜单 -->
@@ -233,6 +248,9 @@ async function loadPostDetail(container, postId, currentUser) {
         // 加载评论
         loadComments(contentArea, postId, currentUser);
         
+        // 👀 记录浏览量（fire-and-forget，不阻塞渲染）
+        recordPostView(contentArea, postId);
+        
     } catch (err) {
         console.error("加载帖子详情失败:", err);
         contentArea.innerHTML = `
@@ -245,7 +263,26 @@ async function loadPostDetail(container, postId, currentUser) {
 }
 
 /**
- * 🔗 绑定互动事件
+ * 👀 记录帖子浏览量（带60秒防抖）- 使用公共工具函数
+ */
+async function recordPostView(contentArea, postId) {
+    await recordView(api.recordPostView, postId, 'post', (res) => {
+        updatePostViewStats(contentArea, res.views, res.daily_views);
+    });
+}
+
+/**
+ * 👀 更新帖子浏览量显示
+ */
+function updatePostViewStats(contentArea, views, dailyViews) {
+    const totalEl = contentArea.querySelector("#post-view-total");
+    const dailyEl = contentArea.querySelector("#post-view-daily");
+    if (totalEl) totalEl.textContent = views || 0;
+    if (dailyEl) dailyEl.textContent = dailyViews || 0;
+}
+
+/**
+ * 🔗 绑定互动事件 - 使用公共工具函数
  */
 function bindInteractionEvents(container, post, currentUser) {
     const btnLike = container.querySelector("#btn-like");
@@ -254,50 +291,14 @@ function bindInteractionEvents(container, post, currentUser) {
     const likeCount = container.querySelector("#like-count");
     const favoriteCount = container.querySelector("#favorite-count");
     
-    // 点赞
-    btnLike.onclick = async () => {
-        if (!currentUser) {
-            showToast(t('auth.login_required'), "warning");
-            return;
-        }
-        try {
-            const res = await api.togglePostLike(post.id);
-            likeCount.textContent = res.likes;
-            if (res.action === "liked") {
-                btnLike.style.background = "#FF5722";
-                btnLike.style.borderColor = "#FF5722";
-                showToast(t('post.liked'), "success");
-            } else {
-                btnLike.style.background = "#333";
-                btnLike.style.borderColor = "#555";
-            }
-        } catch (err) {
-            showToast(t('task.operation_failed') + ": " + err.message, "error");
-        }
+    // 点赞 - 使用公共工具函数
+    btnLike.onclick = () => {
+        handleToggleLike(api.togglePostLike, post.id, btnLike, likeCount, currentUser);
     };
     
-    // 收藏
-    btnFavorite.onclick = async () => {
-        if (!currentUser) {
-            showToast(t('auth.login_required'), "warning");
-            return;
-        }
-        try {
-            const res = await api.togglePostFavorite(post.id);
-            favoriteCount.textContent = res.favorites;
-            if (res.action === "favorited") {
-                btnFavorite.style.background = "#FFC107";
-                btnFavorite.style.borderColor = "#FFC107";
-                btnFavorite.style.color = "#000";
-                showToast(t('post.favorited'), "success");
-            } else {
-                btnFavorite.style.background = "#333";
-                btnFavorite.style.borderColor = "#555";
-                btnFavorite.style.color = "#fff";
-            }
-        } catch (err) {
-            showToast(t('task.operation_failed') + ": " + err.message, "error");
-        }
+    // 收藏 - 使用公共工具函数
+    btnFavorite.onclick = () => {
+        handleToggleFavorite(api.togglePostFavorite, post.id, btnFavorite, favoriteCount, currentUser);
     };
     
     // 打赏
@@ -463,35 +464,10 @@ async function loadComments(container, postId, currentUser) {
 }
 
 /**
- * 🎁 渲染打赏榜单
+ * 🎁 渲染打赏榜单 - 使用公共工具函数
  */
 function renderTipBoard(tipBoard) {
-    if (!tipBoard || tipBoard.length === 0) {
-        return `
-            <div style="background: #1a1a1a; padding: 15px; border-radius: 8px; text-align: center; color: #666; font-size: 12px;">
-                ${t('post.no_tips')}
-            </div>
-        `;
-    }
-    
-    const items = tipBoard.slice(0, 5).map((t_item, i) => {
-        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-        const name = t_item.is_anon ? t('creator.anonymous') : (t_item.account || t('common.unknown_user'));
-        return `
-            <div style="display: flex; align-items: center; gap: 8px; padding: 6px 0;">
-                <span style="width: 24px; text-align: center;">${medal}</span>
-                <span style="flex: 1; color: #ddd; font-size: 13px;">${escapeHtml(name)}</span>
-                <span style="color: #FFC107; font-size: 12px;">${t_item.amount} ${t('task.points')}</span>
-            </div>
-        `;
-    }).join("");
-    
-    return `
-        <div style="background: #1a1a1a; padding: 12px; border-radius: 8px;">
-            <div style="font-size: 13px; font-weight: bold; color: #FFC107; margin-bottom: 8px;">${t('post.tip_board_title')}</div>
-            ${items}
-        </div>
-    `;
+    return renderCommonTipBoardHTML(tipBoard, 5, t('post.no_tips'));
 }
 
 /**
@@ -507,14 +483,6 @@ function formatTime(timestamp) {
     if (diff < 604800) return t('time.days_ago', { n: Math.floor(diff / 86400) });
     const date = new Date(timestamp * 1000);
     return `${date.getMonth() + 1}/${date.getDate()}`;
-}
-
-/**
- * 🔒 HTML转义
- */
-function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
 /**
