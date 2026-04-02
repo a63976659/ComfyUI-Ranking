@@ -229,8 +229,8 @@ export async function handlePublishSubmit(params) {
     const price = mainType === "recommend" ? 0 : (parseFloat(container.querySelector("#pub-price").value) || 0);
     
     let finalLink = inputLink.value.trim();
-    let isJsonUpload = (mainType !== "recommend" && resTypeSelect.value === "json") || (type === "recommend_app");
-    let isNetdisk = (mainType !== "recommend" && resTypeSelect.value === "netdisk");  // ☁️ 是否网盘模式
+    let isJsonUpload = (resTypeSelect.value === "json") || (type === "recommend_app");
+    let isNetdisk = (resTypeSelect.value === "netdisk");  // ☁️ 是否网盘模式
     
     // ☁️ 网盘模式下使用网盘链接
     if (isNetdisk) {

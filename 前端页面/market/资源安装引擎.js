@@ -11,7 +11,7 @@ import { removeCache } from "../components/性能优化工具.js";
 // ==========================================
 
 /**
- * 🗑️ 清除使用量相关缓存（触发列表刷新）
+ * 🗑️ 清除使用量相关缓存
  */
 function clearUsesCache() {
     removeCache('api_/api/items');
@@ -23,7 +23,7 @@ function clearUsesCache() {
             removeCache(`ListCache_${tab}_${sort}`);
         }
     }
-    console.log('📊 缓存已清除，触发列表强制刷新');
+    console.log('📊 使用量缓存已清除');
 }
 
 /**
@@ -190,11 +190,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
         const netdiskPassword = purchaseRes?.netdisk_password || itemData.netdisk_password;
         
         if (isNetdisk) {
-            // 网盘资源：显示链接和密码
-            api.recordItemUse(itemData.id).then(() => {
-                clearUsesCache();
-                window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
-            }).catch(err => console.warn('📊 使用量记录失败:', err));
+            // 网盘资源：显示链接和密码（recordItemUse 延迟到用户点击按钮后）
             saveAcquiredItem(itemData);
             
             if (netdiskPassword) {
@@ -203,7 +199,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     <div style="background: #1a1d2e; padding: 12px; border-radius: 6px; border: 1px solid #2d334a;">
                         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                             <span style="color: #2196F3;">🔗 网盘链接：</span>
-                            <a href="${itemData.link}" target="_blank" style="color: #4CAF50; word-break: break-all;">点击打开</a>
+                            <button id="btn-netdisk-open-pwd-${itemData.id}" style="padding: 6px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px;">📂 打开网盘</button>
                         </div>
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span style="color: #FF9800;">🔐 提取码：</span>
@@ -213,11 +209,33 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     </div>
                     <div style="margin-top: 8px; font-size: 11px; color: #888;">💡 提示：请复制提取码后前往网盘下载资源</div>
                 `;
+                // 绑定按钮点击事件
+                const btnOpen = inlineStatusBox.querySelector(`#btn-netdisk-open-pwd-${itemData.id}`);
+                if (btnOpen) {
+                    btnOpen.onclick = () => {
+                        window.open(itemData.link, '_blank');
+                        api.recordItemUse(itemData.id).then(() => {
+                            clearUsesCache();
+                            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
+                        }).catch(err => console.warn('📊 使用量记录失败:', err));
+                    };
+                }
             } else {
                 inlineStatusBox.innerHTML = `
                     <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，请前往网盘下载：</div>
-                    <a href="${itemData.link}" target="_blank" style="color: #2196F3;">🔗 打开网盘链接</a>
+                    <button id="btn-netdisk-open-${itemData.id}" style="padding: 6px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px;">🔗 打开网盘链接</button>
                 `;
+                // 绑定按钮点击事件
+                const btnOpen = inlineStatusBox.querySelector(`#btn-netdisk-open-${itemData.id}`);
+                if (btnOpen) {
+                    btnOpen.onclick = () => {
+                        window.open(itemData.link, '_blank');
+                        api.recordItemUse(itemData.id).then(() => {
+                            clearUsesCache();
+                            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
+                        }).catch(err => console.warn('📊 使用量记录失败:', err));
+                    };
+                }
             }
             btnUse.innerHTML = `✅ 已获取`;
             btnUse.style.background = "#4CAF50";
@@ -268,7 +286,6 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         try {
                             await api.recordItemUse(itemData.id);
                             clearUsesCache();
-                            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
                         } catch(err) { console.warn('📊 使用量记录失败:', err); }
                         
                         // 🚀 保存到已获取记录
@@ -314,7 +331,6 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     // 记录使用量（后端自动去重）
                     api.recordItemUse(itemData.id).then(() => {
                         clearUsesCache();
-                        window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
                     }).catch(err => console.warn('📊 使用量记录失败:', err));
                     
                     // 🚀 保存到已获取记录
@@ -329,12 +345,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务：${err.message || '网络错误'}</span>`;
             }
         } else {
-            // ☁️ 网盘链接或纯链接模式
-            // 记录使用量（后端自动去重）
-            api.recordItemUse(itemData.id).then(() => {
-                clearUsesCache();
-                window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
-            }).catch(err => console.warn('📊 使用量记录失败:', err));
+            // ☁️ 网盘链接或纯链接模式（recordItemUse 延迟到用户点击按钮后）
             
             // ☁️ 从购买响应中获取网盘信息（安全：只有购买成功后才返回）
             const isNetdisk = purchaseRes?.is_netdisk || itemData.is_netdisk;
@@ -347,7 +358,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     <div style="background: #1a1d2e; padding: 12px; border-radius: 6px; border: 1px solid #2d334a;">
                         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                             <span style="color: #2196F3;">🔗 网盘链接：</span>
-                            <a href="${itemData.link}" target="_blank" style="color: #4CAF50; word-break: break-all;">点击打开</a>
+                            <button id="btn-netdisk-mode-pwd-${itemData.id}" style="padding: 6px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px;">📂 打开网盘</button>
                         </div>
                         <div style="display: flex; align-items: center; gap: 8px;">
                             <span style="color: #FF9800;">🔐 提取码：</span>
@@ -357,15 +368,51 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     </div>
                     <div style="margin-top: 8px; font-size: 11px; color: #888;">💡 提示：请复制提取码后前往网盘下载资源</div>
                 `;
+                // 绑定按钮点击事件
+                const btnOpen = inlineStatusBox.querySelector(`#btn-netdisk-mode-pwd-${itemData.id}`);
+                if (btnOpen) {
+                    btnOpen.onclick = () => {
+                        window.open(itemData.link, '_blank');
+                        api.recordItemUse(itemData.id).then(() => {
+                            clearUsesCache();
+                            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
+                        }).catch(err => console.warn('📊 使用量记录失败:', err));
+                    };
+                }
             } else if (isNetdisk) {
                 // ☁️ 网盘资源无密码
                 inlineStatusBox.innerHTML = `
                     <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，请前往网盘下载：</div>
-                    <a href="${itemData.link}" target="_blank" style="color: #2196F3;">🔗 打开网盘链接</a>
+                    <button id="btn-netdisk-mode-${itemData.id}" style="padding: 6px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px;">🔗 打开网盘链接</button>
                 `;
+                // 绑定按钮点击事件
+                const btnOpen = inlineStatusBox.querySelector(`#btn-netdisk-mode-${itemData.id}`);
+                if (btnOpen) {
+                    btnOpen.onclick = () => {
+                        window.open(itemData.link, '_blank');
+                        api.recordItemUse(itemData.id).then(() => {
+                            clearUsesCache();
+                            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
+                        }).catch(err => console.warn('📊 使用量记录失败:', err));
+                    };
+                }
             } else {
                 // 纯链接模式
-                inlineStatusBox.innerHTML = `<span style="color: #4CAF50;">✅ 授权通过，该资源需手动访问源地址获取：</span><a href="${itemData.link}" target="_blank" style="color: #2196F3; margin-left: 5px;">前往地址</a>`;
+                inlineStatusBox.innerHTML = `
+                    <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，该资源需手动访问源地址获取：</div>
+                    <button id="btn-pure-link-${itemData.id}" style="padding: 6px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px;">🔗 前往获取</button>
+                `;
+                // 绑定按钮点击事件
+                const btnOpen = inlineStatusBox.querySelector(`#btn-pure-link-${itemData.id}`);
+                if (btnOpen) {
+                    btnOpen.onclick = () => {
+                        window.open(itemData.link, '_blank');
+                        api.recordItemUse(itemData.id).then(() => {
+                            clearUsesCache();
+                            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
+                        }).catch(err => console.warn('📊 使用量记录失败:', err));
+                    };
+                }
             }
         }
     };

@@ -115,25 +115,61 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
                 inputLink.value = editItemData.link;
             }
         } else {
-            inputLink.value = editItemData.link || "";
+            // 推荐类型编辑回显
+            if (editItemData.is_netdisk && editItemData.link) {
+                resTypeSelect.value = "netdisk";
+                const inputNetdiskLink = container.querySelector("#pub-netdisk-link");
+                if (inputNetdiskLink) inputNetdiskLink.value = editItemData.link;
+                const inputNetdiskPassword = container.querySelector("#pub-netdisk-password");
+                if (inputNetdiskPassword && editItemData.netdisk_password) {
+                    inputNetdiskPassword.value = editItemData.netdisk_password;
+                }
+            } else {
+                resTypeSelect.value = "link";
+                inputLink.value = editItemData.link || "";
+            }
         }
     }
+
+    // 🔄 推荐形式与资源接入联动函数
+    const syncRecommendToResType = () => {
+        const recType = recommendTypeSelect.value;
+        if (recType === "recommend_tool") {
+            resTypeSelect.value = "link";
+        } else if (recType === "recommend_app") {
+            resTypeSelect.value = "json";
+        } else if (recType === "recommend_link") {
+            resTypeSelect.value = "netdisk";
+        }
+        // 触发UI更新以显示对应输入框
+        updateFormView();
+    };
 
     // 表单联动引擎 (强制状态机模型)
     const updateFormView = () => {
         const mainType = typeSelect.value;
         if (mainType === "recommend") {
             boxRecommendType.style.display = "block";
-            boxCover.style.display = "block"; 
+            boxCover.style.display = "block";
             boxPrice.style.display = "none";
-            boxResourceSelect.style.display = "none";
-            boxPrivateRepo.style.display = "none"; 
+            boxResourceSelect.style.display = "block";
+            boxPrivateRepo.style.display = "none";
 
-            const recType = recommendTypeSelect.value;
-            if (recType === "recommend_app") {
-                boxLink.style.display = "none"; boxJson.style.display = "block";
+            if (resTypeSelect.value === "link") {
+                boxLink.style.display = "block";
+                boxJson.style.display = "none";
+                boxNetdisk.style.display = "none";
+                boxNetdiskPassword.style.display = "none";
+            } else if (resTypeSelect.value === "netdisk") {
+                boxLink.style.display = "none";
+                boxJson.style.display = "none";
+                boxNetdisk.style.display = "block";
+                boxNetdiskPassword.style.display = "block";
             } else {
-                boxLink.style.display = "block"; boxJson.style.display = "none";
+                boxLink.style.display = "none";
+                boxJson.style.display = "block";
+                boxNetdisk.style.display = "none";
+                boxNetdiskPassword.style.display = "none";
             }
         } else {
             boxRecommendType.style.display = "none";
@@ -183,10 +219,27 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     };
 
     // ☁️ 编辑模式下：定义完 updateFormView 后，立即刷新表单UI状态
-    if (isEditMode) updateFormView();
+    if (isEditMode) {
+        updateFormView();
+        // 编辑模式下如果是推荐类型，根据回显的推荐形式触发联动（但保留用户已设置的资源接入值）
+        if (typeSelect.value === "recommend") {
+            // 只有在没有明确设置资源接入值时才自动联动
+            // 编辑模式下 editItemData 已设置 resTypeSelect.value，所以这里不需要强制覆盖
+            // 但为了确保UI正确显示，调用一次 updateFormView
+            updateFormView();
+        }
+    }
 
-    typeSelect.onchange = updateFormView;
-    recommendTypeSelect.onchange = updateFormView;
+    typeSelect.onchange = () => {
+        updateFormView();
+        // 当切换到推荐类型时，触发联动
+        if (typeSelect.value === "recommend") {
+            syncRecommendToResType();
+        }
+    };
+    recommendTypeSelect.onchange = () => {
+        syncRecommendToResType();
+    };
     resTypeSelect.onchange = updateFormView;
     
     isPrivateCheck.onchange = (e) => {
