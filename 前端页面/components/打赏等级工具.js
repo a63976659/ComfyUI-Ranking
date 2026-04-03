@@ -11,13 +11,16 @@
 // ===========================================
 
 import { t } from "./用户体验增强.js";
+import { getCachedProfile, getProfileWithSWR, PLACEHOLDERS } from "../core/全局配置.js";
+import { api } from "../core/网络请求_业务API.js";
 
 /**
  * 等级规则（参考QQ等级系统）：
- * - 每 100 积分 = 1 颗星星 ⭐
- * - 每 5 颗星星 = 1 个月亮 🌙 (即 500 积分)
- * - 每 5 个月亮 = 1 个太阳 ☀️ (即 2500 积分)
+ * - 1-100 积分 = 1 颗星星 ⭐，101-200 积分 = 2 颗星星，以此类推
+ * - 每 5 颗星星 = 1 个月亮 🌙 (即 500 积分 = 1月亮)
+ * - 每 5 个月亮 = 1 个太阳 ☀️ (即 2500 积分 = 1太阳)
  * - 上限：9 个太阳 = 22500 积分 (超过后不再接受打赏)
+ * - 注：1积分 = 1元，积分数即为元数
  */
 
 // 等级图标定义
@@ -45,16 +48,13 @@ export function calculateTipLevel(amount) {
     // 限制最大值
     const cappedAmount = Math.min(amount, MAX_POINTS);
     
-    // 计算太阳数量
-    const suns = Math.floor(cappedAmount / POINTS_PER_SUN);
-    let remaining = cappedAmount % POINTS_PER_SUN;
+    // 计算总星级（使用 ceil：1-100积分=1星，101-200积分=2星，以此类推）
+    const totalStars = cappedAmount > 0 ? Math.ceil(cappedAmount / POINTS_PER_STAR) : 0;
     
-    // 计算月亮数量
-    const moons = Math.floor(remaining / POINTS_PER_MOON);
-    remaining = remaining % POINTS_PER_MOON;
-    
-    // 计算星星数量
-    const stars = Math.floor(remaining / POINTS_PER_STAR);
+    // 转换为太阳、月亮、星星
+    const suns = Math.floor(totalStars / (STARS_PER_MOON * MOONS_PER_SUN));
+    const moons = Math.floor((totalStars % (STARS_PER_MOON * MOONS_PER_SUN)) / STARS_PER_MOON);
+    const stars = totalStars % STARS_PER_MOON;
     
     return { suns, moons, stars, isMaxLevel: cappedAmount >= MAX_POINTS };
 }
@@ -164,24 +164,65 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
     
     // 尺寸配置
     const sizeConfig = {
-        small: { badge: 16, font: 11, padding: 3 },
-        normal: { badge: 20, font: 12, padding: 5 },
-        large: { badge: 24, font: 14, padding: 8 }
+        small: { badge: 16, font: 11, padding: 3, avatar: 20 },
+        normal: { badge: 20, font: 12, padding: 5, avatar: 24 },
+        large: { badge: 24, font: 14, padding: 8, avatar: 28 }
     };
     const cfg = sizeConfig[size] || sizeConfig.normal;
-    
-    // 名称显示
-    const displayName = is_anon ? '🔒 匿名' : account;
-    const nameColor = is_anon ? '#888' : '#ddd';
     
     // 等级图标
     const levelHtml = renderTipLevelHTML(amount, true);
     
+    // 匿名用户处理
+    if (is_anon) {
+        return `
+            <div style="display:flex; justify-content:space-between; padding:${cfg.padding}px 0; font-size:${cfg.font}px; align-items:center; border-bottom:1px dashed #333;">
+                <span style="display:flex; align-items:center; gap:6px;">
+                    <span style="display:inline-flex; justify-content:center; align-items:center; width:${cfg.badge}px; height:${cfg.badge}px; border-radius:50%; background:${badgeBg}; color:${badgeColor}; font-weight:bold; font-size:${cfg.font - 2}px;">${rank + 1}</span>
+                    <span style="color:#888;">🔒 匿名</span>
+                </span>
+                <span style="display:flex; align-items:center; gap:6px;">
+                    ${levelHtml}
+                    <span style="color:#4CAF50; font-weight:bold; font-size:${cfg.font - 1}px;">${amount}</span>
+                </span>
+            </div>
+        `;
+    }
+    
+    // 🚀 SWR 模式：非匿名用户显示头像+用户名
+    const containerId = `tip-board-item-${account}-${rank}-${Date.now()}`;
+    
+    // 从缓存获取初始数据（0延迟渲染）
+    const cached = getCachedProfile(account);
+    const avatarUrl = cached?.avatar || cached?.avatarDataUrl || PLACEHOLDERS.AVATAR_SMALL;
+    const userName = cached?.name || account;
+    
+    // 后台静默校对并更新 DOM
+    setTimeout(() => {
+        getProfileWithSWR(account, api.getUserProfile, (profile) => {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            
+            const avatarImg = container.querySelector('.tip-board-avatar');
+            const nameSpan = container.querySelector('.tip-board-name');
+            
+            if (avatarImg && profile.avatar) {
+                avatarImg.src = profile.avatar;
+            }
+            if (nameSpan && profile.name) {
+                nameSpan.textContent = profile.name;
+            }
+        });
+    }, 0);
+    
     return `
-        <div style="display:flex; justify-content:space-between; padding:${cfg.padding}px 0; font-size:${cfg.font}px; align-items:center; border-bottom:1px dashed #333;">
+        <div id="${containerId}" style="display:flex; justify-content:space-between; padding:${cfg.padding}px 0; font-size:${cfg.font}px; align-items:center; border-bottom:1px dashed #333;">
             <span style="display:flex; align-items:center; gap:6px;">
                 <span style="display:inline-flex; justify-content:center; align-items:center; width:${cfg.badge}px; height:${cfg.badge}px; border-radius:50%; background:${badgeBg}; color:${badgeColor}; font-weight:bold; font-size:${cfg.font - 2}px;">${rank + 1}</span>
-                <span style="color:${nameColor};">${displayName}</span>
+                <span style="display:flex; align-items:center; gap:6px;">
+                    <img class="tip-board-avatar" src="${avatarUrl}" style="width:${cfg.avatar}px; height:${cfg.avatar}px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#333;">
+                    <span class="tip-board-name" style="color:#ddd;">${userName}</span>
+                </span>
             </span>
             <span style="display:flex; align-items:center; gap:6px;">
                 ${levelHtml}

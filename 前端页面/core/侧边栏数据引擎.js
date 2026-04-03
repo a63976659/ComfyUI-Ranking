@@ -56,7 +56,6 @@ const CACHE_EXPIRE_TIME = 1000 * 60 * 60 * 2;  // 缓存有效期：2小时
 const PAGE_SIZE = 20;                           // 每页数量
 const CREATORS_PAGE_SIZE = 12;                  // 创作者每页数量（卡片更大）
 
-
 // ==========================================
 // 🔄 本地排序函数
 // ==========================================
@@ -298,8 +297,8 @@ export async function loadSidebarContent({
     // 获取完整缓存信息（包含过期状态）
     const { value: cachedData, expired: isCacheExpired, found: hasCacheData } = getCacheWithMeta(cacheKey, true);
     
-    // 只有有效缓存才直接返回（强制刷新时跳过）
-    if (!force && hasCacheData && !isCacheExpired && !keyword) {
+    // 有缓存时直接渲染缓存
+    if (!force && hasCacheData && !keyword) {
         // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
         const proxiedData = proxyImages(cachedData);
         state.allData = proxiedData;
@@ -427,32 +426,59 @@ function _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyw
         return;
     }
     
+    // 计算数据总量（考虑搜索过滤）
+    const getTotalDataCount = () => {
+        if (!keyword) return state.allData.length;
+        return state.allData.filter(item => {
+            const textStr = `${item.title||''} ${item.shortDesc||''} ${item.name||''} ${item.account||''}`.toLowerCase();
+            return textStr.includes(keyword);
+        }).length;
+    };
+    
     // 创建分页加载器
     const loader = createPaginationLoader({
         container: scrollContainer,
         pageSize: pageSize,
         threshold: 300,
         loadMore: async (page, size) => {
-            // 过滤后的数据总量
-            let totalData = state.allData;
-            if (keyword) {
-                totalData = state.allData.filter(item => {
-                    const textStr = `${item.title||''} ${item.shortDesc||''} ${item.name||''} ${item.account||''}`.toLowerCase();
-                    return textStr.includes(keyword);
-                });
-            }
+            const totalCount = getTotalDataCount();
             
             // 如果已显示完所有数据，返回空数组停止加载
-            if (state.displayedCount >= totalData.length) {
+            if (state.displayedCount >= totalCount) {
                 return [];
             }
             
             return loadMoreData(page, size);
+        },
+        onEnd: () => {
+            // 显示"已经到底了"提示
+            const totalCount = getTotalDataCount();
+            // 只有在有数据且显示数量 >= 总数量时才显示
+            if (totalCount > 0 && state.displayedCount >= totalCount) {
+                _showEndIndicator(contentArea);
+            }
         }
     });
     
     state.loader = loader;
     loader.start();
+}
+
+// ==========================================
+// 🏁 显示"已经到底了"提示
+// ==========================================
+function _showEndIndicator(contentArea) {
+    // 检查是否已存在
+    if (contentArea.querySelector('.end-indicator')) return;
+    
+    const endIndicator = document.createElement('div');
+    endIndicator.className = 'end-indicator';
+    endIndicator.innerHTML = `
+        <div style="text-align: center; padding: 20px; color: #666; font-size: 13px;">
+            — 已经到底了 —
+        </div>
+    `;
+    contentArea.appendChild(endIndicator);
 }
 
 

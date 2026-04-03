@@ -114,6 +114,7 @@ export function buildSidebarDOM() {
     Object.assign(contentBoxWrapper.style, { flex: "1", padding: "0 10px 10px 10px", display: "flex", flexDirection: "column" });
 
     const contentArea = document.createElement("div");
+    contentArea.className = "sidebar-scroll-container";
     Object.assign(contentArea.style, {
         flex: "none", height: "1122px", overflowY: "auto", padding: "10px",
         backgroundColor: "#1c1c1c", border: "1px solid #444", borderRadius: "8px",

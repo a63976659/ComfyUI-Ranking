@@ -32,13 +32,13 @@ export function openWithdrawModal(currentUser, onSuccess) {
             </div>
             <div style="text-align: right;">
                 <div style="font-size: 12px; color: #888; margin-bottom: 5px;">折合人民币 (扣除手续费前)</div>
-                <div style="font-size: 16px; font-weight: bold; color: #4CAF50;">≈ ¥ ${(maxWithdraw / 100).toFixed(2)}</div>
+                <div style="font-size: 16px; font-weight: bold; color: #4CAF50;">≈ ¥ ${maxWithdraw.toFixed(2)}</div>
             </div>
         </div>
 
         <div style="margin-bottom: 15px;">
             <label style="display:block; margin-bottom:5px; color:#ccc;">提现金额 (积分) <span style="color:#F44336">*</span></label>
-            <input type="number" id="withdraw-amount" placeholder="100积分 = 1元" max="${maxWithdraw}" min="1" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+            <input type="number" id="withdraw-amount" placeholder="1积分 = 1元" max="${maxWithdraw}" min="1" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
             
             <div id="fee-calc-box" style="margin-top: 10px; padding: 10px; background: rgba(255,152,0,0.1); border: 1px dashed #FF9800; border-radius: 4px; font-size: 12px; color: #FF9800; display:none; line-height: 1.5;">
                 <div id="fee-text"></div>
@@ -79,8 +79,8 @@ export function openWithdrawModal(currentUser, onSuccess) {
             return;
         }
         
-        // 计算规则：100元=10000积分免手续费
-        const freeQuota = Math.max(0, 10000 - totalWithdrawn);
+        // 计算规则：100元=100积分免手续费 (1积分=1元)
+        const freeQuota = Math.max(0, 100 - totalWithdrawn);
         let fee = 0;
         if (val > freeQuota) {
             fee = Math.floor((val - freeQuota) * 0.1); // 超过免责额度的部分收取 10%
@@ -88,9 +88,9 @@ export function openWithdrawModal(currentUser, onSuccess) {
         
         feeBox.style.display = "block";
         if (fee > 0) {
-            feeText.innerHTML = `⚠️ 平台累计免手续费额度 (10000积分) 已耗尽。<br>本次提现需扣除 10% 平台维护手续费：<strong style="color:#F44336;">${fee} 积分</strong><br>扣除后预计实际到账：<strong style="color:#4CAF50;">${((val - fee)/100).toFixed(2)} 元</strong>`;
+            feeText.innerHTML = `⚠️ 平台累计免手续费额度 (100积分) 已耗尽。<br>本次提现需扣除 10% 平台维护手续费：<strong style="color:#F44336;">${fee} 积分</strong><br>扣除后预计实际到账：<strong style="color:#4CAF50;">${(val - fee).toFixed(2)} 元</strong>`;
         } else {
-            feeText.innerHTML = `🎉 您目前享有平台 100元 内免手续费优惠福利！<br>预计全额到账：<strong style="color:#4CAF50;">${(val/100).toFixed(2)} 元</strong>`;
+            feeText.innerHTML = `🎉 您目前享有平台 100元 内免手续费优惠福利！<br>预计全额到账：<strong style="color:#4CAF50;">${val.toFixed(2)} 元</strong>`;
         }
     };
 

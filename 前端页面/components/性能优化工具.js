@@ -662,7 +662,7 @@ export function createPaginationLoader(options) {
         threshold = 200
     } = options;
     
-    let currentPage = 1;
+    let currentPage = 1;  // 首屏已渲染第1页，loadMore前先递增，从第2页开始加载
     let isLoading = false;
     let hasMore = true;
     let debounceTimer = null;
@@ -712,15 +712,13 @@ export function createPaginationLoader(options) {
         loadingIndicator.style.display = "block";
         
         try {
+            currentPage++;  // 先递增，再加载（首屏已渲染第1页，从第2页开始）
             const result = await loadMore(currentPage, pageSize);
             
-            // 判断是否还有更多
-            if (!result || result.length < pageSize) {
+            // 判断是否还有更多 - 返回空数组则停止
+            if (!result || result.length === 0) {
                 hasMore = false;
                 loadingIndicator.style.display = "none";
-                endIndicator.style.display = "block";
-            } else {
-                currentPage++;
             }
         } catch (error) {
             console.error("分页加载失败:", error);
@@ -749,7 +747,7 @@ export function createPaginationLoader(options) {
     
     // 重置状态
     const reset = () => {
-        currentPage = 1;
+        currentPage = 1;  // 首屏已渲染第1页，分页器从第2页开始
         hasMore = true;
         isLoading = false;
         loadingIndicator.style.display = "none";

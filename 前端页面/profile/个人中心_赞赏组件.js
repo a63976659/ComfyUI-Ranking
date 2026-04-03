@@ -63,7 +63,7 @@ export function openTipModal(currentUser, targetUser, onSuccess, itemId = null) 
         <div style="margin-bottom: 15px; font-size: 11px; color: #666; line-height: 1.6;">
             <div>📊 等级规则：</div>
             <div style="padding-left: 10px;">
-                • 每 100 积分 = 1⭐ 星星<br>
+                • 1-100 积分 = 1⭐ 星星，101-200 积分 = 2⭐ 星星，以此类推<br>
                 • 每 5 星星 = 1🌙 月亮 (500积分)<br>
                 • 每 5 月亮 = 1☀️ 太阳 (2500积分)<br>
                 • 最高等级：9☀️ 太阳 (22500积分)

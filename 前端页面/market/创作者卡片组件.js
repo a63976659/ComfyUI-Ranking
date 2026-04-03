@@ -11,7 +11,8 @@
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { createCommentSection } from "../social/评论与互动组件.js";
 import { renderTipLevelHTML } from "../components/打赏等级工具.js";
-import { getBannerCacheKey, PLACEHOLDERS } from "../core/全局配置.js";
+import { getBannerCacheKey, PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { api } from "../core/网络请求_业务API.js";
 import { getSettings } from "../components/全局设置组件.js";
 import { t } from "../components/用户体验增强.js";
 
@@ -55,17 +56,60 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
     let listHtml = top10.map((entry, idx) => {
         const rankColor = rankColors[idx] || "#888";
         const rankIcon = idx < 3 ? ["🥇", "🥈", "🥉"][idx] : `<span style="color:${rankColor}">#${idx + 1}</span>`;
-        const displayName = entry.is_anon ? t('creator.anonymous') : entry.account;
-        const nameStyle = entry.is_anon ? "color: #888; font-style: italic;" : "color: #4CAF50; cursor: pointer;";
         
         // 使用统一等级工具获取等级图标
         const levelHtml = renderTipLevelHTML(entry.amount, true);
         
+        // 匿名用户处理
+        if (entry.is_anon) {
+            return `
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: ${idx % 2 === 0 ? '#222' : '#1e1e1e'}; border-radius: 4px; margin-bottom: 4px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 14px; min-width: 24px;">${rankIcon}</span>
+                        <span style="color: #888; font-style: italic; font-size: 13px;">${t('creator.anonymous')}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        ${levelHtml}
+                        <span style="color: #4CAF50; font-weight: bold; font-size: 11px;">${entry.amount}</span>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // 🚀 SWR 模式：非匿名用户显示头像+用户名
+        const containerId = `creator-tip-board-item-${entry.account}-${idx}-${Date.now()}`;
+        
+        // 从缓存获取初始数据（0延迟渲染）
+        const cached = getCachedProfile(entry.account);
+        const avatarUrl = cached?.avatar || cached?.avatarDataUrl || PLACEHOLDERS.AVATAR_SMALL;
+        const userName = cached?.name || entry.account;
+        
+        // 后台静默校对并更新 DOM
+        setTimeout(() => {
+            getProfileWithSWR(entry.account, api.getUserProfile, (profile) => {
+                const itemContainer = document.getElementById(containerId);
+                if (!itemContainer) return;
+                
+                const avatarImg = itemContainer.querySelector('.tip-board-avatar');
+                const nameSpan = itemContainer.querySelector('.tip-board-name');
+                
+                if (avatarImg && profile.avatar) {
+                    avatarImg.src = profile.avatar;
+                }
+                if (nameSpan && profile.name) {
+                    nameSpan.textContent = profile.name;
+                }
+            });
+        }, 0);
+        
         return `
-            <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: ${idx % 2 === 0 ? '#222' : '#1e1e1e'}; border-radius: 4px; margin-bottom: 4px;">
+            <div id="${containerId}" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: ${idx % 2 === 0 ? '#222' : '#1e1e1e'}; border-radius: 4px; margin-bottom: 4px;">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <span style="font-size: 14px; min-width: 24px;">${rankIcon}</span>
-                    <span class="tip-board-user" data-account="${entry.account}" data-anon="${entry.is_anon}" style="${nameStyle} font-size: 13px;">${displayName}</span>
+                    <span class="tip-board-user" data-account="${entry.account}" data-anon="false" style="display: flex; align-items: center; gap: 6px; color: #4CAF50; cursor: pointer; font-size: 13px;">
+                        <img class="tip-board-avatar" src="${avatarUrl}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #333;">
+                        <span class="tip-board-name">${userName}</span>
+                    </span>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px;">
                     ${levelHtml}

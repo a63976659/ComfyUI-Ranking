@@ -117,7 +117,11 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 // 直接向云端发起验证
                 const valRes = await fetch("https://zhiwei666-comfyui-ranking-api.hf.space/api/validate_resource", {
                     method: "POST", headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({item_id: itemData.id})
+                    body: JSON.stringify({
+                        url: itemData.link,
+                        item_id: itemData.id,
+                        account: currentUser.account
+                    })
                 });
                 const valData = await valRes.json();
                 if (!valRes.ok || valData.error) {

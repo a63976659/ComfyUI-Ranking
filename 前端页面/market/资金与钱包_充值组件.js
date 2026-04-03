@@ -1,6 +1,7 @@
 // 前端页面/market/资金与钱包_充值组件.js
 import { showToast } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
+import { api } from "../core/网络请求_业务API.js";
 
 /**
  * 充值弹窗组件 (真实拉起支付宝网关)
@@ -164,8 +165,20 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
                         clearInterval(pollingInterval);
                         globalModal.closeTopModal();
                         showToast(`✅ 充值成功！已实时到账 ${finalPoints} 积分。`, "success");
+
+                        // 不做乐观更新，从服务器获取真实余额
+                        try {
+                            const walletRes = await api.getWallet(currentUser.account);
+                            if (walletRes && walletRes.balance !== undefined) {
+                                currentUser.balance = walletRes.balance;
+                            } else {
+                                currentUser.balance = (currentUser.balance || 0) + finalPoints;  // fallback
+                            }
+                        } catch(e) {
+                            currentUser.balance = (currentUser.balance || 0) + finalPoints;  // fallback
+                        }
+
                         if (onBalanceChange) {
-                            currentUser.balance = (currentUser.balance || 0) + finalPoints;
                             onBalanceChange(currentUser.balance);
                         }
                     }
