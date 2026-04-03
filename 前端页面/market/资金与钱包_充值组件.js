@@ -150,15 +150,15 @@ export function openRechargeModal(currentUser, onBalanceChange) {
             qrLoading.style.display = "none";
             
             // 2. 利用免费接口将返回的支付字符串转成真实二维码图片
-            qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(res.qr_code_url)}`;
+qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(res.qr_code)}`;
             qrImage.style.display = "block";
             container.querySelector("#pay-price-text").innerText = finalPrice.toFixed(2);
 
             // 3. 开启真实轮询查单，监听回调
             pollingInterval = setInterval(async () => {
                 try {
-                    const checkRes = await fetch(`https://zhiwei666-comfyui-ranking-api.hf.space/api/wallet/check_order/${res.order_id}`, { headers })
-                                          .then(r => r.json());
+                    const checkRes = await fetch(`https://zhiwei666-comfyui-ranking-api.hf.space/api/wallet/check_order/${res.order_id}?account=${currentUser.account}`, { headers })
+                      .then(r => r.json());
                                           
                     if (checkRes.status === "SUCCESS") {
                         clearInterval(pollingInterval);
