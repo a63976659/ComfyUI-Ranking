@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = {
     enableAnimations: true,   // ✨ 榜单切换动画
     enableSoundEffects: true, // 🔊 动画音效
     language: 'zh-CN',        // 🌐 界面语言
+    cacheExpireSeconds: 7200, // ⏱️ 缓存刷新间隔（秒），默认2小时
     // 🚀 后续可扩展更多设置项
     // compactMode: false,    // 紧凑模式
     // darkMode: true,        // 深色模式
@@ -139,6 +140,29 @@ export function createSettingsView() {
             color: #fff;
             padding: 8px;
         }
+        .setting-number-input {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            width: 120px;
+            outline: none;
+            transition: 0.2s;
+        }
+        .setting-number-input:hover {
+            border-color: #4CAF50;
+        }
+        .setting-number-input:focus {
+            border-color: #4CAF50;
+            box-shadow: 0 0 0 2px rgba(76,175,80,0.2);
+        }
+        .setting-number-input::-webkit-inner-spin-button,
+        .setting-number-input::-webkit-outer-spin-button {
+            opacity: 1;
+            cursor: pointer;
+        }
     `;
     document.head.appendChild(styleSheet);
     
@@ -208,6 +232,27 @@ export function createSettingsView() {
                     <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.sound_desc')}</div>
                 </div>
                 <div id="switch-sound-effects" class="setting-switch ${settings.enableSoundEffects ? 'active' : ''}"></div>
+            </div>
+            
+            <!-- 分类：数据与缓存 -->
+            <div style="padding: 16px 16px 10px; color: #9C27B0; font-size: 13px; font-weight: bold; border-bottom: 1px solid #333; background: rgba(156,39,176,0.05); margin-top: 20px;">
+                ${t('settings.data_cache')}
+            </div>
+            
+            <!-- 设置项：缓存刷新间隔 -->
+            <div class="setting-item" style="flex-direction: column; align-items: flex-start; gap: 12px;">
+                <div style="flex: 1; width: 100%;">
+                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.cache_expire')}</div>
+                    <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.cache_expire_desc')}</div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
+                    <input type="number" id="input-cache-expire" class="setting-number-input" 
+                        value="${settings.cacheExpireSeconds || 7200}" 
+                        min="60" max="86400" step="60">
+                    <div style="color: #666; font-size: 11px; line-height: 1.5; padding: 8px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 2px solid #9C27B0;">
+                        💡 ${t('settings.cache_trigger_desc')}
+                    </div>
+                </div>
             </div>
             
             <!-- 动画预览提示 -->
@@ -299,6 +344,39 @@ export function createSettingsView() {
         saveSettings(currentSettings);
         
         showToast(newValue ? `🔊 ${t('settings.sound')} ${t('settings.enabled')}` : `${t('settings.sound')} ${t('settings.disabled')}`, "success");
+    };
+    
+    // ⏱️ 数字输入：缓存刷新间隔
+    const inputCacheExpire = container.querySelector("#input-cache-expire");
+    inputCacheExpire.onchange = () => {
+        let newValue = parseInt(inputCacheExpire.value);
+        
+        // 验证范围
+        if (isNaN(newValue) || newValue < 60) {
+            newValue = 60;
+            inputCacheExpire.value = 60;
+        } else if (newValue > 86400) {
+            newValue = 86400;
+            inputCacheExpire.value = 86400;
+        }
+        
+        const currentSettings = getSettings();
+        currentSettings.cacheExpireSeconds = newValue;
+        saveSettings(currentSettings);
+        
+        // 转换为小时和分钟显示
+        let timeDisplay = '';
+        if (newValue >= 3600) {
+            const hours = Math.floor(newValue / 3600);
+            const mins = Math.floor((newValue % 3600) / 60);
+            timeDisplay = mins > 0 ? `${hours}小时${mins}分钟` : `${hours}小时`;
+        } else if (newValue >= 60) {
+            timeDisplay = `${Math.floor(newValue / 60)}分钟`;
+        } else {
+            timeDisplay = `${newValue}秒`;
+        }
+        
+        showToast(`⏱️ ${t('settings.cache_expire')}: ${timeDisplay}`, "success");
     };
     
     return container;

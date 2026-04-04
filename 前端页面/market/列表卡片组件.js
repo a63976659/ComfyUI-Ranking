@@ -2,6 +2,7 @@
 import { createCommentSection, setupToggleButton } from "../social/评论与互动组件.js";
 import { api } from "../core/网络请求API.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
+import { recordView } from "../components/互动工具函数.js";
 import { renderItemTrendChart } from "../components/图表渲染组件.js";
 import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
 import { setupResourceInstall, checkItemStatus } from "./资源安装引擎.js";
@@ -10,10 +11,10 @@ import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 import { renderTipBoardHTML, isMaxTipLevel } from "../components/打赏等级工具.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
-import { recordView } from "../components/互动工具函数.js";
 
 export function createItemCard(itemData, currentUser = null) {
     const card = document.createElement("div");
+    card.setAttribute("data-item-id", itemData.id);
     Object.assign(card.style, {
         backgroundColor: "var(--comfy-input-bg, #2b2b2b)", borderRadius: "8px", padding: "10px", 
         marginBottom: "12px", border: "1px solid #444", color: "#fff", fontFamily: "sans-serif"
@@ -40,15 +41,15 @@ export function createItemCard(itemData, currentUser = null) {
         <div style="display: flex; align-items: center; margin-bottom: 4px;">
             <div style="font-weight: bold; font-size: 14px; color: #4CAF50; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${itemData.title}</div>
             <span style="margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px;">
-                <span style="display: flex; align-items: center; gap: 2px;">📥 ${itemData.uses || 0}</span>
-                <span style="display: flex; align-items: center; gap: 2px;">🔥 ${itemData.views || 0}</span>
+                <span data-stat="uses" style="display: flex; align-items: center; gap: 2px;">📥 ${itemData.uses || 0}</span>
+                <span data-stat="views" style="display: flex; align-items: center; gap: 2px;">🔥 ${itemData.views || 0}</span>
             </span>
         </div>
         <!-- 第2行: 描述 -->
         <div style="font-size: 12px; color: #aaa; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 8px;">${itemData.shortDesc}</div>
         <!-- 第3行: 互动数据 + 发布者信息 -->
         <div style="display: flex; align-items: center; gap: 10px; font-size: 11px; color: #888;">
-            <span>👍 ${itemData.likes || 0}</span> <span>⭐ ${itemData.favorites || 0}</span> <span class="card-comment-count">💬 ${initialCommentCount}</span>
+            <span data-stat="likes">👍 ${itemData.likes || 0}</span> <span data-stat="favorites">⭐ ${itemData.favorites || 0}</span> <span class="card-comment-count">💬 ${initialCommentCount}</span>
             <span style="margin-left: auto; display: flex; align-items: center; gap: 4px; cursor: pointer;" class="card-author-info">
                 <img class="card-author-avatar" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect fill='%23333' width='40' height='40' rx='20'/%3E%3Ctext x='20' y='25' text-anchor='middle' fill='%23666' font-size='16'%3E%3F%3C/text%3E%3C/svg%3E" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover;">
                 <span class="card-author-name" style="font-size: 12px; color: #aaa; transition: color 0.2s;">${itemData.author || '未知'}</span>
@@ -234,19 +235,13 @@ export function createItemCard(itemData, currentUser = null) {
             setupImageSandboxEvents(detailView);
             isRendered = true;
             
-            // 🔥 新增：记录浏览量（仅首次展开时记录）
-            try {
-                const { api } = await import("../core/网络请求API.js");
-                recordView(api.recordItemView.bind(api), itemData.id, 'item', (res) => {
-                    // 更新卡片上的浏览量显示
-                    if (res && res.views !== undefined) {
-                        const viewsEl = summaryView.querySelector('span:nth-child(2) span:nth-child(2)');
-                        if (viewsEl) viewsEl.textContent = `🔥 ${res.views}`;
-                    }
-                });
-            } catch (e) {
-                console.warn('记录浏览量失败:', e);
-            }
+            // 🚀 恢复浏览量记录：工具、应用、推荐榜单的卡片展开即详情页，需要记录浏览量
+            recordView(api.recordItemView, itemData.id, 'item', (result) => {
+                if (result?.views !== undefined) {
+                    const viewsEl = summaryView.querySelector('[data-stat="views"]');
+                    if (viewsEl) viewsEl.innerHTML = `🔥 ${result.views}`;
+                }
+            });
         }
     };
 

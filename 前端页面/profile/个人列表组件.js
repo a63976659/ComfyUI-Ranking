@@ -283,14 +283,16 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
         domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#888;'>⏳ 加载交易记录中...</div>";
         
         try {
-            // 并行获取任务统计和交易明细
-            const [statsRes, txRes] = await Promise.all([
+            // 并行获取任务统计、交易明细和打赏统计
+            const [statsRes, txRes, tipStatsRes] = await Promise.all([
                 api.getTaskStats(currentUser.account),
-                api.getTransactions(currentUser.account, 1, 30)
+                api.getTransactions(currentUser.account, 1, 30),
+                api.getTipStats(currentUser.account).catch(() => ({ data: {} }))  // 新增，带容错
             ]);
             
             const stats = statsRes.data || {};
             const transactions = txRes.data || [];
+            const tipStats = tipStatsRes.data || {};
             
             const containerDiv = document.createElement("div");
             containerDiv.style.cssText = "display: flex; flex-direction: column; gap: 15px;";
@@ -316,6 +318,28 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                 </div>
             `;
             containerDiv.appendChild(statsCard);
+            
+            // 🎁 打赏统计卡片
+            const tipStatsCard = document.createElement("div");
+            tipStatsCard.style.cssText = "background: linear-gradient(135deg, #2a2a2a, #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444; margin-bottom: 15px;";
+            tipStatsCard.innerHTML = `
+                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 12px;">🎁 ${t('profile.tip_stats') || '打赏统计'}</div>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                    <div style="text-align: center; padding: 10px; background: rgba(76,175,80,0.1); border-radius: 8px;">
+                        <div style="font-size: 20px; font-weight: bold; color: #4CAF50;">+${tipStats.total_tip_in || 0}</div>
+                        <div style="font-size: 11px; color: #888;">${t('profile.tip_received') || '收到打赏'} (${tipStats.tip_in_count || 0}${t('profile.transactions_unit') || '笔'})</div>
+                    </div>
+                    <div style="text-align: center; padding: 10px; background: rgba(244,67,54,0.1); border-radius: 8px;">
+                        <div style="font-size: 20px; font-weight: bold; color: #F44336;">-${tipStats.total_tip_out || 0}</div>
+                        <div style="font-size: 11px; color: #888;">${t('profile.tip_sent') || '打赏支出'} (${tipStats.tip_out_count || 0}${t('profile.transactions_unit') || '笔'})</div>
+                    </div>
+                    <div style="text-align: center; padding: 10px; background: rgba(33,150,243,0.1); border-radius: 8px;">
+                        <div style="font-size: 20px; font-weight: bold; color: #2196F3;">${(tipStats.net_tips || 0) > 0 ? '+' : ''}${tipStats.net_tips || 0}</div>
+                        <div style="font-size: 11px; color: #888;">${t('profile.net_tips') || '净打赏'}</div>
+                    </div>
+                </div>
+            `;
+            containerDiv.appendChild(tipStatsCard);
             
             // 📝 交易明细列表
             const txListDiv = document.createElement("div");

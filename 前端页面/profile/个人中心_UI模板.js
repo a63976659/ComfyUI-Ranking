@@ -8,15 +8,10 @@
 //   - 打赏等级工具.js (打赏榜单等级渲染)
 // ==========================================
 
-import { renderTipBoardHTML } from "../components/打赏等级工具.js";
 import { CACHE, getBannerCacheKey, isAdmin, PLACEHOLDERS } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 
 export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs) {
-    // 🚀 核心新增：使用统一工具渲染打赏总榜（带星星/月亮/太阳等级）
-    const boardData = userData.tip_board || [];
-    const boardHtml = renderTipBoardHTML(boardData, 10, "暂无打赏记录，快来占据榜首吧！", "normal");
-
     // 个人资料卡背景图：
     // - 自己查看自己：优先使用本地缓存（账号区分键），否则使用云端 URL
     // - 他人查看：直接使用云端 URL (userData.bannerUrl)
@@ -105,14 +100,6 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
         </div>
     `;
 
-    // 🚀 将开头计算好的 boardHtml 嵌入为专用的打赏榜单面板
-    const tipsHtml = `
-        <div style="background: rgba(233, 30, 99, 0.05); border: 1px solid rgba(233, 30, 99, 0.2); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-            <div style="font-size: 14px; font-weight: bold; color: #E91E63; margin-bottom: 10px; display:flex; align-items:center; gap:6px;">💖 ${t('profile.creator_tip_board')}</div>
-            ${boardHtml}
-        </div>
-    `;
-
     // ====================================================================
     // 【核心新增】：管理员专属系统公告发布 UI 面板 (仅自己且账号是管理员时可见)
     // 🔒 P0安全修复：使用配置化的 isAdmin() 函数
@@ -161,6 +148,5 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
     });
     tabsHtml += `</div><div id="profile-list-container" style="flex: 1; overflow-y: auto; padding-right: 5px;"></div>`;
 
-    // 将 adminHtml 拼接在赞赏榜单之后，列表 Tab 之前
-    return headerHtml + tipsHtml + adminHtml + tabsHtml;
+    return headerHtml + adminHtml + tabsHtml;
 }

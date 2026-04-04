@@ -2,6 +2,7 @@
 import { showToast } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { api } from "../core/网络请求_业务API.js";
+import { t } from "../components/用户体验增强.js";
 
 /**
  * 充值弹窗组件 (真实拉起支付宝网关)
@@ -16,7 +17,7 @@ export function openRechargeModal(currentUser, onBalanceChange) {
         { points: 10, price: 10, isCustom: false },
         { points: 100, price: 100, isCustom: false },
         { points: 1000, price: 1000, isCustom: false },
-        { isCustom: true, label: "自定义" }
+        { isCustom: true, label: t('wallet.recharge.custom') }
     ];
 
     let selectedOption = rechargeOptions[0];
@@ -28,55 +29,55 @@ export function openRechargeModal(currentUser, onBalanceChange) {
             return `
             <div class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : '#2a2a2a'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">
                 <div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px; line-height: 22px;">${opt.label}</div>
-                <div style="font-size: 12px; color: #888;">任意金额</div>
+                <div style="font-size: 12px; color: #888;">${t('wallet.recharge.any_amount')}</div>
             </div>`;
         } else {
             return `
             <div class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : '#2a2a2a'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">
-                <div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px;">${opt.points} 积分</div>
-                <div style="font-size: 12px; color: #888;">￥${opt.price.toFixed(2)}</div>
+                <div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px;">${opt.points} ${t('wallet.recharge.points_suffix')}</div>
+                <div style="font-size: 12px; color: #888;">${t('wallet.recharge.price_prefix')}${opt.price.toFixed(2)}</div>
             </div>`;
         }
     }).join("");
 
     container.innerHTML = `
         <div style="margin-bottom: 20px; text-align: center;">
-            <div style="font-size: 14px; color: #aaa;">当前账号余额</div>
-            <div style="font-size: 28px; font-weight: bold; color: #FF9800; margin-top: 5px;">${currentUser.balance || 0} <span style="font-size: 14px;">积分</span></div>
+            <div style="font-size: 14px; color: #aaa;">${t('wallet.recharge.current_balance')}</div>
+            <div style="font-size: 28px; font-weight: bold; color: #FF9800; margin-top: 5px;">${currentUser.balance || 0} <span style="font-size: 14px;">${t('wallet.recharge.points_suffix')}</span></div>
         </div>
         
         <div style="margin-bottom: 15px;">
-            <label style="display: block; margin-bottom: 8px; font-weight: bold; color: #eee;">选择充值金额 <span style="color: #888; font-weight: normal;">(1 积分 = 1 元)</span></label>
+            <label style="display: block; margin-bottom: 8px; font-weight: bold; color: #eee;">${t('wallet.recharge.select_amount')} <span style="color: #888; font-weight: normal;">${t('wallet.recharge.exchange_rate')}</span></label>
             <div id="recharge-grid" style="display: flex; flex-wrap: wrap; gap: 10px;">
                 ${renderOptions()}
             </div>
             <div id="custom-input-container" style="display: none; margin-top: 10px;">
-                <input type="number" id="custom-amount" placeholder="请输入自定义金额 (1~999999)" min="1" max="999999" style="width: 100%; padding: 10px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center; font-size: 16px; font-weight: bold; outline: none;">
+                <input type="number" id="custom-amount" placeholder="${t('wallet.recharge.custom_placeholder')}" min="1" max="999999" style="width: 100%; padding: 10px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center; font-size: 16px; font-weight: bold; outline: none;">
             </div>
         </div>
 
         <div style="margin-bottom: 20px;">
-            <label style="display: block; margin-bottom: 8px; font-weight: bold; color: #eee;">支付方式</label>
+            <label style="display: block; margin-bottom: 8px; font-weight: bold; color: #eee;">${t('wallet.recharge.payment_method')}</label>
             <div style="display: flex; gap: 15px;">
                 <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
                     <input type="radio" name="pay_method" value="alipay" checked>
-                    <span style="color: #00A1E9; font-weight: bold;">📘 支付宝</span>
+                    <span style="color: #00A1E9; font-weight: bold;">${t('wallet.recharge.alipay')}</span>
                 </label>
                 <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
                     <input type="radio" name="pay_method" value="wechat" disabled>
-                    <span style="color: #888; font-weight: bold;">📗 微信支付(暂未开通)</span>
+                    <span style="color: #888; font-weight: bold;">${t('wallet.recharge.wechat')}</span>
                 </label>
             </div>
         </div>
 
         <div id="qr-container" style="display: none; text-align: center; margin-bottom: 20px; padding: 20px; background: #fff; border-radius: 8px;">
-            <div id="qr-loading" style="color: #666; font-size: 14px; margin-bottom: 10px;">⏳ 正在连接支付网关...</div>
+            <div id="qr-loading" style="color: #666; font-size: 14px; margin-bottom: 10px;">${t('wallet.recharge.connecting')}</div>
             <img id="qr-image" style="width: 180px; height: 180px; display: none; margin: 0 auto;">
-            <div style="color: #333; font-size: 13px; margin-top: 10px; font-weight: bold;">请使用手机扫码支付 <span id="pay-price-text" style="color: #F44336;"></span> 元</div>
-            <div style="color: #888; font-size: 11px; margin-top: 5px;">支付成功后此处将自动跳转，请勿关闭弹窗</div>
+            <div style="color: #333; font-size: 13px; margin-top: 10px; font-weight: bold;">${t('wallet.recharge.scan_to_pay')} <span id="pay-price-text" style="color: #F44336;"></span> ${t('wallet.recharge.yuan')}</div>
+            <div style="color: #888; font-size: 11px; margin-top: 5px;">${t('wallet.recharge.auto_redirect')}</div>
         </div>
 
-        <button id="btn-create-order" style="width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 15px; box-shadow: 0 4px 10px rgba(76, 175, 80, 0.3);">获取支付二维码</button>
+        <button id="btn-create-order" style="width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 15px; box-shadow: 0 4px 10px rgba(76, 175, 80, 0.3);">${t('wallet.recharge.get_qr')}</button>
     `;
 
     const customInputContainer = container.querySelector("#custom-input-container");
@@ -118,7 +119,7 @@ export function openRechargeModal(currentUser, onBalanceChange) {
         if (selectedOption.isCustom) {
             const customVal = parseInt(customAmountInput.value);
             if (!customVal || customVal <= 0 || customVal > 999999) {
-                return showToast("请输入 6 位以内有效的整数充值金额！", "warning");
+                return showToast(t('wallet.recharge.invalid_amount'), "warning");
             }
             finalPoints = customVal;
             finalPrice = customVal;
@@ -164,7 +165,7 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
                     if (checkRes.status === "SUCCESS") {
                         clearInterval(pollingInterval);
                         globalModal.closeTopModal();
-                        showToast(`✅ 充值成功！已实时到账 ${finalPoints} 积分。`, "success");
+                        showToast(t('wallet.recharge.success', { points: finalPoints }), "success");
 
                         // 不做乐观更新，从服务器获取真实余额
                         try {
@@ -189,7 +190,7 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
             }, 3000);
 
         } catch (error) {
-            qrLoading.innerText = "❌ 创建订单失败: " + error.message;
+            qrLoading.innerText = t('wallet.recharge.order_failed') + error.message;
             qrLoading.style.color = "#F44336";
         }
     };
@@ -200,5 +201,5 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
         if (pollingInterval) clearInterval(pollingInterval);
     });
 
-    globalModal.openModal("💰 积分充值中心", container, { width: "400px" });
+    globalModal.openModal(t('wallet.recharge.title'), container, { width: "400px" });
 }

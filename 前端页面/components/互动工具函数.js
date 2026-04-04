@@ -14,10 +14,10 @@ import { t } from "./用户体验增强.js";
 // ==========================================
 
 const _viewRecordCache = {};
-const VIEW_DEBOUNCE_MS = 60000; // 60秒防抖
+const VIEW_DEBOUNCE_MS = 300000; // 5分钟防抖
 
 /**
- * 记录内容浏览量（带60秒防抖）
+ * 记录内容浏览量（带5分钟防抖）
  * @param {Function} apiMethod - API方法，如 api.recordTaskView
  * @param {string} contentId - 内容ID
  * @param {string} cachePrefix - 缓存前缀，如 'task', 'post', 'item'

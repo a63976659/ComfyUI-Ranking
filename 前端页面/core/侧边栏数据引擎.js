@@ -52,9 +52,27 @@ async function getTasksView() {
 // ==========================================
 // 🔧 配置常量
 // ==========================================
-const CACHE_EXPIRE_TIME = 1000 * 60 * 60 * 2;  // 缓存有效期：2小时
 const PAGE_SIZE = 20;                           // 每页数量
 const CREATORS_PAGE_SIZE = 12;                  // 创作者每页数量（卡片更大）
+
+/**
+ * ⏱️ 获取缓存过期时间（毫秒）
+ * 从用户设置中读取，默认2小时（7200秒）
+ * @returns {number} 缓存过期时间（毫秒）
+ */
+function getCacheExpireTime() {
+    try {
+        const settingsStr = localStorage.getItem('ComfyCommunity_Settings');
+        if (settingsStr) {
+            const settings = JSON.parse(settingsStr);
+            const seconds = parseInt(settings.cacheExpireSeconds);
+            if (seconds && seconds >= 60 && seconds <= 86400) {
+                return seconds * 1000;  // 转为毫秒
+            }
+        }
+    } catch (e) {}
+    return 1000 * 60 * 60 * 2;  // 默认2小时
+}
 
 // ==========================================
 // 🔄 本地排序函数
@@ -313,6 +331,47 @@ export async function loadSidebarContent({
             _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword);
         }
         
+        // 【新增】Tab 切换后台静默刷新 —— 仅缓存过期时触发
+        if (isCacheExpired) {
+            console.log(`🔄 缓存已过期，${tab}_${sort} 启动后台静默刷新...`);
+            
+            setTimeout(async () => {
+                // 防竞态检查1：用户是否已切走
+                if (renderToken !== getRenderToken()) return;
+                
+                try {
+                    let newData;
+                    if (tab === "tools" || tab === "apps" || tab === "recommends") {
+                        const itemType = tab === "tools" ? "tool" : (tab === "apps" ? "app" : "recommend");
+                        const response = await api.getItems(itemType, sort, 200);
+                        newData = proxyImages(response.data || []);
+                    } else if (tab === "creators") {
+                        const response = await api.getCreators(sort, 100);
+                        newData = proxyImages(response.data || []);
+                    } else {
+                        return; // posts/tasks 不走这个路径
+                    }
+                    
+                    // 防竞态检查2：网络请求完成后再验证
+                    if (renderToken !== getRenderToken()) return;
+                    
+                    // 对比新旧数据
+                    if (_shouldUpdateData(state.allData, newData)) {
+                        console.log(`✅ ${tab}_${sort} 检测到新数据，执行静默更新`);
+                        const oldData = state.allData;
+                        state.allData = newData;
+                        setCache(cacheKey, newData, getCacheExpireTime(), true);
+                        _silentlyUpdateVisibleCards(contentArea, oldData, newData, tab, currentUser);
+                    } else {
+                        // 数据无变化，仅刷新缓存过期时间
+                        setCache(cacheKey, state.allData, getCacheExpireTime(), true);
+                    }
+                } catch (err) {
+                    console.warn(`⚠️ ${tab}_${sort} 后台刷新失败:`, err);
+                }
+            }, 0);
+        }
+        
         return;
     }
     
@@ -333,7 +392,7 @@ export async function loadSidebarContent({
         }
         
         // 存入当前排序的缓存
-        setCache(cacheKey, locallySorted, CACHE_EXPIRE_TIME, true);
+        setCache(cacheKey, locallySorted, getCacheExpireTime(), true);
         
         return; // 本地排序后直接返回，不需要后台刷新（数据是同一批）
     }
@@ -359,7 +418,7 @@ export async function loadSidebarContent({
         }
         
         // 存入缓存
-        setCache(cacheKey, realData, CACHE_EXPIRE_TIME, true);
+        setCache(cacheKey, realData, getCacheExpireTime(), true);
         
         // 更新状态
         state.allData = realData;
@@ -505,6 +564,54 @@ export async function refreshSidebarContent(params) {
 }
 
 
+/** 判断是否需要更新数据 —— 对比前3条数据的关键字段 */
+function _shouldUpdateData(oldData, newData) {
+    if (!oldData || !newData) return true;
+    if (oldData.length !== newData.length) return true;
+    
+    const checkCount = Math.min(3, oldData.length);
+    for (let i = 0; i < checkCount; i++) {
+        const keyFields = ['id', 'likes', 'downloads', 'uses', 'views', 'daily_views', 'recent_tips'];
+        for (const field of keyFields) {
+            if ((oldData[i][field] || 0) !== (newData[i][field] || 0)) return true;
+        }
+    }
+    return false;
+}
+
+/** 静默更新可见卡片的统计数据（不重排DOM） */
+function _silentlyUpdateVisibleCards(contentArea, oldData, newData, tab, currentUser) {
+    try {
+        const cards = contentArea.querySelectorAll('[data-item-id]');
+        cards.forEach(card => {
+            const itemId = card.getAttribute('data-item-id');
+            const newItem = newData.find(item => (item.id || item.account) === itemId);
+            const oldItem = oldData.find(item => (item.id || item.account) === itemId);
+            if (newItem && oldItem) _updateCardStats(card, oldItem, newItem);
+        });
+    } catch (err) {
+        console.warn('⚠️ 静默更新卡片失败:', err);
+    }
+}
+
+/** 更新单张卡片的统计数字 */
+function _updateCardStats(card, oldItem, newItem) {
+    const statMappings = [
+        { attr: 'data-stat="uses"', field: 'uses' },
+        { attr: 'data-stat="likes"', field: 'likes' },
+        { attr: 'data-stat="favorites"', field: 'favorites' },
+        { attr: 'data-stat="views"', field: 'views' },
+        { attr: 'data-stat="daily_views"', field: 'daily_views' },
+    ];
+    
+    statMappings.forEach(({ attr, field }) => {
+        const el = card.querySelector(`[${attr}]`);
+        if (el && (oldItem[field] || 0) !== (newItem[field] || 0)) {
+            el.textContent = el.textContent.replace(/\d+/, newItem[field] || 0);
+        }
+    });
+}
+
 // ==========================================
 // 📊 预加载相邻标签页数据
 // ==========================================
@@ -538,7 +645,7 @@ export async function preloadAdjacentTabs(currentTab, sort) {
                     response = await api.getItems(itemType, sort, 200);
                     data = proxyImages(response.data || []);  // 确保图片走本地缓存代理
                 }
-                setCache(cacheKey, data, CACHE_EXPIRE_TIME, true);
+                setCache(cacheKey, data, getCacheExpireTime(), true);
             } catch {
                 // 静默失败，不影响用户体验
             }

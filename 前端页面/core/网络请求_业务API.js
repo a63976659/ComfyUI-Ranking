@@ -91,6 +91,11 @@ const api = {
         return request(`/api/wallet/${account}/task-stats`);
     },
     
+    // 💳 P6支付增强：打赏统计
+    async getTipStats(account) {
+        return request(`/api/wallet/${account}/tip-stats`);
+    },
+    
     async tipUser(senderAccount, targetAccount, amount, isAnonymous, itemId = null) {
         // 🐛 Bug修复：itemId 可选，但记录日志便于排查
         if (itemId === undefined) {

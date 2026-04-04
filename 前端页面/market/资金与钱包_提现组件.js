@@ -2,6 +2,7 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
+import { t } from "../components/用户体验增强.js";
 
 /**
  * 提现弹窗组件 (带邮箱验证码安全风控与手续费计算)
@@ -18,7 +19,7 @@ export function openWithdrawModal(currentUser, onSuccess) {
     const totalWithdrawn = currentUser.total_withdrawn || 0; 
     
     if (maxWithdraw <= 0) {
-        return showToast("您的可提现收益为 0，快去发布优质工具赚取积分吧！", "warning");
+        return showToast(t('wallet.withdraw.no_balance'), "warning");
     }
 
     const container = document.createElement("div");
@@ -27,18 +28,18 @@ export function openWithdrawModal(currentUser, onSuccess) {
     container.innerHTML = `
         <div style="margin-bottom: 20px; background: rgba(33, 150, 243, 0.1); border: 1px dashed #2196F3; padding: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
             <div>
-                <div style="font-size: 12px; color: #2196F3; margin-bottom: 5px;">总可提现积分</div>
+                <div style="font-size: 12px; color: #2196F3; margin-bottom: 5px;">${t('wallet.withdraw.total_withdrawable')}</div>
                 <div style="font-size: 24px; font-weight: bold; color: #fff;">${maxWithdraw}</div>
             </div>
             <div style="text-align: right;">
-                <div style="font-size: 12px; color: #888; margin-bottom: 5px;">折合人民币 (扣除手续费前)</div>
-                <div style="font-size: 16px; font-weight: bold; color: #4CAF50;">≈ ¥ ${maxWithdraw.toFixed(2)}</div>
+                <div style="font-size: 12px; color: #888; margin-bottom: 5px;">${t('wallet.withdraw.rmb_equivalent')}</div>
+                <div style="font-size: 16px; font-weight: bold; color: #4CAF50;">≈ ${t('wallet.recharge.price_prefix')} ${maxWithdraw.toFixed(2)}</div>
             </div>
         </div>
 
         <div style="margin-bottom: 15px;">
-            <label style="display:block; margin-bottom:5px; color:#ccc;">提现金额 (积分) <span style="color:#F44336">*</span></label>
-            <input type="number" id="withdraw-amount" placeholder="1积分 = 1元" max="${maxWithdraw}" min="1" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+            <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.amount_label')} <span style="color:#F44336">*</span></label>
+            <input type="number" id="withdraw-amount" placeholder="${t('wallet.withdraw.amount_placeholder')}" max="${maxWithdraw}" min="1" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
             
             <div id="fee-calc-box" style="margin-top: 10px; padding: 10px; background: rgba(255,152,0,0.1); border: 1px dashed #FF9800; border-radius: 4px; font-size: 12px; color: #FF9800; display:none; line-height: 1.5;">
                 <div id="fee-text"></div>
@@ -46,24 +47,24 @@ export function openWithdrawModal(currentUser, onSuccess) {
         </div>
 
         <div style="margin-bottom: 15px;">
-            <label style="display:block; margin-bottom:5px; color:#ccc;">收款支付宝账号 <span style="color:#F44336">*</span></label>
-            <input type="text" id="withdraw-account" placeholder="手机号或邮箱" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+            <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.alipay_account')} <span style="color:#F44336">*</span></label>
+            <input type="text" id="withdraw-account" placeholder="${t('wallet.withdraw.alipay_placeholder')}" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
         </div>
 
         <div style="margin-bottom: 15px;">
-            <label style="display:block; margin-bottom:5px; color:#ccc;">真实姓名 (需与支付宝实名一致) <span style="color:#F44336">*</span></label>
-            <input type="text" id="withdraw-name" placeholder="收款人真实姓名" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+            <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.real_name')} <span style="color:#F44336">*</span></label>
+            <input type="text" id="withdraw-name" placeholder="${t('wallet.withdraw.real_name_placeholder')}" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
         </div>
 
         <div style="margin-bottom: 20px;">
-            <label style="display:block; margin-bottom:5px; color:#ccc;">安全验证码 (将发送至您绑定的邮箱) <span style="color:#F44336">*</span></label>
+            <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.security_code')} <span style="color:#F44336">*</span></label>
             <div style="display:flex; gap:10px;">
-                <input type="text" id="withdraw-code" placeholder="6位验证码" maxlength="6" style="flex:1; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
-                <button id="btn-send-code" style="padding:0 15px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold; white-space:nowrap; transition:0.2s;">获取验证码</button>
+                <input type="text" id="withdraw-code" placeholder="${t('wallet.withdraw.code_placeholder')}" maxlength="6" style="flex:1; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+                <button id="btn-send-code" style="padding:0 15px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold; white-space:nowrap; transition:0.2s;">${t('wallet.withdraw.get_code')}</button>
             </div>
         </div>
 
-        <button id="btn-submit-withdraw" style="width:100%; padding:12px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold; font-size:15px; transition:0.2s;" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1">确认提现 (金额将转入冻结审核)</button>
+        <button id="btn-submit-withdraw" style="width:100%; padding:12px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold; font-size:15px; transition:0.2s;" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1">${t('wallet.withdraw.confirm')}</button>
     `;
 
     // 🚀 核心逻辑：动态计算提现手续费
@@ -88,9 +89,9 @@ export function openWithdrawModal(currentUser, onSuccess) {
         
         feeBox.style.display = "block";
         if (fee > 0) {
-            feeText.innerHTML = `⚠️ 平台累计免手续费额度 (100积分) 已耗尽。<br>本次提现需扣除 10% 平台维护手续费：<strong style="color:#F44336;">${fee} 积分</strong><br>扣除后预计实际到账：<strong style="color:#4CAF50;">${(val - fee).toFixed(2)} 元</strong>`;
+            feeText.innerHTML = `${t('wallet.withdraw.fee_quota_exhausted')}<br>${t('wallet.withdraw.fee_deducted')}<strong style="color:#F44336;">${fee} ${t('wallet.recharge.points_suffix')}</strong><br>${t('wallet.withdraw.fee_actual')}<strong style="color:#4CAF50;">${(val - fee).toFixed(2)} ${t('wallet.withdraw.yuan')}</strong>`;
         } else {
-            feeText.innerHTML = `🎉 您目前享有平台 100元 内免手续费优惠福利！<br>预计全额到账：<strong style="color:#4CAF50;">${val.toFixed(2)} 元</strong>`;
+            feeText.innerHTML = `${t('wallet.withdraw.fee_free_quota')}<br>${t('wallet.withdraw.fee_full_amount')}<strong style="color:#4CAF50;">${val.toFixed(2)} ${t('wallet.withdraw.yuan')}</strong>`;
         }
     };
 
@@ -98,26 +99,26 @@ export function openWithdrawModal(currentUser, onSuccess) {
     btnSendCode.onclick = async () => {
         btnSendCode.disabled = true;
         btnSendCode.style.background = "#555";
-        btnSendCode.innerText = "发送中...";
+        btnSendCode.innerText = t('wallet.withdraw.sending');
         try {
             await api.sendVerifyCode({ contact: currentUser.email, contact_type: "email", action_type: "withdraw", account: currentUser.account });
-            showToast("验证码已发送，请查收邮箱 (注意检查垃圾箱)", "success");
+            showToast(t('wallet.withdraw.code_sent'), "success");
             let count = 60;
             const timer = setInterval(() => {
                 count--;
-                btnSendCode.innerText = `${count}s 后重发`;
+                btnSendCode.innerText = t('wallet.withdraw.resend_in', { seconds: count });
                 if (count <= 0) {
                     clearInterval(timer);
                     btnSendCode.disabled = false;
                     btnSendCode.style.background = "#2196F3";
-                    btnSendCode.innerText = "获取验证码";
+                    btnSendCode.innerText = t('wallet.withdraw.get_code');
                 }
             }, 1000);
         } catch (error) {
-            showToast("发送失败: " + error.message, "error");
+            showToast(t('wallet.withdraw.code_failed') + error.message, "error");
             btnSendCode.disabled = false;
             btnSendCode.style.background = "#2196F3";
-            btnSendCode.innerText = "获取验证码";
+            btnSendCode.innerText = t('wallet.withdraw.get_code');
         }
     };
 
@@ -128,26 +129,26 @@ export function openWithdrawModal(currentUser, onSuccess) {
         const realName = container.querySelector("#withdraw-name").value.trim();
         const code = container.querySelector("#withdraw-code").value.trim();
 
-        if (!amount || amount < 1) return showToast("最低提现额度为 1 积分！", "warning");
-        if (!alipayAccount || !realName) return showToast("请完整填写收款人支付宝账号与真实姓名！", "warning");
-        if (code.length !== 6) return showToast("请输入 6 位有效验证码！", "warning");
+        if (!amount || amount < 1) return showToast(t('wallet.withdraw.min_amount'), "warning");
+        if (!alipayAccount || !realName) return showToast(t('wallet.withdraw.fill_account'), "warning");
+        if (code.length !== 6) return showToast(t('wallet.withdraw.invalid_code'), "warning");
 
-        btnSubmit.innerHTML = "⏳ 提交中...";
+        btnSubmit.innerHTML = t('wallet.withdraw.submitting');
         btnSubmit.disabled = true;
 
         try {
             await api.submitWithdraw({ amount, alipayAccount, real_name: realName, code, account: currentUser.account });
             
-            showToast("🎉 提现申请提交成功！预计 1-3 个工作日内打款至您的支付宝。", "success");
+            showToast(t('wallet.withdraw.success'), "success");
             globalModal.closeTopModal();
             
             if (onSuccess) onSuccess(); 
         } catch (error) {
-            showToast("提交失败: " + error.message, "error");
-            btnSubmit.innerHTML = "确认提现";
+            showToast(t('wallet.withdraw.submit_failed') + error.message, "error");
+            btnSubmit.innerHTML = t('wallet.withdraw.confirm');
             btnSubmit.disabled = false;
         }
     };
 
-    globalModal.openModal("💳 收益提现中心", container, { width: "420px" });
+    globalModal.openModal(t('wallet.withdraw.title'), container, { width: "420px" });
 }

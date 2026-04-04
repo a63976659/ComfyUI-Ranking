@@ -10,11 +10,42 @@
 
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { createCommentSection } from "../social/评论与互动组件.js";
-import { renderTipLevelHTML } from "../components/打赏等级工具.js";
+import { renderTipLevelHTML, getTipLevelRuleShort } from "../components/打赏等级工具.js";
 import { getBannerCacheKey, PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { api } from "../core/网络请求_业务API.js";
 import { getSettings } from "../components/全局设置组件.js";
 import { t } from "../components/用户体验增强.js";
+import { showToast } from "../components/UI交互提示组件.js";
+import { openTipModal } from "../profile/个人中心_赞赏组件.js";
+
+/**
+ * 处理打赏创作者按钮点击
+ * @param {object} creatorData - 创作者数据
+ * @param {object} currentUser - 当前登录用户
+ * @param {Function} onTipSuccess - 打赏成功回调
+ */
+function handleTipCreator(creatorData, currentUser, onTipSuccess) {
+    // 检查用户是否登录
+    if (!currentUser) {
+        showToast(t('creator.tip_login_required') || "请先登录", "warning");
+        return;
+    }
+    
+    // 不能给自己打赏
+    if (currentUser.account === creatorData.account) {
+        showToast(t('creator.cannot_tip_self'), "warning");
+        return;
+    }
+    
+    // 打开打赏弹窗
+    openTipModal(currentUser, {
+        account: creatorData.account,
+        name: creatorData.name
+    }, () => {
+        // 打赏成功回调
+        if (onTipSuccess) onTipSuccess();
+    });
+}
 
 function loadECharts() {
     return new Promise((resolve, reject) => {
@@ -32,19 +63,45 @@ function loadECharts() {
  * @param {Array} tipBoard - 榜单数据 [{account, amount, is_anon}, ...]
  * @param {string} title - 榜单标题
  * @param {Function} onUserClick - 点击用户名时的回调
+ * @param {object} creatorData - 创作者数据（用于打赏）
+ * @param {object} currentUser - 当前登录用户
+ * @param {Function} onTipSuccess - 打赏成功回调
  */
-export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献榜", onUserClick = null) {
+export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献榜", onUserClick = null, creatorData = null, currentUser = null, onTipSuccess = null) {
     const container = document.createElement("div");
     Object.assign(container.style, {
         background: "#1a1d2e", border: "1px solid #2d334a", borderRadius: "6px",
         padding: "10px", marginTop: "10px"
     });
 
+    // 等级规则说明
+    const levelRuleHtml = `
+        <div style="font-size: 11px; color: #888; margin-bottom: 8px; padding: 4px 8px; background: rgba(255,255,255,0.03); border-radius: 4px;">
+            📊 ${t('creator.tip_level_rule')}：${getTipLevelRuleShort()}
+        </div>
+    `;
+
     if (!tipBoard || tipBoard.length === 0) {
         container.innerHTML = `
-            <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #FF9800;">${title}</div>
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                <div style="font-size: 12px; font-weight: bold; color: #FF9800; display: flex; align-items: center; gap: 6px;">
+                    ${title}
+                    <span style="font-size: 10px; color: #888; font-weight: normal;">(${t('creator.tip_board.count', {count: 0})})</span>
+                </div>
+                ${creatorData ? `<button id="btn-tip-creator-empty" style="padding: 4px 10px; background: linear-gradient(135deg, #FF9800, #F57C00); color: #fff; border: none; border-radius: 4px; font-size: 11px; cursor: pointer; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">${t('creator.tip_this_creator')}</button>` : ''}
+            </div>
+            ${levelRuleHtml}
             <div style="color: #666; font-size: 12px; text-align: center; padding: 15px 0;">${t('creator.no_tips')}</div>
         `;
+        
+        // 绑定打赏按钮事件（空榜单时）
+        if (creatorData) {
+            const tipBtn = container.querySelector('#btn-tip-creator-empty');
+            if (tipBtn) {
+                tipBtn.onclick = () => handleTipCreator(creatorData, currentUser, onTipSuccess);
+            }
+        }
+        
         return container;
     }
 
@@ -120,12 +177,24 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
     }).join("");
 
     container.innerHTML = `
-        <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #FF9800; display: flex; align-items: center; gap: 6px;">
-            ${title}
-            <span style="font-size: 10px; color: #888; font-weight: normal;">(${t('creator.tip_board.count', {count: tipBoard.length})})</span>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+            <div style="font-size: 12px; font-weight: bold; color: #FF9800; display: flex; align-items: center; gap: 6px;">
+                ${title}
+                <span style="font-size: 10px; color: #888; font-weight: normal;">(${t('creator.tip_board.count', {count: tipBoard.length})})</span>
+            </div>
+            ${creatorData ? `<button id="btn-tip-creator" style="padding: 4px 10px; background: linear-gradient(135deg, #FF9800, #F57C00); color: #fff; border: none; border-radius: 4px; font-size: 11px; cursor: pointer; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">${t('creator.tip_this_creator')}</button>` : ''}
         </div>
+        ${levelRuleHtml}
         <div style="max-height: 200px; overflow-y: auto;">${listHtml}</div>
     `;
+
+    // 绑定打赏按钮事件
+    if (creatorData) {
+        const tipBtn = container.querySelector('#btn-tip-creator');
+        if (tipBtn) {
+            tipBtn.onclick = () => handleTipCreator(creatorData, currentUser, onTipSuccess);
+        }
+    }
 
     // 绑定点击事件
     if (onUserClick) {
@@ -144,6 +213,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
 
 export function createCreatorCard(creatorData, currentUser = null) {
     const card = document.createElement("div");
+    card.setAttribute("data-item-id", creatorData.account);
     Object.assign(card.style, {
         backgroundColor: "var(--comfy-input-bg, #2b2b2b)", borderRadius: "8px", 
         marginBottom: "12px", border: "1px solid #444", color: "#fff", fontFamily: "sans-serif",
@@ -178,18 +248,18 @@ export function createCreatorCard(creatorData, currentUser = null) {
                 <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px; padding: 5px 0;">
                     <img class="creator-avatar-link" src="${avatarSrc}" title="${t('creator.visit_profile')}" style="width: 50px; height: 50px; border-radius: 50%; border: 2px solid ${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}; object-fit: cover; cursor: pointer; transition: 0.2s; ${hasBanner ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.3);' : ''}" onmouseover="this.style.borderColor='#4CAF50'" onmouseout="this.style.borderColor='${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}'">
                     <div class="creator-name-link" title="${t('creator.visit_profile')}" style="font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; color: #FFD700; text-shadow: 0 1px 4px rgba(0,0,0,0.8), 0 0 8px rgba(255,215,0,0.3);" onmouseover="this.style.color='#FFA500'" onmouseout="this.style.color='#FFD700'">${creatorData.name}</div>
-                    <div style="font-size: 12px; color: #FF6B6B; margin-left: auto; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">${t('creator.usage_count', {count: creatorData.downloads || 0})}</div>
+                    <div data-stat="downloads" style="font-size: 12px; color: #FF6B6B; margin-left: auto; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">${t('creator.usage_count', {count: creatorData.downloads || 0})}</div>
                 </div>
                 <div style="font-size: 12px; color: ${hasBanner ? '#ccc' : '#aaa'}; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 10px;">${creatorData.shortDesc && creatorData.shortDesc !== "null" ? creatorData.shortDesc : t('profile.no_intro') || "这个人很懒，什么都没写..."}</div>
                 <div style="background: rgba(34,34,34,${hasBanner ? '0.8' : '1'}); border-radius: 6px; padding: 8px 10px; border: 1px dashed #555;">
                     <div style="display: flex; gap: 15px; font-size: 12px; color: #eee; justify-content: space-between; margin-bottom: 8px;">
-                        <span style="color: #FF5722;">👍 ${t('creator.stats.likes')}: <strong>${creatorData.likes}</strong></span>
-                        <span style="color: #FFC107;">⭐ ${t('creator.stats.favorites')}: <strong>${creatorData.favorites}</strong></span>
-                        <span style="color: #4CAF50;">👥 ${t('creator.stats.followers')}: <strong>${creatorData.followers}</strong></span>
+                        <span data-stat="likes" style="color: #FF5722;">👍 ${t('creator.stats.likes')}: <strong>${creatorData.likes}</strong></span>
+                        <span data-stat="favorites" style="color: #FFC107;">⭐ ${t('creator.stats.favorites')}: <strong>${creatorData.favorites}</strong></span>
+                        <span data-stat="followers" style="color: #4CAF50;">👥 ${t('creator.stats.followers')}: <strong>${creatorData.followers}</strong></span>
                     </div>
                     <div style="display: flex; gap: 15px; font-size: 12px; color: #ccc; justify-content: center; border-top: 1px solid #333; padding-top: 8px;">
-                        <span style="color: #2196F3;">🛠️ ${t('creator.output.tools')}: <strong>${creatorData.toolsCount}</strong> ${t('creator.output.unit')}</span>
-                        <span style="color: #9C27B0;">📦 ${t('creator.output.apps')}: <strong>${creatorData.appsCount}</strong> ${t('creator.output.unit')}</span>
+                        <span data-stat="toolsCount" style="color: #2196F3;">🛠️ ${t('creator.output.tools')}: <strong>${creatorData.toolsCount}</strong> ${t('creator.output.unit')}</span>
+                        <span data-stat="appsCount" style="color: #9C27B0;">📦 ${t('creator.output.apps')}: <strong>${creatorData.appsCount}</strong> ${t('creator.output.unit')}</span>
                     </div>
                 </div>
             </div>
@@ -217,10 +287,22 @@ export function createCreatorCard(creatorData, currentUser = null) {
 
     // 🎁 添加赞赏贡献总榜
     const tipBoardContainer = detailView.querySelector(`#tipboard-${chartContainerId}`);
+    
+    // 打赏成功后的回调函数 - 刷新创作者数据
+    const onTipSuccess = () => {
+        // 触发重新加载创作者数据
+        if (window.refreshCreatorData) {
+            window.refreshCreatorData(creatorData.account);
+        }
+    };
+    
     const tipBoardUI = createTipBoardSection(
         creatorData.tip_board, 
         t('creator.tip_board.title'),
-        (account) => openOtherUserProfileModal(account, currentUser)
+        (account) => openOtherUserProfileModal(account, currentUser),
+        creatorData,
+        currentUser,
+        onTipSuccess
     );
     tipBoardContainer.appendChild(tipBoardUI);
 

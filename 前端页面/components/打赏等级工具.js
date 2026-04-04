@@ -247,3 +247,11 @@ export function renderTipBoardHTML(boardData, maxShow = 5, emptyText = "暂无�
     
     return boardData.slice(0, maxShow).map((t, i) => renderTipBoardItemHTML(t, i, size)).join('');
 }
+
+/**
+ * 获取等级规则说明（简短格式，用于榜单标题下方）
+ * @returns {string} - 等级规则说明
+ */
+export function getTipLevelRuleShort() {
+    return `1-100${t('tip.points')} = 1⭐ | 500${t('tip.points')} = 1🌙 | 2500${t('tip.points')} = 1☀️`;
+}
