@@ -277,7 +277,6 @@ export function createCreatorCard(creatorData, currentUser = null) {
     Object.assign(detailView.style, { display: "none", marginTop: "12px", paddingTop: "12px", borderTop: "1px dashed #555" });
 
     detailView.innerHTML = `
-        <div style="background: #1e1e1e; padding: 8px; border-radius: 4px; font-size: 12px; color: #ccc; margin-bottom: 15px; line-height: 1.5;">${creatorData.fullDesc && creatorData.fullDesc !== "null" ? creatorData.fullDesc : t('profile.no_intro') || "这个人很懒，什么都没写..."}</div>
         <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #aaa;">${t('creator.chart.download_trend')}</div>
         <div id="${chartContainerId}" style="width: 100%; height: 180px; background: #222; border-radius: 4px; margin-bottom: 15px;"></div>
         <div id="tipboard-${chartContainerId}"></div>
