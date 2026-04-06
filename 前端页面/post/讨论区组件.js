@@ -348,11 +348,34 @@ export function createPostsView(currentUser, keyword = "") {
             // 更新缓存
             const cacheKey = getCacheKey();
             setCache(cacheKey, posts, CACHE_TTL, true);
-            allPostsData = posts;
+            
+            // 对比新旧数据，有变化时重新渲染
+            if (_postsDataChanged(allPostsData, posts)) {
+                console.log(`✅ 讨论区 ${currentSort} 检测到新数据，执行静默更新`);
+                allPostsData = proxyImages(posts);
+                renderPostsFromCache(allPostsData);
+            } else {
+                allPostsData = posts;
+            }
         } catch (err) {
             isLoadingFromNetwork = false;
             console.warn("后台更新失败:", err);
         }
+    };
+    
+    /** 对比帖子数据是否有变化 */
+    const _postsDataChanged = (oldData, newData) => {
+        if (!oldData || !newData) return true;
+        if (oldData.length !== newData.length) return true;
+        const checkCount = Math.min(10, oldData.length);
+        for (let i = 0; i < checkCount; i++) {
+            if ((oldData[i].id) !== (newData[i].id)) return true;
+            if ((oldData[i].likes || 0) !== (newData[i].likes || 0)) return true;
+            if ((oldData[i].favorites || 0) !== (newData[i].favorites || 0)) return true;
+            if ((oldData[i].views || 0) !== (newData[i].views || 0)) return true;
+            if ((oldData[i].comments_count || 0) !== (newData[i].comments_count || 0)) return true;
+        }
+        return false;
     };
     
     // 加载更多按钮

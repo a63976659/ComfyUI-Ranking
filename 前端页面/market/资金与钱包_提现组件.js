@@ -101,7 +101,7 @@ export function openWithdrawModal(currentUser, onSuccess) {
         btnSendCode.style.background = "#555";
         btnSendCode.innerText = t('wallet.withdraw.sending');
         try {
-            await api.sendVerifyCode({ contact: currentUser.email, contact_type: "email", action_type: "withdraw", account: currentUser.account });
+            await api.sendVerifyCode(currentUser.email, "email", "withdraw", currentUser.account);
             showToast(t('wallet.withdraw.code_sent'), "success");
             let count = 60;
             const timer = setInterval(() => {

@@ -271,7 +271,9 @@ async function request(endpoint, options = {}) {
                 if (method === "GET") {
                     const ttl = _getCacheTTL(endpoint);
                     if (ttl > 0) {
-                        setCache(cacheKey, responseData, ttl, true); // 持久化到 localStorage，支持离线回退
+                        // 创作者列表不持久化到 localStorage，避免空间不足
+                        const persist = !endpoint.includes('/api/creators');
+                        setCache(cacheKey, responseData, ttl, persist);
                     }
                 }
 

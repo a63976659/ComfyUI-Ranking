@@ -921,6 +921,9 @@ const translations = {
         // 创作者
         'creator.no_tips': '暂无赞赏记录',
         'creator.anonymous': '匿名用户',
+        'creator.loading_details': '加载详情中...',
+        'creator.load_failed': '加载失败',
+        'creator.retry': '重试',
         'creator.usage_count': '被使用 {count} 次',
         'creator.stats.likes': '获赞',
         'creator.stats.favorites': '收藏',
@@ -1980,6 +1983,9 @@ const translations = {
         // Creator
         'creator.no_tips': 'No tips yet',
         'creator.anonymous': 'Anonymous',
+        'creator.loading_details': 'Loading details...',
+        'creator.load_failed': 'Failed to load',
+        'creator.retry': 'Retry',
         'creator.usage_count': 'Used {count} times',
         'creator.stats.likes': 'Likes',
         'creator.stats.favorites': 'Favorites',

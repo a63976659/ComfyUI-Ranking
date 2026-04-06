@@ -53,6 +53,7 @@ const api = {
     async updatePrivacy(account, privacy) { return request(`/api/users/${account}/privacy`, { method: "PUT", body: privacy }); },
     async toggleFollow(userId, targetAccount, isActive) { return request("/api/users/follow", { method: "POST", body: { user_id: userId, target_account: targetAccount, is_active: isActive } }); },
     async getCreators(sort, limit) { return request(`/api/creators?sort=${sort}&limit=${limit}`); },
+    async getCreatorDetails(account) { return request(`/api/creators/${account}/details`); },
     async uploadFile(file, fileType) {
         const formData = new FormData();
         formData.append("file", file);

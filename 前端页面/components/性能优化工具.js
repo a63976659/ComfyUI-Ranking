@@ -414,23 +414,36 @@ export function setCache(key, value, ttl = DEFAULT_TTL, persist = true) {
     
     // 持久化缓存
     if (persist) {
+        const jsonStr = JSON.stringify(cacheData);
+        let stored = false;
+        
+        // 第一次直接尝试
         try {
-            localStorage.setItem(fullKey, JSON.stringify(cacheData));
+            localStorage.setItem(fullKey, jsonStr);
+            stored = true;
         } catch (e) {
-            // 捕获 QuotaExceededError：先清理过期项再重试
             if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+                // 先清理过期项
                 console.warn('⚠️ localStorage 已满，尝试清理过期缓存...');
                 _cleanExpiredStorage();
+                
+                // 清理后重试
                 try {
-                    localStorage.setItem(fullKey, JSON.stringify(cacheData));
+                    localStorage.setItem(fullKey, jsonStr);
+                    stored = true;
                 } catch {
-                    // 清理过期项后仍失败，进行 LRU 淘汰
-                    console.warn('⚠️ 过期项已清理但主存仍不足，尝试 LRU 淘汰...');
-                    _evictOldestStorage();
-                    try {
-                        localStorage.setItem(fullKey, JSON.stringify(cacheData));
-                    } catch {
-                        // LRU 淘汰后仍失败，降级到仅内存缓存，不阻塞业务
+                    // 循环 LRU 淘汰直到成功或无可淘汰项
+                    for (let attempt = 0; attempt < 5 && !stored; attempt++) {
+                        const evicted = _evictOldestStorage();
+                        if (!evicted) break; // 没有更多可淘汰的项
+                        try {
+                            localStorage.setItem(fullKey, jsonStr);
+                            stored = true;
+                        } catch {
+                            // 继续淘汰
+                        }
+                    }
+                    if (!stored) {
                         console.warn(`⚠️ localStorage 持久化失败，降级到仅内存缓存: ${key}`);
                     }
                 }
@@ -607,7 +620,6 @@ function _cleanExpiredStorage(aggressive = false) {
 // LRU 淘汰：按最近使用时间删除最旧的 localStorage 缓存项
 function _evictOldestStorage() {
     try {
-        // 收集所有属于本模块的 localStorage 缓存项，按过期时间排序
         const entries = [];
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
@@ -616,24 +628,25 @@ function _evictOldestStorage() {
                     const cached = JSON.parse(localStorage.getItem(key));
                     entries.push({ key, expireAt: cached.expireAt || 0 });
                 } catch {
-                    // 无法解析的项直接删除
                     localStorage.removeItem(key);
                 }
             }
         }
         
-        if (entries.length === 0) return;
+        if (entries.length === 0) return false;
         
-        // 按过期时间升序排序（最小 = 最早过期 = 最旧）
         entries.sort((a, b) => a.expireAt - b.expireAt);
         
-        // 淘汰最旧的 1/3 项目，为新内容腾出空间
-        const evictCount = Math.max(1, Math.ceil(entries.length / 3));
+        // 淘汰最旧的 1/2 项目
+        const evictCount = Math.max(1, Math.ceil(entries.length / 2));
         for (let i = 0; i < evictCount; i++) {
             localStorage.removeItem(entries[i].key);
         }
         console.warn(`⚠️ LRU 淘汰: 删除了 ${evictCount} 个最旧 localStorage 缓存项`);
-    } catch {}
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 

@@ -18,6 +18,11 @@ import { t } from "../components/用户体验增强.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 
+// ==========================================
+// 📌 模块级状态：当前展开的卡片
+// ==========================================
+let currentExpandedCard = null;
+
 /**
  * 处理打赏创作者按钮点击
  * @param {object} creatorData - 创作者数据
@@ -276,76 +281,180 @@ export function createCreatorCard(creatorData, currentUser = null) {
     const detailView = document.createElement("div");
     Object.assign(detailView.style, { display: "none", marginTop: "12px", paddingTop: "12px", borderTop: "1px dashed #555" });
 
+    // 🔄 延迟渲染：初始只显示 loading 状态
     detailView.innerHTML = `
-        <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #aaa;">${t('creator.chart.download_trend')}</div>
-        <div id="${chartContainerId}" style="width: 100%; height: 180px; background: #222; border-radius: 4px; margin-bottom: 15px;"></div>
-        <div id="tipboard-${chartContainerId}"></div>
-        <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; margin-top: 15px; color: #aaa;">${t('creator.message_board')}</div>
-        <div id="board-${chartContainerId}" style="height: 250px; border: 1px solid #444; border-radius: 4px; overflow: hidden;"></div>
+        <div id="detail-content-${chartContainerId}" style="display: none;">
+            <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #aaa;">${t('creator.chart.download_trend')}</div>
+            <div id="${chartContainerId}" style="width: 100%; height: 180px; background: #222; border-radius: 4px; margin-bottom: 15px;"></div>
+            <div id="tipboard-${chartContainerId}"></div>
+            <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; margin-top: 15px; color: #aaa;">${t('creator.message_board')}</div>
+            <div id="board-${chartContainerId}" style="height: 250px; border: 1px solid #444; border-radius: 4px; overflow: hidden;"></div>
+        </div>
+        <div id="detail-loading-${chartContainerId}" style="text-align: center; padding: 40px 20px; color: #888;">
+            <div style="font-size: 14px;">⏳ ${t('creator.loading_details')}</div>
+        </div>
+        <div id="detail-error-${chartContainerId}" style="display: none; text-align: center; padding: 40px 20px; color: #F44336;">
+            <div style="font-size: 14px; margin-bottom: 12px;">❌ ${t('creator.load_failed')}</div>
+            <button id="btn-retry-${chartContainerId}" style="padding: 6px 16px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">${t('creator.retry')}</button>
+        </div>
     `;
 
-    // 🎁 添加赞赏贡献总榜
-    const tipBoardContainer = detailView.querySelector(`#tipboard-${chartContainerId}`);
-    
-    // 打赏成功后的回调函数 - 刷新创作者数据
-    const onTipSuccess = () => {
-        // 触发重新加载创作者数据
-        if (window.refreshCreatorData) {
-            window.refreshCreatorData(creatorData.account);
+    // 状态标记
+    let isDetailLoaded = false;
+    let isChartRendered = false;
+    let chartInstance = null;
+
+    // 🔄 加载详情数据
+    async function loadCreatorDetails() {
+        const loadingEl = detailView.querySelector(`#detail-loading-${chartContainerId}`);
+        const contentEl = detailView.querySelector(`#detail-content-${chartContainerId}`);
+        const errorEl = detailView.querySelector(`#detail-error-${chartContainerId}`);
+
+        // 如果已经加载过，直接显示
+        if (isDetailLoaded && creatorData._detailData) {
+            loadingEl.style.display = 'none';
+            errorEl.style.display = 'none';
+            contentEl.style.display = 'block';
+            renderDetailContent(creatorData._detailData);
+            return;
         }
-    };
-    
-    const tipBoardUI = createTipBoardSection(
-        creatorData.tip_board, 
-        t('creator.tip_board.title'),
-        (account) => openOtherUserProfileModal(account, currentUser),
-        creatorData,
-        currentUser,
-        onTipSuccess
-    );
-    tipBoardContainer.appendChild(tipBoardUI);
 
-    const boardContainer = detailView.querySelector(`#board-${chartContainerId}`);
-    // 🚀 P0安全修复：传递创作者账号作为 contentAuthor，使创作者可以删除其主页下的评论
-    const commentUI = createCommentSection(creatorData.account, creatorData.commentsData || [], currentUser, null, creatorData.account);
-    boardContainer.appendChild(commentUI);
+        loadingEl.style.display = 'block';
+        contentEl.style.display = 'none';
+        errorEl.style.display = 'none';
 
-    let isChartRendered = false; let chartInstance = null;
+        try {
+            const response = await api.getCreatorDetails(creatorData.account);
+            if (response.status === "success" && response.data) {
+                // 缓存详情数据到 creatorData 对象
+                creatorData._detailData = response.data;
+                creatorData.trendData = response.data.trendData;
+                creatorData.commentsData = response.data.commentsData;
+                creatorData.tip_board = response.data.tip_board;
+                isDetailLoaded = true;
 
-    function renderTrendChart() {
+                loadingEl.style.display = 'none';
+                contentEl.style.display = 'block';
+                renderDetailContent(response.data);
+            } else {
+                throw new Error(response.detail || response.error || '加载失败');
+            }
+        } catch (err) {
+            console.error('加载创作者详情失败:', err);
+            loadingEl.style.display = 'none';
+            errorEl.style.display = 'block';
+            
+            // 绑定重试按钮
+            const retryBtn = errorEl.querySelector(`#btn-retry-${chartContainerId}`);
+            if (retryBtn) {
+                retryBtn.onclick = () => loadCreatorDetails();
+            }
+        }
+    }
+
+    // 🎨 渲染详情内容（图表、赞赏榜、留言板）
+    function renderDetailContent(detailData) {
+        const contentEl = detailView.querySelector(`#detail-content-${chartContainerId}`);
+        
+        // 🎁 添加赞赏贡献总榜
+        const tipBoardContainer = contentEl.querySelector(`#tipboard-${chartContainerId}`);
+        tipBoardContainer.innerHTML = ''; // 清空之前的内容
+        
+        // 打赏成功后的回调函数 - 刷新创作者数据
+        const onTipSuccess = () => {
+            // 触发重新加载创作者数据
+            if (window.refreshCreatorData) {
+                window.refreshCreatorData(creatorData.account);
+            }
+            // 清除缓存，下次展开重新加载
+            creatorData._detailData = null;
+            isDetailLoaded = false;
+        };
+        
+        const tipBoardUI = createTipBoardSection(
+            detailData.tip_board, 
+            t('creator.tip_board.title'),
+            (account) => openOtherUserProfileModal(account, currentUser),
+            creatorData,
+            currentUser,
+            onTipSuccess
+        );
+        tipBoardContainer.appendChild(tipBoardUI);
+
+        // 💬 添加留言板
+        const boardContainer = contentEl.querySelector(`#board-${chartContainerId}`);
+        boardContainer.innerHTML = ''; // 清空之前的内容
+        // 🚀 P0安全修复：传递创作者账号作为 contentAuthor，使创作者可以删除其主页下的评论
+        const commentUI = createCommentSection(creatorData.account, detailData.commentsData || [], currentUser, null, creatorData.account);
+        boardContainer.appendChild(commentUI);
+
+        // 📊 渲染趋势图表
+        renderTrendChart(detailData.trendData);
+    }
+
+    // 📊 渲染趋势图表
+    function renderTrendChart(trendData) {
         if (isChartRendered) return;
         const chartDom = detailView.querySelector(`#${chartContainerId}`);
         if (!chartDom) return;
+        
         chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#888;">${t('creator.chart.loading')}</div>`;
+        
         loadECharts().then(echarts => {
             chartDom.innerHTML = ""; 
             chartInstance = echarts.init(chartDom, 'dark', { backgroundColor: 'transparent' });
             
-            const trendData = creatorData.trendData || { months: [], tools: [], apps: [], recommends: [] };
+            const data = trendData || { months: [], tools: [], apps: [], recommends: [] };
 
             chartInstance.setOption({
                 tooltip: { trigger: 'axis', textStyle: { fontSize: 11 } },
                 grid: { top: 10, bottom: 20, left: 35, right: 10 },
-                xAxis: { type: 'category', data: trendData.months, axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#444' } } },
+                xAxis: { type: 'category', data: data.months, axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#444' } } },
                 yAxis: { type: 'value', splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888', fontSize: 10 }, minInterval: 1 },
                 series: [
-                    { name: t('creator.chart.series.tools'), type: 'line', data: trendData.tools, smooth: true, itemStyle: { color: '#4CAF50' }, lineStyle: { width: 2, type: 'dashed' } },
-                    { name: t('creator.chart.series.apps'), type: 'line', data: trendData.apps, smooth: true, itemStyle: { color: '#2196F3' }, lineStyle: { width: 2, type: 'dashed' } },
+                    { name: t('creator.chart.series.tools'), type: 'line', data: data.tools, smooth: true, itemStyle: { color: '#4CAF50' }, lineStyle: { width: 2, type: 'dashed' } },
+                    { name: t('creator.chart.series.apps'), type: 'line', data: data.apps, smooth: true, itemStyle: { color: '#2196F3' }, lineStyle: { width: 2, type: 'dashed' } },
                     // 【核心修改】：添加第 3 根趋势折线 —— 推荐资源的点击与获取量
-                    { name: t('creator.chart.series.recommends'), type: 'line', data: trendData.recommends, smooth: true, itemStyle: { color: '#FF9800' }, lineStyle: { width: 2, type: 'dashed' } }
+                    { name: t('creator.chart.series.recommends'), type: 'line', data: data.recommends, smooth: true, itemStyle: { color: '#FF9800' }, lineStyle: { width: 2, type: 'dashed' } }
                 ]
             });
             isChartRendered = true;
-        }).catch(err => { chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#F44336;">${t('creator.chart.load_failed')}</div>`; });
+        }).catch(err => { 
+            chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#F44336;">${t('creator.chart.load_failed')}</div>`; 
+        });
     }
 
+    // 🔄 点击展开/收起
     summaryView.onclick = () => {
         const isHidden = detailView.style.display === "none";
-        detailView.style.display = isHidden ? "block" : "none";
-        if (isHidden) renderTrendChart();
+        
+        if (isHidden) {
+            // 展开当前卡片
+            // 1. 如果有其他卡片已展开，先关闭它
+            if (currentExpandedCard && currentExpandedCard !== card) {
+                const otherDetailView = currentExpandedCard.querySelector('[id^="detail-content-"]')?.parentElement;
+                if (otherDetailView) {
+                    otherDetailView.style.display = "none";
+                }
+            }
+            
+            // 2. 展开当前卡片
+            detailView.style.display = "block";
+            currentExpandedCard = card;
+            
+            // 3. 加载详情数据
+            loadCreatorDetails();
+        } else {
+            // 收起当前卡片
+            detailView.style.display = "none";
+            if (currentExpandedCard === card) {
+                currentExpandedCard = null;
+            }
+        }
     };
 
     window.addEventListener('resize', () => { if (chartInstance) chartInstance.resize(); });
-    card.appendChild(summaryView); card.appendChild(detailView);
+    card.appendChild(summaryView); 
+    card.appendChild(detailView);
     return card;
 }

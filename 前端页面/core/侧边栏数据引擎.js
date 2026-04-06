@@ -358,13 +358,23 @@ export async function loadSidebarContent({
                     // 对比新旧数据
                     if (_shouldUpdateData(state.allData, newData)) {
                         console.log(`✅ ${tab}_${sort} 检测到新数据，执行静默更新`);
-                        const oldData = state.allData;
                         state.allData = newData;
-                        setCache(cacheKey, newData, getCacheExpireTime(), true);
-                        _silentlyUpdateVisibleCards(contentArea, oldData, newData, tab, currentUser);
+                        state.displayedCount = 0; // 重置分页计数
+                        const shouldPersist = tab !== "creators";
+                        setCache(cacheKey, newData, getCacheExpireTime(), shouldPersist);
+                        
+                        // 完整重新渲染（替代之前只更新数字的方案）
+                        contentArea.innerHTML = "";
+                        const firstPage = newData.slice(0, pageSize);
+                        renderBatch(firstPage, false);
+                        
+                        if (newData.length > pageSize) {
+                            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword);
+                        }
                     } else {
                         // 数据无变化，仅刷新缓存过期时间
-                        setCache(cacheKey, state.allData, getCacheExpireTime(), true);
+                        const shouldPersist = tab !== "creators";
+                        setCache(cacheKey, state.allData, getCacheExpireTime(), shouldPersist);
                     }
                 } catch (err) {
                     console.warn(`⚠️ ${tab}_${sort} 后台刷新失败:`, err);
@@ -391,8 +401,9 @@ export async function loadSidebarContent({
             _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword);
         }
         
-        // 存入当前排序的缓存
-        setCache(cacheKey, locallySorted, getCacheExpireTime(), true);
+        // 存入当前排序的缓存（创作者数据不持久化到 localStorage）
+        const shouldPersist = tab !== "creators";
+        setCache(cacheKey, locallySorted, getCacheExpireTime(), shouldPersist);
         
         return; // 本地排序后直接返回，不需要后台刷新（数据是同一批）
     }
@@ -417,8 +428,9 @@ export async function loadSidebarContent({
             realData = proxyImages(realData);  // 确保图片走本地缓存代理
         }
         
-        // 存入缓存
-        setCache(cacheKey, realData, getCacheExpireTime(), true);
+        // 存入缓存（创作者数据不持久化到 localStorage）
+        const shouldPersist = tab !== "creators";
+        setCache(cacheKey, realData, getCacheExpireTime(), shouldPersist);
         
         // 更新状态
         state.allData = realData;
@@ -564,14 +576,20 @@ export async function refreshSidebarContent(params) {
 }
 
 
-/** 判断是否需要更新数据 —— 对比前3条数据的关键字段 */
+/** 判断是否需要更新数据 —— 对比ID顺序和关键字段 */
 function _shouldUpdateData(oldData, newData) {
     if (!oldData || !newData) return true;
     if (oldData.length !== newData.length) return true;
     
-    const checkCount = Math.min(3, oldData.length);
+    // 检查ID顺序是否一致（检测排序变化、新增/删除）
+    const checkCount = Math.min(10, oldData.length);
     for (let i = 0; i < checkCount; i++) {
-        const keyFields = ['id', 'likes', 'downloads', 'uses', 'views', 'daily_views', 'recent_tips'];
+        const oldId = oldData[i].id || oldData[i].account;
+        const newId = newData[i].id || newData[i].account;
+        if (oldId !== newId) return true;
+        
+        // 检查关键数字字段
+        const keyFields = ['likes', 'downloads', 'uses', 'views', 'daily_views', 'recent_tips', 'favorites'];
         for (const field of keyFields) {
             if ((oldData[i][field] || 0) !== (newData[i][field] || 0)) return true;
         }
@@ -579,38 +597,7 @@ function _shouldUpdateData(oldData, newData) {
     return false;
 }
 
-/** 静默更新可见卡片的统计数据（不重排DOM） */
-function _silentlyUpdateVisibleCards(contentArea, oldData, newData, tab, currentUser) {
-    try {
-        const cards = contentArea.querySelectorAll('[data-item-id]');
-        cards.forEach(card => {
-            const itemId = card.getAttribute('data-item-id');
-            const newItem = newData.find(item => (item.id || item.account) === itemId);
-            const oldItem = oldData.find(item => (item.id || item.account) === itemId);
-            if (newItem && oldItem) _updateCardStats(card, oldItem, newItem);
-        });
-    } catch (err) {
-        console.warn('⚠️ 静默更新卡片失败:', err);
-    }
-}
 
-/** 更新单张卡片的统计数字 */
-function _updateCardStats(card, oldItem, newItem) {
-    const statMappings = [
-        { attr: 'data-stat="uses"', field: 'uses' },
-        { attr: 'data-stat="likes"', field: 'likes' },
-        { attr: 'data-stat="favorites"', field: 'favorites' },
-        { attr: 'data-stat="views"', field: 'views' },
-        { attr: 'data-stat="daily_views"', field: 'daily_views' },
-    ];
-    
-    statMappings.forEach(({ attr, field }) => {
-        const el = card.querySelector(`[${attr}]`);
-        if (el && (oldItem[field] || 0) !== (newItem[field] || 0)) {
-            el.textContent = el.textContent.replace(/\d+/, newItem[field] || 0);
-        }
-    });
-}
 
 // ==========================================
 // 📊 预加载相邻标签页数据
@@ -637,6 +624,9 @@ export async function preloadAdjacentTabs(currentTab, sort) {
                 if (tab === "creators") {
                     response = await api.getCreators(sort, 100);
                     data = proxyImages(response.data || []);  // 确保图片走本地缓存代理
+                    // 创作者数据不持久化到 localStorage，避免空间不足
+                    setCache(cacheKey, data, getCacheExpireTime(), false);
+                    continue;
                 } else if (tab === "posts" || tab === "tasks") {
                     // 讨论区/任务榜使用独立组件，不需要预加载
                     continue;

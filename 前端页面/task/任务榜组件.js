@@ -365,13 +365,35 @@ export function createTasksView(currentUser, keyword = "") {
             // 更新缓存
             const cacheKey = getCacheKey();
             setCache(cacheKey, tasks, CACHE_TTL, true);
-            allTasksData = tasks;
             
-            // 如果数据有变化，静默更新UI（不打断用户操作）
+            // 对比新旧数据，有变化时重新渲染
+            if (_tasksDataChanged(allTasksData, tasks)) {
+                console.log(`✅ 任务榜 ${currentSort} 检测到新数据，执行静默更新`);
+                allTasksData = proxyImages(tasks);
+                renderTasksFromCache(allTasksData);
+            } else {
+                allTasksData = tasks;
+            }
         } catch (err) {
             isLoadingFromNetwork = false;
             console.warn("后台更新失败:", err);
         }
+    };
+    
+    /** 对比任务数据是否有变化 */
+    const _tasksDataChanged = (oldData, newData) => {
+        if (!oldData || !newData) return true;
+        if (oldData.length !== newData.length) return true;
+        const checkCount = Math.min(10, oldData.length);
+        for (let i = 0; i < checkCount; i++) {
+            if ((oldData[i].id) !== (newData[i].id)) return true;
+            if ((oldData[i].status) !== (newData[i].status)) return true;
+            if ((oldData[i].likes || 0) !== (newData[i].likes || 0)) return true;
+            if ((oldData[i].favorites || 0) !== (newData[i].favorites || 0)) return true;
+            if ((oldData[i].views || 0) !== (newData[i].views || 0)) return true;
+            if (((oldData[i].applicants || []).length) !== ((newData[i].applicants || []).length)) return true;
+        }
+        return false;
     };
     
     // 管理员仲裁按钮
