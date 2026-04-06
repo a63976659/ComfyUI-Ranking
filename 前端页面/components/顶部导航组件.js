@@ -131,7 +131,12 @@ export function createTopNav() {
                                 try {
                                     const uploadRes = await api.uploadFile(formData.avatarFile, "avatar");
                                     formData.avatarDataUrl = uploadRes.url; 
-                                } catch (uploadErr) {}
+                                } catch (uploadErr) {
+                                    // 上传失败时清除 base64 数据，避免巨大字符串存入后端
+                                    console.warn("头像上传失败，跳过头像设置:", uploadErr.message || uploadErr);
+                                    delete formData.avatarDataUrl;
+                                    delete formData.avatarFile;
+                                }
                             }
                             userActionBtn.innerHTML = `⏳ ${t('auth.registering') || '注册账号中...'}`;
                             await api.register(formData);

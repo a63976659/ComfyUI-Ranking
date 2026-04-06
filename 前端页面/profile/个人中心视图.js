@@ -352,16 +352,23 @@ export async function openOtherUserProfileModal(targetAccount, currentUser) {
 
     try {
         const [profileRes, walletRes] = await Promise.all([
-            api.getUserProfile(targetAccount).catch(() => ({ data: {} })),
-            api.getWallet(targetAccount).catch(() => ({}))
+            api.getUserProfile(targetAccount).catch(err => { console.warn(`⚠️ getUserProfile(${targetAccount}) 失败:`, err.message || err); return { data: {} }; }),
+            api.getWallet(targetAccount).catch(err => { console.warn(`⚠️ getWallet(${targetAccount}) 失败:`, err.message || err); return {}; })
         ]);
         const freshData = { ...profileRes.data, ...walletRes };
-        localStorage.setItem(cacheKey, JSON.stringify(freshData));
+        
+        // 如果 getUserProfile 失败（data 为空），用 targetAccount 兜底确保能渲染
+        if (!freshData.account) freshData.account = targetAccount;
+        
+        try { localStorage.setItem(cacheKey, JSON.stringify(freshData)); } catch(e) { /* localStorage 满时忽略 */ }
         
         if (activeContainer) { if (activeContainer.updateData) activeContainer.updateData(freshData); } 
         else {
             const profileElement = showUserProfile(freshData, currentUser, false);
             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: profileElement } }));
         }
-    } catch (err) { if (!activeContainer) showToast(t('feedback.user_fetch_failed'), "error"); }
+    } catch (err) {
+        console.error(`❌ openOtherUserProfileModal(${targetAccount}) 异常:`, err);
+        if (!activeContainer) showToast(t('feedback.user_fetch_failed'), "error");
+    }
 }
