@@ -55,12 +55,16 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             const isSystem = msg.type === "system";
             
             // 系统公告使用尊贵的橙色/金色 UI 边框，普通消息使用默认颜色
+            // 插件更新通知使用蓝色主题
             let bg = isUnread ? "rgba(76, 175, 80, 0.1)" : "#2a2a2a";
             let border = isUnread ? "1px solid #4CAF50" : "1px solid #444";
             
             if (isSystem) {
                 bg = isUnread ? "rgba(255, 152, 0, 0.15)" : "rgba(255, 152, 0, 0.05)";
                 border = isUnread ? "1px solid #FF9800" : "1px solid #886020";
+            } else if (msg.type === "plugin_update") {
+                bg = isUnread ? "rgba(33, 150, 243, 0.15)" : "rgba(33, 150, 243, 0.05)";
+                border = isUnread ? "1px solid #2196F3" : "1px solid #1a5a8a";
             }
             
             let actionText = "";
@@ -83,13 +87,21 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             else if (msg.type === "dispute_resolved") actionText = `<span style="color:#9C27B0;">🔨</span> ${msg.content || t('notif.dispute_resolved')}`;
             // 【核心新增】：系统公告的正文排版，保留原格式的换行
             else if (isSystem) actionText = `<div style="margin-top: 6px; color: #eee; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${msg.content}</div>`;
+            // 【核心新增】：插件更新通知
+            else if (msg.type === "plugin_update") actionText = `${t('notif.plugin_update')} <span style="color:#2196F3;">[${msg.target_item_title}]</span>，${t('notif.click_to_view')}`;
             
             const timeStr = new Date(msg.created_at * 1000).toLocaleString();
             
             // 【核心新增】：如果是系统消息，增加 📢 标签并改变标题颜色
-            const nameLabel = isSystem 
-                ? `<strong style="color: #FF9800; font-size: 15px;">📢 [${t('notif.system_announcement')}] ${msg.from_name}</strong>` 
-                : `<strong style="color: #fff;">${msg.from_name}</strong>`;
+            // 插件更新通知使用 📦 图标
+            let nameLabel;
+            if (isSystem) {
+                nameLabel = `<strong style="color: #FF9800; font-size: 15px;">📢 [${t('notif.system_announcement')}] ${msg.from_name}</strong>`;
+            } else if (msg.type === "plugin_update") {
+                nameLabel = `<strong style="color: #2196F3; font-size: 15px;">📦 [${t('notif.plugin_update_title')}] ${msg.from_name}</strong>`;
+            } else {
+                nameLabel = `<strong style="color: #fff;">${msg.from_name}</strong>`;
+            }
             
             html += `
                 <div class="notif-item" data-account="${msg.from_user}" data-type="${msg.type}" data-item-id="${msg.target_item_id || ''}" style="padding: 12px; border-radius: 8px; background: ${bg}; border: ${border}; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; transition: 0.2s;" onmouseover="this.style.transform='scale(1.01)'" onmouseout="this.style.transform='scale(1)'">
@@ -114,6 +126,26 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                 
                 // 【核心新增】：系统公告点击不跳转，只触发消除红点
                 if (type === "system") return; 
+                
+                // 📦 插件更新通知：跳转到插件详情页
+                if (type === "plugin_update" && itemId) {
+                    import("../market/资源详情页面组件.js").then(async module => {
+                        try {
+                            // 先获取完整的 itemData 对象
+                            const res = await api.getItemById(itemId);
+                            if (res.status === "success" && res.data) {
+                                const view = module.createItemDetailView(res.data, currentUser);
+                                window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                            } else {
+                                showToast(t('notif.item_not_found'), "error");
+                            }
+                        } catch (e) {
+                            console.error("获取资源详情失败:", e);
+                            showToast(t('notif.load_item_failed'), "error");
+                        }
+                    });
+                    return;
+                }
                 
                 // 📝 任务榜通知：跳转到任务详情
                 if (type.startsWith("task_") && itemId) {

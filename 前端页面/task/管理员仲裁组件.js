@@ -10,6 +10,15 @@ import { showToast } from "../components/UI交互提示组件.js";
 import { createDisputeDetailView } from "./申诉详情组件.js";
 import { t } from "../components/用户体验增强.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
+import { setCache, getCache, removeCache, createSkeleton } from "../components/性能优化工具.js";
+
+// 缓存配置
+const CACHE_KEY = "AdminDisputesCache";
+const CACHE_TTL = 1000 * 60 * 30;  // 30分钟缓存
+
+// 全局状态：缓存所有争议数据
+let allDisputesCache = [];
+let isLoadingFromNetwork = false;
 
 /**
  * 创建管理员仲裁视图
@@ -26,6 +35,7 @@ export function createAdminDisputeView(currentUser) {
 }
 
 async function renderDisputeList(container, currentUser, statusFilter = null) {
+    // 渲染UI框架
     container.innerHTML = `
         <style>
             .admin-dispute-header { margin-bottom: 20px; }
@@ -34,6 +44,9 @@ async function renderDisputeList(container, currentUser, statusFilter = null) {
             .admin-tab { padding: 8px 16px; border-radius: 20px; border: none; cursor: pointer; font-size: 13px; transition: all 0.2s; }
             .admin-tab.active { background: #FF5722; color: white; }
             .admin-tab:not(.active) { background: var(--comfy-input-bg); color: var(--input-text); }
+            
+            .admin-back-btn { background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s; backdrop-filter: blur(4px); margin-bottom: 16px; width: fit-content; }
+            .admin-back-btn:hover { background: #4CAF50; border-color: #4CAF50; }
             
             .dispute-list { display: flex; flex-direction: column; gap: 12px; }
             .dispute-card { background: var(--comfy-input-bg); border-radius: 12px; padding: 16px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
@@ -52,10 +65,19 @@ async function renderDisputeList(container, currentUser, statusFilter = null) {
             
             .empty-state { text-align: center; padding: 60px 20px; color: #888; }
             .empty-state .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+            
+            .cache-indicator { font-size: 11px; color: #888; margin-left: 8px; font-weight: normal; }
         </style>
         
+        <button class="admin-back-btn" id="btn-back-arbitrate">
+            <span style="font-size: 14px;">⬅</span> ${t('common.back')}
+        </button>
+        
         <div class="admin-dispute-header">
-            <div class="admin-dispute-title">⚖️ ${t('arbitrate.center')}</div>
+            <div class="admin-dispute-title">
+                ⚖️ ${t('arbitrate.center')}
+                <span class="cache-indicator" id="cacheIndicator"></span>
+            </div>
             <div class="admin-dispute-tabs">
                 <button class="admin-tab ${!statusFilter ? 'active' : ''}" data-status="">${t('arbitrate.all')}</button>
                 <button class="admin-tab ${statusFilter === 'pending' ? 'active' : ''}" data-status="pending">${t('arbitrate.pending_response')}</button>
@@ -69,6 +91,14 @@ async function renderDisputeList(container, currentUser, statusFilter = null) {
         </div>
     `;
 
+    const listEl = container.querySelector("#disputeList");
+    const cacheIndicator = container.querySelector("#cacheIndicator");
+
+    // 返回按钮事件
+    container.querySelector("#btn-back-arbitrate").onclick = () => {
+        window.dispatchEvent(new CustomEvent("comfy-route-back"));
+    };
+
     // Tab切换
     container.querySelectorAll(".admin-tab").forEach(tab => {
         tab.onclick = () => {
@@ -77,63 +107,175 @@ async function renderDisputeList(container, currentUser, statusFilter = null) {
         };
     });
 
-    // 加载申诉列表
-    try {
-        const res = await api.getAdminDisputes(statusFilter);
-        const disputes = res.data || [];
-        const listEl = container.querySelector("#disputeList");
+    // 🚀 缓存优先策略：尝试从缓存加载
+    const cachedData = getCache(CACHE_KEY);
+    
+    if (cachedData && cachedData.length > 0) {
+        // 有缓存，先显示缓存数据
+        allDisputesCache = cachedData;
+        const filteredDisputes = filterDisputesByStatus(allDisputesCache, statusFilter);
+        renderDisputeCards(listEl, filteredDisputes, currentUser, statusFilter);
+        cacheIndicator.textContent = "📦 缓存";
+        
+        // 后台静默刷新
+        silentRefreshDisputes(listEl, currentUser, statusFilter, cacheIndicator);
+    } else {
+        // 无缓存，显示骨架屏并加载数据
+        listEl.innerHTML = "";
+        listEl.appendChild(createSkeleton("list", 4));
+        await loadDisputesFromNetwork(listEl, currentUser, statusFilter, cacheIndicator);
+    }
+}
 
-        if (disputes.length === 0) {
-            listEl.innerHTML = `
-                <div class="empty-state">
-                    <div class="icon">📭</div>
-                    <div>${t('arbitrate.no_disputes')}</div>
+/**
+ * 按状态过滤争议数据
+ */
+function filterDisputesByStatus(disputes, statusFilter) {
+    if (!statusFilter) return disputes;
+    return disputes.filter(d => d.status === statusFilter);
+}
+
+/**
+ * 渲染争议卡片列表
+ */
+function renderDisputeCards(listEl, disputes, currentUser, statusFilter) {
+    if (disputes.length === 0) {
+        listEl.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">📭</div>
+                <div>${t('arbitrate.no_disputes')}</div>
+            </div>
+        `;
+        return;
+    }
+
+    const statusConfig = {
+        pending: { label: t('arbitrate.pending_response'), color: "#FF9800", bg: "rgba(255, 152, 0, 0.15)" },
+        responded: { label: t('arbitrate.pending_ruling'), color: "#2196F3", bg: "rgba(33, 150, 243, 0.15)" },
+        resolved: { label: t('arbitrate.ruled'), color: "#4CAF50", bg: "rgba(76, 175, 80, 0.15)" }
+    };
+
+    listEl.innerHTML = disputes.map(d => {
+        const status = statusConfig[d.status] || statusConfig.pending;
+        return `
+            <div class="dispute-card" data-id="${d.id}">
+                <div class="dispute-card-header">
+                    <div class="dispute-card-title">${d.task_title || t('common.unknown_task')}</div>
+                    <span class="dispute-card-status" style="background: ${status.bg}; color: ${status.color};">${status.label}</span>
                 </div>
-            `;
-            return;
-        }
+                <div class="dispute-card-parties">
+                    <span>${d.publisher_name || d.publisher}</span>
+                    <span class="vs">VS</span>
+                    <span>${d.assignee_name || d.assignee}</span>
+                </div>
+                <div class="dispute-card-reason">${d.reason || t('arbitrate.no_reason')}</div>
+                <div class="dispute-card-meta">
+                    <span>${t('arbitrate.initiator')}: ${d.initiator_role === "publisher" ? t('dispute.publisher') : t('task.assignee')}</span>
+                    <span>${formatTime(d.created_at)}</span>
+                </div>
+            </div>
+        `;
+    }).join("");
 
-        const statusConfig = {
-            pending: { label: t('arbitrate.pending_response'), color: "#FF9800", bg: "rgba(255, 152, 0, 0.15)" },
-            responded: { label: t('arbitrate.pending_ruling'), color: "#2196F3", bg: "rgba(33, 150, 243, 0.15)" },
-            resolved: { label: t('arbitrate.ruled'), color: "#4CAF50", bg: "rgba(76, 175, 80, 0.15)" }
+    // 点击进入详情
+    listEl.querySelectorAll(".dispute-card").forEach(card => {
+        card.onclick = () => {
+            const disputeId = card.dataset.id;
+            showDisputeModal(disputeId, currentUser, () => renderDisputeList(listEl.parentElement, currentUser, statusFilter));
         };
+    });
+}
 
-        listEl.innerHTML = disputes.map(d => {
-            const status = statusConfig[d.status] || statusConfig.pending;
-            return `
-                <div class="dispute-card" data-id="${d.id}">
-                    <div class="dispute-card-header">
-                        <div class="dispute-card-title">${d.task_title || t('common.unknown_task')}</div>
-                        <span class="dispute-card-status" style="background: ${status.bg}; color: ${status.color};">${status.label}</span>
-                    </div>
-                    <div class="dispute-card-parties">
-                        <span>${d.publisher_name || d.publisher}</span>
-                        <span class="vs">VS</span>
-                        <span>${d.assignee_name || d.assignee}</span>
-                    </div>
-                    <div class="dispute-card-reason">${d.reason || t('arbitrate.no_reason')}</div>
-                    <div class="dispute-card-meta">
-                        <span>${t('arbitrate.initiator')}: ${d.initiator_role === "publisher" ? t('dispute.publisher') : t('task.assignee')}</span>
-                        <span>${formatTime(d.created_at)}</span>
-                    </div>
-                </div>
-            `;
-        }).join("");
-
-        // 点击进入详情
-        listEl.querySelectorAll(".dispute-card").forEach(card => {
-            card.onclick = () => {
-                const disputeId = card.dataset.id;
-                showDisputeModal(disputeId, currentUser, () => renderDisputeList(container, currentUser, statusFilter));
-            };
-        });
-
+/**
+ * 从网络加载争议数据
+ */
+async function loadDisputesFromNetwork(listEl, currentUser, statusFilter, cacheIndicator) {
+    if (isLoadingFromNetwork) return;
+    
+    try {
+        isLoadingFromNetwork = true;
+        
+        // 始终获取全部数据（不传statusFilter）
+        const res = await api.getAdminDisputes(null);
+        const disputes = res.data || [];
+        
+        // 更新全局缓存
+        allDisputesCache = disputes;
+        
+        // 保存到本地缓存
+        setCache(CACHE_KEY, disputes, CACHE_TTL, true);
+        
+        // 更新缓存指示器
+        if (cacheIndicator) cacheIndicator.textContent = "";
+        
+        // 按当前筛选状态过滤并渲染
+        const filteredDisputes = filterDisputesByStatus(disputes, statusFilter);
+        renderDisputeCards(listEl, filteredDisputes, currentUser, statusFilter);
+        
     } catch (err) {
-        container.querySelector("#disputeList").innerHTML = `
+        console.error("加载申诉列表失败:", err);
+        listEl.innerHTML = `
             <div style="text-align: center; padding: 40px; color: #f44;">❌ ${t('common.load_failed')}: ${err.message}</div>
         `;
+    } finally {
+        isLoadingFromNetwork = false;
     }
+}
+
+/**
+ * SWR模式：后台静默刷新
+ */
+async function silentRefreshDisputes(listEl, currentUser, statusFilter, cacheIndicator) {
+    if (isLoadingFromNetwork) return;
+    
+    try {
+        isLoadingFromNetwork = true;
+        
+        // 获取最新全部数据
+        const res = await api.getAdminDisputes(null);
+        const freshDisputes = res.data || [];
+        
+        // 检查数据是否有变化
+        if (_disputesDataChanged(allDisputesCache, freshDisputes)) {
+            console.log("✅ 仲裁中心检测到新数据，执行静默更新");
+            
+            // 更新缓存
+            allDisputesCache = freshDisputes;
+            setCache(CACHE_KEY, freshDisputes, CACHE_TTL, true);
+            
+            // 重新渲染当前筛选状态的数据
+            const filteredDisputes = filterDisputesByStatus(freshDisputes, statusFilter);
+            renderDisputeCards(listEl, filteredDisputes, currentUser, statusFilter);
+            
+            // 短暂显示更新提示
+            if (cacheIndicator) {
+                cacheIndicator.textContent = "✓ 已更新";
+                setTimeout(() => {
+                    if (cacheIndicator) cacheIndicator.textContent = "";
+                }, 2000);
+            }
+        }
+    } catch (err) {
+        console.warn("后台刷新失败:", err);
+    } finally {
+        isLoadingFromNetwork = false;
+    }
+}
+
+/**
+ * 对比争议数据是否有变化
+ */
+function _disputesDataChanged(oldData, newData) {
+    if (!oldData || !newData) return true;
+    if (oldData.length !== newData.length) return true;
+    
+    // 检查前10条数据的关键字段
+    const checkCount = Math.min(10, oldData.length);
+    for (let i = 0; i < checkCount; i++) {
+        if (oldData[i].id !== newData[i].id) return true;
+        if (oldData[i].status !== newData[i].status) return true;
+    }
+    return false;
 }
 
 function showDisputeModal(disputeId, currentUser, onClose) {
@@ -322,6 +464,11 @@ async function loadDisputeModalContent(content, disputeId, currentUser, onClose)
                 try {
                     await api.resolveDispute(dispute.id, selectedResolution, selectedResolution === "split" ? ratio : null, note || null);
                     showToast(t('arbitrate.ruling_success'), "success");
+                    
+                    // 🗑️ 裁决成功后清除缓存，强制下次重新加载
+                    allDisputesCache = [];
+                    removeCache(CACHE_KEY);
+                    
                     onClose();
                 } catch (err) {
                     showToast(t('arbitrate.ruling_failed') + ": " + err.message, "error");

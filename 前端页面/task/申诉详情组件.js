@@ -8,6 +8,7 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
+import { isAdmin } from "../core/全局配置.js";
 
 /**
  * 创建申诉详情视图
@@ -42,7 +43,7 @@ async function loadDisputeDetail(container, disputeId, currentUser, onBack) {
 function renderDisputeDetail(container, dispute, currentUser, onBack) {
     const isInitiator = currentUser?.account === dispute.initiator;
     const isRespondent = currentUser?.account === (dispute.initiator_role === "publisher" ? dispute.assignee : dispute.publisher);
-    const isAdmin = currentUser?.isAdmin;
+    const isAdminUser = isAdmin(currentUser?.account);
     const canRespond = isRespondent && dispute.status === "pending";
 
     const statusConfig = {

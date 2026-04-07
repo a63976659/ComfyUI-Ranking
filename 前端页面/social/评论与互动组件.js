@@ -1,7 +1,7 @@
 // 前端页面/social/评论与互动组件.js
 import { api } from "../core/网络请求API.js";
 import { t } from "../components/用户体验增强.js";
-import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { getCachedProfile, getProfileWithSWR, isAdmin } from "../core/全局配置.js";
 
 export function setupToggleButton(btnElement, initialState, initialCount, activeText, inactiveText, activeColor, apiCallback) {
     let isActive = initialState;
@@ -94,8 +94,8 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             // 🚀 P0安全修复：权限判断 - 评论作者、内容作者或管理员可删除
             const isCommentAuthor = currentUser && currentUser.account === comment.author;
             const isContentAuthor = currentUser && contentAuthor && currentUser.account === contentAuthor;
-            const isAdmin = currentUser && currentUser.isAdmin === true;
-            const canDelete = isCommentAuthor || isContentAuthor || isAdmin;
+            const isAdminUser = currentUser && isAdmin(currentUser.account);
+            const canDelete = isCommentAuthor || isContentAuthor || isAdminUser;
             const deleteBtnHtml = canDelete ? `<span class="delete-btn" style="color: #F44336; cursor: pointer; margin-left: 10px; font-size: 10px;">${t('common.delete')}</span>` : "";
 
             // 🚀 SWR 缓存优先获取头像

@@ -63,6 +63,7 @@ const api = {
     async publishItem(data) { return request("/api/items", { method: "POST", body: data }); },
     async updateItem(itemId, author, data) { return request(`/api/items/${itemId}?author=${author}`, { method: "PUT", body: data }); },
     async getItems(type, sort, limit) { return request(`/api/items?type=${type}&sort=${sort}&limit=${limit}`); },
+    async getItemById(itemId) { return request(`/api/items/${itemId}`); },
     async deleteItem(itemId) { return request(`/api/items/${itemId}`, { method: "DELETE" }); },
     async recordItemUse(itemId) { return request(`/api/items/${itemId}/use`, { method: "POST" }); },
     async recordItemView(itemId) { return request(`/api/items/${itemId}/view`, { method: "POST" }); },
@@ -281,6 +282,21 @@ const api = {
         return request(`/api/admin/config/${configKey}`, {
             method: "PUT",
             body: value
+        });
+    },
+
+    // ==========================================
+    // 💰 管理员：提现管理 API
+    // ==========================================
+    async getAdminWithdrawals(status = null) {
+        let url = "/api/admin/withdrawals";
+        if (status) url += `?status=${status}`;
+        return request(url);
+    },
+    async completeWithdrawal(txId, paymentOrderId) {
+        return request(`/api/admin/withdrawals/${txId}/complete`, {
+            method: "POST",
+            body: { payment_order_id: paymentOrderId }
         });
     }
 };

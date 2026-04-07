@@ -8,7 +8,7 @@
 import { api, proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
-import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR, isAdmin } from "../core/全局配置.js";
 import { removeCache, findInListCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
@@ -1006,7 +1006,7 @@ async function loadTaskComments(container, taskId, currentUser) {
                 const canDelete = currentUser && (
                     currentAccount === c.author || 
                     currentAccount === container.dataset?.publisher ||
-                    currentUser?.isAdmin === true
+                    isAdmin(currentAccount)
                 );
                 
                 return `

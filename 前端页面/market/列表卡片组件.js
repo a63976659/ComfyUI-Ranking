@@ -30,6 +30,12 @@ export function createItemCard(itemData, currentUser = null) {
         }, 0);
     };
     const initialCommentCount = itemData.commentsData ? calcActiveComments(itemData.commentsData) : (itemData.comments || 0);
+    
+    // 🚀 检查插件安装状态（用于显示更新徽章）
+    const installStatus = checkItemStatus(itemData.id, itemData.latest_version);
+    const updateBadgeHtml = installStatus.hasUpdate 
+        ? `<span style="margin-left: 6px; background: linear-gradient(135deg, #FF9800, #F44336); color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 10px; font-weight: bold; animation: pulse 2s infinite;">🔄 ${t('market.update_available')}</span>` 
+        : '';
 
     const summaryView = document.createElement("div");
     summaryView.style.cursor = "pointer";
@@ -39,7 +45,7 @@ export function createItemCard(itemData, currentUser = null) {
     summaryView.innerHTML = `
         <!-- 第1行: 标题 + 使用次数 -->
         <div style="display: flex; align-items: center; margin-bottom: 4px;">
-            <div style="font-weight: bold; font-size: 14px; color: #4CAF50; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${itemData.title}</div>
+            <div style="font-weight: bold; font-size: 14px; color: #4CAF50; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${itemData.title}${updateBadgeHtml}</div>
             <span style="margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px;">
                 <span data-stat="uses" style="display: flex; align-items: center; gap: 2px;">📥 ${itemData.uses || 0}</span>
                 <span data-stat="views" style="display: flex; align-items: center; gap: 2px;">🔥 ${itemData.views || 0}</span>
@@ -158,9 +164,8 @@ export function createItemCard(itemData, currentUser = null) {
     const btnFav = document.createElement("button");
     Object.assign(btnFav.style, { flex: "1", padding: "6px", background: "transparent", border: "1px solid #555", borderRadius: "4px", cursor: "pointer", color: "#aaa" });
     
-    // 🚀 根据安装状态显示不同的按钮样式
+    // 🚀 根据安装状态显示不同的按钮样式（installStatus 已在上方声明）
     const btnUse = document.createElement("button");
-    const installStatus = checkItemStatus(itemData.id, itemData.latest_version);
     
     if (installStatus.hasUpdate) {
         // 有更新可用

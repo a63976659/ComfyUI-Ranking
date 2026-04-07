@@ -107,6 +107,21 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
     let adminHtml = '';
     if (isMe && isAdmin(userData.account)) {
         adminHtml = `
+            <!-- 管理员功能按钮区域 -->
+            <div id="admin-actions-panel" style="margin-bottom: 15px; background: #181b28; border: 1px solid #2d334a; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+                <div style="font-weight: bold; font-size: 15px; color: #FF9800; display: flex; align-items: center; gap: 6px; margin-bottom: 12px;">
+                    🛠️ ${t('admin.management_tools')}
+                </div>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button id="btn-admin-withdraw" style="flex: 1; min-width: 120px; background: linear-gradient(135deg, #4CAF50, #388E3C); border: none; color: #fff; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; justify-content: center; gap: 6px; transition: 0.2s; box-shadow: 0 2px 6px rgba(76,175,80,0.3);" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+                        💰 ${t('withdraw.manage_title')}
+                    </button>
+                    <button id="btn-admin-dispute" style="flex: 1; min-width: 120px; background: linear-gradient(135deg, #9C27B0, #7B1FA2); border: none; color: #fff; padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; justify-content: center; gap: 6px; transition: 0.2s; box-shadow: 0 2px 6px rgba(156,39,176,0.3);" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+                        ⚖️ ${t('task.arbitrate')}
+                    </button>
+                </div>
+            </div>
+
             <div id="admin-ann-panel" style="margin-bottom: 15px; background: #181b28; border: 1px solid #2d334a; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
                     <div style="font-weight: bold; font-size: 15px; color: #FF9800; display: flex; align-items: center; gap: 6px;">

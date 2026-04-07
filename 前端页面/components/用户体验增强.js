@@ -909,6 +909,9 @@ const translations = {
         'notif.system_announcement': '系统公告',
         'notif.clear_confirm': '确定要清空本地的所有通知记录吗？云端7天前的记录不会再同步下来。',
         'notif.cleared': '通知已清空',
+        'notif.plugin_update_title': '插件更新',
+        'notif.plugin_update': '插件',
+        'notif.click_to_view': '点击查看',
         
         // 私信聊天
         'chat.title': '私信聊天',
@@ -950,6 +953,7 @@ const translations = {
         'common.back': '返回',
         
         // 管理员
+        'admin.management_tools': '管理员功能',
         'admin.empty_content': '公告内容不能为空！',
         'admin.announce_confirm': '发送说明：\n\n1. 内容将下发给所有用户，无法撤回。\n2. 内容将在消息中心醒目展示。\n\n⚠️ 请确保内容准确，谨慎操作！',
         'admin.publishing': '发布中',
@@ -1405,6 +1409,26 @@ const translations = {
         'arbitrate.confirm_ruling': '确认裁决',
         'arbitrate.ruling_success': '裁决成功',
         'arbitrate.ruling_failed': '裁决失败',
+        
+        // 管理员提现管理
+        'withdraw.manage_title': '提现管理',
+        'withdraw.pending_payment': '待打款',
+        'withdraw.completed': '已完成',
+        'withdraw.pending': '待打款',
+        'withdraw.no_pending': '暂无待打款提现申请',
+        'withdraw.no_completed': '暂无已完成提现记录',
+        'withdraw.alipay_account': '支付宝账号',
+        'withdraw.real_name': '收款人姓名',
+        'withdraw.apply_time': '申请时间',
+        'withdraw.enter_order_id': '请输入打款订单号',
+        'withdraw.confirm_payment': '确认打款',
+        'withdraw.payment_completed': '打款完成',
+        'withdraw.order_id': '订单号',
+        'withdraw.order_required': '请输入打款订单号',
+        'withdraw.confirm_title': '确认已打款?',
+        'withdraw.confirm_desc': '请确认您已完成实际转账操作后再点击确认',
+        'withdraw.payment_success': '打款确认成功',
+        'withdraw.payment_failed': '打款确认失败',
         
         // 发布帖子补充
         'post.upload_images': '上传图片',
@@ -1971,6 +1995,9 @@ const translations = {
         'notif.system_announcement': 'System Announcement',
         'notif.clear_confirm': 'Clear all local notifications? Records older than 7 days will not be synced again.',
         'notif.cleared': 'Notifications cleared',
+        'notif.plugin_update_title': 'Plugin Update',
+        'notif.plugin_update': 'Plugin',
+        'notif.click_to_view': 'click to view',
         
         // Chat
         'chat.title': 'Private Messages',

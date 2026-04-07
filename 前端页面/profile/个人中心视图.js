@@ -212,6 +212,32 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
             renderProfileListContent(activeTab, listDOM, userData, currentUser, openOtherUserProfileModal);
 
             // =========================================================
+            // 【新增】：管理员提现管理按钮绑定事件
+            // =========================================================
+            const btnAdminWithdraw = container.querySelector("#btn-admin-withdraw");
+            if (btnAdminWithdraw) {
+                btnAdminWithdraw.onclick = () => {
+                    import("../task/管理员提现组件.js").then(module => {
+                        const view = module.createWithdrawManageView(currentUser);
+                        window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                    });
+                };
+            }
+
+            // =========================================================
+            // 【新增】：管理员仲裁按钮绑定事件
+            // =========================================================
+            const btnAdminDispute = container.querySelector("#btn-admin-dispute");
+            if (btnAdminDispute) {
+                btnAdminDispute.onclick = () => {
+                    import("../task/管理员仲裁组件.js").then(module => {
+                        const view = module.createAdminDisputeView(currentUser);
+                        window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                    });
+                };
+            }
+
+            // =========================================================
             // 【新增】：为管理员系统公告发布按钮绑定事件
             // =========================================================
             const btnAdminAnnSend = container.querySelector("#btn-admin-ann-send");

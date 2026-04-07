@@ -76,15 +76,6 @@ export function createTasksView(currentUser, keyword = "") {
     });
     
     container.innerHTML = `
-        <!-- 🎯 管理员仲裁入口（筛选控件已移至顶部统一筛选栏） -->
-        ${currentUser?.isAdmin ? `
-        <div style="display: flex; align-items: center; justify-content: flex-end; padding: 8px 15px; border-bottom: 1px solid #333; background: #1a1a1a;">
-            <button id="btn-admin-dispute" style="background: linear-gradient(135deg, #9C27B0, #7B1FA2); border: none; color: #fff; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 4px; transition: 0.2s; box-shadow: 0 2px 6px rgba(156,39,176,0.3);" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
-                ${t('task.arbitrate')}
-            </button>
-        </div>
-        ` : ""}
-        
         <!-- 任务列表容器 -->
         <div id="tasks-list" style="display: flex; flex-direction: column; gap: 12px; padding: 15px; overflow-y: auto; flex: 1;">
             <!-- 加载占位 -->
@@ -395,17 +386,6 @@ export function createTasksView(currentUser, keyword = "") {
         }
         return false;
     };
-    
-    // 管理员仲裁按钮
-    const adminDisputeBtn = container.querySelector("#btn-admin-dispute");
-    if (adminDisputeBtn) {
-        adminDisputeBtn.onclick = () => {
-            import("./管理员仲裁组件.js").then(module => {
-                const view = module.createAdminDisputeView(currentUser);
-                window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-            });
-        };
-    }
     
     // 加载更多
     loadMoreBtn.onclick = () => {
