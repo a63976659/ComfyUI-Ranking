@@ -219,7 +219,7 @@ export function buildSidebarDOM() {
         const { itemData, currentUser } = e.detail;
         const publishView = createPublishView(currentUser, 
             () => hideInlineView(), 
-            () => { hideInlineView(); triggerLoad(); },
+            () => { hideInlineView(); triggerLoad(true); },
             itemData 
         );
         showInlineView(publishView);
@@ -284,7 +284,7 @@ export function buildSidebarDOM() {
             // 工具/应用/推荐 -> 打开发布内容界面，并自动设置对应类型
             const publishView = createPublishView(currentUser, 
                 () => hideInlineView(), 
-                () => { hideInlineView(); triggerLoad(); },
+                () => { hideInlineView(); triggerLoad(true); },
                 null,  // editItemData
                 currentTab  // initialType: tools/apps/recommends
             );
