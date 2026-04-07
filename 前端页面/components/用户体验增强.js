@@ -745,6 +745,26 @@ const translations = {
         'wallet.sales': '销售收入',
         'wallet.tips_received': '打赏收入',
         
+        // 交易记录类型
+        'tx.withdraw': '💸 提现申请',
+        'tx.tip_in': '🎁 收到打赏',
+        'tx.tip_out': '🎁 打赏支出',
+        'tx.purchase': '🛒 购买资源',
+        'tx.task_deposit': '📋 任务订金',
+        'tx.task_payment': '📋 任务尾款',
+        'tx.task_income': '📋 任务收入',
+        'tx.task_freeze': '🔒 任务冻结',
+        'tx.task_refund': '↩️ 任务退款',
+        'tx.task_cancel_refund': '🔄 任务取消退款',
+        'tx.recharge': '💰 充值',
+        'tx.refund': '↩️ 退款',
+        'tx.withdraw_fee': '💸 手续费',
+        'tx.withdraw_pending': '待打款',
+        'tx.withdraw_completed': '已完成',
+        'tx.recharge_desc': '支付宝充值',
+        'tx.withdraw_fee_desc': '提现手续费',
+        'tx.net_amount': '实到',
+        
         // 充值相关
         'wallet.recharge.title': '💰 积分充值中心',
         'wallet.recharge.current_balance': '当前账号余额',
@@ -1830,6 +1850,26 @@ const translations = {
         'wallet.points': 'Points',
         'wallet.sales': 'Sales',
         'wallet.tips_received': 'Tips Received',
+        
+        // Transaction Types
+        'tx.withdraw': '💸 Withdrawal Request',
+        'tx.tip_in': '🎁 Tip Received',
+        'tx.tip_out': '🎁 Tip Sent',
+        'tx.purchase': '🛒 Purchase',
+        'tx.task_deposit': '📋 Task Deposit',
+        'tx.task_payment': '📋 Task Payment',
+        'tx.task_income': '📋 Task Income',
+        'tx.task_freeze': '🔒 Task Frozen',
+        'tx.task_refund': '↩️ Task Refund',
+        'tx.task_cancel_refund': '🔄 Task Cancel Refund',
+        'tx.recharge': '💰 Recharge',
+        'tx.refund': '↩️ Refund',
+        'tx.withdraw_fee': '💸 Withdrawal Fee',
+        'tx.withdraw_pending': 'Pending',
+        'tx.withdraw_completed': 'Completed',
+        'tx.recharge_desc': 'Alipay Recharge',
+        'tx.withdraw_fee_desc': 'Withdrawal Fee',
+        'tx.net_amount': 'Net Amount',
         
         // Recharge
         'wallet.recharge.title': '💰 Points Recharge Center',

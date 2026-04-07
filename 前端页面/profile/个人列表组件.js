@@ -351,41 +351,13 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                     <div>暂无交易记录</div>
                 </div>`;
             } else {
-                const txTypeLabels = {
-                    'RECHARGE': { icon: '💵', label: '充值', color: '#4CAF50' },
-                    'PURCHASE': { icon: '🛒', label: '购买', color: '#F44336' },
-                    'TIP_OUT': { icon: '🎁', label: '打赏支出', color: '#FF9800' },
-                    'TIP_IN': { icon: '🎁', label: '收到打赏', color: '#4CAF50' },
-                    'WITHDRAW': { icon: '🏧', label: '提现', color: '#F44336' },
-                    'WITHDRAW_FEE': { icon: '💸', label: '提现手续费', color: '#757575' },
-                    'TASK_FREEZE': { icon: '❄️', label: '任务冻结', color: '#2196F3' },
-                    'TASK_DEPOSIT': { icon: '💳', label: '订金支付', color: '#FF9800' },
-                    'TASK_PAYMENT': { icon: '💳', label: '尾款支付', color: '#F44336' },
-                    'TASK_INCOME': { icon: '💰', label: '任务收入', color: '#4CAF50' },
-                    'TASK_REFUND': { icon: '🔄', label: '任务退款', color: '#9C27B0' }
-                };
-                
                 transactions.forEach(tx => {
-                    const typeInfo = txTypeLabels[tx.tx_type] || { icon: '💰', label: tx.tx_type, color: '#888' };
-                    const isPositive = tx.amount > 0;
-                    const amountColor = isPositive ? '#4CAF50' : '#F44336';
-                    const timeStr = tx.created_at ? new Date(tx.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-                    
-                    const txDiv = document.createElement("div");
-                    txDiv.style.cssText = "padding: 12px; background: #2a2a2a; border-radius: 8px; border: 1px solid #444; display: flex; justify-content: space-between; align-items: center;";
-                    txDiv.innerHTML = `
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span style="font-size: 20px;">${typeInfo.icon}</span>
-                            <div>
-                                <div style="font-weight: bold; color: #eee; font-size: 13px;">${typeInfo.label}</div>
-                                <div style="font-size: 11px; color: #888;">${timeStr}${tx.related_account ? ' · ' + tx.related_account.substring(0, 8) + '...' : ''}</div>
-                            </div>
-                        </div>
-                        <div style="font-weight: bold; font-size: 15px; color: ${amountColor};">
-                            ${isPositive ? '+' : ''}${tx.amount}
-                        </div>
-                    `;
-                    txListDiv.appendChild(txDiv);
+                    try {
+                        const txCard = createTransactionCard(tx);
+                        txListDiv.appendChild(txCard);
+                    } catch (e) {
+                        console.error("交易卡片渲染失败:", tx.tx_id, e);
+                    }
                 });
             }
             
@@ -614,4 +586,183 @@ function formatPostTime(timestamp) {
     if (diff < 24 * 60 * 60 * 1000) return `${Math.floor(diff / 3600000)}小时前`;
     if (diff < 7 * 24 * 60 * 60 * 1000) return `${Math.floor(diff / 86400000)}天前`;
     return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+/**
+ * 💳 创建交易记录卡片
+ * 根据交易类型展示不同的详细信息
+ */
+function createTransactionCard(tx) {
+    const txDiv = document.createElement("div");
+    txDiv.style.cssText = "padding: 12px; background: #2a2a2a; border-radius: 8px; border: 1px solid #444; display: flex; justify-content: space-between; align-items: flex-start;";
+    
+    const isPositive = tx.amount > 0;
+    const amountColor = isPositive ? '#4CAF50' : '#F44336';
+    const timeStr = tx.created_at ? new Date(tx.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    
+    // 获取交易类型配置
+    const typeConfig = getTransactionTypeConfig(tx.tx_type);
+    
+    // 构建描述文本
+    let description = '';
+    let detailLine = '';
+    
+    switch (tx.tx_type) {
+        case 'WITHDRAW':
+            // 提现：显示脱敏支付宝账号和姓名
+            if (tx.alipay_account && tx.real_name) {
+                description = `${tx.alipay_account} ${tx.real_name}`;
+            }
+            // 状态标签
+            if (tx.withdraw_status === 'pending') {
+                detailLine = `⏳ ${t('tx.withdraw_pending') || '待打款'}`;
+            } else if (tx.withdraw_status === 'completed') {
+                detailLine = `✅ ${t('tx.withdraw_completed') || '已完成'}`;
+            }
+            break;
+            
+        case 'TIP_IN':
+            // 收到打赏
+            description = tx.description || '';
+            if (tx.related_user_name) {
+                detailLine = `👤 ${tx.related_user_name}`;
+            }
+            break;
+            
+        case 'TIP_OUT':
+            // 打赏支出
+            description = tx.description || '';
+            break;
+            
+        case 'PURCHASE':
+            // 购买资源
+            description = tx.item_title || '';
+            break;
+            
+        case 'TASK_DEPOSIT':
+            // 任务订金
+            description = tx.item_title || '';
+            break;
+            
+        case 'TASK_PAYMENT':
+            // 任务尾款
+            description = tx.item_title || '';
+            break;
+            
+        case 'TASK_INCOME':
+            // 任务收入
+            description = tx.item_title || '';
+            if (tx.related_user_name) {
+                detailLine = `👤 ${tx.related_user_name}`;
+            }
+            break;
+            
+        case 'TASK_FREEZE':
+            // 任务冻结
+            description = tx.item_title || '';
+            break;
+            
+        case 'TASK_REFUND':
+            // 任务退款
+            description = tx.item_title || '';
+            break;
+            
+        case 'RECHARGE':
+            // 充值
+            description = t('tx.recharge_desc') || '支付宝充值';
+            break;
+            
+        case 'REFUND':
+            // 退款
+            description = tx.item_title || '';
+            break;
+            
+        case 'WITHDRAW_FEE':
+            // 提现手续费
+            description = t('tx.withdraw_fee_desc') || '提现手续费';
+            break;
+            
+        default:
+            description = tx.description || tx.item_title || '';
+    }
+    
+    // 构建详情行（时间 + 对方 + 状态）
+    const details = [timeStr];
+    if (detailLine) details.push(detailLine);
+    const detailText = details.join(' · ');
+    
+    // 判断是否使用详细展示模式（有description或item_title时）
+    const hasDetailedInfo = description || tx.item_title;
+    
+    // 资源标题（如果有）
+    const itemTitle = tx.item_title && tx.tx_type !== 'TIP_IN' && tx.tx_type !== 'TIP_OUT' 
+        ? `<span style="color: #888; margin-left: 6px;">- ${escapeHtml(tx.item_title)}</span>` 
+        : '';
+    
+    // 实到金额（仅提现类型）
+    const netAmountHtml = (tx.tx_type === 'WITHDRAW' && tx.net_amount !== null && tx.net_amount !== undefined)
+        ? `<div style="font-size: 11px; color: #888; text-align: right;">${t('tx.net_amount') || '实到'}: ${tx.net_amount}</div>`
+        : '';
+    
+    if (hasDetailedInfo) {
+        // 详细展示模式
+        txDiv.innerHTML = `
+            <div style="display: flex; align-items: flex-start; gap: 10px; flex: 1; min-width: 0;">
+                <span style="font-size: 20px; flex-shrink: 0;">${typeConfig.icon}</span>
+                <div style="flex: 1; min-width: 0;">
+                    <div style="display: flex; align-items: center; flex-wrap: wrap;">
+                        <span style="font-weight: bold; color: #eee; font-size: 13px;">${typeConfig.title}</span>
+                        ${itemTitle}
+                    </div>
+                    ${description ? `<div style="font-size: 11px; color: #aaa; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(description)}</div>` : ''}
+                    ${detailText ? `<div style="font-size: 11px; color: #888; margin-top: 3px;">${detailText}</div>` : ''}
+                </div>
+            </div>
+            <div style="text-align: right; flex-shrink: 0; margin-left: 10px;">
+                <div style="font-weight: bold; font-size: 15px; color: ${amountColor};">
+                    ${isPositive ? '+' : ''}${tx.amount}
+                </div>
+                ${netAmountHtml}
+            </div>
+        `;
+    } else {
+        // 简洁展示模式（向后兼容旧数据）
+        txDiv.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 20px;">${typeConfig.icon}</span>
+                <div>
+                    <div style="font-weight: bold; color: #eee; font-size: 13px;">${typeConfig.title}</div>
+                    <div style="font-size: 11px; color: #888;">${timeStr}${tx.related_account ? ' · ' + tx.related_account.substring(0, 8) + '...' : ''}</div>
+                </div>
+            </div>
+            <div style="font-weight: bold; font-size: 15px; color: ${amountColor};">
+                ${isPositive ? '+' : ''}${tx.amount}
+            </div>
+        `;
+    }
+    
+    return txDiv;
+}
+
+/**
+ * 获取交易类型配置
+ */
+function getTransactionTypeConfig(txType) {
+    const configs = {
+        'WITHDRAW': { icon: '💸', title: t('tx.withdraw') || '提现申请' },
+        'TIP_IN': { icon: '🎁', title: t('tx.tip_in') || '收到打赏' },
+        'TIP_OUT': { icon: '🎁', title: t('tx.tip_out') || '打赏支出' },
+        'PURCHASE': { icon: '🛒', title: t('tx.purchase') || '购买资源' },
+        'TASK_DEPOSIT': { icon: '📋', title: t('tx.task_deposit') || '任务订金' },
+        'TASK_PAYMENT': { icon: '📋', title: t('tx.task_payment') || '任务尾款' },
+        'TASK_INCOME': { icon: '📋', title: t('tx.task_income') || '任务收入' },
+        'TASK_FREEZE': { icon: '🔒', title: t('tx.task_freeze') || '任务冻结' },
+        'TASK_REFUND': { icon: '↩️', title: t('tx.task_refund') || '任务退款' },
+        'TASK_CANCEL_REFUND': { icon: '🔄', title: t('tx.task_cancel_refund') || '任务取消退款' },
+        'RECHARGE': { icon: '💰', title: t('tx.recharge') || '充值' },
+        'REFUND': { icon: '↩️', title: t('tx.refund') || '退款' },
+        'WITHDRAW_FEE': { icon: '💸', title: t('tx.withdraw_fee') || '手续费' }
+    };
+    
+    return configs[txType] || { icon: '💰', title: txType };
 }
