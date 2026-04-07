@@ -118,7 +118,7 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
                 <input type="checkbox" id="is-original-checkbox" ${safeData.is_original ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #4CAF50;" />
                 <span style="font-size: 13px; color: #ccc;">🎨 标记为原创作品</span>
             </label>
-            <div style="font-size: 11px; color: #888; margin-top: 6px; padding-left: 24px;">
+            <div id="original-hint-text" style="font-size: 11px; color: #888; margin-top: 6px; padding-left: 24px;">
                 原创内容将获得特殊标识展示，请勿标记非原创内容
             </div>
         </div>

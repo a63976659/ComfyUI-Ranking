@@ -2,6 +2,7 @@
 import { generatePublishHTML } from "./发布内容_UI模板.js";
 import { handlePublishSubmit } from "./发布内容_提交引擎.js";
 import { t } from "../components/用户体验增强.js";
+import { globalModal } from "../components/全局弹窗管理器.js";
 
 // 🖼️ 编辑模式下回显已有图片的辅助函数
 function renderImagePreviews(imageUrls, container, onRemove) {
@@ -293,6 +294,75 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     };
     
     inputJson.onchange = (e) => { jsonFile = e.target.files[0]; };
+
+    // 🎨 原创勾选框逻辑：工具/应用类型强制确认弹窗
+    const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
+    const originalHintText = container.querySelector("#original-hint-text");
+    
+    // 根据类型更新原创提示文案
+    const updateOriginalHint = () => {
+        const mainType = typeSelect.value;
+        if (originalHintText) {
+            if (mainType === "tool" || mainType === "app") {
+                originalHintText.innerHTML = `<span style="color: #FF9800;">⚠️ 工具/应用类型必须为原创内容</span>，非原创请发布到「推荐」分类`;
+            } else {
+                originalHintText.textContent = "原创内容将获得特殊标识展示，请勿标记非原创内容";
+            }
+        }
+    };
+    
+    // 显示原创确认弹窗
+    const showOriginalConfirmModal = (onConfirm, onCancel) => {
+        const contentDiv = document.createElement("div");
+        contentDiv.innerHTML = `
+            <div style="line-height: 1.6; color: #ccc;">
+                <p style="margin-bottom: 15px;">您正在声明该内容为个人原创作品。</p>
+                <p style="margin-bottom: 10px; color: #fff; font-weight: bold;">请确认：</p>
+                <ul style="margin: 0 0 15px 20px; padding: 0; color: #aaa;">
+                    <li style="margin-bottom: 5px;">该内容由您本人独立创作</li>
+                    <li style="margin-bottom: 5px;">您对该内容拥有完整的知识产权</li>
+                    <li style="margin-bottom: 5px;">您愿意为此声明承担相应法律责任</li>
+                </ul>
+                <p style="margin-top: 15px; padding: 10px; background: rgba(255,152,0,0.1); border-left: 3px solid #FF9800; border-radius: 3px; font-size: 12px; color: #FF9800;">
+                    💡 如果您分享的是他人作品或非原创内容，请发布到「推荐」分类。
+                </p>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end;">
+                <button id="btn-original-cancel" style="padding: 8px 16px; background: #444; color: #fff; border: none; border-radius: 4px; cursor: pointer;">取消</button>
+                <button id="btn-original-confirm" style="padding: 8px 16px; background: #4CAF50; color: #fff; border: none; border-radius: 4px; cursor: pointer;">确认</button>
+            </div>
+        `;
+        
+        globalModal.openModal("原创内容声明", contentDiv, { width: "450px" });
+        
+        contentDiv.querySelector("#btn-original-confirm").onclick = () => {
+            globalModal.closeTopModal();
+            onConfirm();
+        };
+        contentDiv.querySelector("#btn-original-cancel").onclick = () => {
+            globalModal.closeTopModal();
+            onCancel();
+        };
+    };
+    
+    // 监听原创勾选框变化
+    isOriginalCheckbox.onchange = (e) => {
+        const mainType = typeSelect.value;
+        // 只有工具/应用类型才需要确认弹窗
+        if ((mainType === "tool" || mainType === "app") && e.target.checked) {
+            // 取消勾选，等待用户确认
+            e.target.checked = false;
+            showOriginalConfirmModal(
+                () => { e.target.checked = true; },  // 确认
+                () => { e.target.checked = false; }  // 取消
+            );
+        }
+    };
+    
+    // 监听类型变化，更新提示文案
+    typeSelect.addEventListener("change", updateOriginalHint);
+    // 初始化提示文案
+    updateOriginalHint();
 
     // 4. 将提取的参数交接给分离出去的提交引擎
     const submitBtn = container.querySelector("#btn-submit-publish");

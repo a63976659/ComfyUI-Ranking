@@ -256,6 +256,13 @@ export async function handlePublishSubmit(params) {
     if ((type === "tool" || type === "recommend_tool") && !isJsonUpload && !isNetdisk && !finalLink) return showToast(t('publish.git_required'), "warning");
     if (isJsonUpload && !jsonFile && !finalLink) return showToast(t('publish.json_required'), "warning");
     if (isNetdisk && !finalLink) return showToast(t('publish.netdisk_required'), "warning");  // ☁️
+    
+    // 🎨 工具/应用类型必须勾选原创
+    const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
+    const isOriginal = isOriginalCheckbox?.checked || false;
+    if ((type === "tool" || type === "app") && !isOriginal) {
+        return showToast("工具/应用类型必须为原创内容", "warning");
+    }
 
     submitBtn.innerHTML = `⏳ ${t('publish.connecting')}`;
     submitBtn.disabled = true; 
@@ -288,10 +295,6 @@ export async function handlePublishSubmit(params) {
             coverUrl = uploadedUrls[0];  // 第一张作为封面
             imageUrls = uploadedUrls;     // 全部图片URL
         }
-
-        // 获取原创作品勾选状态
-        const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
-        const isOriginal = isOriginalCheckbox?.checked || false;
 
         submitBtn.innerHTML = `⏳ ${t('publish.syncing')}`;
         const submitData = { 

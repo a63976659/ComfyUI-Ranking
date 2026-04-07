@@ -138,6 +138,19 @@ export function createItemCard(itemData, currentUser = null) {
     
     nameDOM.onclick = (e) => { e.stopPropagation(); openOtherUserProfileModal(itemData.author, currentUser); };
 
+    // 原创内容标识
+    if (itemData.is_original) {
+        const originalBadge = document.createElement("div");
+        Object.assign(originalBadge.style, {
+            display: "inline-flex", alignItems: "center", gap: "6px",
+            padding: "4px 12px", background: "linear-gradient(135deg, #FF6B35, #FF8F00)",
+            borderRadius: "12px", fontSize: "11px", color: "#fff", fontWeight: "500",
+            marginBottom: "10px"
+        });
+        originalBadge.textContent = "🎨 原创内容";
+        detailView.appendChild(originalBadge);
+    }
+
     const actionArea = document.createElement("div");
     Object.assign(actionArea.style, { display: "flex", gap: "8px", marginBottom: "12px" });
     const btnLike = document.createElement("button");
