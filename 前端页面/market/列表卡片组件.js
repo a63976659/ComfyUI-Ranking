@@ -22,7 +22,7 @@ export function createItemCard(itemData, currentUser = null) {
 
     // 🚀 核心新增：初始渲染时，动态计算真实的有效评论数（过滤软删除的废弃数据）
     const calcActiveComments = (data) => {
-        if (!data) return 0;
+        if (!data || !Array.isArray(data)) return 0;
         return data.reduce((acc, c) => {
             const parentCnt = c.isDeleted ? 0 : 1;
             const repliesCnt = (c.replies || []).filter(r => !r.isDeleted).length;

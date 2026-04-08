@@ -75,6 +75,8 @@ const api = {
     async postComment(itemId, author, content, replyTo = null, parentId = null) { return request("/api/comments", { method: "POST", body: { item_id: itemId, author, content, reply_to_user: replyTo, parent_id: parentId } }); },
     async deleteComment(itemId, commentId) { return request(`/api/comments/${itemId}/${commentId}`, { method: "DELETE" }); },
     async getMessages(account) { return request(`/api/messages/${account}`); },
+    // 🔥 新增：轻量级获取未读消息数量（不标记已读，用于轮询红点）
+    async getUnreadCount(account) { return request(`/api/messages/${account}?count_only=true`); },
     async markMessagesRead(account) { return request(`/api/messages/${account}/read`, { method: "POST" }); },
     async sendPrivateMessage(sender, receiver, content) { return request("/api/messages/private", { method: "POST", body: { sender, receiver, content } }); },
     async getChatList(account) { return request(`/api/chats/${account}`); },

@@ -289,7 +289,11 @@ export async function handlePublishSubmit(params) {
                 // 上传前压缩：转JPG，超5MB压缩
                 const processedFile = await compressImageForUpload(imageFiles[i]);
                 const uploadRes = await api.uploadFile(processedFile, "cover");
-                uploadedUrls.push(uploadRes.url);
+                if (uploadRes && uploadRes.url) {
+                    uploadedUrls.push(uploadRes.url);
+                } else {
+                    throw new Error(`图片上传失败: ${uploadRes?.error || '未知错误'}`);
+                }
             }
             
             coverUrl = uploadedUrls[0];  // 第一张作为封面

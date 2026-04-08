@@ -1,5 +1,6 @@
 // 前端页面/social/通知中心组件.js
 import { api } from "../core/网络请求API.js";
+import { request } from "../core/网络请求_基础设施.js";
 import { openChatModal } from "./私信聊天组件.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
@@ -217,7 +218,8 @@ export async function openNotificationCenter(currentUser, bellBtn) {
 export async function loadUnreadCount(currentUser, bellBtn) {
     if (!currentUser) { bellBtn.querySelector("#unread-badge").style.display = "none"; return; }
     try {
-        const res = await api.getMessages(currentUser.account);
+        // 🔥 修复：使用 count_only=true 参数，只获取未读数，不标记已读
+        const res = await request(`/api/messages/${currentUser.account}?count_only=true`);
         const unreadCount = res.unread_count || 0;
         const badge = bellBtn.querySelector("#unread-badge");
         if (unreadCount > 0) {

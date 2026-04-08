@@ -198,21 +198,40 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             saveAcquiredItem(itemData);
             
             if (netdiskPassword) {
-                inlineStatusBox.innerHTML = `
+                // 🔒 XSS防护：使用DOM API安全构建网盘密码显示区域
+                inlineStatusBox.innerHTML = '';
+                inlineStatusBox.style.display = 'block';
+                
+                const container = document.createElement('div');
+                container.innerHTML = `
                     <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，网盘资源信息如下：</div>
                     <div style="background: #1a1d2e; padding: 12px; border-radius: 6px; border: 1px solid #2d334a;">
                         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                             <span style="color: #2196F3;">🔗 网盘链接：</span>
                             <button id="btn-netdisk-open-pwd-${itemData.id}" style="padding: 6px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px;">📂 打开网盘</button>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 8px;">
+                        <div id="netdisk-pwd-container-${itemData.id}" style="display: flex; align-items: center; gap: 8px;">
                             <span style="color: #FF9800;">🔐 提取码：</span>
-                            <code style="background: #333; padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;">${netdiskPassword}</code>
-                            <button onclick="navigator.clipboard.writeText('${netdiskPassword}'); this.innerText='✅ 已复制'" style="padding: 4px 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">📋 复制</button>
+                            <code id="netdisk-pwd-code-${itemData.id}" style="background: #333; padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;"></code>
+                            <button id="btn-copy-pwd-${itemData.id}" style="padding: 4px 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">📋 复制</button>
                         </div>
                     </div>
                     <div style="margin-top: 8px; font-size: 11px; color: #888;">💡 提示：请复制提取码后前往网盘下载资源</div>
                 `;
+                inlineStatusBox.appendChild(container);
+                
+                // 安全设置密码文本（防止XSS）
+                const pwdCodeEl = container.querySelector(`#netdisk-pwd-code-${itemData.id}`);
+                if (pwdCodeEl) pwdCodeEl.textContent = netdiskPassword;
+                
+                // 绑定复制按钮事件
+                const copyBtn = container.querySelector(`#btn-copy-pwd-${itemData.id}`);
+                if (copyBtn) {
+                    copyBtn.onclick = () => {
+                        navigator.clipboard.writeText(netdiskPassword);
+                        copyBtn.textContent = '✅ 已复制';
+                    };
+                }
                 // 绑定按钮点击事件
                 const btnOpen = inlineStatusBox.querySelector(`#btn-netdisk-open-pwd-${itemData.id}`);
                 if (btnOpen) {
@@ -357,21 +376,40 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             
             // ☁️ 网盘资源：购买后显示密码
             if (isNetdisk && netdiskPassword) {
-                inlineStatusBox.innerHTML = `
+                // 🔒 XSS防护：使用DOM API安全构建网盘密码显示区域
+                inlineStatusBox.innerHTML = '';
+                
+                const container2 = document.createElement('div');
+                container2.innerHTML = `
                     <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，网盘资源信息如下：</div>
                     <div style="background: #1a1d2e; padding: 12px; border-radius: 6px; border: 1px solid #2d334a;">
                         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                             <span style="color: #2196F3;">🔗 网盘链接：</span>
                             <button id="btn-netdisk-mode-pwd-${itemData.id}" style="padding: 6px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px;">📂 打开网盘</button>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 8px;">
+                        <div id="netdisk-mode-pwd-container-${itemData.id}" style="display: flex; align-items: center; gap: 8px;">
                             <span style="color: #FF9800;">🔐 提取码：</span>
-                            <code style="background: #333; padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;">${netdiskPassword}</code>
-                            <button onclick="navigator.clipboard.writeText('${netdiskPassword}'); this.innerText='✅ 已复制'" style="padding: 4px 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">📋 复制</button>
+                            <code id="netdisk-mode-pwd-code-${itemData.id}" style="background: #333; padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;"></code>
+                            <button id="btn-copy-mode-pwd-${itemData.id}" style="padding: 4px 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">📋 复制</button>
                         </div>
                     </div>
                     <div style="margin-top: 8px; font-size: 11px; color: #888;">💡 提示：请复制提取码后前往网盘下载资源</div>
                 `;
+                inlineStatusBox.appendChild(container2);
+                
+                // 安全设置密码文本（防止XSS）
+                const pwdCodeEl2 = container2.querySelector(`#netdisk-mode-pwd-code-${itemData.id}`);
+                if (pwdCodeEl2) pwdCodeEl2.textContent = netdiskPassword;
+                
+                // 绑定复制按钮事件
+                const copyBtn2 = container2.querySelector(`#btn-copy-mode-pwd-${itemData.id}`);
+                if (copyBtn2) {
+                    copyBtn2.onclick = () => {
+                        navigator.clipboard.writeText(netdiskPassword);
+                        copyBtn2.textContent = '✅ 已复制';
+                    };
+                }
+                
                 // 绑定按钮点击事件
                 const btnOpen = inlineStatusBox.querySelector(`#btn-netdisk-mode-pwd-${itemData.id}`);
                 if (btnOpen) {
