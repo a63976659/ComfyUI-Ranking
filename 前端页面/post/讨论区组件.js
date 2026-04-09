@@ -373,6 +373,7 @@ export function createPostsView(currentUser, keyword = "") {
             if ((oldData[i].likes || 0) !== (newData[i].likes || 0)) return true;
             if ((oldData[i].favorites || 0) !== (newData[i].favorites || 0)) return true;
             if ((oldData[i].views || 0) !== (newData[i].views || 0)) return true;
+            if ((oldData[i].daily_views || 0) !== (newData[i].daily_views || 0)) return true;
             if ((oldData[i].comments_count || 0) !== (newData[i].comments_count || 0)) return true;
         }
         return false;
