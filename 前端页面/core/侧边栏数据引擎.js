@@ -162,7 +162,8 @@ export async function loadSidebarContent({
     currentUser, 
     renderToken, 
     getRenderToken,
-    force = false
+    force = false,
+    expandItemId = null  // 新增：要自动展开的卡片ID
 }) {
     // ========== 💬 讨论区特殊处理 ==========
     if (tab === "posts") {
@@ -255,12 +256,17 @@ export async function loadSidebarContent({
         const fragment = document.createDocumentFragment();
         const animationType = getAnimationTypeForTab(tab);
         const cards = [];
+        let targetCard = null;  // 用于保存需要展开的目标卡片
         
         if (tab === "tools" || tab === "apps" || tab === "recommends") {
             displayData.forEach(data => {
                 const card = createItemCard(data, currentUser);
                 cards.push(card);
                 fragment.appendChild(card);
+                // 检查是否是需要展开的卡片
+                if (expandItemId && data.id === expandItemId) {
+                    targetCard = card;
+                }
             });
         } else if (tab === "creators") {
             displayData.forEach(data => {
@@ -282,6 +288,33 @@ export async function loadSidebarContent({
         
         // 对新渲染的图片启用懒加载
         lazyLoadImages(contentArea, "img:not(.lazy-loaded):not(.lazy-loading)");
+        
+        // 🔔 自动展开目标卡片（如果有）
+        if (targetCard && !append) {
+            requestAnimationFrame(() => {
+                // 滚动到卡片位置
+                targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // 模拟点击摘要区域展开卡片
+                const summary = targetCard.querySelector('.item-summary') || targetCard.firstElementChild;
+                if (summary) summary.click();
+            });
+        }
+        
+        // 【问题1修复】首屏未找到目标卡片，fallback到独立详情页
+        if (expandItemId && !targetCard && !append) {
+            (async () => {
+                try {
+                    const res = await api.getItemById(expandItemId);
+                    if (res.status === "success" && res.data) {
+                        const module = await import("../market/资源详情页面组件.js");
+                        const view = module.createItemDetailView(res.data, currentUser);
+                        window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                    }
+                } catch (e) {
+                    console.error("展开卡片 fallback 失败:", e);
+                }
+            })();
+        }
         
         state.displayedCount += displayData.length;
         return displayData.length;

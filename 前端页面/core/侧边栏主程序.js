@@ -243,6 +243,82 @@ export function buildSidebarDOM() {
         showInlineView(view);
     });
 
+    // 🔔 通知跳转：切换到对应Tab并展开指定卡片
+    window.addEventListener("comfy-route-to-item", async (e) => {
+        const { itemId, itemType } = e.detail;
+        if (!itemId) return;
+        
+        // 1. 根据 itemType 确定 Tab
+        let targetTab;
+        if (itemType === "tool") targetTab = "tools";
+        else if (itemType === "app") targetTab = "apps";
+        else if (itemType === "recommend") targetTab = "recommends";
+        else targetTab = "tools"; // 兜底
+        
+        // 【问题2修复】如果已经在目标 Tab，先尝试在当前 DOM 中查找卡片
+        if (currentTab === targetTab) {
+            const existingCard = contentArea.querySelector(`[data-item-id="${itemId}"]`);
+            if (existingCard) {
+                // 关闭可能存在的通知中心等全屏视图
+                if (activeInlineView) hideInlineView();
+                
+                const summary = existingCard.querySelector('.item-summary') || existingCard.firstElementChild;
+                // 先确保卡片是折叠状态再展开（避免点击已展开的卡片把它收起来）
+                existingCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // 检查详情区域是否已展开
+                const detailView = existingCard.children[1]; // detailView 是第二个子元素
+                if (detailView && detailView.style.display === 'none' && summary) {
+                    summary.click();
+                }
+                return;
+            }
+        }
+        
+        // 2. 切换到目标 Tab（如果不同）
+        if (currentTab !== targetTab) {
+            currentTab = targetTab;
+            Store.save("activeTab", currentTab);
+            
+            // 3. 更新 Tab 按钮的选中状态
+            const tabBtns = tabsContainer.querySelectorAll('button');
+            tabBtns.forEach((btn, index) => {
+                const tabId = tabs[index].id;
+                const tabColor = tabColors[tabId];
+                if (tabId === currentTab) {
+                    btn.style.background = "rgba(0,0,0,0.3)";
+                    btn.style.color = tabColor.active;
+                    btn.style.borderBottom = `2px solid ${tabColor.active}`;
+                    btn.style.textShadow = getTextShadow(tabColor.active, true);
+                } else {
+                    btn.style.background = "rgba(0,0,0,0.15)";
+                    btn.style.color = tabColor.inactive;
+                    btn.style.borderBottom = "none";
+                    btn.style.textShadow = getTextShadow(tabColor.active, false);
+                }
+            });
+            
+            // 4. 更新筛选控件可见性
+            updateFilterVisibility(currentTab);
+        }
+        
+        // 5. 隐藏可能存在的详情页视图
+        hideInlineView();
+        
+        // 6. 触发加载，传入要展开的 itemId
+        currentRenderToken++;
+        await loadSidebarContent({
+            tab: currentTab,
+            sort: currentSort,
+            keyword: "",
+            contentArea: contentArea,
+            currentUser: topNav.getCurrentUser(),
+            renderToken: currentRenderToken,
+            getRenderToken: getRenderToken,
+            force: false,
+            expandItemId: itemId  // 新增：要展开的卡片ID
+        });
+    });
+
     let currentTab = Store.load("activeTab", "tools");
     let currentSort = Store.load("activeSort", "time");
     let currentRenderToken = 0;

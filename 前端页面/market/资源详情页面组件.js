@@ -318,7 +318,7 @@ export function createItemDetailView(itemData, currentUser) {
                 ${deleteBtnHtml}
             </div>
         </div>
-        <div style="margin-top: 10px; color: #888;">感谢 硊影科技 的支持！</div>
+        <div style="margin-top: 10px; color: #888;">感谢 砚影科技 的支持！</div>
             
         <!-- 🔄 P7后悔模式：退款区域 -->
         <div id="refund-area"></div>

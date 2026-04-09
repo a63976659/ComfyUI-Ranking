@@ -38,6 +38,7 @@ export function createItemCard(itemData, currentUser = null) {
         : '';
 
     const summaryView = document.createElement("div");
+    summaryView.className = "item-summary";
     summaryView.style.cursor = "pointer";
     
     // 🚀 核心修改：为评论计数的 span 加上专属的 class，并填入过滤后的真实数量

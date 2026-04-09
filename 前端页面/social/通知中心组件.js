@@ -177,12 +177,15 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
                         });
                     } else {
-                        import("../market/资源详情页面组件.js").then(async module => {
+                        // 🔔 资源类通知：切换到对应Tab并展开卡片
+                        (async () => {
                             try {
                                 const res = await api.getItemById(id);
                                 if (res.status === "success" && res.data) {
-                                    const view = module.createItemDetailView(res.data, currentUser);
-                                    window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                                    const itemType = res.data.type || 'tool';
+                                    window.dispatchEvent(new CustomEvent("comfy-route-to-item", {
+                                        detail: { itemId: id, itemType: itemType }
+                                    }));
                                 } else {
                                     showToast(t('notif.item_not_found'), "error");
                                 }
@@ -190,7 +193,7 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                                 console.error("获取资源详情失败:", e);
                                 showToast(t('notif.load_item_failed'), "error");
                             }
-                        });
+                        })();
                     }
                     return;
                 }
@@ -203,14 +206,16 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                 // 【核心新增】：系统公告点击不跳转，只触发消除红点
                 if (type === "system") return; 
                 
-                // 📦 插件更新通知：跳转到插件详情页
+                // 📦 插件更新通知：切换到对应Tab并展开卡片
                 if (type === "plugin_update" && itemId) {
-                    import("../market/资源详情页面组件.js").then(async module => {
+                    (async () => {
                         try {
                             const res = await api.getItemById(itemId);
                             if (res.status === "success" && res.data) {
-                                const view = module.createItemDetailView(res.data, currentUser);
-                                window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                                const itemType = res.data.type || 'tool';
+                                window.dispatchEvent(new CustomEvent("comfy-route-to-item", {
+                                    detail: { itemId: itemId, itemType: itemType }
+                                }));
                             } else {
                                 showToast(t('notif.item_not_found'), "error");
                             }
@@ -218,7 +223,7 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                             console.error("获取资源详情失败:", e);
                             showToast(t('notif.load_item_failed'), "error");
                         }
-                    });
+                    })();
                     return;
                 }
                 
@@ -239,7 +244,41 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                     });
                     return;
                 }
-                
+
+                // 互动类通知（点赞/收藏/评论/回复/购买/打赏/退款）：优先跳转内容详情
+                if (["like", "favorite", "comment", "reply", "purchase", "tip", "refund"].includes(type) && itemId) {
+                    if (itemId.startsWith('post_')) {
+                        import("../post/帖子详情组件.js").then(module => {
+                            const view = module.createPostDetailView(itemId, currentUser);
+                            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                        });
+                    } else if (itemId.startsWith('task_')) {
+                        import("../task/任务详情组件.js").then(module => {
+                            const view = module.createTaskDetailView(itemId, currentUser);
+                            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                        });
+                    } else {
+                        // 🔔 资源类互动通知：切换到对应Tab并展开卡片
+                        (async () => {
+                            try {
+                                const res = await api.getItemById(itemId);
+                                if (res.status === "success" && res.data) {
+                                    const itemType = res.data.type || 'tool';
+                                    window.dispatchEvent(new CustomEvent("comfy-route-to-item", {
+                                        detail: { itemId: itemId, itemType: itemType }
+                                    }));
+                                } else {
+                                    showToast(t('notif.item_not_found'), "error");
+                                }
+                            } catch (e) {
+                                console.error("获取资源详情失败:", e);
+                                showToast(t('notif.load_item_failed'), "error");
+                            }
+                        })();
+                    }
+                    return;
+                }
+
                 // 私信：打开对话
                 if (type === "private") {
                     openChatModal(currentUser, acc);
