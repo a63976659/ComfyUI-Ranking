@@ -255,6 +255,10 @@ async function request(endpoint, options = {}) {
                     
                     // 🚀 P1优化：4xx 错误不重试，5xx 错误可重试
                     if (response.status >= 400 && response.status < 500) {
+                        if (response.status === 401) {
+                            // 广播登出事件，通知所有组件清除登录状态
+                            window.dispatchEvent(new CustomEvent('comfy-ranking-auth-expired'));
+                        }
                         throw new Error(errorMsg);
                     }
                     

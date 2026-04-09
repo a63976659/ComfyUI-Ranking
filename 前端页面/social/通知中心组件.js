@@ -42,6 +42,23 @@ export async function openNotificationCenter(currentUser, bellBtn) {
     header.querySelector("#btn-back-notif").onclick = () => window.dispatchEvent(new CustomEvent("comfy-route-back"));
     const clearBtn = header.querySelector("#btn-clear-notif");
 
+    // 生成标题链接的辅助函数
+    function makeTitleLink(itemId, title) {
+        if (!itemId || !title) return escapeHtml(title || '');
+        return `<span class="notif-item-link" data-item-id="${itemId}" 
+            style="color:#FF9800; cursor:pointer; text-decoration:underline dotted;">
+            ${escapeHtml(title)}
+        </span>`;
+    }
+
+    // HTML 转义函数
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
     const renderMsgList = (msgs) => {
         listArea.innerHTML = "";
         if (msgs.length === 0) {
@@ -54,6 +71,7 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             const isUnread = !msg.is_read;
             // 【核心新增】：判断是否为系统公告
             const isSystem = msg.type === "system";
+            const isAnonymous = msg.from_user === "anonymous";
             
             // 系统公告使用尊贵的橙色/金色 UI 边框，普通消息使用默认颜色
             // 插件更新通知使用蓝色主题
@@ -68,40 +86,51 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                 border = isUnread ? "1px solid #2196F3" : "1px solid #1a5a8a";
             }
             
+            // 生成标题链接
+            const titleLink = makeTitleLink(msg.target_item_id, msg.target_item_title);
+            
             let actionText = "";
             if (msg.type === "private") actionText = t('notif.private_msg');
             else if (msg.type === "follow") actionText = t('notif.followed_you');
-            else if (msg.type === "like") actionText = `${t('notif.liked')} <span style="color:#4CAF50;">[${msg.target_item_title}]</span>`;
-            else if (msg.type === "favorite") actionText = `${t('notif.favorited')} <span style="color:#2196F3;">[${msg.target_item_title}]</span>`;
-            else if (msg.type === "comment") actionText = `${t('notif.commented_on')} <span style="color:#FF9800;">[${msg.target_item_title}]</span>：<br><span style="color:#ccc;">${msg.content}</span>`;
-            else if (msg.type === "purchase") actionText = `${t('notif.purchased')} <span style="color:#E91E63;">[${msg.target_item_title}]</span>${t('notif.income_received')}`;
-            else if (msg.type === "tip") actionText = `${t('notif.tipped_you')}<br><span style="color:#FF9800;">"${msg.content}"</span>`;
-            // 任务榥通知
-            else if (msg.type === "task_apply") actionText = `<span style="color:#FF9800;">🙋</span> ${msg.content || t('notif.task_apply')}`;
-            else if (msg.type === "task_assigned") actionText = `<span style="color:#4CAF50;">🎯</span> ${msg.content || t('notif.task_assigned')}`;
-            else if (msg.type === "task_submitted") actionText = `<span style="color:#2196F3;">📤</span> ${msg.content || t('notif.task_submitted')}`;
-            else if (msg.type === "task_completed") actionText = `<span style="color:#4CAF50;">✅</span> ${msg.content || t('notif.task_completed')}`;
-            else if (msg.type === "task_rejected") actionText = `<span style="color:#F44336;">❌</span> ${msg.content || t('notif.task_rejected')}`;
-            // 申诉仲裁通知
-            else if (msg.type === "task_disputed") actionText = `<span style="color:#F44336;">⚖️</span> ${msg.content || t('notif.task_disputed')}`;
-            else if (msg.type === "dispute_responded") actionText = `<span style="color:#2196F3;">💬</span> ${msg.content || t('notif.dispute_responded')}`;
-            else if (msg.type === "dispute_resolved") actionText = `<span style="color:#9C27B0;">🔨</span> ${msg.content || t('notif.dispute_resolved')}`;
+            else if (msg.type === "like") actionText = `${t('notif.liked')} ${titleLink}`;
+            else if (msg.type === "favorite") actionText = `${t('notif.favorited')} ${titleLink}`;
+            else if (msg.type === "comment") actionText = `${t('notif.commented_on')} ${titleLink}：<br><span style="color:#ccc;">${escapeHtml(msg.content)}</span>`;
+            else if (msg.type === "reply") actionText = `${t('notif.replied_on')} ${titleLink}：<br><span style="color:#ccc;">${escapeHtml(msg.content)}</span>`;
+            else if (msg.type === "purchase") actionText = `${t('notif.purchased')} ${titleLink}${t('notif.income_received')}`;
+            else if (msg.type === "refund") actionText = `${t('notif.refunded')} ${titleLink}`;
+            else if (msg.type === "tip") actionText = `${t('notif.tipped_you')}<br><span style="color:#FF9800;">"${escapeHtml(msg.content)}"</span>`;
+            // 任务类通知 - 保持现有模板不变
+            else if (msg.type === "task_apply") actionText = `<span style="color:#FF9800;">🙋</span> ${escapeHtml(msg.content) || t('notif.task_apply')}`;
+            else if (msg.type === "task_assigned") actionText = `<span style="color:#4CAF50;">🎯</span> ${escapeHtml(msg.content) || t('notif.task_assigned')}`;
+            else if (msg.type === "task_submitted") actionText = `<span style="color:#2196F3;">📤</span> ${escapeHtml(msg.content) || t('notif.task_submitted')}`;
+            else if (msg.type === "task_completed") actionText = `<span style="color:#4CAF50;">✅</span> ${escapeHtml(msg.content) || t('notif.task_completed')}`;
+            else if (msg.type === "task_rejected") actionText = `<span style="color:#F44336;">❌</span> ${escapeHtml(msg.content) || t('notif.task_rejected')}`;
+            // 申诉仲裁通知 - 保持现有模板不变
+            else if (msg.type === "task_disputed") actionText = `<span style="color:#F44336;">⚖️</span> ${escapeHtml(msg.content) || t('notif.task_disputed')}`;
+            else if (msg.type === "dispute_responded") actionText = `<span style="color:#2196F3;">💬</span> ${escapeHtml(msg.content) || t('notif.dispute_responded')}`;
+            else if (msg.type === "dispute_resolved") actionText = `<span style="color:#9C27B0;">🔨</span> ${escapeHtml(msg.content) || t('notif.dispute_resolved')}`;
             // 【核心新增】：系统公告的正文排版，保留原格式的换行
-            else if (isSystem) actionText = `<div style="margin-top: 6px; color: #eee; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${msg.content}</div>`;
-            // 【核心新增】：插件更新通知
-            else if (msg.type === "plugin_update") actionText = `${t('notif.plugin_update')} <span style="color:#2196F3;">[${msg.target_item_title}]</span>，${t('notif.click_to_view')}`;
+            else if (isSystem) actionText = `<div style="margin-top: 6px; color: #eee; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(msg.content)}</div>`;
+            // 【核心新增】：插件更新通知 - 保持现有模板不变
+            else if (msg.type === "plugin_update") actionText = `${t('notif.plugin_update')} <span style="color:#2196F3;">[${escapeHtml(msg.target_item_title)}]</span>，${t('notif.click_to_view')}`;
             
             const timeStr = new Date(msg.created_at * 1000).toLocaleString();
             
             // 【核心新增】：如果是系统消息，增加 📢 标签并改变标题颜色
             // 插件更新通知使用 📦 图标
+            // 匿名打赏和系统通知的用户名不显示为链接
             let nameLabel;
             if (isSystem) {
-                nameLabel = `<strong style="color: #FF9800; font-size: 15px;">📢 [${t('notif.system_announcement')}] ${msg.from_name}</strong>`;
+                nameLabel = `<strong style="color: #FF9800; font-size: 15px;">📢 [${t('notif.system_announcement')}] ${escapeHtml(msg.from_name)}</strong>`;
             } else if (msg.type === "plugin_update") {
-                nameLabel = `<strong style="color: #2196F3; font-size: 15px;">📦 [${t('notif.plugin_update_title')}] ${msg.from_name}</strong>`;
+                nameLabel = `<strong style="color: #2196F3; font-size: 15px;">📦 [${t('notif.plugin_update_title')}] ${escapeHtml(msg.from_name)}</strong>`;
+            } else if (isAnonymous) {
+                nameLabel = `<strong style="color: #fff;">${escapeHtml(msg.from_name || msg.from_user)}</strong>`;
             } else {
-                nameLabel = `<strong style="color: #fff;">${msg.from_name}</strong>`;
+                nameLabel = `<span class="notif-user-link" data-account="${msg.from_user}" 
+                    style="color:#4FC3F7; cursor:pointer; text-decoration:underline dotted; font-weight:bold;">
+                    ${escapeHtml(msg.from_name || msg.from_user)}
+                </span>`;
             }
             
             html += `
@@ -120,7 +149,53 @@ export async function openNotificationCenter(currentUser, bellBtn) {
         listArea.innerHTML = html;
         
         listArea.querySelectorAll(".notif-item").forEach(item => {
-            item.onclick = () => {
+            item.onclick = (e) => {
+                // 使用事件委托区分点击目标
+                const userLink = e.target.closest('.notif-user-link');
+                const itemLink = e.target.closest('.notif-item-link');
+                
+                if (userLink) {
+                    // 点击用户名 -> 跳转用户资料页
+                    const acc = userLink.dataset.account;
+                    if (acc && acc !== 'system' && acc !== 'anonymous') {
+                        openOtherUserProfileModal(acc, currentUser);
+                    }
+                    return;
+                }
+                
+                if (itemLink) {
+                    // 点击资源/帖子/任务标题 -> 根据 ID 前缀跳转
+                    const id = itemLink.dataset.itemId;
+                    if (id.startsWith('post_')) {
+                        import("../post/帖子详情组件.js").then(module => {
+                            const view = module.createPostDetailView(id, currentUser);
+                            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                        });
+                    } else if (id.startsWith('task_')) {
+                        import("../task/任务详情组件.js").then(module => {
+                            const view = module.createTaskDetailView(id, currentUser);
+                            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                        });
+                    } else {
+                        import("../market/资源详情页面组件.js").then(async module => {
+                            try {
+                                const res = await api.getItemById(id);
+                                if (res.status === "success" && res.data) {
+                                    const view = module.createItemDetailView(res.data, currentUser);
+                                    window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+                                } else {
+                                    showToast(t('notif.item_not_found'), "error");
+                                }
+                            } catch (e) {
+                                console.error("获取资源详情失败:", e);
+                                showToast(t('notif.load_item_failed'), "error");
+                            }
+                        });
+                    }
+                    return;
+                }
+                
+                // 默认行为：保留现有的整卡片点击逻辑
                 const acc = item.dataset.account;
                 const type = item.dataset.type;
                 const itemId = item.dataset.itemId;
@@ -132,7 +207,6 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                 if (type === "plugin_update" && itemId) {
                     import("../market/资源详情页面组件.js").then(async module => {
                         try {
-                            // 先获取完整的 itemData 对象
                             const res = await api.getItemById(itemId);
                             if (res.status === "success" && res.data) {
                                 const view = module.createItemDetailView(res.data, currentUser);
@@ -166,8 +240,14 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                     return;
                 }
                 
-                if (type === "private") openChatModal(currentUser, acc);
-                else openOtherUserProfileModal(acc, currentUser);
+                // 私信：打开对话
+                if (type === "private") {
+                    openChatModal(currentUser, acc);
+                    return;
+                }
+                
+                // 其他：跳转发送者资料页（兜底）
+                if (acc && acc !== 'anonymous') openOtherUserProfileModal(acc, currentUser);
             };
         });
     };

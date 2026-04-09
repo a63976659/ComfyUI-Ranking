@@ -83,6 +83,10 @@ export function createTopNav() {
 
     window.addEventListener("comfy-user-logout", () => { currentUser = null; updateUserButtonState(); });
 
+    window.addEventListener('comfy-ranking-auth-expired', () => {
+        stopMessagePolling();
+    });
+
     chatEntryBtn.onclick = () => {
         if (!currentUser) return showToast(t('auth.login_required') || "请先登录您的社区账号！", "warning");
         openChatModal(currentUser);
