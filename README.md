@@ -71,7 +71,7 @@ git clone https://github.com/a63976659/ComfyUI-Ranking.git
 # 重启 ComfyUI
 ```
 
-### 方式二：手动安装
+### 方式二：手动安装（不推荐，无法更新版本）
 
 1. 下载仓库 ZIP 文件
 2. 解压到 `ComfyUI/custom_nodes/ComfyUI-Ranking`
