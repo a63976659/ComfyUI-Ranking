@@ -284,7 +284,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 try {
                     // 🚀 双轨分流引擎：免费走直连 Clone，付费走云端防盗版 ZIP 覆写
                     // 设置了 github_token 的工具（无论免费还是付费）都走云端代理
-                    const hasPrivateToken = !!itemData.github_token;
+                    const hasPrivateToken = !!itemData.has_private_token;
                     const localApiEndpoint = (isFree && !hasPrivateToken) 
                         ? "/community_hub/install_tool" 
                         : "/community_hub/install_private_tool";
