@@ -284,7 +284,19 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 try {
                     // 🚀 双轨分流引擎：免费走直连 Clone，付费走云端防盗版 ZIP 覆写
                     // 设置了 github_token 的工具（无论免费还是付费）都走云端代理
-                    const hasPrivateToken = !!itemData.has_private_token;
+                    
+                    // 获取最新的 item 数据以确保路由决策准确
+                    let freshHasPrivateToken = !!itemData.has_private_token;
+                    try {
+                        const freshRes = await api.getItemById(itemData.id);
+                        if (freshRes.status === "success" && freshRes.data) {
+                            freshHasPrivateToken = !!freshRes.data.has_private_token;
+                        }
+                    } catch (e) {
+                        // 获取失败时使用缓存数据的值
+                        console.warn("获取最新 item 数据失败，使用缓存值:", e);
+                    }
+                    const hasPrivateToken = freshHasPrivateToken;
                     const localApiEndpoint = (isFree && !hasPrivateToken) 
                         ? "/community_hub/install_tool" 
                         : "/community_hub/install_private_tool";
