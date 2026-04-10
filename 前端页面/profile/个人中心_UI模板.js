@@ -49,10 +49,14 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
     const statsHtml = `
         <div style="display: flex; gap: 15px; font-size: 12px; color: rgba(255,255,255,0.9); flex-wrap: wrap; margin-top: 15px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
             ${isMe ? `
-                <div style="display:flex; gap: 12px;">
-                    <span>💰 ${t('profile.balance')}: <strong style="color:#FF9800;">${userData.balance || 0}</strong></span>
-                    <span>🛍️ ${t('profile.sales')}: <strong style="color:#4CAF50;">${userData.earn_balance || 0}</strong></span>
-                    <span>🎁 ${t('profile.tips')}: <strong style="color:#E91E63;">${userData.tip_balance || 0}</strong></span>
+                <div style="display:flex; flex-direction: column; gap: 6px; width: 100%;">
+                    <div style="font-size: 14px;">
+                        <span>💰 ${t('profile.balance')}: <strong style="color:#FF9800; font-size: 16px;">${userData.balance || 0}</strong></span>
+                    </div>
+                    <div style="font-size: 11px; color: rgba(255,255,255,0.6);">
+                        <span>🛍️ ${t('profile.sales')}: ${userData.earn_balance || 0}</span>
+                        <span style="margin-left: 12px;">🎁 ${t('profile.tips')}: ${userData.tip_balance || 0}</span>
+                    </div>
                 </div>
             ` : ''}
             <div style="display:flex; gap: 12px;">

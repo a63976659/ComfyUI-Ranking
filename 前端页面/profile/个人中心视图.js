@@ -143,9 +143,17 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                     openRechargeModal(currentUser, (newBalance) => { userData.balance = newBalance; render(); });
                 };
                 container.querySelector("#btn-withdraw").onclick = () => {
-                    openWithdrawModal(currentUser, () => { 
-                        userData.earn_balance = 0; 
-                        userData.tip_balance = 0;
+                    openWithdrawModal(currentUser, async () => { 
+                        // 提现成功后重新拉取用户数据刷新余额
+                        try {
+                            const walletRes = await api.getWallet(currentUser.account);
+                            userData.balance = walletRes.balance ?? userData.balance;
+                            userData.earn_balance = walletRes.earn_balance ?? userData.earn_balance;
+                            userData.tip_balance = walletRes.tip_balance ?? userData.tip_balance;
+                            userData.total_withdrawn = walletRes.total_withdrawn ?? userData.total_withdrawn;
+                        } catch (err) {
+                            console.warn("提现后刷新钱包数据失败:", err);
+                        }
                         render(); 
                     });
                 };

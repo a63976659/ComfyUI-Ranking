@@ -4,16 +4,17 @@ import { showToast } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { t } from "../components/用户体验增强.js";
 
+// 模块级防重复提交标志
+let isSubmitting = false;
+
 /**
  * 提现弹窗组件 (带邮箱验证码安全风控与手续费计算)
  * @param {Object} currentUser 当前登录用户
  * @param {Function} onSuccess 提现成功后的回调函数
  */
 export function openWithdrawModal(currentUser, onSuccess) {
-    // 将双轨账目合并为总可提现额度
-    const earn = currentUser.earn_balance || 0;
-    const tip = currentUser.tip_balance || 0;
-    const maxWithdraw = earn + tip; 
+    // 使用统一可用余额作为可提现额度
+    const maxWithdraw = currentUser.balance || 0;
     
     // 🚀 获取历史累计提现金额用于计算免责额度
     const totalWithdrawn = currentUser.total_withdrawn || 0; 
@@ -39,7 +40,7 @@ export function openWithdrawModal(currentUser, onSuccess) {
 
         <div style="margin-bottom: 15px;">
             <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.amount_label')} <span style="color:#F44336">*</span></label>
-            <input type="number" id="withdraw-amount" placeholder="${t('wallet.withdraw.amount_placeholder')}" max="${maxWithdraw}" min="1" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+            <input type="number" id="withdraw-amount" placeholder="${t('wallet.withdraw.amount_placeholder')}" max="${maxWithdraw}" min="1" step="1" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
             
             <div id="fee-calc-box" style="margin-top: 10px; padding: 10px; background: rgba(255,152,0,0.1); border: 1px dashed #FF9800; border-radius: 4px; font-size: 12px; color: #FF9800; display:none; line-height: 1.5;">
                 <div id="fee-text"></div>
@@ -124,15 +125,23 @@ export function openWithdrawModal(currentUser, onSuccess) {
 
     const btnSubmit = container.querySelector("#btn-submit-withdraw");
     btnSubmit.onclick = async () => {
+        // 防重复提交检查
+        if (isSubmitting) return;
+
         const amount = parseInt(inputAmount.value);
         const alipayAccount = container.querySelector("#withdraw-account").value.trim();
         const realName = container.querySelector("#withdraw-name").value.trim();
         const code = container.querySelector("#withdraw-code").value.trim();
 
-        if (!amount || amount < 1) return showToast(t('wallet.withdraw.min_amount'), "warning");
+        // 验证为正整数
+        if (!amount || amount < 1 || !Number.isInteger(amount)) {
+            return showToast(t('wallet.withdraw.min_amount'), "warning");
+        }
         if (!alipayAccount || !realName) return showToast(t('wallet.withdraw.fill_account'), "warning");
         if (code.length !== 6) return showToast(t('wallet.withdraw.invalid_code'), "warning");
 
+        // 设置提交标志
+        isSubmitting = true;
         btnSubmit.innerHTML = t('wallet.withdraw.submitting');
         btnSubmit.disabled = true;
 
@@ -147,6 +156,9 @@ export function openWithdrawModal(currentUser, onSuccess) {
             showToast(t('wallet.withdraw.submit_failed') + error.message, "error");
             btnSubmit.innerHTML = t('wallet.withdraw.confirm');
             btnSubmit.disabled = false;
+        } finally {
+            // 无论成功失败，重置提交标志
+            isSubmitting = false;
         }
     };
 

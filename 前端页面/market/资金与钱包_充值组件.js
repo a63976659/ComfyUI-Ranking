@@ -52,7 +52,7 @@ export function openRechargeModal(currentUser, onBalanceChange) {
                 ${renderOptions()}
             </div>
             <div id="custom-input-container" style="display: none; margin-top: 10px;">
-                <input type="number" id="custom-amount" placeholder="${t('wallet.recharge.custom_placeholder')}" min="1" max="999999" style="width: 100%; padding: 10px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center; font-size: 16px; font-weight: bold; outline: none;">
+                <input type="number" id="custom-amount" placeholder="${t('wallet.recharge.custom_placeholder')}" min="1" max="999999" step="1" style="width: 100%; padding: 10px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center; font-size: 16px; font-weight: bold; outline: none;">
             </div>
         </div>
 
@@ -117,8 +117,8 @@ export function openRechargeModal(currentUser, onBalanceChange) {
         let finalPrice = 0;
 
         if (selectedOption.isCustom) {
-            const customVal = parseInt(customAmountInput.value);
-            if (!customVal || customVal <= 0 || customVal > 999999) {
+            const customVal = Number(customAmountInput.value);
+            if (!Number.isInteger(customVal) || customVal <= 0 || customVal > 999999) {
                 return showToast(t('wallet.recharge.invalid_amount'), "warning");
             }
             finalPoints = customVal;
