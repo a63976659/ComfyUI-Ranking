@@ -40,6 +40,9 @@ async def install_tool_handler(request):
         # 复制当前系统环境变量，防止 git 弹窗要求输入密码导致后台卡死
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
+        env["GCM_INTERACTIVE"] = "never"           # 禁止 Git Credential Manager 交互
+        env["GIT_CONFIG_NOSYSTEM"] = "1"           # 忽略系统级 git 配置
+        env["GCM_CREDENTIAL_STORE"] = ""           # 不使用凭证存储
 
         try:
             print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
