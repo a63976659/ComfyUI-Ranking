@@ -105,6 +105,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
         if (isMe) tabs.push({ id: "my_posts", label: t('profile.my_posts') });
         if (isMe || !privacy.likes) tabs.push({ id: "liked", label: t('profile.recent_likes') });
         if (isMe || !privacy.follows) tabs.push({ id: "following", label: t('profile.following') });
+        if (isMe || !privacy.followers) tabs.push({ id: "followers", label: t('profile.followers') || "粉丝" });
 
         if (!tabs.find(t => t.id === activeTab)) activeTab = "published";
 
@@ -142,7 +143,14 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                 container.querySelector("#btn-wallet").onclick = () => {
                     openRechargeModal(currentUser, (newBalance) => { userData.balance = newBalance; render(); });
                 };
-                container.querySelector("#btn-withdraw").onclick = () => {
+                container.querySelector("#btn-withdraw").onclick = async () => {
+                    // 点击提现按钮前先刷新钱包数据
+                    try {
+                        const freshWallet = await api.getWallet(currentUser.account);
+                        Object.assign(currentUser, freshWallet);
+                    } catch (err) {
+                        console.warn("刷新钱包数据失败:", err);
+                    }
                     openWithdrawModal(currentUser, async () => { 
                         // 提现成功后重新拉取用户数据刷新余额
                         try {
@@ -215,6 +223,26 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                     render();
                 };
             });
+
+            // 粉丝数点击跳转到粉丝列表
+            const btnFollowers = container.querySelector("#btn-followers");
+            if (btnFollowers) {
+                btnFollowers.onclick = () => {
+                    activeTab = "followers";
+                    localStorage.setItem(`Profile_ActiveTab_${isMe}`, activeTab);
+                    render();
+                };
+            }
+
+            // 关注数点击跳转到关注列表
+            const btnFollowing = container.querySelector("#btn-following");
+            if (btnFollowing) {
+                btnFollowing.onclick = () => {
+                    activeTab = "following";
+                    localStorage.setItem(`Profile_ActiveTab_${isMe}`, activeTab);
+                    render();
+                };
+            }
 
             const listDOM = container.querySelector("#profile-list-container");
             renderProfileListContent(activeTab, listDOM, userData, currentUser, openOtherUserProfileModal);

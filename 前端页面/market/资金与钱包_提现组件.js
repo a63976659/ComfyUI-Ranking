@@ -12,12 +12,21 @@ let isSubmitting = false;
  * @param {Object} currentUser 当前登录用户
  * @param {Function} onSuccess 提现成功后的回调函数
  */
-export function openWithdrawModal(currentUser, onSuccess) {
+export async function openWithdrawModal(currentUser, onSuccess) {
+    // 在函数开头添加：从后端获取实时钱包数据
+    let walletData = currentUser;
+    try {
+        const freshData = await api.getWallet(currentUser.account);
+        walletData = { ...currentUser, ...freshData };
+    } catch (err) {
+        console.warn("获取钱包数据失败，使用本地数据:", err);
+    }
+
     // 使用统一可用余额作为可提现额度
-    const maxWithdraw = currentUser.balance || 0;
+    const maxWithdraw = walletData.balance || 0;
     
     // 🚀 获取历史累计提现金额用于计算免责额度
-    const totalWithdrawn = currentUser.total_withdrawn || 0; 
+    const totalWithdrawn = walletData.total_withdrawn || 0; 
     
     if (maxWithdraw <= 0) {
         return showToast(t('wallet.withdraw.no_balance'), "warning");

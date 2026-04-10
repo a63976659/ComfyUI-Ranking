@@ -4,7 +4,107 @@ import { createItemCard } from "../market/列表卡片组件.js";
 import { getAcquiredItems, checkItemStatus } from "../market/资源安装引擎.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
-import { PLACEHOLDERS } from "../core/全局配置.js";
+import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+
+/**
+ * 👤 渲染用户卡片（复用于粉丝列表和关注列表）
+ * @param {string} account - 用户账号
+ * @param {Object} currentUser - 当前登录用户
+ * @param {Function} openOtherUserModalCb - 打开用户详情回调
+ * @returns {HTMLElement} 用户卡片元素
+ */
+function renderUserCard(account, currentUser, openOtherUserModalCb) {
+    const card = document.createElement("div");
+    card.id = `user-card-${account}`;
+    card.style.cssText = "padding: 12px; background: #2a2a2a; border-radius: 8px; border: 1px solid #444; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: all 0.2s;";
+    card.onmouseover = () => { card.style.borderColor = "#666"; card.style.transform = "translateX(3px)"; };
+    card.onmouseout = () => { card.style.borderColor = "#444"; card.style.transform = "translateX(0)"; };
+    card.onclick = () => openOtherUserModalCb(account, currentUser);
+
+    // 先从缓存获取数据快速渲染
+    const cached = getCachedProfile(account);
+    const avatar = cached?.avatar || PLACEHOLDERS.AVATAR;
+    const name = cached?.name || account;
+    const intro = cached?.intro || '';
+
+    card.innerHTML = `
+        <img id="user-avatar-${account}" src="${avatar}" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid #4CAF50; flex-shrink: 0;">
+        <div style="flex: 1; min-width: 0;">
+            <div id="user-name-${account}" style="font-weight: bold; color: #4CAF50; font-size: 14px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">@${name}</div>
+            <div id="user-intro-${account}" style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${intro || t('profile.no_intro') || '暂无简介'}</div>
+        </div>
+        <button style="padding: 6px 12px; background: #2196F3; border: none; border-radius: 4px; color: white; cursor: pointer; font-size: 12px; flex-shrink: 0;">${t('profile.homepage')}</button>
+    `;
+
+    // SWR：后台静默更新
+    getProfileWithSWR(account, api.getUserProfile, (profile) => {
+        const avatarImg = card.querySelector(`#user-avatar-${account}`);
+        const nameDiv = card.querySelector(`#user-name-${account}`);
+        const introDiv = card.querySelector(`#user-intro-${account}`);
+
+        if (avatarImg && profile.avatar) {
+            avatarImg.src = profile.avatar;
+        }
+        if (nameDiv && profile.name) {
+            nameDiv.textContent = `@${profile.name}`;
+        }
+        if (introDiv && profile.intro !== undefined) {
+            introDiv.textContent = profile.intro || t('profile.no_intro') || '暂无简介';
+        }
+    });
+
+    return card;
+}
+
+/**
+ * 📄 渲染分页用户列表（复用于粉丝列表和关注列表）
+ * @param {Array} userList - 用户账号列表
+ * {HTMLElement} containerDiv - 容器元素
+ * {Object} currentUser - 当前登录用户
+ * {Function} openOtherUserModalCb - 打开用户详情回调
+ * {string} emptyMessage - 空列表提示消息
+ */
+function renderPaginatedUserList(userList, containerDiv, currentUser, openOtherUserModalCb, emptyMessage) {
+    containerDiv.innerHTML = "";
+    
+    if (userList.length === 0) {
+        containerDiv.innerHTML = `<div style='text-align:center; padding: 20px; color:#666;'>${emptyMessage}</div>`;
+        return;
+    }
+
+    // 分页逻辑：先加载前20个
+    const PAGE_SIZE = 20;
+    let displayedCount = Math.min(PAGE_SIZE, userList.length);
+
+    // 渲染当前页的用户
+    const renderPage = () => {
+        // 保留容器但清空内容
+        containerDiv.innerHTML = "";
+        
+        const pageAccounts = userList.slice(0, displayedCount);
+        
+        pageAccounts.forEach((account) => {
+            const card = renderUserCard(account, currentUser, openOtherUserModalCb);
+            containerDiv.appendChild(card);
+        });
+
+        // 如果有更多，显示"加载更多"按钮
+        if (displayedCount < userList.length) {
+            const loadMoreBtn = document.createElement("button");
+            loadMoreBtn.textContent = t('profile.load_more') || `加载更多 (${userList.length - displayedCount})`;
+            loadMoreBtn.style.cssText = "width: 100%; padding: 12px; background: #333; border: 1px solid #555; border-radius: 6px; color: #4CAF50; cursor: pointer; font-size: 13px; margin-top: 8px; transition: all 0.2s;";
+            loadMoreBtn.onmouseover = () => { loadMoreBtn.style.background = "#3a3a3a"; };
+            loadMoreBtn.onmouseout = () => { loadMoreBtn.style.background = "#333"; };
+            loadMoreBtn.onclick = () => {
+                displayedCount = Math.min(displayedCount + PAGE_SIZE, userList.length);
+                renderPage();
+            };
+            containerDiv.appendChild(loadMoreBtn);
+        }
+    };
+
+    renderPage();
+}
 
 export async function renderProfileListContent(tabId, domElement, userData, currentUser, openOtherUserModalCb) {
     const isMe = currentUser && currentUser.account === userData.account;
@@ -12,46 +112,55 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
 
     // 【修复】：从底层杜绝隐私被穿透抓取
     if (!isMe) {
-        if ((tabId === "following" && privacy.follows) || (tabId === "liked" && privacy.likes)) {
+        if ((tabId === "following" && privacy.follows) || 
+            (tabId === "liked" && privacy.likes) ||
+            (tabId === "followers" && privacy.followers)) {
             domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#888;'>🔒 ${t('profile.privacy_hidden')}</div>`;
             return;
         }
     }
 
+    // 👥 关注列表（使用 SWR 缓存技术）
     if (tabId === "following") {
         const followingList = userData.following || [];
         domElement.innerHTML = "";
-        if (followingList.length === 0) {
-            domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#666;'>${t('profile.no_following')}</div>`; return;
-        }
         
-        domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#888;'>⏳ ${t('profile.loading_users')}</div>`;
+        // 创建容器
+        const containerDiv = document.createElement("div");
+        containerDiv.style.display = "flex"; 
+        containerDiv.style.flexDirection = "column"; 
+        containerDiv.style.gap = "8px";
+        domElement.appendChild(containerDiv);
 
-        try {
-            // 【修复】：并发获取所有关注者的最新资料，彻底解决闪烁和 ID 显示问题
-            const followingDetails = await Promise.all(
-                followingList.map(acc => api.getUserProfile(acc).then(res => res.data).catch(() => ({ account: acc, name: acc })))
-            );
+        renderPaginatedUserList(
+            followingList, 
+            containerDiv, 
+            currentUser, 
+            openOtherUserModalCb, 
+            t('profile.no_following') || '还没有关注任何人'
+        );
+        return;
+    }
 
-            const listDiv = document.createElement("div");
-            listDiv.style.display = "flex"; listDiv.style.flexDirection = "column"; listDiv.style.gap = "8px";
-            
-            followingDetails.forEach(user => {
-                const item = document.createElement("div");
-                Object.assign(item.style, { padding: "10px", background: "#2a2a2a", borderRadius: "6px", border: "1px solid #444", display: "flex", justifyContent: "space-between", alignItems: "center" });
-                
-                // 直接使用 user.name 渲染
-                item.innerHTML = `<span class="follow-name" style="color: #4CAF50; font-weight: bold; cursor: pointer;">@${user.name || user.account}</span><button class="btn-view-user" data-acc="${user.account}" style="padding: 4px 10px; background: #2196F3; border: none; border-radius: 4px; color: white; cursor: pointer; font-size: 12px;">${t('profile.homepage')}</button>`;
-                
-                item.querySelector('.btn-view-user').onclick = () => openOtherUserModalCb(user.account, currentUser);
-                item.querySelector('span').onclick = () => openOtherUserModalCb(user.account, currentUser);
-                listDiv.appendChild(item);
-            });
-            domElement.innerHTML = "";
-            domElement.appendChild(listDiv);
-        } catch (e) {
-            domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#F44336;'>${t('profile.load_failed')}</div>`;
-        }
+    // 👥 粉丝列表（使用 SWR 缓存技术）
+    if (tabId === "followers") {
+        const followersList = userData.followers || [];
+        domElement.innerHTML = "";
+        
+        // 创建容器
+        const containerDiv = document.createElement("div");
+        containerDiv.style.display = "flex"; 
+        containerDiv.style.flexDirection = "column"; 
+        containerDiv.style.gap = "8px";
+        domElement.appendChild(containerDiv);
+
+        renderPaginatedUserList(
+            followersList, 
+            containerDiv, 
+            currentUser, 
+            openOtherUserModalCb, 
+            t('profile.no_followers') || '还没有粉丝'
+        );
         return;
     }
 
