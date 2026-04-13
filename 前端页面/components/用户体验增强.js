@@ -1551,7 +1551,8 @@ const translations = {
         'profile.balance': '余额',
         'profile.sales': '销售',
         'profile.tips': '打赏',
-        
+        'profile.task_earnings': '任务收益',
+                
         // 个人列表
         'profile.privacy_hidden': '由于作者的隐私设置，该列表不对外公开',
         'profile.no_following': '暂无关注的人',
@@ -2638,7 +2639,8 @@ const translations = {
         'profile.balance': 'Balance',
         'profile.sales': 'Sales',
         'profile.tips': 'Tips',
-        
+        'profile.task_earnings': 'Task Earnings',
+                
         // Profile Lists
         'profile.privacy_hidden': 'This list is private due to privacy settings',
         'profile.no_following': 'Not following anyone',
