@@ -56,6 +56,7 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                     <div style="font-size: 11px; color: rgba(255,255,255,0.6);">
                         <span>🛍️ ${t('profile.sales')}: ${userData.earn_balance || 0}</span>
                         <span style="margin-left: 12px;">🎁 ${t('profile.tips')}: ${userData.tip_balance || 0}</span>
+                        <span style="margin-left: 12px;">📋 ${t('profile.task_earnings') || '任务收益'}: ${userData.task_balance || 0}</span>
                     </div>
                 </div>
             ` : ''}
