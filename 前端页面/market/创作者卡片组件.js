@@ -400,27 +400,44 @@ export function createCreatorCard(creatorData, currentUser = null) {
         
         chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#888;">${t('creator.chart.loading')}</div>`;
         
-        loadECharts().then(echarts => {
-            chartDom.innerHTML = ""; 
-            chartInstance = echarts.init(chartDom, 'dark', { backgroundColor: 'transparent' });
-            
-            const data = trendData || { months: [], tools: [], apps: [], recommends: [] };
+        // 关键修复：等待DOM完成重排后再初始化ECharts
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                // 检查容器是否有有效宽度
+                if (chartDom.clientWidth === 0) {
+                    console.warn('图表容器宽度为0，延迟重试');
+                    setTimeout(() => renderTrendChart(trendData), 200);
+                    return;
+                }
+                
+                loadECharts().then(echarts => {
+                    chartDom.innerHTML = ""; 
+                    chartInstance = echarts.init(chartDom, 'dark', { backgroundColor: 'transparent' });
+                    
+                    const data = trendData || { months: [], tools: [], apps: [], recommends: [] };
 
-            chartInstance.setOption({
-                tooltip: { trigger: 'axis', textStyle: { fontSize: 11 } },
-                grid: { top: 10, bottom: 20, left: 35, right: 10 },
-                xAxis: { type: 'category', data: data.months, axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#444' } } },
-                yAxis: { type: 'value', splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888', fontSize: 10 }, minInterval: 1 },
-                series: [
-                    { name: t('creator.chart.series.tools'), type: 'line', data: data.tools, smooth: true, itemStyle: { color: '#4CAF50' }, lineStyle: { width: 2, type: 'dashed' } },
-                    { name: t('creator.chart.series.apps'), type: 'line', data: data.apps, smooth: true, itemStyle: { color: '#2196F3' }, lineStyle: { width: 2, type: 'dashed' } },
-                    // 【核心修改】：添加第 3 根趋势折线 —— 推荐资源的点击与获取量
-                    { name: t('creator.chart.series.recommends'), type: 'line', data: data.recommends, smooth: true, itemStyle: { color: '#FF9800' }, lineStyle: { width: 2, type: 'dashed' } }
-                ]
-            });
-            isChartRendered = true;
-        }).catch(err => { 
-            chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#F44336;">${t('creator.chart.load_failed')}</div>`; 
+                    chartInstance.setOption({
+                        tooltip: { trigger: 'axis', textStyle: { fontSize: 11 } },
+                        grid: { top: 10, bottom: 20, left: 35, right: 10, containLabel: true },
+                        xAxis: { type: 'category', data: data.months, axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#444' } } },
+                        yAxis: { type: 'value', splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888', fontSize: 10 }, minInterval: 1 },
+                        series: [
+                            { name: t('creator.chart.series.tools'), type: 'line', data: data.tools, smooth: true, itemStyle: { color: '#4CAF50' }, lineStyle: { width: 2, type: 'dashed' } },
+                            { name: t('creator.chart.series.apps'), type: 'line', data: data.apps, smooth: true, itemStyle: { color: '#2196F3' }, lineStyle: { width: 2, type: 'dashed' } },
+                            // 【核心修改】：添加第 3 根趋势折线 —— 推荐资源的点击与获取量
+                            { name: t('creator.chart.series.recommends'), type: 'line', data: data.recommends, smooth: true, itemStyle: { color: '#FF9800' }, lineStyle: { width: 2, type: 'dashed' } }
+                        ]
+                    });
+                    isChartRendered = true;
+                    
+                    // 初始化完成后延迟调用resize确保正确渲染
+                    setTimeout(() => {
+                        if (chartInstance) chartInstance.resize();
+                    }, 300);
+                }).catch(err => { 
+                    chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#F44336;">${t('creator.chart.load_failed')}</div>`; 
+                });
+            }, 50);
         });
     }
 
