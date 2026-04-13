@@ -98,14 +98,25 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
         const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool';
         const isApp = itemData.type === 'app' || itemData.type === 'recommend_app';
 
-        // 【新增】：本地前置余额校验
-        if (!isFree && (currentUser.balance || 0) < itemData.price) {
-            if (await showConfirm(`您的积分余额不足（当前：${currentUser.balance || 0}，需要：${itemData.price}）。是否前往个人中心充值？`)) {
-                if (typeof globalModal !== 'undefined') globalModal.closeTopModal();
-                // 【修复点】：直接调用函数唤起个人中心，解决白屏 Bug
-                openUserProfileModal(currentUser);
+        // 【新增】：本地前置余额校验（购买前动态获取最新余额）
+        if (!isFree) {
+            try {
+                const walletRes = await api.getWallet(currentUser.account);
+                if (walletRes && walletRes.status === "success") {
+                    currentUser.balance = walletRes.balance || 0;
+                }
+            } catch (e) {
+                console.warn("获取钱包余额失败:", e);
             }
-            return; // 余额不足，直接终止后续所有云端请求
+            
+            if ((currentUser.balance || 0) < itemData.price) {
+                if (await showConfirm(`您的积分余额不足（当前：${currentUser.balance || 0}，需要：${itemData.price}）。是否前往个人中心充值？`)) {
+                    if (typeof globalModal !== 'undefined') globalModal.closeTopModal();
+                    // 【修复点】：直接调用函数唤起个人中心，解决白屏 Bug
+                    openUserProfileModal(currentUser);
+                }
+                return; // 余额不足，直接终止后续所有云端请求
+            }
         }
 
         // 防线 1：扣费前进行死链探测 (解决问题 1)
