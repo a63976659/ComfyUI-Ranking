@@ -300,21 +300,45 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
         domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#888;'>⏳ 加载交易记录中...</div>";
         
         try {
-            // 并行获取任务统计、交易明细和打赏统计
-            const [statsRes, txRes, tipStatsRes] = await Promise.all([
+            // 并行获取任务统计、交易明细、打赏统计和销售统计
+            const [statsRes, txRes, tipStatsRes, salesStatsRes] = await Promise.all([
                 api.getTaskStats(currentUser.account),
                 api.getTransactions(currentUser.account, 1, 30),
-                api.getTipStats(currentUser.account).catch(() => ({ data: {} }))  // 新增，带容错
+                api.getTipStats(currentUser.account).catch(() => ({ data: {} })),  // 新增，带容错
+                api.getSalesStats(currentUser.account).catch(() => ({ data: {} }))  // 新增，带容错
             ]);
             
             const stats = statsRes.data || {};
             const transactions = txRes.data || [];
             const tipStats = tipStatsRes.data || {};
+            const salesStats = salesStatsRes.data || {};
             
             const containerDiv = document.createElement("div");
             containerDiv.style.cssText = "display: flex; flex-direction: column; gap: 15px;";
             
-            // 📊 统计卡片
+            // 💰 销售统计卡片（放在最上方，与打赏统计样式一致）
+            const salesStatsCard = document.createElement("div");
+            salesStatsCard.style.cssText = "background: linear-gradient(135deg, #2a2a2a, #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444; margin-bottom: 15px;";
+            salesStatsCard.innerHTML = `
+                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 12px;">💰 ${t('profile.sales_stats') || '销售统计'}</div>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+                    <div style="text-align: center; padding: 10px; background: rgba(76,175,80,0.1); border-radius: 8px;">
+                        <div style="font-size: 20px; font-weight: bold; color: #4CAF50;">+${salesStats.total_sales || 0}</div>
+                        <div style="font-size: 11px; color: #888;">${t('profile.sales_income') || '销售收入'}</div>
+                    </div>
+                    <div style="text-align: center; padding: 10px; background: rgba(244,67,54,0.1); border-radius: 8px;">
+                        <div style="font-size: 20px; font-weight: bold; color: #F44336;">-${salesStats.total_purchase || 0}</div>
+                        <div style="font-size: 11px; color: #888;">${t('profile.purchase_expense') || '购买支出'} (${salesStats.purchase_count || 0}${t('profile.transactions_unit') || '笔'})</div>
+                    </div>
+                    <div style="text-align: center; padding: 10px; background: rgba(33,150,243,0.1); border-radius: 8px;">
+                        <div style="font-size: 20px; font-weight: bold; color: #2196F3;">${(salesStats.net_sales || 0) > 0 ? '+' : ''}${salesStats.net_sales || 0}</div>
+                        <div style="font-size: 11px; color: #888;">${t('profile.net_sales') || '净销售'}</div>
+                    </div>
+                </div>
+            `;
+            containerDiv.appendChild(salesStatsCard);
+            
+            // 📊 任务收益统计卡片
             const statsCard = document.createElement("div");
             statsCard.style.cssText = "background: linear-gradient(135deg, #2a2a2a, #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444;";
             statsCard.innerHTML = `
