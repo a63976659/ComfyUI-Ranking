@@ -179,9 +179,9 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
             } else {
                 const btnTip = container.querySelector("#btn-tip-user");
                 if (btnTip) {
-                    btnTip.onclick = () => {
+                    btnTip.onclick = async () => {
                         if (!currentUser) return showToast(t('feedback.login_required_tip'), "warning");
-                        openTipModal(currentUser, userData, (newBalance) => {
+                        await openTipModal(currentUser, userData, (newBalance) => {
                             currentUser.balance = newBalance;
                             openOtherUserProfileModal(userData.account, currentUser); 
                         });

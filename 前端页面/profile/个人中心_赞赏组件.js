@@ -25,7 +25,20 @@ const MAX_TIP_POINTS = 22500;
  * @param {function} onSuccess - 成功回调
  * @param {string} itemId - 可选，关联的内容ID
  */
-export function openTipModal(currentUser, targetUser, onSuccess, itemId = null) {
+export async function openTipModal(currentUser, targetUser, onSuccess, itemId = null) {
+    // ==========================================
+    // 刷新钱包余额，避免使用缓存的旧值
+    // ==========================================
+    try {
+        const walletRes = await api.getWallet(currentUser.account);
+        if (walletRes && walletRes.status === "success") {
+            currentUser.balance = walletRes.balance || 0;
+        }
+    } catch (err) {
+        console.warn("刷新钱包余额失败，使用缓存值:", err);
+        // 失败时继续使用缓存值，不阻断打赏流程
+    }
+
     // ==========================================
     // 检查目标用户是否已满级
     // ==========================================
@@ -36,7 +49,7 @@ export function openTipModal(currentUser, targetUser, onSuccess, itemId = null) 
     const container = document.createElement("div");
     container.style.color = "#eee";
     
-    // 当前用户余额
+    // 当前用户余额（使用刷新后的值）
     const userBalance = currentUser.balance || 0;
     
     container.innerHTML = `

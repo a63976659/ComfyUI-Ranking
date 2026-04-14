@@ -158,6 +158,19 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
         detailView.appendChild(originalBadge);
     }
 
+    // 支持退款标识（仅工具和应用类型显示，且允许退款时）
+    if (itemData.allow_refund !== false && (itemData.type === 'tool' || itemData.type === 'app')) {
+        const refundBadge = document.createElement("div");
+        Object.assign(refundBadge.style, {
+            display: "inline-flex", alignItems: "center", gap: "6px",
+            padding: "4px 12px", background: "linear-gradient(135deg, #4CAF50, #2E7D32)",
+            borderRadius: "12px", fontSize: "11px", color: "#fff", fontWeight: "500",
+            marginBottom: "10px", marginLeft: "8px"
+        });
+        refundBadge.textContent = `🛡️ ${t('item.refundable')}`;
+        detailView.appendChild(refundBadge);
+    }
+
     const actionArea = document.createElement("div");
     Object.assign(actionArea.style, { display: "flex", gap: "8px", marginBottom: "12px" });
     const btnLike = document.createElement("button");

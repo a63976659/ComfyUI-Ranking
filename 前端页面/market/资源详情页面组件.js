@@ -392,9 +392,9 @@ export function createItemDetailView(itemData, currentUser) {
     }
     
     // 🚀 绑定作品打赏按钮事件
-    container.querySelector("#btn-tip-item").onclick = () => {
+    container.querySelector("#btn-tip-item").onclick = async () => {
         if (!currentUser) return alert("请先登录您的账号！");
-        openTipModal(currentUser, { account: itemData.author }, (newBalance) => {
+        await openTipModal(currentUser, { account: itemData.author }, (newBalance) => {
             currentUser.balance = newBalance;
             // 打赏成功后刷新局部或整体详情 (由框架重新渲染)
         }, itemData.id); 

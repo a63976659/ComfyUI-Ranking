@@ -1008,6 +1008,7 @@ const translations = {
         'market.edit_content': '修改内容',
         'market.delete_permanently': '永久删除',
         'market.delete_confirm': '🚨 警告：确定要彻底删除该发布内容吗？<br><br><span style="color:#aaa;">该操作不可逆，且相关的所有评论数据也将被同步永久清空。</span>',
+        'item.refundable': '支持退款',
         
         // 时间
         'time.hours_later': '小时后生效',
@@ -2114,6 +2115,7 @@ const translations = {
         'market.edit_content': 'Edit',
         'market.delete_permanently': 'Delete',
         'market.delete_confirm': '🚨 Warning: Are you sure you want to permanently delete this content?<br><br><span style="color:#aaa;">This action is irreversible and all related comments will be deleted.</span>',
+        'item.refundable': 'Refundable',
         
         // Time
         'time.hours_later': ' hours effective',

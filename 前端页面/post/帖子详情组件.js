@@ -314,7 +314,7 @@ function bindInteractionEvents(container, post, currentUser) {
     };
     
     // 打赏
-    btnTip.onclick = () => {
+    btnTip.onclick = async () => {
         if (!currentUser) {
             showToast(t('auth.login_required'), "warning");
             return;
@@ -323,17 +323,33 @@ function bindInteractionEvents(container, post, currentUser) {
             showToast(t('post.tip_self'), "warning");
             return;
         }
-        showTipDialog(post, currentUser, container);
+        await showTipDialog(post, currentUser, container);
     };
 }
 
 /**
  * 🎁 显示打赏对话框
  */
-function showTipDialog(post, currentUser, container) {
+async function showTipDialog(post, currentUser, container) {
+    // ==========================================
+    // 刷新钱包余额，避免使用缓存的旧值
+    // ==========================================
+    try {
+        const walletRes = await api.getWallet(currentUser.account);
+        if (walletRes && walletRes.status === "success") {
+            currentUser.balance = walletRes.balance || 0;
+        }
+    } catch (err) {
+        console.warn("刷新钱包余额失败，使用缓存值:", err);
+        // 失败时继续使用缓存值，不阻断打赏流程
+    }
+
     const content = document.createElement("div");
     content.style.color = "#ccc";
     content.innerHTML = `
+        <div style="margin-bottom: 12px; background: rgba(255,152,0,0.1); padding: 10px; border-radius: 4px; border: 1px solid #FF9800; text-align: center;">
+            当前余额: <strong style="color:#FF9800;">${currentUser.balance || 0}</strong> 积分
+        </div>
         <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
             <button class="tip-amount" data-amount="10" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
             <button class="tip-amount" data-amount="50" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">50 ${t('task.points')}</button>
@@ -354,6 +370,13 @@ function showTipDialog(post, currentUser, container) {
     content.querySelectorAll(".tip-amount").forEach(btn => {
         btn.onclick = async () => {
             const amount = parseInt(btn.dataset.amount);
+            
+            // 本地前置余额校验
+            if ((currentUser.balance || 0) < amount) {
+                showToast(t('wallet.insufficient_balance') || "余额不足，请前往充值", "warning");
+                return;
+            }
+            
             try {
                 await api.tipPost(post.id, amount, false);
                 showToast(t('post.tip_success', { amount }), "success");

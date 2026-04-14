@@ -29,7 +29,7 @@ let currentExpandedCard = null;
  * @param {object} currentUser - 当前登录用户
  * @param {Function} onTipSuccess - 打赏成功回调
  */
-function handleTipCreator(creatorData, currentUser, onTipSuccess) {
+async function handleTipCreator(creatorData, currentUser, onTipSuccess) {
     // 检查用户是否登录
     if (!currentUser) {
         showToast(t('creator.tip_login_required') || "请先登录", "warning");
@@ -43,7 +43,7 @@ function handleTipCreator(creatorData, currentUser, onTipSuccess) {
     }
     
     // 打开打赏弹窗
-    openTipModal(currentUser, {
+    await openTipModal(currentUser, {
         account: creatorData.account,
         name: creatorData.name
     }, () => {
@@ -103,7 +103,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
         if (creatorData) {
             const tipBtn = container.querySelector('#btn-tip-creator-empty');
             if (tipBtn) {
-                tipBtn.onclick = () => handleTipCreator(creatorData, currentUser, onTipSuccess);
+                tipBtn.onclick = async () => await handleTipCreator(creatorData, currentUser, onTipSuccess);
             }
         }
         
@@ -197,7 +197,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
     if (creatorData) {
         const tipBtn = container.querySelector('#btn-tip-creator');
         if (tipBtn) {
-            tipBtn.onclick = () => handleTipCreator(creatorData, currentUser, onTipSuccess);
+            tipBtn.onclick = async () => await handleTipCreator(creatorData, currentUser, onTipSuccess);
         }
     }
 
