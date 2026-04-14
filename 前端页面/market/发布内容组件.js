@@ -47,6 +47,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     const boxNetdiskPassword = container.querySelector("#netdisk-password-settings");  // 🔐 网盘密码设置
     const boxCover = container.querySelector("#box-cover");
     const boxPrice = container.querySelector("#box-price");
+    const boxAllowRefund = container.querySelector("#box-allow-refund");  // 💸 退款勾选框容器
     const inputLink = container.querySelector("#pub-link");
     const inputJson = container.querySelector("#pub-json");
     const imagesInput = container.querySelector("#pub-images");  // 🖼️ 多图上传
@@ -153,6 +154,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
             boxRecommendType.style.display = "block";
             boxCover.style.display = "block";
             boxPrice.style.display = "none";
+            boxAllowRefund.style.display = "none";  // 💸 推荐类型不显示退款勾选
             boxResourceSelect.style.display = "block";
             boxPrivateRepo.style.display = "none";
 
@@ -174,8 +176,9 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
             }
         } else {
             boxRecommendType.style.display = "none";
-            boxCover.style.display = "block"; 
+            boxCover.style.display = "block";
             boxPrice.style.display = "flex";
+            boxAllowRefund.style.display = "block";  // 💸 tool/app 类型显示退款勾选
             boxResourceSelect.style.display = "block";
             
             // ☁️ 修改：原创工具可选择 "外部链接/Git" 或 "网盘链接"

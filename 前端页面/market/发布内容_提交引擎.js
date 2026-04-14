@@ -264,6 +264,10 @@ export async function handlePublishSubmit(params) {
         return showToast("工具/应用类型必须为原创内容", "warning");
     }
 
+    // 💸 是否支持退款 (仅 tool/app 类型)
+    const allowRefundCheckbox = container.querySelector("#allow-refund-checkbox");
+    const allowRefund = (type === "tool" || type === "app") ? (allowRefundCheckbox?.checked ?? true) : null;
+
     submitBtn.innerHTML = `⏳ ${t('publish.connecting')}`;
     submitBtn.disabled = true; 
     submitBtn.style.background = "#555";
@@ -301,13 +305,18 @@ export async function handlePublishSubmit(params) {
         }
 
         submitBtn.innerHTML = `⏳ ${t('publish.syncing')}`;
-        const submitData = { 
+        const submitData = {
             type, title, shortDesc, fullDesc, price, link: finalLink, coverUrl, imageUrls,  // 🖼️ 添加 imageUrls
             author: currentUser.account, github_token,
             netdisk_password,  // ☁️ 网盘密码（后端加密存储）
             is_netdisk: isNetdisk,  // ☁️ 标记为网盘资源
             is_original: isOriginal  // 🎨 标记为原创作品
         };
+
+        // 💸 仅 tool/app 类型提交 allow_refund 字段
+        if (allowRefund !== null) {
+            submitData.allow_refund = allowRefund;
+        }
 
         if (isEditMode) {
             await api.updateItem(editItemData.id, currentUser.account, submitData);

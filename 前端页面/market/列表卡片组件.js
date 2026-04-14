@@ -10,9 +10,9 @@ import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 import { renderTipBoardHTML, isMaxTipLevel } from "../components/打赏等级工具.js";
 import { t } from "../components/用户体验增强.js";
-import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { getCachedProfile, getProfileWithSWR, CACHE } from "../core/全局配置.js";
 
-export function createItemCard(itemData, currentUser = null) {
+export function createItemCard(itemData, currentUser = null, contextType = null) {
     const card = document.createElement("div");
     card.setAttribute("data-item-id", itemData.id);
     Object.assign(card.style, {
@@ -244,6 +244,12 @@ export function createItemCard(itemData, currentUser = null) {
         }, itemData.id);
     };
 
+    // 🔄 P7后悔模式：退款区域（仅在"我购买的"列表中显示）
+    const refundArea = document.createElement("div");
+    refundArea.id = `refund-area-${itemData.id}`;
+    Object.assign(refundArea.style, { display: "none", marginBottom: "12px" });
+    detailView.appendChild(refundArea);
+
     let isRendered = false;
     summaryView.onclick = async () => {
         const isHidden = detailView.style.display === "none";
@@ -261,6 +267,11 @@ export function createItemCard(itemData, currentUser = null) {
                     if (viewsEl) viewsEl.innerHTML = `🔥 ${result.views}`;
                 }
             });
+            
+            // 🔄 P7后悔模式：在"我购买的"列表中加载退款状态（仅当发布者允许退款时）
+            if (contextType === "acquired" && currentUser && itemData.allow_refund !== false) {
+                loadRefundStatus(refundArea, itemData, currentUser, card);
+            }
         }
     };
 
@@ -310,4 +321,160 @@ export function createItemCard(itemData, currentUser = null) {
     card.appendChild(summaryView);
     card.appendChild(detailView);
     return card;
+}
+
+// ==========================================
+// 🔄 P7后悔模式：退款功能
+// ==========================================
+
+/**
+ * 加载退款状态并渲染退款区域
+ */
+async function loadRefundStatus(refundArea, itemData, currentUser, card) {
+    if (!refundArea || !currentUser) return;
+    
+    refundArea.style.display = "block";
+    refundArea.innerHTML = `<div style="padding: 10px; color: #888; font-size: 12px;">⏳ 加载购买状态...</div>`;
+    
+    try {
+        const statusRes = await api.getPurchaseStatus(currentUser.account, itemData.id);
+        
+        if (!statusRes.owned) {
+            refundArea.innerHTML = '';
+            refundArea.style.display = "none";
+            return;
+        }
+        
+        if (statusRes.can_refund) {
+            const hoursLeft = statusRes.refund_hours_left;
+            refundArea.innerHTML = `
+                <div style="padding: 12px; background: rgba(255,152,0,0.1); border: 1px dashed #FF9800; border-radius: 6px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                        <div style="font-size: 12px; color: #FF9800;">
+                            🔄 后悔模式：还剩 <strong>${hoursLeft.toFixed(1)}</strong> 小时可申请退款
+                        </div>
+                        <button id="btn-refund-${itemData.id}" style="background: #FF5722; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">
+                            💸 申请退款
+                        </button>
+                    </div>
+                    <div style="font-size: 11px; color: #888; margin-top: 8px;">
+                        ⚠️ 退款后权限将被收回，已下载的文件将被删除，且 <strong>30天内禁止再次购买</strong> 此商品
+                    </div>
+                </div>
+            `;
+            
+            const refundBtn = refundArea.querySelector(`#btn-refund-${itemData.id}`);
+            if (refundBtn) {
+                refundBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    showRefundConfirm(itemData, currentUser, statusRes.price_paid, card);
+                };
+            }
+        } else {
+            refundArea.innerHTML = `
+                <div style="padding: 10px; background: rgba(76,175,80,0.1); border: 1px solid rgba(76,175,80,0.3); border-radius: 6px; font-size: 12px; color: #4CAF50;">
+                    ✅ 已购买此资源，退款窗口已过期
+                </div>
+            `;
+        }
+    } catch (e) {
+        console.warn("获取购买状态失败:", e);
+        refundArea.innerHTML = '';
+        refundArea.style.display = "none";
+    }
+}
+
+/**
+ * 显示退款确认弹窗
+ */
+function showRefundConfirm(itemData, currentUser, pricePaid, card) {
+    const overlay = document.createElement("div");
+    overlay.id = "refund-confirm-overlay";
+    Object.assign(overlay.style, {
+        position: "fixed", top: "0", left: "0", right: "0", bottom: "0",
+        background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: "10000"
+    });
+    
+    overlay.innerHTML = `
+        <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 420px; width: 90%; color: #fff; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
+            <div style="font-size: 18px; font-weight: bold; margin-bottom: 20px; color: #FF5722; display: flex; align-items: center; gap: 10px;">
+                ⚠️ 确认退款
+            </div>
+            
+            <div style="background: #2a2d3e; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+                <div style="font-size: 14px; margin-bottom: 10px;">商品：<strong>${itemData.title || '未命名资源'}</strong></div>
+                <div style="font-size: 14px; color: #4CAF50;">退款金额：<strong>${pricePaid}</strong> 积分</div>
+            </div>
+            
+            <div style="background: rgba(255,87,34,0.1); border: 1px solid rgba(255,87,34,0.3); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                <div style="font-size: 13px; color: #FF9800; line-height: 1.8;">
+                    <div>🚨 <strong>退款后果：</strong></div>
+                    <div style="margin-left: 20px; margin-top: 5px;">
+                        • 您将失去此资源的访问权限<br>
+                        • 已下载的文件将被自动删除<br>
+                        • <strong style="color: #F44336;">30天内禁止再次购买此商品</strong>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                <button id="btn-cancel-refund" style="background: #555; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: 0.2s;" onmouseover="this.style.background='#666'" onmouseout="this.style.background='#555'">
+                    取消
+                </button>
+                <button id="btn-confirm-refund" style="background: #FF5722; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#E64A19'" onmouseout="this.style.background='#FF5722'">
+                    确认退款
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector("#btn-cancel-refund").onclick = () => overlay.remove();
+    
+    overlay.querySelector("#btn-confirm-refund").onclick = async () => {
+        const confirmBtn = overlay.querySelector("#btn-confirm-refund");
+        confirmBtn.disabled = true;
+        confirmBtn.innerText = "处理中...";
+        
+        try {
+            const res = await api.requestRefund(currentUser.account, itemData.id);
+            if (res.status === "success") {
+                // 清除本地购买记录
+                const key = CACHE.LOCAL_KEYS.ACQUIRED_ITEMS;
+                const acquiredItems = JSON.parse(localStorage.getItem(key) || '[]');
+                const updated = acquiredItems.filter(i => i.id !== itemData.id);
+                localStorage.setItem(key, JSON.stringify(updated));
+                
+                // 从DOM中移除卡片
+                if (card && card.parentNode) {
+                    card.remove();
+                }
+                
+                overlay.innerHTML = `
+                    <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 380px; width: 90%; color: #fff; text-align: center;">
+                        <div style="font-size: 48px; margin-bottom: 15px;">✅</div>
+                        <div style="font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #4CAF50;">退款成功</div>
+                        <div style="font-size: 14px; color: #aaa; margin-bottom: 20px;">
+                            ${res.refund_amount} 积分已退还到您的账户<br>
+                            <span style="color: #FF9800;">${res.ban_days}天内禁止再次购买此商品</span>
+                        </div>
+                        <button id="btn-close-refund" style="background: #4CAF50; color: #fff; border: none; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                            知道了
+                        </button>
+                    </div>
+                `;
+                overlay.querySelector("#btn-close-refund").onclick = () => overlay.remove();
+                
+                showToast("退款成功！积分已退还", "success");
+            } else {
+                showToast("退款失败：" + (res.detail || "未知错误"), "error");
+                overlay.remove();
+            }
+        } catch (e) {
+            showToast("退款请求失败：" + (e.message || "网络错误"), "error");
+            overlay.remove();
+        }
+    };
 }

@@ -144,7 +144,8 @@ function getPaginationState(tab, sort) {
             allData: [],        // 全量数据（从缓存或网络加载）
             displayedCount: 0,  // 已渲染数量
             loader: null,       // 分页加载器实例
-            isFullyLoaded: false // 是否已加载完所有数据
+            isFullyLoaded: false, // 是否已加载完所有数据
+            isSearchResult: false // 标记是否为搜索结果（用于区分正常数据和搜索结果）
         });
     }
     return paginationStates.get(key);
@@ -227,9 +228,9 @@ export async function loadSidebarContent({
     const renderBatch = (dataArray, append = false) => {
         if (renderToken !== getRenderToken()) return;
         
-        // 搜索过滤
+        // 搜索过滤（创作者Tab有keyword时不进行本地过滤，因为后端已过滤）
         let displayData = dataArray;
-        if (keyword) {
+        if (keyword && tab !== "creators") {
             displayData = dataArray.filter(item => {
                 const textStr = `${item.title||''} ${item.shortDesc||''} ${item.name||''} ${item.account||''}`.toLowerCase();
                 return textStr.includes(keyword);
@@ -326,9 +327,9 @@ export async function loadSidebarContent({
         const start = (page - 1) * size;
         const end = start + size;
         
-        // 从全量数据中截取
+        // 从全量数据中截取（创作者Tab有keyword时不进行本地过滤，因为后端已过滤）
         let dataSlice = state.allData;
-        if (keyword) {
+        if (keyword && tab !== "creators") {
             dataSlice = state.allData.filter(item => {
                 const textStr = `${item.title||''} ${item.shortDesc||''} ${item.name||''} ${item.account||''}`.toLowerCase();
                 return textStr.includes(keyword);
@@ -348,8 +349,11 @@ export async function loadSidebarContent({
     // 获取完整缓存信息（包含过期状态）
     const { value: cachedData, expired: isCacheExpired, found: hasCacheData } = getCacheWithMeta(cacheKey, true);
     
-    // 有缓存时直接渲染缓存
-    if (!force && hasCacheData && !keyword) {
+    // 有缓存时直接渲染缓存（搜索时也使用缓存，renderBatch 会处理 keyword 过滤）
+    // 🔍 创作者Tab有keyword时不使用缓存，每次都从后端搜索
+    // 🔍 如果当前state是搜索结果且keyword为空，跳过缓存，强制从网络重新加载全量数据
+    const skipCache = (tab === "creators" && keyword) || (tab === "creators" && !keyword && state.isSearchResult);
+    if (!force && hasCacheData && !skipCache) {
         // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
         const proxiedData = proxyImages(cachedData);
         state.allData = proxiedData;
@@ -361,7 +365,7 @@ export async function loadSidebarContent({
         
         // 如果有更多数据，启动分页加载器
         if (proxiedData.length > pageSize) {
-            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword);
+            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
         }
         
         // 【新增】Tab 切换后台静默刷新 —— 仅缓存过期时触发
@@ -402,7 +406,7 @@ export async function loadSidebarContent({
                         renderBatch(firstPage, false);
                         
                         if (newData.length > pageSize) {
-                            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword);
+                            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
                         }
                     } else {
                         // 数据无变化，仅刷新缓存过期时间
@@ -419,8 +423,15 @@ export async function loadSidebarContent({
     }
     
     // ========== 🔄 本地排序优先：同 tab 已有数据时直接排序渲染（强制刷新时跳过）==========
+    // 🔍 创作者Tab有keyword时不走本地排序优先，必须调用后端搜索API
+    // 🔍 创作者Tab清空搜索框后也不走本地排序优先，避免使用搜索时的部分结果
+    // 🔍 如果当前state是搜索结果，也不走本地排序优先
+    // 仅在"正在搜索"或"刚清空搜索但state仍是搜索结果"时跳过本地排序
+    const isCreatorSearching = tab === "creators" && keyword;
+    const isCreatorSearchCleared = tab === "creators" && !keyword && state.isSearchResult;
+    const skipLocalSort = isCreatorSearching || isCreatorSearchCleared || state.isSearchResult;
     const existingData = findExistingTabData(tab);
-    if (!force && existingData && existingData.length > 0) {
+    if (!force && !skipLocalSort && existingData && existingData.length > 0) {
         const locallySorted = sortDataLocally(existingData, tab, sort);
         state.allData = locallySorted;
         state.isFullyLoaded = true;
@@ -431,7 +442,7 @@ export async function loadSidebarContent({
         
         // 启动分页加载器
         if (locallySorted.length > pageSize) {
-            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword);
+            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
         }
         
         // 存入当前排序的缓存（创作者数据不持久化到 localStorage）
@@ -456,14 +467,28 @@ export async function loadSidebarContent({
             realData = response.data || [];
             realData = proxyImages(realData);  // 确保图片走本地缓存代理
         } else if (tab === "creators") {
-            response = await api.getCreators(sort, 100);
-            realData = response.data || [];
-            realData = proxyImages(realData);  // 确保图片走本地缓存代理
+            // 🔍 创作者搜索：有 keyword 时调用后端搜索API，否则获取列表
+            if (keyword) {
+                response = await api.searchCreators(keyword, sort);
+                realData = response.data || [];
+                realData = proxyImages(realData);  // 确保图片走本地缓存代理
+                // 标记为搜索结果，不存入缓存，避免污染正常数据
+                state.isSearchResult = true;
+            } else {
+                response = await api.getCreators(sort, 100);
+                realData = response.data || [];
+                realData = proxyImages(realData);  // 确保图片走本地缓存代理
+                // 正常数据，清除搜索标记
+                state.isSearchResult = false;
+            }
         }
         
-        // 存入缓存（创作者数据不持久化到 localStorage）
+        // 存入缓存（创作者数据不持久化到 localStorage，且搜索结果不存入缓存）
         const shouldPersist = tab !== "creators";
-        setCache(cacheKey, realData, getCacheExpireTime(), shouldPersist);
+        const isCreatorSearch = tab === "creators" && keyword;
+        if (!isCreatorSearch) {
+            setCache(cacheKey, realData, getCacheExpireTime(), shouldPersist);
+        }
         
         // 更新状态
         state.allData = realData;
@@ -475,7 +500,7 @@ export async function loadSidebarContent({
         
         // 启动分页加载器
         if (realData.length > pageSize) {
-            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword);
+            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
         }
         
     } catch (error) {
@@ -521,7 +546,7 @@ export async function loadSidebarContent({
 // ==========================================
 // 📜 设置分页加载器
 // ==========================================
-function _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword) {
+function _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab) {
     // 获取滚动容器（侧边栏主容器）
     const scrollContainer = contentArea.closest(".sidebar-scroll-container") || contentArea.parentElement;
     
@@ -530,9 +555,11 @@ function _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyw
         return;
     }
     
-    // 计算数据总量（考虑搜索过滤）
+    // 计算数据总量（考虑搜索过滤，创作者Tab有keyword时不进行本地过滤，因为后端已过滤）
     const getTotalDataCount = () => {
         if (!keyword) return state.allData.length;
+        // 创作者Tab后端搜索已过滤，直接返回全部数据
+        if (tab === "creators") return state.allData.length;
         return state.allData.filter(item => {
             const textStr = `${item.title||''} ${item.shortDesc||''} ${item.name||''} ${item.account||''}`.toLowerCase();
             return textStr.includes(keyword);

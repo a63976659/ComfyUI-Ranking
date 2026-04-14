@@ -145,11 +145,12 @@ export function createTopNav() {
                             userActionBtn.innerHTML = `⏳ ${t('auth.registering') || '注册账号中...'}`;
                             await api.register(formData);
                             showToast(t('auth.register_success') + (t('auth.auto_login') || '！正在为您自动登录...'), "success");
-                            const res = await api.login(formData.account, formData.password);
+                            // 注册后自动登录，默认保持登录
+                            const res = await api.login(formData.account, formData.password, true);
                             userData = { account: formData.account, name: formData.name, avatar: res.avatar, ...res }; 
                             token = res.token; isRemember = true; 
                         } else if (formData.type === "login") {
-                            const res = await api.login(formData.account, formData.password);
+                            const res = await api.login(formData.account, formData.password, formData.remember);
                             token = res.token; isRemember = formData.remember;
                             try {
                                 if (isRemember) localStorage.setItem("ComfyCommunity_Token", token); 

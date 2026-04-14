@@ -200,7 +200,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             listDiv.style.cssText = "display:flex;flex-direction:column;gap:10px;";
 
             enrichedItems.forEach(item => {
-                const card = createItemCard(item, currentUser);
+                const card = createItemCard(item, currentUser, "acquired");
                 listDiv.appendChild(card);
             });
 
@@ -213,7 +213,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             const listDiv = document.createElement("div");
             listDiv.style.cssText = "display:flex;flex-direction:column;gap:10px;";
             acquiredItems.forEach(item => {
-                const card = createItemCard(item, currentUser);
+                const card = createItemCard(item, currentUser, "acquired");
                 listDiv.appendChild(card);
             });
             domElement.innerHTML = "";

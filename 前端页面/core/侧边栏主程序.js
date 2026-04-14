@@ -141,7 +141,7 @@ export function buildSidebarDOM() {
             <a href="https://github.com/a63976659" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">🐙 GitHub</a>
             <a href="https://huggingface.co/ZHIWEI666" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#FFD21E'" onmouseout="this.style.color='#888'">🤗 Hugging Face</a>
             <a href="#" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#2196F3'" onmouseout="this.style.color='#888'">🏢 砚影科技</a>
-            <a href="https://space.bilibili.com/2114638644" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#00A1D6'" onmouseout="this.style.color='#888'">📺 Bilibili</a>
+            <a href="https://www.bilibili.com/video/BV1x4XzBXEk9" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#00A1D6'" onmouseout="this.style.color='#888'">📺 Bilibili</a>
         </div>
         <div style="display: flex; justify-content: center; align-items: center; gap: 10px; color: #555;">
             <span>MIT License Copyright (c) 2026 <a href="#" id="easter-egg-trigger" style="color: #888; text-decoration: none; cursor: pointer; transition: color 0.2s;" onmouseover="this.style.color='#ffb0c0'" onmouseout="this.style.color='#888'">猪的飞行梦</a></span>
@@ -470,7 +470,15 @@ export function buildSidebarDOM() {
 
     sortContainer.querySelector("#hub-sort-select").value = currentSort;
     sortContainer.querySelector("#hub-sort-select").onchange = (e) => { currentSort = e.target.value; Store.save("activeSort", currentSort); triggerLoad(); };
-    sortContainer.querySelector("#hub-search-input").oninput = triggerLoad;
+    
+    // 🔍 搜索防抖：300ms 延迟，避免每次按键都发起网络请求
+    let searchDebounceTimer = null;
+    sortContainer.querySelector("#hub-search-input").oninput = () => {
+        if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            triggerLoad();
+        }, 300);
+    };
     
     // 🎯 任务榜筛选控件事件绑定
     sortContainer.querySelector("#task-status-filter").onchange = () => {

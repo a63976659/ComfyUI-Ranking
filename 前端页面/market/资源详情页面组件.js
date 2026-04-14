@@ -25,6 +25,12 @@ async function renderRefundButton(container, itemData, currentUser) {
     
     const refundArea = container.querySelector("#refund-area");
     if (!refundArea) return;
+
+    // 💸 检查商品是否支持退款
+    if (!itemData.allow_refund && itemData.allow_refund !== undefined) {
+        refundArea.innerHTML = '';  // 不支持退款则不显示任何退款相关UI
+        return;
+    }
     
     try {
         const statusRes = await api.getPurchaseStatus(currentUser.account, itemData.id);

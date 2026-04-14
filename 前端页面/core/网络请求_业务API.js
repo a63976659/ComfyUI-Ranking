@@ -13,7 +13,7 @@ import { request } from "./网络请求_基础设施.js";
 const api = {
     async sendVerifyCode(contact, type, actionType, account = null) { return request("/api/users/send_code", { method: "POST", body: { contact, contact_type: type, action_type: actionType, account } }); },
     async register(data) { return request("/api/users/register", { method: "POST", body: data }); },
-    async login(account, password) { return request("/api/users/login", { method: "POST", body: { account, password } }); },
+    async login(account, password, remember = true) { return request("/api/users/login", { method: "POST", body: { account, password, remember } }); },
     
     // 🚀 核心修复：究极数据打捞装甲与弹窗报警
     async resetPassword(...args) { 
@@ -53,6 +53,7 @@ const api = {
     async updatePrivacy(account, privacy) { return request(`/api/users/${account}/privacy`, { method: "PUT", body: privacy }); },
     async toggleFollow(userId, targetAccount, isActive) { return request("/api/users/follow", { method: "POST", body: { user_id: userId, target_account: targetAccount, is_active: isActive } }); },
     async getCreators(sort, limit) { return request(`/api/creators?sort=${sort}&limit=${limit}`); },
+    async searchCreators(keyword, sort, limit = 50) { return request(`/api/creators/search?keyword=${encodeURIComponent(keyword)}&sort=${sort}&limit=${limit}`); },
     async getCreatorDetails(account) { return request(`/api/creators/${account}/details`); },
     async uploadFile(file, fileType) {
         const formData = new FormData();

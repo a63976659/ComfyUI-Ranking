@@ -123,6 +123,17 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
             </div>
         </div>
 
+        <!-- 💸 是否支持退款勾选框 (仅 tool/app 类型显示) -->
+        <div id="box-allow-refund" style="margin-bottom: 15px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" id="allow-refund-checkbox" ${safeData.allow_refund !== false ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #2196F3;" />
+                <span style="font-size: 13px; color: #ccc;">💸 支持退款</span>
+            </label>
+            <div style="font-size: 11px; color: #888; margin-top: 6px; padding-left: 24px;">
+                勾选后，购买者可在 24 小时内申请退款。未勾选则不支持退款
+            </div>
+        </div>
+
         <button id="btn-submit-publish" style="width: 100%; padding: 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 15px; transition: 0.3s; margin-bottom: 20px;">${submitBtnText}</button>
     `;
 }
