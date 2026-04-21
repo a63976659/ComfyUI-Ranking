@@ -70,6 +70,18 @@ const api = {
     async recordItemView(itemId) { return request(`/api/items/${itemId}/view`, { method: "POST" }); },
     async toggleItemLike(itemId) { return request(`/api/items/${itemId}/like`, { method: "POST" }); },
     async toggleItemFavorite(itemId) { return request(`/api/items/${itemId}/favorite`, { method: "POST" }); },
+    async rateItem(itemId, score) {
+        return request(`/api/items/${itemId}/rating`, {
+            method: "POST",
+            body: JSON.stringify({ score })
+        });
+    },
+    async ratePost(postId, score) {
+        return request(`/api/posts/${postId}/rating`, {
+            method: "POST",
+            body: JSON.stringify({ score })
+        });
+    },
     async recordTaskView(taskId) { return request(`/api/tasks/${taskId}/view`, { method: "POST" }); },
     async recordPostView(postId) { return request(`/api/posts/${postId}/view`, { method: "POST" }); },
     async toggleInteraction(itemId, userId, actionType, isActive) { return request("/api/interactions/toggle", { method: "POST", body: { item_id: itemId, user_id: userId, action_type: actionType, is_active: isActive } }); },

@@ -23,7 +23,7 @@ function clearItemCacheByType(type) {
     removeCache('api_/api/creators');  // 创作者列表也需要刷新
     
     // 清除侧边栏数据引擎缓存（只清除对应类型）
-    const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views'];
+    const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
     for (const sort of sorts) {
         removeCache(`ListCache_${tab}_${sort}`);
         removeCache(`ListCache_creators_${sort}`);  // 创作者列表

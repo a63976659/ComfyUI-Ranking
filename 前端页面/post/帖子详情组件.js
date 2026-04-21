@@ -19,6 +19,7 @@ import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全�
 import { removeCache, findInListCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml } from "../components/互动工具函数.js";
+import { createRatingStars } from "../social/评论与互动组件.js";
 
 /**
  * 📄 创建帖子详情视图
@@ -149,12 +150,12 @@ async function loadPostDetail(container, postId, currentUser) {
             </div>
             
             <!-- 互动按钮栏 -->
-            <div style="display: flex; align-items: center; gap: 15px; padding: 15px 0; border-top: 1px solid #333; border-bottom: 1px solid #333; margin-bottom: 15px;">
+            <div id="interaction-bar" style="display: flex; align-items: center; gap: 15px; padding: 15px 0; border-top: 1px solid #333; border-bottom: 1px solid #333;">
                 <button id="btn-like" style="background: ${isLiked ? '#FF5722' : '#333'}; border: 1px solid ${isLiked ? '#FF5722' : '#555'}; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
                     ❤️ <span id="like-count">${post.likes || 0}</span>
                 </button>
                 <button id="btn-favorite" style="background: ${isFavorited ? '#FFC107' : '#333'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
-                    ⭐ <span id="favorite-count">${post.favorites || 0}</span>
+                    🔖 <span id="favorite-count">${post.favorites || 0}</span>
                 </button>
                 <button id="btn-tip" style="background: #333; border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
                     ${t('post.tip_author')}
@@ -165,6 +166,9 @@ async function loadPostDetail(container, postId, currentUser) {
                     <span style="display: flex; align-items: center; gap: 4px;">📅 <span id="post-view-daily">${post.daily_views || 0}</span></span>
                 </div>
             </div>
+            
+            <!-- 评分区域 -->
+            <div id="rating-section" style="padding: 12px 0; border-bottom: 1px solid #333; margin-bottom: 15px;"></div>
             
             <!-- 打赏榜单 -->
             <div id="tip-board-area" style="margin-bottom: 15px;">
@@ -258,6 +262,36 @@ async function loadPostDetail(container, postId, currentUser) {
         
         // 绑定互动事件
         bindInteractionEvents(contentArea, post, currentUser);
+        
+        // 渲染评分组件
+        const ratingSectionEl = contentArea.querySelector("#rating-section");
+        if (ratingSectionEl) {
+            const ratingSection = createRatingStars({
+                ratingData: {
+                    rating_avg: post.rating_avg || 0,
+                    rating_count: post.rating_count || 0,
+                    rating_dist: post.rating_dist || {"1":0,"2":0,"3":0,"4":0,"5":0},
+                    rated_by: post.rated_by || {}
+                },
+                currentUser: currentUser,
+                authorAccount: post.author,
+                onRate: async (score) => {
+                    const res = await api.ratePost(post.id, score);
+                    if (res && res.status === "success") {
+                        post.rating_avg = res.rating_avg;
+                        post.rating_count = res.rating_count;
+                        post.rating_dist = res.rating_dist;
+                        if (!post.rated_by) post.rated_by = {};
+                        post.rated_by[currentUser.account] = { score: res.user_score, time: Date.now() / 1000 };
+                        // 通知讨论区列表刷新
+                        window.dispatchEvent(new CustomEvent("comfy-posts-refresh"));
+                    }
+                    return res;
+                },
+                compact: false
+            });
+            ratingSectionEl.replaceWith(ratingSection);
+        }
         
         // 加载评论
         loadComments(contentArea, postId, currentUser);

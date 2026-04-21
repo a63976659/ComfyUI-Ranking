@@ -259,7 +259,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
                 <div style="background: rgba(34,34,34,${hasBanner ? '0.8' : '1'}); border-radius: 6px; padding: 8px 10px; border: 1px dashed #555;">
                     <div style="display: flex; gap: 15px; font-size: 12px; color: #eee; justify-content: space-between; margin-bottom: 8px;">
                         <span data-stat="likes" style="color: #FF5722;">👍 ${t('creator.stats.likes')}: <strong>${creatorData.likes}</strong></span>
-                        <span data-stat="favorites" style="color: #FFC107;">⭐ ${t('creator.stats.favorites')}: <strong>${creatorData.favorites}</strong></span>
+                        <span data-stat="favorites" style="color: #FFC107;">🔖 ${t('creator.stats.favorites')}: <strong>${creatorData.favorites}</strong></span>
                         <span data-stat="followers" style="color: #4CAF50;">👥 ${t('creator.stats.followers')}: <strong>${creatorData.followers}</strong></span>
                     </div>
                     <div style="display: flex; gap: 15px; font-size: 12px; color: #ccc; justify-content: center; border-top: 1px solid #333; padding-top: 8px;">

@@ -694,6 +694,7 @@ const translations = {
         'profile.my_tasks': '我的任务',
         'profile.transactions': '交易明细',
         'profile.my_posts': '我的帖子',
+        'profile.my_collected': '我的收藏',
         'profile.recent_likes': '近期点赞',
         'profile.following': '关注的人',
         'profile.max_privilege': '最高特权',
@@ -834,6 +835,7 @@ const translations = {
         'market.favorited': '已收藏',
         'market.views': '🔥 浏览总量',
         'market.daily_views': '🔥 今日热门',
+        'market.rating': '★ 评分最高',
         'market.install_now': '立即安装',
         'market.load_workflow': '加载工作流',
         'market.price_free': '免费',
@@ -904,6 +906,16 @@ const translations = {
         
         // 反馈补充
         'feedback.send_failed': '发送失败',
+
+        // 评分
+        'rating.stars': '评分',
+        'rating.count': '{count}人评分',
+        'rating.your_score': '你的评分',
+        'rating.login_required': '登录后评分',
+        'rating.self_forbidden': '不能给自己的作品评分',
+        'rating.sixth_star_tip': '超过90%的用户给出了五星好评！',
+        'rating.submit_success': '评分成功',
+        'rating.submit_failed': '评分失败，请重试',
         
         // 通知中心
         'notif.login_required': '请先登录您的社区账号查看消息！',
@@ -1059,7 +1071,7 @@ const translations = {
         'task.sort_views': '🔥 浏览总量',
         'task.sort_daily_views': '🔥 今日热门',
         'task.sort_likes': '👍 最多点赞',
-        'task.sort_favorites': '⭐ 最多收藏',
+        'task.sort_favorites': '🔖 最多收藏',
         'task.status_open': '开放接单',
         'task.status_in_progress': '进行中',
         'task.status_submitted': '待验收',
@@ -1258,10 +1270,11 @@ const translations = {
         // 帖子详情
         'post.sort_latest': '最新',
         'post.sort_likes': '👍 最多点赞',
-        'post.sort_favorites': '⭐ 最多收藏',
+        'post.sort_favorites': '🔖 最多收藏',
         'post.sort_tips': '💰 打赏榜',
         'post.sort_views': '🔥 浏览总量',
         'post.sort_daily_views': '🔥 今日热门',
+        'post.sort_rating': '★ 评分最高',
         'post.detail_title': '📄 作品详情',
         'post.not_exist': '帖子不存在或已被删除',
         'post.load_detail_failed': '加载失败',
@@ -1561,6 +1574,11 @@ const translations = {
         // 个人列表
         'profile.privacy_hidden': '由于作者的隐私设置，该列表不对外公开',
         'profile.no_following': '暂无关注的人',
+        'profile.no_collected': '还没有收藏任何内容',
+        'profile.go_discover': '去榜单页面或讨论区发现精彩内容吧！',
+        'profile.collected_items': '收藏的资源',
+        'profile.collected_posts': '收藏的帖子',
+        'profile.load_collected_failed': '收藏加载失败',
         'profile.loading_users': '正在加载用户数据...',
         'profile.load_failed': '数据加载失败',
         'profile.homepage': '主页',
@@ -1810,6 +1828,7 @@ const translations = {
         'profile.my_tasks': 'My Tasks',
         'profile.transactions': 'Transactions',
         'profile.my_posts': 'My Posts',
+        'profile.my_collected': 'My Favorites',
         'profile.recent_likes': 'Recent Likes',
         'profile.following': 'Following',
         'profile.max_privilege': ' Max Privilege',
@@ -1950,6 +1969,7 @@ const translations = {
         'market.favorited': 'Favorited',
         'market.views': '🔥 Most Viewed',
         'market.daily_views': '🔥 Trending Today',
+        'market.rating': '★ Highest Rated',
         'market.install_now': 'Install Now',
         'market.load_workflow': 'Load Workflow',
         'market.price_free': 'Free',
@@ -2020,6 +2040,16 @@ const translations = {
         
         // Feedback additions
         'feedback.send_failed': 'Send failed',
+
+        // Rating
+        'rating.stars': 'Rating',
+        'rating.count': '{count} ratings',
+        'rating.your_score': 'Your rating',
+        'rating.login_required': 'Login to rate',
+        'rating.self_forbidden': 'Cannot rate your own work',
+        'rating.sixth_star_tip': 'Over 90% of users gave 5 stars!',
+        'rating.submit_success': 'Rating submitted',
+        'rating.submit_failed': 'Rating failed, please retry',
         
         // Notifications
         'notif.login_required': 'Please log in to view messages!',
@@ -2174,7 +2204,7 @@ const translations = {
         'task.sort_views': '🔥 Most Viewed',
         'task.sort_daily_views': '🔥 Trending Today',
         'task.sort_likes': '👍 Most Liked',
-        'task.sort_favorites': '⭐ Most Favorited',
+        'task.sort_favorites': '🔖 Most Favorited',
         'task.status_open': 'Open',
         'task.status_in_progress': 'In Progress',
         'task.status_submitted': 'Submitted',
@@ -2373,10 +2403,11 @@ const translations = {
         // Post Sorting
         'post.sort_latest': 'Latest',
         'post.sort_likes': '👍 Most Liked',
-        'post.sort_favorites': '⭐ Most Favorited',
+        'post.sort_favorites': '🔖 Most Favorited',
         'post.sort_tips': '💰 Top Tipped',
         'post.sort_views': '🔥 Most Viewed',
         'post.sort_daily_views': '🔥 Trending Today',
+        'post.sort_rating': '★ Highest Rated',
         
         // Post Detail
         'post.detail_title': '📄 Post Details',
@@ -2658,6 +2689,11 @@ const translations = {
         // Profile Lists
         'profile.privacy_hidden': 'This list is private due to privacy settings',
         'profile.no_following': 'Not following anyone',
+        'profile.no_collected': 'No favorites yet',
+        'profile.go_discover': 'Discover great content in the ranking or forum!',
+        'profile.collected_items': 'Favorited Resources',
+        'profile.collected_posts': 'Favorited Posts',
+        'profile.load_collected_failed': 'Failed to load favorites',
         'profile.loading_users': 'Loading user data...',
         'profile.load_failed': 'Failed to load data',
         'profile.homepage': 'Profile',

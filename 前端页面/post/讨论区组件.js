@@ -21,6 +21,7 @@ import { setCache, getCache, createSkeleton } from "../components/性能优化�
 import { applyCardAnimation } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { createRatingStars } from "../social/评论与互动组件.js";
 
 // 缓存配置
 const CACHE_KEY_PREFIX = "PostsCache";
@@ -117,6 +118,14 @@ export function createPostsView(currentUser, keyword = "") {
                     return sumB - sumA;
                 });
                 break;
+            case "rating":
+                sorted.sort((a, b) => {
+                    const ra = a.rating_avg || 0;
+                    const rb = b.rating_avg || 0;
+                    if (ra === rb) return (b.rating_count || 0) - (a.rating_count || 0);
+                    return rb - ra;
+                });
+                break;
             default: // latest
                 sorted.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
                 break;
@@ -150,6 +159,15 @@ export function createPostsView(currentUser, keyword = "") {
     }
     currentFilterHandler = handleFilterChange;
     window.addEventListener("comfy-posts-filter-change", handleFilterChange);
+    
+    // 监听外部评分刷新事件（帖子详情页评分后通知列表刷新）
+    window.addEventListener("comfy-posts-refresh", () => {
+        if (allPostsData.length > 0) {
+            const sorted = sortPostsLocally(allPostsData, currentSort);
+            renderPostsFromCache(sorted);
+        }
+        silentRefresh();
+    });
     
     // 显示骨架屏
     const showSkeleton = () => {
@@ -429,8 +447,9 @@ function createPostCard(post) {
             <!-- 互动数据 -->
             <div style="display: flex; align-items: center; gap: 12px; font-size: 11px; color: #888;">
                 <span>❤️ ${post.likes || 0}</span>
-                <span>⭐ ${post.favorites || 0}</span>
+                <span>🔖 ${post.favorites || 0}</span>
                 <span>🔥 ${post.views || 0}</span>
+                <span style="color: #FFD700;">★ ${(post.rating_avg || 0).toFixed(1)}</span>
                 <span style="margin-left: auto; font-size: 10px;">${timeStr}</span>
             </div>
         </div>

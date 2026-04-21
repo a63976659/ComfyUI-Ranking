@@ -52,7 +52,7 @@ const SORT_OPTIONS = [
     { value: "views", label: "🔥 浏览总量" },
     { value: "daily_views", label: "🔥 今日热门" },
     { value: "likes", label: "❤️ 最多点赞" },
-    { value: "favorites", label: "⭐ 最多收藏" }
+    { value: "favorites", label: "🔖 最多收藏" }
 ];
 
 /**
@@ -475,7 +475,7 @@ function createTaskCard(task) {
                 ${task.status === "open" ? `<span>👥 ${(task.applicants || []).length} ${t('task.applicants')}</span>` : ""}
                 <span>🔥 ${task.views || 0}</span>
                 <span>❤️ ${task.likes || 0}</span>
-                <span>⭐ ${task.favorites || 0}</span>
+                <span>🔖 ${task.favorites || 0}</span>
             </div>
         </div>
     `;

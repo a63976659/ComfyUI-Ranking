@@ -171,7 +171,7 @@ function burnLocalFiles(itemId) {
     
     // 清除工具/应用/推荐列表缓存（使用标准 ListCache 格式）
     const tabs = ['tools', 'apps', 'recommends'];
-    const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views'];
+    const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
     for (const tab of tabs) {
         for (const sort of sorts) {
             removeCache(`ListCache_${tab}_${sort}`);

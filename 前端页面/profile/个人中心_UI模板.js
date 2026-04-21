@@ -62,7 +62,7 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
             ` : ''}
             <div style="display:flex; gap: 12px;">
                 <span>👍 ${t('profile.received_likes')}: <strong style="color:#fff;">${userData.receivedLikes || 0}</strong></span>
-                <span>⭐ ${t('profile.received_favorites')}: <strong style="color:#fff;">${userData.receivedFavorites || 0}</strong></span>
+                <span>🔖 ${t('profile.received_favorites')}: <strong style="color:#fff;">${userData.receivedFavorites || 0}</strong></span>
                 <span id="btn-followers" style="cursor: pointer;">👥 ${t('profile.followers_count')}: <strong style="color:#fff;">${userData.followers ? userData.followers.length : 0}</strong></span>
                 <span id="btn-following" style="cursor: pointer;">🏃 ${t('profile.following_count')}: <strong style="color:#fff;">${followingCount}</strong></span>
             </div>

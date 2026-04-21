@@ -17,7 +17,7 @@ function clearUsesCache() {
     removeCache('api_/api/items');
     removeCache('api_/api/creators');
     const tabs = ['tools', 'apps', 'recommends', 'creators'];
-    const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views'];
+    const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
     for (const tab of tabs) {
         for (const sort of sorts) {
             removeCache(`ListCache_${tab}_${sort}`);

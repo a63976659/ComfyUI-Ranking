@@ -1,5 +1,5 @@
 // 前端页面/market/列表卡片组件.js
-import { createCommentSection, setupToggleButton } from "../social/评论与互动组件.js";
+import { createCommentSection, setupToggleButton, createRatingStars } from "../social/评论与互动组件.js";
 import { api } from "../core/网络请求API.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { recordView } from "../components/互动工具函数.js";
@@ -56,13 +56,29 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
         <div style="font-size: 12px; color: #aaa; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 8px;">${itemData.shortDesc}</div>
         <!-- 第3行: 互动数据 + 发布者信息 -->
         <div style="display: flex; align-items: center; gap: 10px; font-size: 11px; color: #888;">
-            <span data-stat="likes">👍 ${itemData.likes || 0}</span> <span data-stat="favorites">⭐ ${itemData.favorites || 0}</span> <span class="card-comment-count">💬 ${initialCommentCount}</span>
+            <span data-stat="likes">👍 ${itemData.likes || 0}</span> <span data-stat="favorites">🔖 ${itemData.favorites || 0}</span> <span class="card-comment-count">💬 ${initialCommentCount}</span>
             <span style="margin-left: auto; display: flex; align-items: center; gap: 4px; cursor: pointer;" class="card-author-info">
                 <img class="card-author-avatar" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect fill='%23333' width='40' height='40' rx='20'/%3E%3Ctext x='20' y='25' text-anchor='middle' fill='%23666' font-size='16'%3E%3F%3C/text%3E%3C/svg%3E" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover;">
                 <span class="card-author-name" style="font-size: 12px; color: #aaa; transition: color 0.2s;">${itemData.author || '未知'}</span>
             </span>
         </div>
     `;
+
+    // ⭐ 摘要区紧凑评分（插入到互动数据与作者信息之间）
+    const ratingCompact = createRatingStars({
+        ratingData: {
+            rating_avg: itemData.rating_avg,
+            rating_count: itemData.rating_count,
+            rating_dist: itemData.rating_dist,
+            rated_by: itemData.rated_by
+        },
+        compact: true
+    });
+    ratingCompact.className = "card-rating-compact";
+    const authorInfoInSummary = summaryView.querySelector(".card-author-info");
+    if (authorInfoInSummary && authorInfoInSummary.parentNode) {
+        authorInfoInSummary.parentNode.insertBefore(ratingCompact, authorInfoInSummary);
+    }
 
     // 🚀 添加发布者信息异步加载逻辑（使用SWR缓存机制）
     const authorInfoEl = summaryView.querySelector('.card-author-info');
@@ -198,6 +214,47 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
     actionArea.appendChild(btnLike); actionArea.appendChild(btnFav); actionArea.appendChild(btnUse);
     detailView.appendChild(actionArea);
 
+    // ⭐ 展开详情区完整评分组件（互动按钮栏下方、打赏榜单上方）
+    const ratingSection = createRatingStars({
+        ratingData: {
+            rating_avg: itemData.rating_avg || 0,
+            rating_count: itemData.rating_count || 0,
+            rating_dist: itemData.rating_dist || {"1":0,"2":0,"3":0,"4":0,"5":0},
+            rated_by: itemData.rated_by || {}
+        },
+        currentUser: currentUser,
+        authorAccount: itemData.author,
+        onRate: async (score) => {
+            const res = await api.rateItem(itemData.id, score);
+            if (res && res.status === "success") {
+                itemData.rating_avg = res.rating_avg;
+                itemData.rating_count = res.rating_count;
+                itemData.rating_dist = res.rating_dist;
+                if (!itemData.rated_by) itemData.rated_by = {};
+                itemData.rated_by[currentUser.account] = { score: res.user_score, time: Date.now() / 1000 };
+
+                // 同步更新摘要区紧凑评分
+                const oldCompact = summaryView.querySelector(".card-rating-compact");
+                if (oldCompact) {
+                    const newCompact = createRatingStars({
+                        ratingData: {
+                            rating_avg: itemData.rating_avg,
+                            rating_count: itemData.rating_count,
+                            rating_dist: itemData.rating_dist,
+                            rated_by: itemData.rated_by
+                        },
+                        compact: true
+                    });
+                    newCompact.className = "card-rating-compact";
+                    oldCompact.parentNode.replaceChild(newCompact, oldCompact);
+                }
+            }
+            return res;
+        },
+        compact: false
+    });
+    detailView.appendChild(ratingSection);
+
     const isLiked = currentUser && Array.isArray(itemData.liked_by) && itemData.liked_by.includes(currentUser.account);
     const isFav = currentUser && Array.isArray(itemData.favorited_by) && itemData.favorited_by.includes(currentUser.account);
 
@@ -207,7 +264,7 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
     };
 
     setupToggleButton(btnLike, isLiked, itemData.likes || 0, `👍 ${t('market.liked')}`, `👍 ${t('market.like')}`, "#FF5722", (isActive) => handleInteraction("like", isActive));
-    setupToggleButton(btnFav, isFav, itemData.favorites || 0, `⭐ ${t('market.favorited')}`, `⭐ ${t('market.favorite')}`, "#FFC107", (isActive) => handleInteraction("favorite", isActive));
+    setupToggleButton(btnFav, isFav, itemData.favorites || 0, `🔖 ${t('market.favorited')}`, `🔖 ${t('market.favorite')}`, "#FFC107", (isActive) => handleInteraction("favorite", isActive));
 
     const inlineStatusBox = document.createElement("div");
     Object.assign(inlineStatusBox.style, { display: "none", margin: "0 0 15px 0", padding: "12px", background: "#222", border: "1px solid #444", borderRadius: "6px", fontSize: "12px", lineHeight: "1.5" });

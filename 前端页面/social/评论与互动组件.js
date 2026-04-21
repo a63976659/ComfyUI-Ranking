@@ -213,6 +213,378 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
 
     inputArea.appendChild(inputField); inputArea.appendChild(submitBtn);
     container.appendChild(listArea); container.appendChild(inputArea);
-    renderList(); 
+    renderList();
+    return container;
+}
+
+// ==========================================
+// ⭐ 星星评分组件
+// ==========================================
+
+/**
+ * 创建可复用的星星评分组件
+ * @param {Object} options - 配置选项
+ * @param {Object} options.ratingData - 评分数据 { rating_avg, rating_count, rating_dist, rated_by }
+ * @param {Object} options.currentUser - 当前用户 { account }，null 表示未登录
+ * @param {string} options.authorAccount - 作品作者 account
+ * @param {Function} options.onRate - 评分回调 async (score) => {}
+ * @param {boolean} options.compact - true=紧凑模式，false=完整模式
+ * @returns {HTMLElement} 评分组件 DOM 元素
+ */
+export function createRatingStars(options) {
+    const {
+        ratingData = {},
+        currentUser = null,
+        authorAccount = "",
+        onRate = null,
+        compact = false
+    } = options;
+
+    // 解构评分数据
+    let {
+        rating_avg = 0,
+        rating_count = 0,
+        rating_dist = {},
+        rated_by = {}
+    } = ratingData;
+
+    // 内部可变状态（用于乐观更新）
+    let displayAvg = typeof rating_avg === "number" && !isNaN(rating_avg) ? rating_avg : 0;
+    let displayCount = typeof rating_count === "number" && !isNaN(rating_count) ? rating_count : 0;
+    // 归一化 rated_by：后端存储可能是对象 {score, time}，前端统一为数字
+    let displayRatedBy = {};
+    for (const [account, value] of Object.entries(rated_by || {})) {
+        displayRatedBy[account] = typeof value === "number" ? value : (value?.score ?? 0);
+    }
+
+    const userAccount = currentUser?.account;
+    let userRating = userAccount ? (displayRatedBy[userAccount] || null) : null;
+
+    // 第6颗星条件
+    const hasSixthStar = !compact && rating_count >= 5 && ((rating_dist["5"] || 0) / rating_count) >= 0.9;
+
+    // 交互状态
+    let isSubmitting = false;
+    let hoverScore = 0;
+
+    // 尺寸配置
+    const starSize = compact ? "14px" : "20px";
+    const gap = "2px";
+
+    // 判断交互权限
+    const isLoggedOut = !currentUser;
+    const isSelf = currentUser && currentUser.account === authorAccount;
+    const canInteract = !compact && onRate && !isLoggedOut && !isSelf;
+
+    // ========== 根容器 ==========
+    const container = document.createElement("div");
+    Object.assign(container.style, {
+        display: "inline-flex",
+        flexDirection: "column",
+        gap: compact ? "0px" : "4px",
+        fontFamily: "inherit",
+        position: "relative"
+    });
+
+    // 注入第6颗星动画样式
+    if (hasSixthStar) {
+        const styleEl = document.createElement("style");
+        styleEl.textContent = `
+            @keyframes rating-star-glow {
+                0%, 100% { filter: drop-shadow(0 0 4px #FFD700) drop-shadow(0 0 8px #FFA500); }
+                50% { filter: drop-shadow(0 0 8px #FFD700) drop-shadow(0 0 16px #FFA500); }
+            }
+        `;
+        container.appendChild(styleEl);
+    }
+
+    // ========== 第一行：星星 + 分数 ==========
+    const row1 = document.createElement("div");
+    Object.assign(row1.style, {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: gap
+    });
+
+    // 星星元素数组
+    const stars = [];
+
+    // 计算取整到0.5的平均值
+    const roundedAvg = Math.round(displayAvg * 2) / 2;
+
+    function getStarConfig(score, index) {
+        const filled = Math.min(Math.max(score - (index - 1), 0), 1);
+        if (filled >= 0.75) {
+            return { char: "★", color: "#FFD700", bg: null };
+        } else if (filled >= 0.25) {
+            return {
+                char: "★",
+                color: "transparent",
+                bg: "linear-gradient(90deg, #FFD700 50%, #555 50%)"
+            };
+        } else {
+            return { char: "☆", color: "#555", bg: null };
+        }
+    }
+
+    function applyStarStyle(starEl, config, isHovered = false) {
+        starEl.textContent = config.char;
+        starEl.style.color = config.color;
+        if (config.bg) {
+            starEl.style.background = config.bg;
+            starEl.style.webkitBackgroundClip = "text";
+            starEl.style.backgroundClip = "text";
+            starEl.style.webkitTextFillColor = "transparent";
+        } else {
+            starEl.style.background = "";
+            starEl.style.webkitBackgroundClip = "";
+            starEl.style.backgroundClip = "";
+            starEl.style.webkitTextFillColor = "";
+        }
+        starEl.style.transform = isHovered ? "scale(1.1)" : "scale(1)";
+    }
+
+    function updateStars(previewScore = 0) {
+        const targetScore = previewScore || roundedAvg;
+        stars.forEach((star, i) => {
+            const isHovered = previewScore > 0 && i + 1 <= previewScore;
+            const config = getStarConfig(targetScore, i + 1);
+            applyStarStyle(star, config, isHovered);
+        });
+    }
+
+    if (compact) {
+        // 紧凑模式：无评分时不显示，有评分时显示 ★ 分数
+        if (displayCount === 0) {
+            container.style.display = "none";
+            return container;
+        }
+        const iconStar = document.createElement("span");
+        iconStar.textContent = "★";
+        iconStar.style.color = "#FFD700";
+        iconStar.style.fontSize = starSize;
+        iconStar.style.lineHeight = "1";
+        row1.appendChild(iconStar);
+    } else {
+        // 完整模式：5颗基础星星
+        for (let i = 1; i <= 5; i++) {
+            const star = document.createElement("span");
+            Object.assign(star.style, {
+                fontSize: starSize,
+                cursor: canInteract ? "pointer" : "default",
+                transition: "transform 0.15s ease, color 0.15s ease",
+                display: "inline-block",
+                userSelect: "none",
+                lineHeight: "1"
+            });
+
+            if (canInteract) {
+                star.addEventListener("mouseenter", () => {
+                    if (isSubmitting) return;
+                    hoverScore = i;
+                    updateStars(hoverScore);
+                    showTooltip(`${i} ${t('rating.stars')}`);
+                });
+                star.addEventListener("click", async () => {
+                    if (isSubmitting) return;
+                    await submitRating(i);
+                });
+            }
+
+            stars.push(star);
+            row1.appendChild(star);
+        }
+
+        // 第6颗星彩蛋
+        if (hasSixthStar) {
+            const sixthStar = document.createElement("span");
+            sixthStar.textContent = "★";
+            Object.assign(sixthStar.style, {
+                fontSize: `calc(${starSize} * 1.15)`,
+                color: "#FFD700",
+                animation: "rating-star-glow 2s ease-in-out infinite",
+                marginLeft: "2px",
+                cursor: "help",
+                lineHeight: "1",
+                display: "inline-block"
+            });
+            sixthStar.title = t('rating.sixth_star_tip');
+            row1.appendChild(sixthStar);
+        }
+    }
+
+    // 分数文本
+    const scoreText = document.createElement("span");
+    scoreText.style.color = compact ? "#aaa" : "#ccc";
+    scoreText.style.fontSize = compact ? "12px" : "14px";
+    if (compact) {
+        scoreText.textContent = `${displayAvg.toFixed(1)}`;
+    } else {
+        scoreText.textContent = `${displayAvg.toFixed(1)} (${t('rating.count', { count: displayCount })})`;
+    }
+    row1.appendChild(scoreText);
+
+    container.appendChild(row1);
+
+    // ========== 第二行：用户评分（仅完整模式） ==========
+    let userRatingRow = null;
+    if (!compact && userRating) {
+        userRatingRow = document.createElement("div");
+        Object.assign(userRatingRow.style, {
+            display: "flex",
+            alignItems: "center",
+            gap: "4px",
+            fontSize: "12px",
+            color: "#888"
+        });
+
+        const label = document.createElement("span");
+        label.textContent = `${t('rating.your_score')}:`;
+        userRatingRow.appendChild(label);
+
+        const userStars = document.createElement("span");
+        userStars.textContent = "★".repeat(userRating) + "☆".repeat(5 - userRating);
+        userStars.style.color = "#FFD700";
+        userStars.style.fontSize = "14px";
+        userRatingRow.appendChild(userStars);
+
+        container.appendChild(userRatingRow);
+    }
+
+    // ========== Tooltip ==========
+    const tooltip = document.createElement("div");
+    Object.assign(tooltip.style, {
+        position: "absolute",
+        bottom: "calc(100% + 6px)",
+        left: "0",
+        padding: "4px 8px",
+        backgroundColor: "rgba(0,0,0,0.9)",
+        color: "#fff",
+        fontSize: "11px",
+        borderRadius: "4px",
+        whiteSpace: "nowrap",
+        pointerEvents: "none",
+        opacity: "0",
+        transition: "opacity 0.2s ease",
+        zIndex: "1000",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.3)"
+    });
+    container.appendChild(tooltip);
+
+    function showTooltip(text) {
+        tooltip.textContent = text;
+        tooltip.style.opacity = "1";
+    }
+    function hideTooltip() {
+        tooltip.style.opacity = "0";
+    }
+
+    // 非交互状态下的 tooltip 事件
+    if (!compact) {
+        if (isLoggedOut) {
+            row1.addEventListener("mouseenter", () => showTooltip(t('rating.login_required')));
+            row1.addEventListener("mouseleave", hideTooltip);
+        } else if (isSelf) {
+            row1.addEventListener("mouseenter", () => showTooltip(t('rating.self_forbidden')));
+            row1.addEventListener("mouseleave", hideTooltip);
+        } else if (canInteract) {
+            row1.addEventListener("mouseleave", () => {
+                hoverScore = 0;
+                updateStars(0);
+                hideTooltip();
+            });
+        }
+    }
+
+    // ========== 提交评分 ==========
+    async function submitRating(score) {
+        if (!onRate) return;
+        isSubmitting = true;
+
+        // 保存旧状态用于回滚
+        const oldAvg = displayAvg;
+        const oldCount = displayCount;
+        const oldUserRating = userRating;
+
+        // 乐观更新
+        if (oldUserRating) {
+            displayAvg = (oldAvg * oldCount - oldUserRating + score) / oldCount;
+        } else {
+            displayCount = oldCount + 1;
+            displayAvg = (oldAvg * oldCount + score) / displayCount;
+        }
+        displayRatedBy[userAccount] = score;
+        userRating = score;
+
+        // 更新 UI
+        scoreText.textContent = `${displayAvg.toFixed(1)} (${t('rating.count', { count: displayCount })})`;
+        updateStars(0);
+        updateUserRatingRow();
+
+        try {
+            const res = await onRate(score);
+            if (!res || res.success === false) {
+                throw new Error('Rating failed');
+            }
+            const { showToast } = await import('../components/UI交互提示组件.js');
+            showToast(t('rating.submit_success'), 'success');
+        } catch (err) {
+            console.error('评分失败:', err);
+            // 回滚
+            displayAvg = oldAvg;
+            displayCount = oldCount;
+            userRating = oldUserRating;
+            if (oldUserRating) {
+                displayRatedBy[userAccount] = oldUserRating;
+            } else {
+                delete displayRatedBy[userAccount];
+            }
+            scoreText.textContent = `${displayAvg.toFixed(1)} (${t('rating.count', { count: displayCount })})`;
+            updateStars(0);
+            updateUserRatingRow();
+            const { showToast } = await import('../components/UI交互提示组件.js');
+            showToast(t('rating.submit_failed'), 'error');
+        } finally {
+            isSubmitting = false;
+            hoverScore = 0;
+            hideTooltip();
+        }
+    }
+
+    // 更新/创建用户评分行
+    function updateUserRatingRow() {
+        if (userRatingRow) {
+            userRatingRow.remove();
+            userRatingRow = null;
+        }
+        if (userRating && !compact) {
+            userRatingRow = document.createElement("div");
+            Object.assign(userRatingRow.style, {
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                fontSize: "12px",
+                color: "#888"
+            });
+
+            const label = document.createElement("span");
+            label.textContent = `${t('rating.your_score')}:`;
+            userRatingRow.appendChild(label);
+
+            const userStars = document.createElement("span");
+            userStars.textContent = "★".repeat(userRating) + "☆".repeat(5 - userRating);
+            userStars.style.color = "#FFD700";
+            userStars.style.fontSize = "14px";
+            userRatingRow.appendChild(userStars);
+
+            container.appendChild(userRatingRow);
+        }
+    }
+
+    // 初始化显示
+    if (!compact) {
+        updateStars(0);
+    }
+
     return container;
 }

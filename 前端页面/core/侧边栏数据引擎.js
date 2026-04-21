@@ -109,6 +109,16 @@ function sortDataLocally(data, tab, sort) {
                 break;
             case "views": sorted.sort((a, b) => (b.views || 0) - (a.views || 0)); break;
             case "daily_views": sorted.sort((a, b) => (b.daily_views || 0) - (a.daily_views || 0)); break;
+            case "rating":
+                sorted.sort((a, b) => {
+                    const ratingA = a.rating_avg || 0;
+                    const ratingB = b.rating_avg || 0;
+                    if (ratingA === ratingB) {
+                        return (b.rating_count || 0) - (a.rating_count || 0);
+                    }
+                    return ratingB - ratingA;
+                });
+                break;
             default: sorted.sort((a, b) => (b.created_at || 0) - (a.created_at || 0)); break; // time
         }
     }
@@ -125,6 +135,50 @@ function findExistingTabData(tab) {
         }
     }
     return null;
+}
+
+/**
+ * 从 sessionStorage 读取创作者缓存
+ */
+function getCreatorsFromSessionStorage() {
+    try {
+        const data = sessionStorage.getItem('ComfyRanking_CreatorsCache');
+        if (data) {
+            return JSON.parse(data);
+        }
+    } catch (e) {
+        console.warn('读取创作者 sessionStorage 缓存失败:', e);
+    }
+    return null;
+}
+
+/**
+ * 将创作者数据保存到 sessionStorage
+ */
+function saveCreatorsToSessionStorage(data) {
+    try {
+        sessionStorage.setItem('ComfyRanking_CreatorsCache', JSON.stringify(data));
+    } catch (e) {
+        console.warn('创作者数据写入 sessionStorage 失败:', e);
+    }
+}
+
+/**
+ * 本地搜索创作者数据
+ * @param {string} keyword - 搜索关键词
+ * @param {Array} data - 创作者数据数组
+ * @returns {Array} 匹配的数据
+ */
+function searchCreatorsLocally(keyword, data) {
+    const lowerKeyword = keyword.toLowerCase();
+    return data.filter(item => {
+        const name = (item.name || '').toLowerCase();
+        const account = (item.account || '').toLowerCase();
+        const shortDesc = (item.shortDesc || '').toLowerCase();
+        return name.includes(lowerKeyword) || 
+               account.includes(lowerKeyword) || 
+               shortDesc.includes(lowerKeyword);
+    });
 }
 
 
@@ -400,6 +454,11 @@ export async function loadSidebarContent({
                         const shouldPersist = tab !== "creators";
                         setCache(cacheKey, newData, getCacheExpireTime(), shouldPersist);
                         
+                        // 更新创作者 sessionStorage 缓存
+                        if (tab === "creators") {
+                            saveCreatorsToSessionStorage(newData);
+                        }
+                        
                         // 完整重新渲染（替代之前只更新数字的方案）
                         contentArea.innerHTML = "";
                         const firstPage = newData.slice(0, pageSize);
@@ -490,6 +549,11 @@ export async function loadSidebarContent({
             setCache(cacheKey, realData, getCacheExpireTime(), shouldPersist);
         }
         
+        // 创作者非搜索数据存入 sessionStorage（用于离线降级）
+        if (tab === "creators" && !isCreatorSearch) {
+            saveCreatorsToSessionStorage(realData);
+        }
+        
         // 更新状态
         state.allData = realData;
         state.isFullyLoaded = true;
@@ -521,6 +585,66 @@ export async function loadSidebarContent({
                 setTimeout(() => toastDiv.remove(), 3000);
             }
             return;
+        }
+        
+        // 🚀 创作者Tab：尝试从 sessionStorage 或内存中降级
+        if (tab === "creators") {
+            let fallbackData = null;
+            
+            // 1. 优先从当前内存状态获取
+            if (state.allData && state.allData.length > 0) {
+                fallbackData = state.allData;
+            }
+            // 2. 尝试从 sessionStorage 获取
+            if (!fallbackData) {
+                fallbackData = getCreatorsFromSessionStorage();
+            }
+            // 3. 从其他排序状态获取
+            if (!fallbackData) {
+                fallbackData = findExistingTabData("creators");
+            }
+            
+            if (fallbackData && fallbackData.length > 0) {
+                let displayData = fallbackData;
+                
+                // 搜索场景：执行本地搜索
+                if (keyword) {
+                    displayData = searchCreatorsLocally(keyword, fallbackData);
+                    if (displayData.length === 0) {
+                        contentArea.innerHTML = `
+                            <div style='text-align:center; padding: 40px 20px; color:#888;'>
+                                🔍 没有搜索到相关内容
+                            </div>
+                        `;
+                        
+                        const toastDiv = document.createElement('div');
+                        toastDiv.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#FF9800; color:white; padding:10px 20px; border-radius:4px; z-index:10000; font-size:14px;';
+                        toastDiv.textContent = '⚠️ 网络不可用，显示本地搜索结果';
+                        document.body.appendChild(toastDiv);
+                        setTimeout(() => toastDiv.remove(), 3000);
+                        return;
+                    }
+                }
+                
+                // 按当前排序排序
+                displayData = sortDataLocally(displayData, tab, sort);
+                state.allData = displayData;
+                renderBatch(displayData.slice(0, pageSize), false);
+                
+                // 启动分页加载器
+                if (displayData.length > pageSize) {
+                    _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
+                }
+                
+                const toastDiv = document.createElement('div');
+                toastDiv.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#FF9800; color:white; padding:10px 20px; border-radius:4px; z-index:10000; font-size:14px;';
+                toastDiv.textContent = keyword 
+                    ? '⚠️ 网络不可用，显示本地搜索结果' 
+                    : '⚠️ 网络连接失败，展示的是本地缓存的数据';
+                document.body.appendChild(toastDiv);
+                setTimeout(() => toastDiv.remove(), 3000);
+                return;
+            }
         }
         
         // 无任何缓存，显示原有的错误信息
@@ -649,7 +773,7 @@ function _shouldUpdateData(oldData, newData) {
         if (oldId !== newId) return true;
         
         // 检查关键数字字段
-        const keyFields = ['likes', 'downloads', 'uses', 'views', 'daily_views', 'recent_tips', 'favorites'];
+        const keyFields = ['likes', 'downloads', 'uses', 'views', 'daily_views', 'recent_tips', 'favorites', 'rating_avg', 'rating_count'];
         for (const field of keyFields) {
             if ((oldData[i][field] || 0) !== (newData[i][field] || 0)) return true;
         }
@@ -686,6 +810,8 @@ export async function preloadAdjacentTabs(currentTab, sort) {
                     data = proxyImages(response.data || []);  // 确保图片走本地缓存代理
                     // 创作者数据不持久化到 localStorage，避免空间不足
                     setCache(cacheKey, data, getCacheExpireTime(), false);
+                    // 同时存入 sessionStorage 用于离线降级
+                    saveCreatorsToSessionStorage(data);
                     continue;
                 } else if (tab === "posts" || tab === "tasks") {
                     // 讨论区/任务榜使用独立组件，不需要预加载

@@ -257,7 +257,7 @@ ${escapeHtml(task.description)}</div>
                 ❤️ <span id="like-count">${task.likes || 0}</span>
             </button>
             <button id="btn-favorite" style="background: ${isFavorited ? '#FFC107' : '#333'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
-                ⭐ <span id="favorite-count">${task.favorites || 0}</span>
+                🔖 <span id="favorite-count">${task.favorites || 0}</span>
             </button>
             <button id="btn-tip" style="background: #333; border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
                 💰 ${t('post.tip_author')}

@@ -103,6 +103,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
         if (isMe) tabs.push({ id: "my_tasks", label: t('profile.my_tasks') });
         if (isMe) tabs.push({ id: "transactions", label: t('profile.transactions') });
         if (isMe) tabs.push({ id: "my_posts", label: t('profile.my_posts') });
+        if (isMe) tabs.push({ id: "collected", label: t('profile.my_collected') });
         if (isMe || !privacy.likes) tabs.push({ id: "liked", label: t('profile.recent_likes') });
         if (isMe || !privacy.follows) tabs.push({ id: "following", label: t('profile.following') });
         if (isMe || !privacy.followers) tabs.push({ id: "followers", label: t('profile.followers') || "粉丝" });

@@ -80,7 +80,7 @@ export function renderInteractionButtonsHTML(data, currentAccount, options = {})
     
     const favoriteBtn = `
         <button id="btn-favorite" style="background: ${isFavorited ? '#FFC107' : '#333'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
-            ⭐ <span id="favorite-count">${data.favorites || 0}</span>
+            🔖 <span id="favorite-count">${data.favorites || 0}</span>
         </button>
     `;
     

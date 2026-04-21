@@ -112,9 +112,10 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
 
     // 【修复】：从底层杜绝隐私被穿透抓取
     if (!isMe) {
-        if ((tabId === "following" && privacy.follows) || 
+        if ((tabId === "following" && privacy.follows) ||
             (tabId === "liked" && privacy.likes) ||
-            (tabId === "followers" && privacy.followers)) {
+            (tabId === "followers" && privacy.followers) ||
+            (tabId === "collected")) {
             domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#888;'>🔒 ${t('profile.privacy_hidden')}</div>`;
             return;
         }
@@ -416,11 +417,11 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
     // 💬 新增：我的帖子列表
     if (tabId === "my_posts") {
         domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#888;'>⏳ 加载帖子中...</div>";
-        
+
         try {
             const res = await api.getMyPosts();
             const posts = res.data || [];
-            
+
             if (posts.length === 0) {
                 domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#666;'>
                     <div style="font-size: 40px; margin-bottom: 10px;">💬</div>
@@ -429,23 +430,93 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                 </div>`;
                 return;
             }
-            
+
             const listDiv = document.createElement("div");
             listDiv.style.display = "flex";
             listDiv.style.flexDirection = "column";
             listDiv.style.gap = "10px";
-            
+
             posts.forEach(post => {
                 const postDiv = createPostItem(post, currentUser);
                 listDiv.appendChild(postDiv);
             });
-            
+
             domElement.innerHTML = "";
             domElement.appendChild(listDiv);
-            
+
         } catch (e) {
             console.error("加载帖子失败:", e);
             domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#F44336;'>帖子加载失败</div>`;
+        }
+        return;
+    }
+
+    // ⭐ 新增：我的收藏列表（资源 + 帖子）
+    if (tabId === "collected") {
+        const cacheKey = `ProfileList_${userData.account}_collected`;
+        const cachedStr = localStorage.getItem(cacheKey);
+
+        const applyDOM = (items, posts) => {
+            domElement.innerHTML = "";
+            if ((!items || items.length === 0) && (!posts || posts.length === 0)) {
+                domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#666;'>
+                    <div style="font-size: 40px; margin-bottom: 10px;">🔖</div>
+                    <div>${t('profile.no_collected') || '还没有收藏任何内容'}</div>
+                    <div style="font-size: 12px; color: #888; margin-top: 5px;">${t('profile.go_discover') || '去榜单页面或讨论区发现精彩内容吧！'}</div>
+                </div>`;
+                return;
+            }
+            const listDiv = document.createElement("div");
+            listDiv.style.cssText = "display:flex;flex-direction:column;gap:10px;";
+
+            if (items && items.length > 0) {
+                const sectionTitle = document.createElement("div");
+                sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #FF9800; margin-bottom: 5px; padding: 5px 0;";
+                sectionTitle.textContent = `📦 ${t('profile.collected_items') || '收藏的资源'} (${items.length})`;
+                listDiv.appendChild(sectionTitle);
+                items.forEach(item => { listDiv.appendChild(createItemCard(item, currentUser)); });
+            }
+
+            if (posts && posts.length > 0) {
+                const sectionTitle = document.createElement("div");
+                sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #9C27B0; margin-bottom: 5px; padding: 5px 0;" + (items && items.length > 0 ? " margin-top: 15px;" : "");
+                sectionTitle.textContent = `💬 ${t('profile.collected_posts') || '收藏的帖子'} (${posts.length})`;
+                listDiv.appendChild(sectionTitle);
+                posts.forEach(post => { listDiv.appendChild(createPostItem(post, currentUser)); });
+            }
+
+            domElement.appendChild(listDiv);
+        };
+
+        if (cachedStr) {
+            try {
+                const cached = JSON.parse(cachedStr);
+                applyDOM(cached.items, cached.posts);
+            } catch(e) { localStorage.removeItem(cacheKey); }
+        } else {
+            domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#888;'>⏳ 正在拉取数据...</div>";
+        }
+
+        try {
+            const [toolsRes, appsRes, postsRes] = await Promise.all([
+                api.getItems("tool", "time", 100),
+                api.getItems("app", "time", 100),
+                api.getPosts(1, 200, "latest")
+            ]);
+            const allItems = [...(toolsRes.data || []), ...(appsRes.data || [])];
+            const allPosts = postsRes.data || [];
+            const collectedItems = allItems.filter(item => item.favorited_by && item.favorited_by.includes(userData.account));
+            const collectedPosts = allPosts.filter(post => post.favorited_by && post.favorited_by.includes(userData.account));
+
+            const freshData = { items: collectedItems, posts: collectedPosts };
+            const freshStr = JSON.stringify(freshData);
+            if (freshStr !== cachedStr) {
+                localStorage.setItem(cacheKey, freshStr);
+                applyDOM(collectedItems, collectedPosts);
+            }
+        } catch (error) {
+            console.error("加载收藏失败:", error);
+            if (!cachedStr) domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#F44336;'>${t('profile.load_collected_failed') || '收藏加载失败'}</div>`;
         }
         return;
     }

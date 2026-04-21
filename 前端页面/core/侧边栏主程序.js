@@ -78,6 +78,7 @@ export function buildSidebarDOM() {
             <option value="tips">💰 ${t('market.tips_ranking') || '近期打赏榜'}</option>
             <option value="views">${t('market.views')}</option>
             <option value="daily_views">${t('market.daily_views')}</option>
+            <option value="rating">${t('market.rating')}</option>
         </select>
         <!-- 任务榜筛选控件（状态+排序） -->
         <select id="task-status-filter" style="display: none; background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
@@ -105,6 +106,7 @@ export function buildSidebarDOM() {
             <option value="tips">${t('post.sort_tips')}</option>
             <option value="views">${t('post.sort_views')}</option>
             <option value="daily_views">${t('post.sort_daily_views')}</option>
+            <option value="rating">${t('post.sort_rating') || t('market.rating')}</option>
         </select>
         <input type="text" id="hub-search-input" placeholder="🔍 ${t('common.search')}..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
         <button id="btn-open-publish" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">➕ ${t('market.publish')}</button>
@@ -442,12 +444,15 @@ export function buildSidebarDOM() {
             taskSortSelect.style.display = "block";
             publishBtn.style.display = "block";
         } else if (tabId === "creators") {
-            // 🎯 创作者界面：隐藏发布按钮
+            // 🎯 创作者界面：隐藏发布按钮，隐藏评分排序（创作者无评分）
             hubSortSelect.style.display = "block";
             postsSortSelect.style.display = "none";
             taskStatusFilter.style.display = "none";
             taskSortSelect.style.display = "none";
             publishBtn.style.display = "none";
+            const ratingOpt = hubSortSelect.querySelector('option[value="rating"]');
+            if (ratingOpt) ratingOpt.style.display = "none";
+            if (hubSortSelect.value === "rating") { hubSortSelect.value = "time"; currentSort = "time"; Store.save("activeSort", currentSort); }
         } else if (tabId === "posts") {
             // 🎯 讨论区：显示讨论区排序，隐藏通用排序和任务筛选
             hubSortSelect.style.display = "none";
@@ -462,6 +467,8 @@ export function buildSidebarDOM() {
             taskStatusFilter.style.display = "none";
             taskSortSelect.style.display = "none";
             publishBtn.style.display = "block";
+            const ratingOpt = hubSortSelect.querySelector('option[value="rating"]');
+            if (ratingOpt) ratingOpt.style.display = "";
         }
     };
     
