@@ -1,7 +1,6 @@
 [project]
 name = "ComfyUI-Ranking"
-<<<<<<< HEAD
-description = ""
+description = "ComfyUI-Ranking精选社区，一个排行榜工具"
 version = "1.0.3"
 license = "LICENSE"
 
