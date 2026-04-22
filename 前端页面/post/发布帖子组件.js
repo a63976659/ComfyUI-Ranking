@@ -25,6 +25,155 @@ function clearPostListCache() {
     console.log('🗑️ 已清除帖子列表缓存');
 }
 
+// ✅ 更新封面标记：第一张显示绿色边框和"封面"标签
+function updateCoverMark(previewContainer) {
+    const wrappers = Array.from(previewContainer.children).filter(
+        child => child.tagName === 'DIV' && child.querySelector('img')
+    );
+    wrappers.forEach((wrapper, idx) => {
+        const img = wrapper.querySelector('img');
+        const coverLabel = wrapper.querySelector('.cover-label');
+        if (img) {
+            img.style.borderColor = idx === 0 ? '#4CAF50' : '#444';
+        }
+        if (idx === 0) {
+            if (!coverLabel) {
+                const label = document.createElement('span');
+                label.className = 'cover-label';
+                label.style.cssText = 'position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px; pointer-events: none;';
+                label.textContent = t('post.cover');
+                wrapper.appendChild(label);
+            }
+        } else {
+            if (coverLabel) coverLabel.remove();
+        }
+    });
+}
+
+// ✅ 为图片预览容器设置拖拽排序
+function setupImageDragSort(previewContainer, fileArray, options = {}) {
+    const { onRemove, onDrop } = options;
+    const getWrappers = () => Array.from(previewContainer.children).filter(
+        child => child.tagName === 'DIV' && child.querySelector('img')
+    );
+
+    const wrappers = getWrappers();
+    if (wrappers.length === 0) return;
+
+    let dragSrcEl = null;
+    let dragSrcIndex = -1;
+
+    // 清除所有旧事件，防止重复绑定
+    wrappers.forEach(wrapper => {
+        wrapper.ondragstart = null;
+        wrapper.ondragover = null;
+        wrapper.ondragleave = null;
+        wrapper.ondrop = null;
+        wrapper.ondragend = null;
+    });
+
+    wrappers.forEach(wrapper => {
+        wrapper.draggable = true;
+        wrapper.style.cursor = 'grab';
+
+        // 绑定删除按钮（如果尚未绑定）
+        const removeBtn = wrapper.querySelector('button[data-action="remove"]');
+        if (removeBtn && !removeBtn.onclick) {
+            removeBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (onRemove) {
+                    onRemove(wrapper);
+                } else if (fileArray) {
+                    const currentWrappers = getWrappers();
+                    const currentIdx = currentWrappers.indexOf(wrapper);
+                    if (currentIdx >= 0 && currentIdx < fileArray.length) {
+                        fileArray.splice(currentIdx, 1);
+                    }
+                    wrapper.remove();
+                    updateCoverMark(previewContainer);
+                    setupImageDragSort(previewContainer, fileArray, options);
+                }
+            };
+        }
+
+        wrapper.ondragstart = (e) => {
+            e.stopPropagation();
+            dragSrcEl = wrapper;
+            dragSrcIndex = getWrappers().indexOf(wrapper);
+            wrapper.style.opacity = '0.5';
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(dragSrcIndex));
+        };
+
+        wrapper.ondragover = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+
+            const currentWrappers = getWrappers();
+            const targetIndex = currentWrappers.indexOf(wrapper);
+            if (targetIndex === dragSrcIndex) {
+                currentWrappers.forEach(w => {
+                    w.style.borderLeft = '';
+                    w.style.paddingLeft = '';
+                });
+                return;
+            }
+
+            // 清除所有插入指示
+            currentWrappers.forEach(w => {
+                w.style.borderLeft = '';
+                w.style.paddingLeft = '';
+            });
+
+            // 在当前目标左侧显示绿色竖线指示插入位置
+            wrapper.style.borderLeft = '3px solid #4CAF50';
+            wrapper.style.paddingLeft = '5px';
+        };
+
+        wrapper.ondragleave = () => {
+            wrapper.style.borderLeft = '';
+            wrapper.style.paddingLeft = '';
+        };
+
+        wrapper.ondrop = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const currentWrappers = getWrappers();
+            const targetIndex = currentWrappers.indexOf(wrapper);
+            if (targetIndex === dragSrcIndex || dragSrcIndex === -1) return;
+
+            // 移动 DOM 元素
+            if (targetIndex > dragSrcIndex) {
+                previewContainer.insertBefore(dragSrcEl, wrapper.nextSibling);
+            } else {
+                previewContainer.insertBefore(dragSrcEl, wrapper);
+            }
+
+            // 同步数组
+            if (onDrop) {
+                onDrop();
+            } else if (fileArray && dragSrcIndex >= 0 && dragSrcIndex < fileArray.length) {
+                const [moved] = fileArray.splice(dragSrcIndex, 1);
+                fileArray.splice(targetIndex, 0, moved);
+            }
+
+            // 更新封面标记
+            updateCoverMark(previewContainer);
+        };
+
+        wrapper.ondragend = () => {
+            dragSrcEl = null;
+            dragSrcIndex = -1;
+            getWrappers().forEach(w => {
+                w.style.opacity = '';
+                w.style.borderLeft = '';
+                w.style.paddingLeft = '';
+            });
+        };
+    });
+}
+
 // 🖼️ 图片压缩配置
 const IMAGE_MAX_SIZE = 1920;    // 最大宽/高
 const IMAGE_QUALITY = 0.85;     // JPG压缩质量
@@ -173,9 +322,6 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 </button>
                 <span style="font-size: 16px; font-weight: bold; color: #fff;">✏️ ${isEditMode ? '编辑帖子' : t('post.publish')}</span>
             </div>
-            <button id="btn-submit-post" style="background: #4CAF50; border: none; color: #fff; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
-                🚀 ${isEditMode ? '保存修改' : t('common.publish')}
-            </button>
         </div>
         
         <!-- 表单内容 -->
@@ -294,6 +440,11 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 • ${t('post.notice_compress')}<br>
                 • ${t('post.notice_manage')}
             </div>
+            
+            <!-- 确认发布按钮 -->
+            <button id="btn-submit-post" style="width: 100%; padding: 12px; background: #4CAF50; border: none; color: #fff; border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: bold; transition: 0.2s; margin-top: 15px; margin-bottom: 5px;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
+                🚀 ${isEditMode ? '保存修改' : t('common.publish')}
+            </button>
         </div>
     `;
     
@@ -316,6 +467,10 @@ export function createPublishPostView(currentUser, editPostData = null) {
     const videoSection = container.querySelector("#video-upload-section");
     const imagesInput = container.querySelector("#images-input");
     const imagesPreview = container.querySelector("#images-preview");
+    if (imagesPreview) {
+        imagesPreview.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
+        imagesPreview.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); });
+    }
     const videoInput = container.querySelector("#video-input");
     const videoPreviewArea = container.querySelector("#video-preview-area");
     const videoEmptyState = container.querySelector("#video-empty-state");
@@ -446,6 +601,18 @@ export function createPublishPostView(currentUser, editPostData = null) {
         imagesPreview.innerHTML = "";
         imagesPreview.onclick = null;
         
+        const onDropReorder = () => {
+            const wrappers = Array.from(imagesPreview.children).filter(c => c.querySelector('img'));
+            const newExisting = [];
+            const newFiles = [];
+            wrappers.forEach(w => {
+                if (w._imageType === 'existing') newExisting.push(w._imageData);
+                else if (w._imageType === 'file') newFiles.push(w._imageData);
+            });
+            existingImageUrls = newExisting;
+            imageFiles = newFiles;
+        };
+        
         existingImageUrls.forEach((url, idx) => {
             const wrapper = document.createElement("div");
             Object.assign(wrapper.style, {
@@ -457,8 +624,11 @@ export function createPublishPostView(currentUser, editPostData = null) {
             wrapper.innerHTML = `
                 <img src="${url}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
                 ${idx === 0 ? `<span style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
-                <button data-existing-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+                <button data-action="remove" data-existing-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
             `;
+            
+            wrapper._imageType = 'existing';
+            wrapper._imageData = url;
             
             wrapper.querySelector("button").onclick = (e) => {
                 e.stopPropagation();
@@ -468,6 +638,8 @@ export function createPublishPostView(currentUser, editPostData = null) {
             
             imagesPreview.appendChild(wrapper);
         });
+        
+        setupImageDragSort(imagesPreview, null, { onDrop: onDropReorder });
         
         imageFiles.forEach((file, idx) => {
             const reader = new FileReader();
@@ -483,8 +655,11 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 wrapper.innerHTML = `
                     <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${totalIdx === 0 ? '#4CAF50' : '#444'};">
                     ${totalIdx === 0 ? `<span style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
-                    <button data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+                    <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
                 `;
+                
+                wrapper._imageType = 'file';
+                wrapper._imageData = file;
                 
                 wrapper.querySelector("button").onclick = (e) => {
                     e.stopPropagation();
@@ -493,6 +668,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 };
                 
                 imagesPreview.appendChild(wrapper);
+                setupImageDragSort(imagesPreview, null, { onDrop: onDropReorder });
             };
             reader.readAsDataURL(file);
         });
@@ -549,16 +725,20 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 wrapper.innerHTML = `
                     <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
                     ${idx === 0 ? `<span style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
-                    <button data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+                    <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
                 `;
                 
-                wrapper.querySelector("button").onclick = (e) => {
-                    e.stopPropagation();
-                    imageFiles = imageFiles.filter((_, i) => i !== idx);
-                    renderImagePreviews();
-                };
+                wrapper._imageType = 'file';
+                wrapper._imageData = file;
                 
                 imagesPreview.appendChild(wrapper);
+                setupImageDragSort(imagesPreview, imageFiles, {
+                    onRemove: (wrapper) => {
+                        const idx = imageFiles.indexOf(wrapper._imageData);
+                        if (idx >= 0) imageFiles.splice(idx, 1);
+                        renderImagePreviews();
+                    }
+                });
             };
             reader.readAsDataURL(file);
         });
