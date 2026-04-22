@@ -2,24 +2,16 @@
 name = "ComfyUI-Ranking"
 description = "ComfyUI-Ranking精选社区，一个排行榜工具"
 version = "1.0.3"
-license = "LICENSE"
-
-[project.urls]
-Repository = ""
-=======
-description = "ComfyUI-Ranking精选社区，一个排行榜工具"
-version = "1.0.2"
-license = "LICENSE"
+license = { file = "LICENSE" }
+dependencies = []
 
 [project.urls]
 Repository = "https://github.com/a63976659/ComfyUI-Ranking"
->>>>>>> 910848734ab3dca41949b8b855cb1e5226f013af
 #  Used by Comfy Registry https://registry.comfy.org
 
 [tool.comfy]
 PublisherId = "a63976659"
 DisplayName = "ComfyUI-Ranking"
 Icon = ""
-includes = [] 
+includes = []
 # "requires-comfyui" = ">=1.0.0"  # ComfyUI version compatibility
-
