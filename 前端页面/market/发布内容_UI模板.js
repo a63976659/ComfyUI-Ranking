@@ -116,10 +116,10 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
         <div style="margin-bottom: 15px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px;">
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                 <input type="checkbox" id="is-original-checkbox" ${safeData.is_original ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #4CAF50;" />
-                <span style="font-size: 13px; color: #ccc;">🎨 标记为原创作品</span>
+                <span style="font-size: 13px; color: #ccc;">🎨 ${t('publish.mark_original')}</span>
             </label>
             <div id="original-hint-text" style="font-size: 11px; color: #888; margin-top: 6px; padding-left: 24px;">
-                原创内容将获得特殊标识展示，请勿标记非原创内容
+                ${t('publish.original_default_hint')}
             </div>
         </div>
 
@@ -127,10 +127,10 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
         <div id="box-allow-refund" style="margin-bottom: 15px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px;">
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                 <input type="checkbox" id="allow-refund-checkbox" ${safeData.allow_refund !== false ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #2196F3;" />
-                <span style="font-size: 13px; color: #ccc;">💸 支持退款</span>
+                <span style="font-size: 13px; color: #ccc;">💸 ${t('publish.allow_refund')}</span>
             </label>
             <div style="font-size: 11px; color: #888; margin-top: 6px; padding-left: 24px;">
-                勾选后，购买者可在 24 小时内申请退款。未勾选则不支持退款
+                ${t('publish.refund_hint')}
             </div>
         </div>
 

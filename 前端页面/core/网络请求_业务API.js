@@ -55,11 +55,11 @@ const api = {
     async getCreators(sort, limit) { return request(`/api/creators?sort=${sort}&limit=${limit}`); },
     async searchCreators(keyword, sort, limit = 50) { return request(`/api/creators/search?keyword=${encodeURIComponent(keyword)}&sort=${sort}&limit=${limit}`); },
     async getCreatorDetails(account) { return request(`/api/creators/${account}/details`); },
-    async uploadFile(file, fileType) {
+    async uploadFile(file, fileType, timeout = 120000) {
         const formData = new FormData();
         formData.append("file", file);
         formData.append("file_type", fileType);
-        return request("/api/upload", { method: "POST", body: formData, timeout: 120000, retries: 2 });
+        return request("/api/upload", { method: "POST", body: formData, timeout, retries: 2 });
     },
     async publishItem(data) { return request("/api/items", { method: "POST", body: data }); },
     async updateItem(itemId, author, data) { return request(`/api/items/${itemId}?author=${author}`, { method: "PUT", body: data }); },

@@ -5,16 +5,147 @@ import { t } from "../components/用户体验增强.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 
 // 🖼️ 编辑模式下回显已有图片的辅助函数
-function renderImagePreviews(imageUrls, container, onRemove) {
+function renderImagePreviews(imageUrls, container) {
     container.innerHTML = '';
     imageUrls.forEach((url, idx) => {
         const wrapper = document.createElement('div');
         wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
         wrapper.innerHTML = `
             <img src="${url}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-            ${idx === 0 ? `<span style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px;">${t('post.cover')}</span>` : ''}
+            ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px; pointer-events: none;">${t('post.cover')}</span>` : ''}
+            <button data-action="remove" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
         `;
         container.appendChild(wrapper);
+    });
+}
+
+// ✅ 更新封面标记：第一张显示绿色边框和"封面"标签
+function updateCoverMark(previewContainer) {
+    const wrappers = previewContainer.querySelectorAll(':scope > div');
+    wrappers.forEach((wrapper, idx) => {
+        const img = wrapper.querySelector('img');
+        const coverLabel = wrapper.querySelector('.cover-label');
+        if (img) {
+            img.style.borderColor = idx === 0 ? '#4CAF50' : '#444';
+        }
+        if (idx === 0) {
+            if (!coverLabel) {
+                const label = document.createElement('span');
+                label.className = 'cover-label';
+                label.style.cssText = 'position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px; pointer-events: none;';
+                label.textContent = t('post.cover');
+                wrapper.appendChild(label);
+            }
+        } else {
+            if (coverLabel) coverLabel.remove();
+        }
+    });
+}
+
+// ✅ 为图片预览容器设置拖拽排序
+function setupImageDragSort(previewContainer, fileArray) {
+    const wrappers = Array.from(previewContainer.querySelectorAll(':scope > div'));
+    if (wrappers.length === 0) return;
+
+    let dragSrcEl = null;
+    let dragSrcIndex = -1;
+
+    // 清除所有旧事件，防止重复绑定
+    wrappers.forEach(wrapper => {
+        wrapper.ondragstart = null;
+        wrapper.ondragover = null;
+        wrapper.ondragleave = null;
+        wrapper.ondrop = null;
+        wrapper.ondragend = null;
+    });
+
+    wrappers.forEach(wrapper => {
+        wrapper.draggable = true;
+        wrapper.style.cursor = 'grab';
+
+        // 绑定删除按钮
+        const removeBtn = wrapper.querySelector('button[data-action="remove"]');
+        if (removeBtn) {
+            removeBtn.onclick = null; // 清除旧事件，防止重复绑定
+            removeBtn.onclick = (e) => {
+                e.stopPropagation();
+                const currentIdx = Array.from(previewContainer.children).indexOf(wrapper);
+                fileArray.splice(currentIdx, 1);
+                wrapper.remove();
+                updateCoverMark(previewContainer);
+                setupImageDragSort(previewContainer, fileArray);
+            };
+        }
+
+        wrapper.ondragstart = (e) => {
+            e.stopPropagation();
+            dragSrcEl = wrapper;
+            dragSrcIndex = Array.from(previewContainer.children).indexOf(wrapper);
+            wrapper.style.opacity = '0.5';
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(dragSrcIndex));
+        };
+
+        wrapper.ondragover = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+
+            const targetIndex = Array.from(previewContainer.children).indexOf(wrapper);
+            if (targetIndex === dragSrcIndex) {
+                Array.from(previewContainer.children).forEach(w => {
+                    w.style.borderLeft = '';
+                    w.style.paddingLeft = '';
+                });
+                return;
+            }
+
+            // 清除所有插入指示
+            Array.from(previewContainer.children).forEach(w => {
+                w.style.borderLeft = '';
+                w.style.paddingLeft = '';
+            });
+
+            // 在当前目标左侧显示绿色竖线指示插入位置
+            wrapper.style.borderLeft = '3px solid #4CAF50';
+            wrapper.style.paddingLeft = '5px';
+        };
+
+        wrapper.ondragleave = () => {
+            wrapper.style.borderLeft = '';
+            wrapper.style.paddingLeft = '';
+        };
+
+        wrapper.ondrop = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const targetIndex = Array.from(previewContainer.children).indexOf(wrapper);
+            if (targetIndex === dragSrcIndex || dragSrcIndex === -1) return;
+
+            // 移动数组元素（splice 方式，不是交换）
+            const [moved] = fileArray.splice(dragSrcIndex, 1);
+            fileArray.splice(targetIndex, 0, moved);
+
+            // 移动 DOM 元素
+            if (targetIndex > dragSrcIndex) {
+                previewContainer.insertBefore(dragSrcEl, wrapper.nextSibling);
+            } else {
+                previewContainer.insertBefore(dragSrcEl, wrapper);
+            }
+
+            // 更新封面标记
+            updateCoverMark(previewContainer);
+        };
+
+        wrapper.ondragend = () => {
+            dragSrcEl = null;
+            dragSrcIndex = -1;
+            Array.from(previewContainer.children).forEach(w => {
+                w.style.opacity = '';
+                w.style.borderLeft = '';
+                w.style.paddingLeft = '';
+            });
+        };
     });
 }
 
@@ -90,13 +221,16 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         }
 
         // 🖼️ 编辑模式回显已有图片
-        const existingImages = editItemData.imageUrls || [];
-        if (editItemData.coverUrl && !existingImages.includes(editItemData.coverUrl)) {
-            existingImages.unshift(editItemData.coverUrl);
+        let editImageUrls = editItemData.imageUrls || [];
+        if (editItemData.coverUrl && !editImageUrls.includes(editItemData.coverUrl)) {
+            editImageUrls.unshift(editItemData.coverUrl);
         }
-        if (existingImages.length > 0) {
+        editImageUrls = [...editImageUrls]; // 复制一份，避免直接修改原始数据
+        editItemData.imageUrls = editImageUrls; // 同步给提交引擎，确保提交时顺序一致
+        if (editImageUrls.length > 0) {
             container.querySelector("#cover-file-hint").style.display = "inline";
-            renderImagePreviews(existingImages, imagesPreview, () => {});
+            renderImagePreviews(editImageUrls, imagesPreview);
+            setupImageDragSort(imagesPreview, editImageUrls);
         }
 
         if (!editItemData.type.startsWith("recommend")) {
@@ -269,10 +403,11 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     imagesInput.onchange = (e) => {
         const files = Array.from(e.target.files).slice(0, 6);  // 最多6张
         if (files.length === 0) return;
-        
+
         imageFiles = files;
         imagesPreview.innerHTML = '';
-        
+
+        let loadedCount = 0;
         files.forEach((file, idx) => {
             const reader = new FileReader();
             reader.onload = (ev) => {
@@ -280,17 +415,16 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
                 wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
                 wrapper.innerHTML = `
                     <img src="${ev.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-                    ${idx === 0 ? `<span style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px;">${t('post.cover')}</span>` : ''}
-                    <button data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+                    ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px; pointer-events: none;">${t('post.cover')}</span>` : ''}
+                    <button data-action="remove" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
                 `;
-                wrapper.querySelector('button').onclick = () => {
-                    imageFiles = imageFiles.filter((_, i) => i !== idx);
-                    wrapper.remove();
-                    // 更新封面标记
-                    const firstImg = imagesPreview.querySelector('img');
-                    if (firstImg) firstImg.style.borderColor = '#4CAF50';
-                };
                 imagesPreview.appendChild(wrapper);
+
+                loadedCount++;
+                if (loadedCount === files.length) {
+                    updateCoverMark(imagesPreview);
+                    setupImageDragSort(imagesPreview, imageFiles);
+                }
             };
             reader.readAsDataURL(file);
         });
@@ -307,9 +441,9 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         const mainType = typeSelect.value;
         if (originalHintText) {
             if (mainType === "tool" || mainType === "app") {
-                originalHintText.innerHTML = `<span style="color: #FF9800;">⚠️ 工具/应用类型必须为原创内容</span>，非原创请发布到「推荐」分类`;
+                originalHintText.innerHTML = `<span style="color: #FF9800;">⚠️ ${t('publish.original_required_hint')}</span>`;
             } else {
-                originalHintText.textContent = "原创内容将获得特殊标识展示，请勿标记非原创内容";
+                originalHintText.textContent = t('publish.original_default_hint');
             }
         }
     };
@@ -319,24 +453,24 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         const contentDiv = document.createElement("div");
         contentDiv.innerHTML = `
             <div style="line-height: 1.6; color: #ccc;">
-                <p style="margin-bottom: 15px;">您正在声明该内容为个人原创作品。</p>
-                <p style="margin-bottom: 10px; color: #fff; font-weight: bold;">请确认：</p>
+                <p style="margin-bottom: 15px;">${t('publish.original_confirm_desc')}</p>
+                <p style="margin-bottom: 10px; color: #fff; font-weight: bold;">${t('publish.original_confirm_subtitle')}</p>
                 <ul style="margin: 0 0 15px 20px; padding: 0; color: #aaa;">
-                    <li style="margin-bottom: 5px;">该内容由您本人独立创作</li>
-                    <li style="margin-bottom: 5px;">您对该内容拥有完整的知识产权</li>
-                    <li style="margin-bottom: 5px;">您愿意为此声明承担相应法律责任</li>
+                    <li style="margin-bottom: 5px;">${t('publish.original_confirm_item1')}</li>
+                    <li style="margin-bottom: 5px;">${t('publish.original_confirm_item2')}</li>
+                    <li style="margin-bottom: 5px;">${t('publish.original_confirm_item3')}</li>
                 </ul>
                 <p style="margin-top: 15px; padding: 10px; background: rgba(255,152,0,0.1); border-left: 3px solid #FF9800; border-radius: 3px; font-size: 12px; color: #FF9800;">
-                    💡 如果您分享的是他人作品或非原创内容，请发布到「推荐」分类。
+                    💡 ${t('publish.original_confirm_warning')}
                 </p>
             </div>
             <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end;">
-                <button id="btn-original-cancel" style="padding: 8px 16px; background: #444; color: #fff; border: none; border-radius: 4px; cursor: pointer;">取消</button>
-                <button id="btn-original-confirm" style="padding: 8px 16px; background: #4CAF50; color: #fff; border: none; border-radius: 4px; cursor: pointer;">确认</button>
+                <button id="btn-original-cancel" style="padding: 8px 16px; background: #444; color: #fff; border: none; border-radius: 4px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="btn-original-confirm" style="padding: 8px 16px; background: #4CAF50; color: #fff; border: none; border-radius: 4px; cursor: pointer;">${t('common.confirm')}</button>
             </div>
         `;
         
-        globalModal.openModal("原创内容声明", contentDiv, { width: "450px" });
+        globalModal.openModal(t('publish.original_confirm_title'), contentDiv, { width: "450px" });
         
         contentDiv.querySelector("#btn-original-confirm").onclick = () => {
             globalModal.closeTopModal();

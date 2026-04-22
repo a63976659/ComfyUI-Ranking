@@ -295,15 +295,15 @@ export function createSettingsView() {
         const langName = LANGUAGE_OPTIONS.find(opt => opt.value === newLang)?.label || newLang;
         showToast(`🌐 ${t('settings.language_changed') || '语言已切换为'} ${langName.split(' / ')[0]}`, "success");
         
-        // 🔄 直接重新渲染设置页面（无需先返回再打开，避免闪烁）
+        // 🔄 通过路由系统刷新，保持 activeInlineView 同步
         setTimeout(() => {
-            // 获取当前容器的父元素
-            const parent = container.parentElement;
-            if (parent) {
-                // 创建新的设置视图并替换
+            // 先返回主页
+            window.dispatchEvent(new CustomEvent("comfy-route-back"));
+            // 再重新打开设置页
+            setTimeout(() => {
                 const newSettingsView = createSettingsView();
-                parent.replaceChild(newSettingsView, container);
-            }
+                window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: newSettingsView } }));
+            }, 50);
         }, 100);
     };
     

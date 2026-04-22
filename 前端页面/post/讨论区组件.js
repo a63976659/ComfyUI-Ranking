@@ -426,12 +426,25 @@ function createPostCard(post) {
     // 格式化时间
     const timeStr = formatTime(post.created_at);
     
+    // 判断是否为视频帖子
+    const isVideo = post.post_type === "video";
+    
     card.innerHTML = `
         <!-- 封面图 -->
         <div style="position: relative; width: 100%; padding-top: 100%; background: #111;">
             <img src="${post.cover_image || 'data:image/svg+xml,...'}" 
                  style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;"
                  onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23222%22 width=%22200%22 height=%22200%22/%3E%3Ctext x=%22100%22 y=%22100%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2224%22%3E🖼️%3C/text%3E%3C/svg%3E'">
+            ${isVideo ? `
+            <!-- 视频播放按钮 -->
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                        width: 48px; height: 48px; background: rgba(0,0,0,0.6); border-radius: 50%;
+                        display: flex; align-items: center; justify-content: center; pointer-events: none;">
+                <div style="width: 0; height: 0; border-left: 16px solid rgba(255,255,255,0.9);
+                            border-top: 10px solid transparent; border-bottom: 10px solid transparent;
+                            margin-left: 4px;"></div>
+            </div>
+            ` : ''}
         </div>
         
         <!-- 内容区 -->

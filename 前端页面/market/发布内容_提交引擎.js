@@ -261,7 +261,7 @@ export async function handlePublishSubmit(params) {
     const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
     const isOriginal = isOriginalCheckbox?.checked || false;
     if ((type === "tool" || type === "app") && !isOriginal) {
-        return showToast("工具/应用类型必须为原创内容", "warning");
+        return showToast(t('publish.original_required_toast'), "warning");
     }
 
     // 💸 是否支持退款 (仅 tool/app 类型)
@@ -305,6 +305,10 @@ export async function handlePublishSubmit(params) {
         }
 
         submitBtn.innerHTML = `⏳ ${t('publish.syncing')}`;
+        // 🖼️ 统一封面逻辑：第一张图片始终作为封面（兑容拖拽排序后的顺序变化）
+        if (imageUrls && imageUrls.length > 0) {
+            coverUrl = imageUrls[0];
+        }
         const submitData = {
             type, title, shortDesc, fullDesc, price, link: finalLink, coverUrl, imageUrls,  // 🖼️ 添加 imageUrls
             author: currentUser.account, github_token,

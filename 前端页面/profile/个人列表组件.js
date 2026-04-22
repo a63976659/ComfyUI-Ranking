@@ -644,13 +644,31 @@ function createPostItem(post, currentUser) {
     // 格式化时间
     const timeStr = formatPostTime(post.created_at);
     
-    // 图片数量
-    const imageCount = (post.images || []).length;
+    // 视频帖判断与封面图取值
+    const isVideo = post.post_type === "video";
+    let coverImageUrl = null;
+    if (isVideo) {
+        coverImageUrl = post.cover_image || null;
+    } else {
+        const imageCount = (post.images || []).length;
+        coverImageUrl = imageCount > 0 ? post.images[0] : null;
+    }
     
     postDiv.innerHTML = `
         <div style="display: flex; align-items: flex-start; gap: 10px;">
-            ${imageCount > 0 ? `
-                <img src="${post.images[0]}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; flex-shrink: 0;">
+            ${coverImageUrl ? `
+                <div style="position: relative; flex-shrink: 0;">
+                    <img src="${coverImageUrl}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; display: block;">
+                    ${isVideo ? `
+                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                                width: 28px; height: 28px; background: rgba(0,0,0,0.6); border-radius: 50%;
+                                display: flex; align-items: center; justify-content: center; pointer-events: none;">
+                        <div style="width: 0; height: 0; border-left: 10px solid rgba(255,255,255,0.9);
+                                    border-top: 6px solid transparent; border-bottom: 6px solid transparent;
+                                    margin-left: 2px;"></div>
+                    </div>
+                    ` : ''}
+                </div>
             ` : ""}
             <div style="flex: 1; min-width: 0;">
                 <div style="font-size: 14px; color: #fff; margin-bottom: 6px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
@@ -659,16 +677,16 @@ function createPostItem(post, currentUser) {
                 <div style="display: flex; align-items: center; gap: 12px; font-size: 11px; color: #888;">
                     <span>❤️ ${post.like_count || 0}</span>
                     <span>💬 ${post.comment_count || 0}</span>
-                    ${imageCount > 1 ? `<span>🖼️ ${imageCount}张</span>` : ""}
+                    ${isVideo ? `<span>🎬 ${t('post.video_tag') || '视频'}</span>` : ((post.images || []).length > 1 ? `<span>🖼️ ${(post.images || []).length}张</span>` : "")}
                     <span style="margin-left: auto;">${timeStr}</span>
                 </div>
             </div>
         </div>
     `;
     
-    // 悬停效果
-    postDiv.onmouseover = () => { postDiv.style.borderColor = "#9C27B0"; postDiv.style.transform = "translateX(2px)"; };
-    postDiv.onmouseout = () => { postDiv.style.borderColor = "#444"; postDiv.style.transform = "translateX(0)"; };
+    // 悬停效果（使用 mouseenter/mouseleave 避免子元素边界闪烁）
+    postDiv.onmouseenter = () => { postDiv.style.borderColor = "#9C27B0"; postDiv.style.transform = "translateX(2px)"; };
+    postDiv.onmouseleave = () => { postDiv.style.borderColor = "#444"; postDiv.style.transform = "translateX(0)"; };
     
     // 点击进入详情
     postDiv.onclick = () => {

@@ -1,10 +1,22 @@
 # api_cache.py
 import os
 import hashlib
+import asyncio
+import uuid
 import aiohttp
 import mimetypes
 import urllib.parse
 from aiohttp import web
+
+# 视频下载锁字典（按 URL hash 粒度加锁）
+_video_download_locks = {}
+_video_locks_lock = asyncio.Lock()
+
+async def _get_video_lock(url_hash):
+    async with _video_locks_lock:
+        if url_hash not in _video_download_locks:
+            _video_download_locks[url_hash] = asyncio.Lock()
+        return _video_download_locks[url_hash]
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_NODES_DIR = os.path.dirname(THIS_DIR)
@@ -12,8 +24,15 @@ COMFY_ROOT_DIR = os.path.dirname(CUSTOM_NODES_DIR)
 # 确保存放在 ComfyUI/models/cache/images
 CACHE_ROOT_DIR = os.path.join(COMFY_ROOT_DIR, "models", "cache")
 IMAGE_CACHE_DIR = os.path.join(CACHE_ROOT_DIR, "images")
+# 视频缓存目录（与图片分离）
+VIDEO_CACHE_DIR = os.path.join(CACHE_ROOT_DIR, "videos")
 
 os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
+os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)
+
+# 视频缓存限制
+MAX_VIDEO_SIZE = 100 * 1024 * 1024  # 100MB
+VIDEO_TIMEOUT = aiohttp.ClientTimeout(total=300)
 
 async def cache_image_handler(request):
     """本地 API：异步拦截图片请求，防阻塞实现硬盘级永久缓存
@@ -83,3 +102,162 @@ async def cache_image_handler(request):
             except:
                 pass
         return web.Response(status=504, text="Image download failed: Network error")
+
+
+async def _serve_video_file(request, file_path):
+    """使用 StreamResponse 流式返回视频文件，支持 HTTP Range 请求（视频 seek 必需）"""
+    file_size = os.path.getsize(file_path)
+    content_type, _ = mimetypes.guess_type(file_path)
+    content_type = content_type or 'video/mp4'
+
+    range_header = request.headers.get('Range')
+    if range_header:
+        # 解析 Range: bytes=start-end
+        try:
+            range_str = range_header.replace('bytes=', '')
+            start_str, end_str = range_str.split('-')
+            start = int(start_str) if start_str else 0
+            end = int(end_str) if end_str else file_size - 1
+            if start >= file_size or start < 0 or end >= file_size or end < start:
+                return web.Response(status=416, text="Range Not Satisfiable")
+        except (ValueError, IndexError):
+            start = 0
+            end = file_size - 1
+
+        resp = web.StreamResponse(status=206, headers={
+            'Content-Type': content_type,
+            'Accept-Ranges': 'bytes',
+            'Content-Range': f'bytes {start}-{end}/{file_size}',
+            'Content-Length': str(end - start + 1),
+        })
+        await resp.prepare(request)
+        with open(file_path, 'rb') as f:
+            f.seek(start)
+            remaining = end - start + 1
+            chunk_size = 256 * 1024
+            while remaining > 0:
+                to_read = min(chunk_size, remaining)
+                data = f.read(to_read)
+                if not data:
+                    break
+                await resp.write(data)
+                remaining -= len(data)
+        await resp.write_eof()
+        return resp
+    else:
+        resp = web.StreamResponse(status=200, headers={
+            'Content-Type': content_type,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': str(file_size),
+        })
+        await resp.prepare(request)
+        with open(file_path, 'rb') as f:
+            while True:
+                data = f.read(256 * 1024)
+                if not data:
+                    break
+                await resp.write(data)
+        await resp.write_eof()
+        return resp
+
+
+async def cache_video_handler(request):
+    """视频代理缓存接口 /community_hub/video?url=...
+
+    关键设计：
+    - 缓存目录独立：ComfyUI/models/cache/videos/
+    - 支持 HTTP Range 请求（视频 seek/拖动进度条必需）
+    - 使用 StreamResponse 流式传输，不一次性读入内存
+    - 单文件最大 100MB，超过直接转发不缓存
+    - 下载超时 300 秒
+    """
+    url = request.query.get("url")
+    if not url:
+        return web.Response(status=400, text="Missing url")
+
+    # 🟢 终极防污染保险：解套被污染的嵌套 URL
+    while url.startswith('/community_hub/video?url='):
+        url = urllib.parse.unquote(url.replace('/community_hub/video?url=', ''))
+
+    if not url.startswith('http'):
+        raise web.HTTPFound(location=url)
+
+    # 生成缓存路径
+    url_hash = hashlib.md5(url.encode('utf-8')).hexdigest()
+    # 根据 URL 后缀确定扩展名，限制为常见视频格式
+    ext = url.split('.')[-1].split('?')[0].lower()
+    valid_exts = {'mp4', 'webm', 'mov', 'avi', 'mkv'}
+    if ext not in valid_exts:
+        ext = 'mp4'
+
+    local_path = os.path.join(VIDEO_CACHE_DIR, f"{url_hash}.{ext}")
+
+    # 🚀 优先级1：本地缓存存在且有效，直接返回（零延迟）
+    if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+        return await _serve_video_file(request, local_path)
+
+    # 优先级2：本地无缓存或缓存无效，尝试从网络下载
+    lock = await _get_video_lock(url_hash)
+    try:
+        async with lock:
+            # 双重检查：锁获取后再次确认缓存是否已存在（其他协程可能已下载完成）
+            if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+                return await _serve_video_file(request, local_path)
+
+            try:
+                async with aiohttp.ClientSession() as session:
+                    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                    async with session.get(url, headers=headers, ssl=False, timeout=VIDEO_TIMEOUT) as response:
+                        if response.status != 200:
+                            print(f"[ComfyUI-Ranking] ⚠️ 视频下载失败 (状态码: {response.status}): {url[:80]}...")
+                            return web.Response(status=response.status, text=f"Video download failed: HTTP {response.status}")
+
+                        content_length = response.headers.get('Content-Length')
+                        if content_length and int(content_length) > MAX_VIDEO_SIZE:
+                            # 超过大小限制，直接流式转发不缓存
+                            content_type = response.headers.get('Content-Type') or mimetypes.guess_type(local_path)[0] or 'video/mp4'
+                            stream_resp = web.StreamResponse(status=200, headers={
+                                'Content-Type': content_type,
+                                'Accept-Ranges': 'bytes',
+                            })
+                            stream_resp.headers['Content-Length'] = content_length
+                            await stream_resp.prepare(request)
+                            async for chunk in response.content.iter_chunked(256 * 1024):
+                                await stream_resp.write(chunk)
+                            await stream_resp.write_eof()
+                            return stream_resp
+
+                        # 下载并缓存（流式写入，不读入内存）
+                        os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)
+                        tmp_path = local_path + f'.tmp.{uuid.uuid4().hex[:8]}'
+                        try:
+                            with open(tmp_path, "wb") as f:
+                                async for chunk in response.content.iter_chunked(256 * 1024):
+                                    f.write(chunk)
+                            os.replace(tmp_path, local_path)
+                            print(f"[ComfyUI-Ranking] ✅ 成功下载并缓存视频: {url_hash}.{ext}")
+                        except Exception as e:
+                            if os.path.exists(tmp_path):
+                                try:
+                                    os.remove(tmp_path)
+                                except:
+                                    pass
+                            raise e
+
+                        return await _serve_video_file(request, local_path)
+            except Exception as e:
+                print(f"[ComfyUI-Ranking] ⚠️ 视频下载失败: {url[:80]}... 错误: {str(e)}")
+                # 如果存在 0 字节的损坏缓存文件，清理掉以便下次重试
+                if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
+                    try:
+                        os.remove(local_path)
+                        print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
+                    except:
+                        pass
+                return web.Response(status=504, text="Video download failed: Network error")
+    finally:
+        # 🔒 锁释放后清理：如果没有其他等待者，删除锁对象防止内存泄漏
+        if not lock._waiters:
+            async with _video_locks_lock:
+                if url_hash in _video_download_locks and _video_download_locks[url_hash] is lock and not lock._waiters:
+                    del _video_download_locks[url_hash]

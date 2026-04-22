@@ -12,6 +12,7 @@
 import { api, proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
+import { getVideoPlayerHTML, setupVideoPlayerEvents, cleanupVideoPlayer } from "../components/视频播放器组件.js";
 import { renderTipLevelHTML } from "../components/打赏等级工具.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t } from "../components/用户体验增强.js";
@@ -58,9 +59,23 @@ export function createPostDetailView(postId, currentUser) {
     
     // 返回按钮
     container.querySelector("#btn-back-detail").onclick = () => {
+        const contentArea = container.querySelector("#post-content");
+        if (contentArea) {
+            cleanupVideoPlayer(contentArea);
+        }
         window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
-    
+
+    // 防御性清理：监听 comfy-route-back 事件（防止其他地方直接派发导致遗漏）
+    const handleRouteBack = () => {
+        const contentArea = container.querySelector("#post-content");
+        if (contentArea) {
+            cleanupVideoPlayer(contentArea);
+        }
+        window.removeEventListener("comfy-route-back", handleRouteBack);
+    };
+    window.addEventListener("comfy-route-back", handleRouteBack, { once: true });
+
     // 加载帖子详情
     loadPostDetail(container, postId, currentUser);
     
@@ -72,6 +87,11 @@ export function createPostDetailView(postId, currentUser) {
  */
 async function loadPostDetail(container, postId, currentUser) {
     const contentArea = container.querySelector("#post-content");
+    
+    // 先清理旧的视频播放器全局事件（如果存在）
+    if (contentArea) {
+        cleanupVideoPlayer(contentArea);
+    }
     
     let post = null;
     let fromCache = false;
@@ -102,8 +122,16 @@ async function loadPostDetail(container, postId, currentUser) {
     
     post = proxyImages(post);  // 对帖子数据应用图片代理
     
-    // 准备图片列表
+    // 判断是否为视频帖子
+    const isVideo = post.post_type === "video" && post.video_url;
+    
+    // 准备图片列表（视频帖也需要 cover_image 作为 poster）
     const images = post.images && post.images.length > 0 ? post.images : (post.cover_image ? [post.cover_image] : []);
+    
+    // 准备媒体展示HTML
+    const mediaHTML = isVideo
+        ? getVideoPlayerHTML(post.video_url, post.cover_image || '')
+        : getCoverSandboxHTML(images);
     
     // 检查当前用户是否已点赞/收藏
     const isLiked = post.liked_by?.includes(currentUser?.account) || false;
@@ -112,7 +140,7 @@ async function loadPostDetail(container, postId, currentUser) {
     contentArea.innerHTML = `
             <!-- 图片展示区 -->
             <div id="images-area" style="margin-bottom: 15px;">
-                ${getCoverSandboxHTML(images)}
+                ${mediaHTML}
             </div>
             
             <!-- 标题 -->
@@ -196,8 +224,19 @@ async function loadPostDetail(container, postId, currentUser) {
             </div>
         `;
         
-        // 设置图片沙盒事件
+        // 设置图片沙盒事件（视频帖无沙盒元素，函数会安全返回）
         setupImageSandboxEvents(contentArea);
+        
+        // 视频播放器事件绑定
+        if (isVideo) {
+            setupVideoPlayerEvents(contentArea);
+            const videoEl = contentArea.querySelector('video');
+            if (videoEl) {
+                videoEl.addEventListener('error', () => {
+                    console.warn('[VideoPlayer] 视频加载失败:', post.video_url);
+                });
+            }
+        }
         
         // 🚀 SWR 头像渲染：作者头像
         const authorRow = contentArea.querySelector("#author-row");

@@ -1,8 +1,8 @@
 // 前端页面/post/发布帖子组件.js
 // ==========================================
-// ✏️ 发布帖子组件
+// ✏️ 发布帖子组件（支持图文/视频双模式）
 // ==========================================
-// 功能：上传图片、输入标题和正文、发布帖子
+// 功能：上传图片或视频、输入标题和正文、发布帖子
 // 关联文件：
 //   - 网络请求API.js (上传图片、发布帖子)
 //   - UI交互提示组件.js (提示信息)
@@ -12,6 +12,7 @@ import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { removeCache } from "../components/性能优化工具.js";
+import { API } from "../core/全局配置.js";
 
 // 📦 清除帖子列表缓存
 function clearPostListCache() {
@@ -79,12 +80,76 @@ function compressImage(file) {
 }
 
 /**
+ * 📐 格式化文件大小
+ */
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+}
+
+/**
+ * 🎬 使用 XMLHttpRequest 上传视频并支持进度回调
+ */
+function uploadVideoWithProgress(file, onProgress) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("file_type", "post_video");
+
+        const baseUrl = API?.BASE_URL || "";
+        xhr.open("POST", `${baseUrl}/api/upload`);
+
+        const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
+        if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable && onProgress) {
+                onProgress(Math.round((e.loaded / e.total) * 100));
+            }
+        };
+
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    resolve(JSON.parse(xhr.responseText));
+                } catch {
+                    resolve({ url: xhr.responseText });
+                }
+            } else {
+                let msg = `上传失败 (${xhr.status})`;
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    if (data.detail || data.message || data.error) msg = data.detail || data.message || data.error;
+                } catch {}
+                reject(new Error(msg));
+            }
+        };
+
+        xhr.onerror = () => reject(new Error('网络错误，上传失败'));
+        xhr.ontimeout = () => reject(new Error('上传超时'));
+        xhr.timeout = 300000;
+        xhr.send(formData);
+    });
+}
+
+/**
  * ✏️ 创建发布帖子视图
  * @param {Object|string} currentUser - 当前用户
  * @param {Object} editPostData - 编辑模式时的帖子数据（可选）
  */
 export function createPublishPostView(currentUser, editPostData = null) {
     const isEditMode = !!editPostData;
+    
+    // 编辑模式下的字段值
+    const editTitle = isEditMode ? (editPostData.title || '') : '';
+    const editContent = isEditMode ? (editPostData.content || '') : '';
+    const editImageUrls = isEditMode ? (editPostData.images || editPostData.image_urls || []) : [];
+    const editIsOriginal = isEditMode ? (editPostData.is_original || false) : false;
+    const editPostType = isEditMode ? (editPostData.post_type || 'image') : 'image';
+    const editVideoUrl = isEditMode ? (editPostData.video_url || '') : '';
+    const editCoverUrl = isEditMode ? (editPostData.cover_image || '') : '';
     
     const container = document.createElement("div");
     Object.assign(container.style, {
@@ -98,12 +163,6 @@ export function createPublishPostView(currentUser, editPostData = null) {
         flex: "1",
         boxSizing: "border-box"
     });
-    
-    // 编辑模式下的字段值
-    const editTitle = isEditMode ? (editPostData.title || '') : '';
-    const editContent = isEditMode ? (editPostData.content || '') : '';
-    const editImageUrls = isEditMode ? (editPostData.images || editPostData.image_urls || []) : [];
-    const editIsOriginal = isEditMode ? (editPostData.is_original || false) : false;
     
     container.innerHTML = `
         <!-- 顶部标题栏 -->
@@ -121,17 +180,76 @@ export function createPublishPostView(currentUser, editPostData = null) {
         
         <!-- 表单内容 -->
         <div style="flex: 1; overflow-y: auto; padding: 15px;">
+            <!-- 模式切换 -->
+            <div style="margin-bottom: 15px;">
+                <label style="display: block; font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 8px;">
+                    ${t('post.mode_label') || '发布模式'}
+                </label>
+                <div style="display: flex; gap: 0; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; overflow: hidden;">
+                    <button id="mode-image" style="flex: 1; padding: 10px; background: #4CAF50; color: #fff; border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;">
+                        📷 ${t('post.mode_image') || '图文'}
+                    </button>
+                    <button id="mode-video" style="flex: 1; padding: 10px; background: transparent; color: #888; border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s; border-left: 1px solid #444;">
+                        🎬 ${t('post.mode_video') || '视频'}
+                    </button>
+                </div>
+            </div>
+            
             <!-- 图片上传区 -->
-            <div style="margin-bottom: 20px;">
+            <div id="image-upload-section" style="margin-bottom: 20px;">
                 <label style="display: block; font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 8px;">
                     🖼️ ${t('post.upload_images')} <span style="color: #F44336;">*</span>
                     <span style="font-weight: normal; color: #888; font-size: 12px;">（${t('post.max_9_images')}）</span>
                 </label>
                 <input type="file" id="images-input" accept="image/*" multiple style="display: none;">
-                <div id="images-preview" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 80px; padding: 15px; background: #1a1a1a; border: 2px dashed #444; border-radius: 8px; cursor: pointer; transition: 0.2s;" onclick="document.getElementById('images-input').click()">
+                <div id="images-preview" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 80px; padding: 15px; background: #1a1a1a; border: 2px dashed #444; border-radius: 8px; cursor: pointer; transition: 0.2s;">
                     <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: #666; font-size: 13px;">
                         <div style="font-size: 32px; margin-bottom: 8px;">📷</div>
                         ${t('post.click_upload')}
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 视频上传区 -->
+            <div id="video-upload-section" style="margin-bottom: 20px; display: none;">
+                <label style="display: block; font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 8px;">
+                    🎬 ${t('post.upload_video') || '上传视频'} <span style="color: #F44336;">*</span>
+                    <span style="font-weight: normal; color: #888; font-size: 12px;">（mp4/webm/mov，≤50MB，≤3分钟）</span>
+                </label>
+                <input type="file" id="video-input" accept="video/mp4,video/webm,video/quicktime" style="display: none;">
+                <div id="video-preview-area" style="padding: 15px; background: #1a1a1a; border: 2px dashed #444; border-radius: 8px; cursor: pointer; transition: 0.2s;">
+                    <div id="video-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: #666; font-size: 13px;">
+                        <div style="font-size: 32px; margin-bottom: 8px;">🎬</div>
+                        ${t('post.click_upload_video') || '点击选择视频'}
+                    </div>
+                    <div id="video-player-wrap" style="display: none;">
+                        <video id="video-player" controls style="width: 100%; max-height: 300px; border-radius: 8px; background: #000; display: block;"></video>
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px;">
+                            <div style="font-size: 12px; color: #aaa; line-height: 1.5;">
+                                <div id="video-name"></div>
+                                <div id="video-meta"></div>
+                            </div>
+                            <button id="btn-remove-video" style="width: 28px; height: 28px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 16px; line-height: 1; flex-shrink: 0;">×</button>
+                        </div>
+                        <!-- 封面区域 -->
+                        <div id="video-cover-wrap" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #333;">
+                            <div style="font-size: 12px; font-weight: bold; color: #fff; margin-bottom: 8px;">${t('post.video_cover') || '视频封面'}</div>
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div style="position: relative; width: 80px; height: 80px; flex-shrink: 0;">
+                                    <img id="cover-thumb" src="" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid #4CAF50; display: none;">
+                                    <span id="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px; display: none;">${t('post.cover')}</span>
+                                </div>
+                                <div style="display: flex; flex-direction: column; gap: 6px;">
+                                    <button id="btn-capture-frame" style="padding: 6px 12px; background: #333; border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
+                                        📸 ${t('post.capture_frame') || '截取当前帧'}
+                                    </button>
+                                    <button id="btn-upload-cover" style="padding: 6px 12px; background: #333; border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
+                                        🖼️ ${t('post.upload_cover') || '手动上传封面'}
+                                    </button>
+                                    <input type="file" id="cover-input" accept="image/*" style="display: none;">
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -179,13 +297,39 @@ export function createPublishPostView(currentUser, editPostData = null) {
         </div>
     `;
     
-    // 状态
+    // ========== 状态变量 ==========
+    let postMode = isEditMode && editPostType === 'video' ? 'video' : 'image';
     let imageFiles = [];
-    let existingImageUrls = [];  // 编辑模式下已有的图片URL
+    let existingImageUrls = [];
+    let videoFile = null;
+    let videoCoverFile = null;
+    let videoDuration = 0;
+    let videoObjectUrl = null;
+    let coverObjectUrl = null;
+    let currentVideoUrl = isEditMode ? editVideoUrl : '';
+    let currentCoverUrl = isEditMode ? editCoverUrl : '';
     
-    // DOM 引用
+    // ========== DOM 引用 ==========
+    const modeImageBtn = container.querySelector("#mode-image");
+    const modeVideoBtn = container.querySelector("#mode-video");
+    const imageSection = container.querySelector("#image-upload-section");
+    const videoSection = container.querySelector("#video-upload-section");
     const imagesInput = container.querySelector("#images-input");
     const imagesPreview = container.querySelector("#images-preview");
+    const videoInput = container.querySelector("#video-input");
+    const videoPreviewArea = container.querySelector("#video-preview-area");
+    const videoEmptyState = container.querySelector("#video-empty-state");
+    const videoPlayerWrap = container.querySelector("#video-player-wrap");
+    const videoPlayer = container.querySelector("#video-player");
+    const videoNameEl = container.querySelector("#video-name");
+    const videoMetaEl = container.querySelector("#video-meta");
+    const btnRemoveVideo = container.querySelector("#btn-remove-video");
+    const videoCoverWrap = container.querySelector("#video-cover-wrap");
+    const coverThumb = container.querySelector("#cover-thumb");
+    const coverLabel = container.querySelector("#cover-label");
+    const btnCaptureFrame = container.querySelector("#btn-capture-frame");
+    const btnUploadCover = container.querySelector("#btn-upload-cover");
+    const coverInput = container.querySelector("#cover-input");
     const titleInput = container.querySelector("#title-input");
     const contentInput = container.querySelector("#content-input");
     const titleCount = container.querySelector("#title-count");
@@ -193,10 +337,59 @@ export function createPublishPostView(currentUser, editPostData = null) {
     const submitBtn = container.querySelector("#btn-submit-post");
     const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
     
+    // ========== 模式切换 ==========
+    function updateModeUI() {
+        if (postMode === 'image') {
+            modeImageBtn.style.background = '#4CAF50';
+            modeImageBtn.style.color = '#fff';
+            modeVideoBtn.style.background = 'transparent';
+            modeVideoBtn.style.color = '#888';
+            imageSection.style.display = 'block';
+            videoSection.style.display = 'none';
+        } else {
+            modeImageBtn.style.background = 'transparent';
+            modeImageBtn.style.color = '#888';
+            modeVideoBtn.style.background = '#4CAF50';
+            modeVideoBtn.style.color = '#fff';
+            imageSection.style.display = 'none';
+            videoSection.style.display = 'block';
+        }
+    }
+    
+    function switchMode(mode) {
+        if (postMode === mode) return;
+        postMode = mode;
+        // 清空用户新选择的文件内容，防止混合；保留编辑模式下的原始URL数据
+        if (mode === 'image') {
+            videoFile = null;
+            videoCoverFile = null;
+            videoDuration = 0;
+            if (videoObjectUrl) { URL.revokeObjectURL(videoObjectUrl); videoObjectUrl = null; }
+            renderVideoPreview();
+            // 重新渲染图片区，确保UI与当前数据一致
+            if (isEditMode) {
+                renderExistingImagePreviews();
+            } else {
+                renderImagePreviews();
+            }
+        } else {
+            imageFiles = [];
+            if (isEditMode) {
+                renderExistingImagePreviews();
+            } else {
+                renderImagePreviews();
+            }
+            renderVideoPreview();
+        }
+        updateModeUI();
+    }
+    
+    modeImageBtn.onclick = () => switchMode('image');
+    modeVideoBtn.onclick = () => switchMode('video');
+    
     // 编辑模式：加载已有的图片
     if (isEditMode && editImageUrls.length > 0) {
         existingImageUrls = [...editImageUrls];
-        renderExistingImagePreviews();
     }
     
     // 返回按钮
@@ -212,7 +405,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         contentCount.textContent = contentInput.value.length;
     };
     
-    // 图片选择
+    // ========== 图片相关逻辑 ==========
     imagesInput.onchange = (e) => {
         const files = Array.from(e.target.files);
         const totalImages = existingImageUrls.length + imageFiles.length;
@@ -246,12 +439,13 @@ export function createPublishPostView(currentUser, editPostData = null) {
                     ${t('post.click_upload')}
                 </div>
             `;
+            imagesPreview.onclick = () => imagesInput.click();
             return;
         }
         
         imagesPreview.innerHTML = "";
+        imagesPreview.onclick = null;
         
-        // 渲染已有图片
         existingImageUrls.forEach((url, idx) => {
             const wrapper = document.createElement("div");
             Object.assign(wrapper.style, {
@@ -275,7 +469,6 @@ export function createPublishPostView(currentUser, editPostData = null) {
             imagesPreview.appendChild(wrapper);
         });
         
-        // 渲染新上传图片
         imageFiles.forEach((file, idx) => {
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -304,7 +497,6 @@ export function createPublishPostView(currentUser, editPostData = null) {
             reader.readAsDataURL(file);
         });
         
-        // 添加"添加更多"按钮
         if (totalImages < 9) {
             const addBtn = document.createElement("div");
             Object.assign(addBtn.style, {
@@ -337,10 +529,12 @@ export function createPublishPostView(currentUser, editPostData = null) {
                     ${t('post.click_upload')}
                 </div>
             `;
+            imagesPreview.onclick = () => imagesInput.click();
             return;
         }
         
         imagesPreview.innerHTML = "";
+        imagesPreview.onclick = null;
         
         imageFiles.forEach((file, idx) => {
             const reader = new FileReader();
@@ -369,7 +563,6 @@ export function createPublishPostView(currentUser, editPostData = null) {
             reader.readAsDataURL(file);
         });
         
-        // 添加"添加更多"按钮
         if (imageFiles.length < 9) {
             const addBtn = document.createElement("div");
             Object.assign(addBtn.style, {
@@ -393,12 +586,284 @@ export function createPublishPostView(currentUser, editPostData = null) {
         }
     }
     
-    // 提交发布/保存
+    // ========== 视频相关逻辑 ==========
+    
+    // 视频文件选择
+    videoInput.onchange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        
+        // 格式检查
+        const validTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
+        const validExts = ['.mp4', '.webm', '.mov'];
+        const isValidType = validTypes.includes(file.type) || validExts.some(ext => file.name.toLowerCase().endsWith(ext));
+        if (!isValidType) {
+            showToast(t('post.error_video_format') || '仅支持 mp4、webm、mov 格式的视频', "warning");
+            videoInput.value = '';
+            return;
+        }
+        
+        // 大小检查
+        const MAX_SIZE = 50 * 1024 * 1024;
+        if (file.size > MAX_SIZE) {
+            showToast(t('post.error_video_size') || '视频大小不能超过 50MB', "warning");
+            videoInput.value = '';
+            return;
+        }
+        
+        // 时长检查
+        const tempVideo = document.createElement('video');
+        tempVideo.preload = 'metadata';
+        const tempUrl = URL.createObjectURL(file);
+        tempVideo.src = tempUrl;
+        
+        tempVideo.onloadedmetadata = () => {
+            URL.revokeObjectURL(tempUrl);
+            if (tempVideo.duration > 180) {
+                showToast(t('post.error_video_duration') || '视频时长不能超过 3 分钟', "warning");
+                videoInput.value = '';
+                return;
+            }
+            
+            videoDuration = tempVideo.duration;
+            videoFile = file;
+            if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
+            videoObjectUrl = URL.createObjectURL(file);
+            currentVideoUrl = '';
+            renderVideoPreview();
+        };
+        
+        tempVideo.onerror = () => {
+            URL.revokeObjectURL(tempUrl);
+            showToast(t('post.error_video_load') || '无法读取视频信息', "warning");
+            videoInput.value = '';
+        };
+    };
+    
+    // 渲染视频预览
+    function renderVideoPreview() {
+        if (!videoFile && !currentVideoUrl) {
+            videoEmptyState.style.display = 'flex';
+            videoPlayerWrap.style.display = 'none';
+            videoPreviewArea.style.borderStyle = 'dashed';
+            videoPreviewArea.style.cursor = 'pointer';
+            videoPreviewArea.onclick = () => videoInput.click();
+            return;
+        }
+        
+        videoEmptyState.style.display = 'none';
+        videoPlayerWrap.style.display = 'block';
+        videoPreviewArea.style.borderStyle = 'solid';
+        videoPreviewArea.style.cursor = 'default';
+        videoPreviewArea.onclick = null;
+        
+        const src = videoObjectUrl || currentVideoUrl;
+        videoPlayer.src = src;
+        
+        if (videoFile) {
+            videoNameEl.textContent = videoFile.name;
+            videoMetaEl.textContent = `${formatFileSize(videoFile.size)} · ${Math.round(videoDuration)}秒`;
+        } else if (currentVideoUrl) {
+            videoNameEl.textContent = t('post.existing_video') || '已有视频';
+            videoMetaEl.textContent = '';
+        }
+        
+        // 自动生成封面（首次加载视频数据时）
+        videoPlayer.onloadeddata = async () => {
+            if (!videoCoverFile && !currentCoverUrl) {
+                const cover = await generateCoverFromVideo(videoPlayer);
+                if (cover) {
+                    videoCoverFile = cover;
+                    renderCoverThumb();
+                }
+            }
+        };
+        
+        videoCoverWrap.style.display = 'block';
+        renderCoverThumb();
+    }
+    
+    // 渲染封面缩略图
+    function renderCoverThumb() {
+        if (coverObjectUrl) { URL.revokeObjectURL(coverObjectUrl); coverObjectUrl = null; }
+        const url = videoCoverFile ? URL.createObjectURL(videoCoverFile) : currentCoverUrl;
+        if (url) {
+            coverThumb.src = url;
+            coverThumb.style.display = 'block';
+            coverLabel.style.display = 'block';
+            if (videoCoverFile) coverObjectUrl = url;
+        } else {
+            coverThumb.style.display = 'none';
+            coverLabel.style.display = 'none';
+        }
+    }
+    
+    // 从视频元素生成封面
+    async function generateCoverFromVideo(videoEl) {
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = videoEl.videoWidth || 640;
+            canvas.height = videoEl.videoHeight || 360;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+            
+            return await new Promise((resolve) => {
+                canvas.toBlob((blob) => {
+                    if (blob) {
+                        const file = new File([blob], 'cover.jpg', { type: 'image/jpeg' });
+                        resolve(file);
+                    } else {
+                        resolve(null);
+                    }
+                }, 'image/jpeg', 0.85);
+            });
+        } catch (err) {
+            console.error('封面生成失败:', err);
+            return null;
+        }
+    }
+    
+    // 删除视频
+    btnRemoveVideo.onclick = (e) => {
+        e.stopPropagation();
+        videoFile = null;
+        videoCoverFile = null;
+        videoDuration = 0;
+        if (videoObjectUrl) { URL.revokeObjectURL(videoObjectUrl); videoObjectUrl = null; }
+        currentVideoUrl = '';
+        currentCoverUrl = '';
+        videoInput.value = '';
+        renderVideoPreview();
+    };
+    
+    // 截取当前帧
+    btnCaptureFrame.onclick = async (e) => {
+        e.stopPropagation();
+        if (!videoPlayer.videoWidth) {
+            showToast(t('post.error_video_not_ready') || '视频尚未加载完成', "warning");
+            return;
+        }
+        const cover = await generateCoverFromVideo(videoPlayer);
+        if (cover) {
+            videoCoverFile = cover;
+            currentCoverUrl = '';
+            renderCoverThumb();
+            showToast(t('post.cover_captured') || '封面已更新', "success");
+        } else {
+            showToast(t('post.cover_capture_failed') || '封面截取失败', "error");
+        }
+    };
+    
+    // 手动上传封面
+    btnUploadCover.onclick = (e) => {
+        e.stopPropagation();
+        coverInput.click();
+    };
+    
+    coverInput.onchange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+            showToast(t('post.error_cover_format') || '请选择图片文件作为封面', "warning");
+            coverInput.value = '';
+            return;
+        }
+        videoCoverFile = file;
+        currentCoverUrl = '';
+        renderCoverThumb();
+        coverInput.value = '';
+    };
+    
+    // 阻止视频区域的拖拽冒泡到 ComfyUI 画布
+    videoPreviewArea.ondragenter = (e) => { e.stopPropagation(); };
+    videoPreviewArea.ondragover = (e) => { e.stopPropagation(); };
+    videoPreviewArea.ondrop = (e) => { e.stopPropagation(); };
+    videoPlayer.ondragenter = (e) => { e.stopPropagation(); };
+    videoPlayer.ondragover = (e) => { e.stopPropagation(); };
+    videoPlayer.ondrop = (e) => { e.stopPropagation(); };
+    
+    // ========== 提交发布/保存 ==========
     submitBtn.onclick = async () => {
         const title = titleInput.value.trim();
         const content = contentInput.value.trim();
+        const isOriginal = isOriginalCheckbox?.checked || false;
         
-        // 验证
+        if (postMode === 'video') {
+            // 视频模式校验
+            if (!title) {
+                showToast(t('post.error_no_title'), "warning");
+                return;
+            }
+            if (!content) {
+                showToast(t('post.error_no_content') || '请输入正文内容', "warning");
+                return;
+            }
+            if (!videoFile && !currentVideoUrl) {
+                showToast(t('post.error_no_video') || '请选择视频文件', "warning");
+                return;
+            }
+            if (!videoCoverFile && !currentCoverUrl) {
+                showToast(t('post.error_no_cover') || '请等待封面生成或手动上传封面', "warning");
+                return;
+            }
+            
+            try {
+                submitBtn.disabled = true;
+                
+                // 上传封面
+                let coverUrl = currentCoverUrl;
+                if (videoCoverFile) {
+                    submitBtn.textContent = `⏳ ${t('post.uploading_cover') || '上传封面中...'}`;
+                    const res = await api.uploadFile(videoCoverFile, "post");
+                    coverUrl = res.url;
+                }
+                
+                // 上传视频（带进度的 XMLHttpRequest）
+                let videoUrl = currentVideoUrl;
+                if (videoFile) {
+                    submitBtn.textContent = `⏳ ${t('post.uploading_video') || '上传视频中...'} 0%`;
+                    const res = await uploadVideoWithProgress(videoFile, (percent) => {
+                        submitBtn.textContent = `⏳ ${t('post.uploading_video') || '上传视频中...'} ${percent}%`;
+                    });
+                    videoUrl = res.url;
+                }
+                
+                submitBtn.textContent = `⏳ ${isEditMode ? t('common.saving') : t('post.publishing')}...`;
+                
+                const payload = {
+                    title,
+                    content,
+                    cover_image: coverUrl,
+                    images: [],
+                    post_type: "video",
+                    video_url: videoUrl,
+                    is_original: isOriginal
+                };
+                
+                if (isEditMode) {
+                    await api.updatePost(editPostData.id, payload);
+                    showToast(t('post.edit_success'), "success");
+                } else {
+                    payload.author = currentUser.account;
+                    await api.createPost(payload);
+                    showToast(t('post.publish_success'), "success");
+                }
+                
+                clearPostListCache();
+                window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload"));
+                window.dispatchEvent(new CustomEvent("comfy-route-back"));
+                
+            } catch (err) {
+                showToast((isEditMode ? t('post.edit_failed') : t('post.publish_failed')) + ": " + err.message, "error");
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = `🚀 ${isEditMode ? '保存修改' : t('common.publish')}`;
+            }
+            
+            return;
+        }
+        
+        // ========== 图文模式（原有逻辑完全保留） ==========
         const totalImages = existingImageUrls.length + imageFiles.length;
         if (totalImages === 0) {
             showToast(t('post.error_no_image'), "warning");
@@ -413,7 +878,6 @@ export function createPublishPostView(currentUser, editPostData = null) {
             submitBtn.disabled = true;
             submitBtn.textContent = `⏳ ${t('post.compressing_images')}...`;
             
-            // 🖼️ 先压缩所有新图片
             const compressedFiles = [];
             for (let i = 0; i < imageFiles.length; i++) {
                 submitBtn.textContent = `🖼️ ${t('post.compressing_progress', { current: i + 1, total: imageFiles.length })}...`;
@@ -421,7 +885,6 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 compressedFiles.push(compressed);
             }
             
-            // 上传压缩后的图片
             const uploadedUrls = [];
             for (let i = 0; i < compressedFiles.length; i++) {
                 submitBtn.textContent = `⏳ ${t('post.uploading_progress', { current: i + 1, total: compressedFiles.length })}...`;
@@ -429,14 +892,9 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 uploadedUrls.push(res.url);
             }
             
-            // 合并已有图片和新上传的图片
             const allImages = [...existingImageUrls, ...uploadedUrls];
             
-            // 获取原创作品勾选状态
-            const isOriginal = isOriginalCheckbox?.checked || false;
-            
             if (isEditMode) {
-                // 编辑模式：更新帖子
                 submitBtn.textContent = `⏳ ${t('common.saving')}...`;
                 await api.updatePost(editPostData.id, {
                     title,
@@ -445,10 +903,8 @@ export function createPublishPostView(currentUser, editPostData = null) {
                     images: allImages,
                     is_original: isOriginal
                 });
-                
                 showToast(t('post.edit_success'), "success");
             } else {
-                // 新建模式：发布帖子
                 submitBtn.textContent = `⏳ ${t('post.publishing')}...`;
                 await api.createPost({
                     title,
@@ -458,15 +914,11 @@ export function createPublishPostView(currentUser, editPostData = null) {
                     author: currentUser.account,
                     is_original: isOriginal
                 });
-                
                 showToast(t('post.publish_success'), "success");
             }
             
-            // 🚀 清除帖子列表缓存，确保返回列表时能看到更新
             clearPostListCache();
-            // 🔄 触发列表刷新，确保新内容立即显示
             window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload"));
-            
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
             
         } catch (err) {
@@ -476,6 +928,17 @@ export function createPublishPostView(currentUser, editPostData = null) {
             submitBtn.textContent = `🚀 ${isEditMode ? '保存修改' : t('common.publish')}`;
         }
     };
+    
+    // ========== 初始渲染 ==========
+    updateModeUI();
+    if (isEditMode && editImageUrls.length > 0) {
+        renderExistingImagePreviews();
+    } else if (!isEditMode) {
+        renderImagePreviews();
+    }
+    if (postMode === 'video') {
+        renderVideoPreview();
+    }
     
     return container;
 }

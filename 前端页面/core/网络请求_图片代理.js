@@ -21,6 +21,11 @@ const IMAGE_PROXY_FIELDS = [
     'target_avatar',      // 私信目标用户头像
 ];
 
+// 🎬 视频代理字段（走独立的 /community_hub/video 接口，支持流式传输和 Range 请求）
+const VIDEO_PROXY_FIELDS = [
+    'video_url',
+];
+
 // 🚀 新增：需要对数组元素进行代理的图片字段
 const IMAGE_PROXY_ARRAY_FIELDS = ['images', 'imageUrls', 'reference_images', 'deliverables'];
 
@@ -44,6 +49,21 @@ export function proxyImages(obj) {
                 // 只有最终剥离出来的确实是外部网络链接（包括云端代理URL），才挂上本地缓存代理
                 if (originalUrl.startsWith('http')) {
                     obj[key] = `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
+                } else {
+                    obj[key] = originalUrl;
+                }
+            } else if (VIDEO_PROXY_FIELDS.includes(key) && typeof obj[key] === 'string') {
+                // 🎬 视频字段走独立的视频代理接口
+                let originalUrl = obj[key];
+                // 自动修复：一层一层剥开已经被污染的多重代理前缀（视频）
+                let _unwrap = 0;
+                while (originalUrl.startsWith('/community_hub/video?url=') && _unwrap++ < 10) {
+                    try { originalUrl = decodeURIComponent(originalUrl.replace('/community_hub/video?url=', '')); }
+                    catch(e) { break; }
+                }
+                // 只有外部网络链接才挂上本地视频缓存代理
+                if (originalUrl.startsWith('http')) {
+                    obj[key] = `/community_hub/video?url=${encodeURIComponent(originalUrl)}`;
                 } else {
                     obj[key] = originalUrl;
                 }
@@ -82,6 +102,12 @@ export function unproxyImages(obj) {
         let _unwrap = 0;
         while (str.startsWith('/community_hub/image?url=') && _unwrap++ < 10) {
             try { str = decodeURIComponent(str.replace('/community_hub/image?url=', '')); }
+            catch(e) { break; }
+        }
+        // 🎬 同时剥离视频代理前缀
+        _unwrap = 0;
+        while (str.startsWith('/community_hub/video?url=') && _unwrap++ < 10) {
+            try { str = decodeURIComponent(str.replace('/community_hub/video?url=', '')); }
             catch(e) { break; }
         }
         return str;
