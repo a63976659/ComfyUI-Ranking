@@ -623,16 +623,16 @@ export function createPublishPostView(currentUser, editPostData = null) {
             
             wrapper.innerHTML = `
                 <img src="${url}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-                ${idx === 0 ? `<span style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
+                ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
                 <button data-action="remove" data-existing-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
             `;
-            
+
             wrapper._imageType = 'existing';
             wrapper._imageData = url;
-            
+
             wrapper.querySelector("button").onclick = (e) => {
                 e.stopPropagation();
-                existingImageUrls = existingImageUrls.filter((_, i) => i !== idx);
+                existingImageUrls = existingImageUrls.filter(u => u !== url);
                 renderExistingImagePreviews();
             };
             
@@ -654,16 +654,16 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 const totalIdx = existingImageUrls.length + idx;
                 wrapper.innerHTML = `
                     <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${totalIdx === 0 ? '#4CAF50' : '#444'};">
-                    ${totalIdx === 0 ? `<span style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
+                    ${totalIdx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
                     <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
                 `;
-                
+
                 wrapper._imageType = 'file';
                 wrapper._imageData = file;
-                
+
                 wrapper.querySelector("button").onclick = (e) => {
                     e.stopPropagation();
-                    imageFiles = imageFiles.filter((_, i) => i !== idx);
+                    imageFiles = imageFiles.filter(f => f !== file);
                     renderExistingImagePreviews();
                 };
                 
@@ -724,7 +724,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 
                 wrapper.innerHTML = `
                     <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-                    ${idx === 0 ? `<span style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
+                    ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
                     <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
                 `;
                 

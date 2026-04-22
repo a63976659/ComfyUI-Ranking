@@ -12,6 +12,26 @@ from aiohttp import web
 _video_download_locks = {}
 _video_locks_lock = asyncio.Lock()
 
+def _scan_dir_stats(dir_path):
+    """使用 os.scandir() 统计目录下的直接文件数量和总大小"""
+    count = 0
+    total_size = 0
+    if not os.path.exists(dir_path):
+        return count, total_size
+    try:
+        with os.scandir(dir_path) as it:
+            for entry in it:
+                if entry.is_file(follow_symlinks=False):
+                    count += 1
+                    try:
+                        total_size += entry.stat(follow_symlinks=False).st_size
+                    except (OSError, FileNotFoundError):
+                        pass
+    except (OSError, FileNotFoundError):
+        pass
+    return count, total_size
+
+
 async def _get_video_lock(url_hash):
     async with _video_locks_lock:
         if url_hash not in _video_download_locks:
@@ -261,3 +281,66 @@ async def cache_video_handler(request):
             async with _video_locks_lock:
                 if url_hash in _video_download_locks and _video_download_locks[url_hash] is lock and not lock._waiters:
                     del _video_download_locks[url_hash]
+
+
+async def cache_stats_handler(request):
+    """GET /community_hub/cache/stats - 返回图片和视频缓存统计"""
+    image_count, image_size = _scan_dir_stats(IMAGE_CACHE_DIR)
+    video_count, video_size = _scan_dir_stats(VIDEO_CACHE_DIR)
+    return web.json_response({
+        "image_count": image_count,
+        "image_size": image_size,
+        "video_count": video_count,
+        "video_size": video_size,
+    })
+
+
+async def cache_clear_handler(request):
+    """POST /community_hub/cache/clear - 清理缓存文件"""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.Response(status=400, text="Invalid JSON body")
+
+    target = body.get("target")
+    if target not in ("all", "images", "videos"):
+        return web.Response(status=400, text="Invalid target. Must be 'all', 'images', or 'videos'")
+
+    dirs_to_clear = []
+    if target == "all":
+        dirs_to_clear = [IMAGE_CACHE_DIR, VIDEO_CACHE_DIR]
+    elif target == "images":
+        dirs_to_clear = [IMAGE_CACHE_DIR]
+    elif target == "videos":
+        dirs_to_clear = [VIDEO_CACHE_DIR]
+
+    cleared_count = 0
+    freed_size = 0
+
+    for dir_path in dirs_to_clear:
+        if not os.path.exists(dir_path):
+            continue
+        try:
+            with os.scandir(dir_path) as it:
+                for entry in it:
+                    if entry.is_file(follow_symlinks=False):
+                        name = entry.name
+                        # 跳过临时文件：.tmp. 开头或包含 .tmp.
+                        if name.startswith(".tmp.") or ".tmp." in name:
+                            continue
+                        try:
+                            file_size = entry.stat(follow_symlinks=False).st_size
+                            os.remove(entry.path)
+                            cleared_count += 1
+                            freed_size += file_size
+                        except FileNotFoundError:
+                            pass
+                        except OSError:
+                            pass
+        except (OSError, FileNotFoundError):
+            pass
+
+    return web.json_response({
+        "cleared_count": cleared_count,
+        "freed_size": freed_size,
+    })

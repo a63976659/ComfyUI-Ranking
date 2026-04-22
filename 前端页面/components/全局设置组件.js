@@ -10,6 +10,7 @@
 
 import { showToast } from "./UI交互提示组件.js";
 import { setLanguage, getLanguage, t } from "./用户体验增强.js";
+import { clearAllCache } from "./性能优化工具.js";
 
 // 🔧 设置项 localStorage Key
 const SETTINGS_KEY = "ComfyCommunity_Settings";
@@ -54,6 +55,39 @@ export function saveSettings(settings) {
         // 🔔 广播设置变更事件，让其他组件响应
         window.dispatchEvent(new CustomEvent("comfy-settings-changed", { detail: settings }));
     } catch (e) {}
+}
+
+/**
+ * 📊 格式化文件大小
+ */
+function formatSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log2(bytes) / 10);
+    const unitIndex = Math.min(i, units.length - 1);
+    const size = bytes / Math.pow(1024, unitIndex);
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
+}
+
+/**
+ * 📊 获取浏览器缓存统计
+ */
+function getBrowserCacheStats() {
+    let totalSize = 0;
+    let count = 0;
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('ComfyRanking_')) {
+                const value = localStorage.getItem(key);
+                if (value) {
+                    totalSize += new Blob([value]).size;
+                    count++;
+                }
+            }
+        }
+    } catch (e) {}
+    return { count, totalSize };
 }
 
 /**
@@ -163,6 +197,26 @@ export function createSettingsView() {
             opacity: 1;
             cursor: pointer;
         }
+        .cache-clear-btn {
+            flex: 1;
+            min-width: 120px;
+            background: rgba(156, 39, 176, 0.15);
+            border: 1px solid #9C27B0;
+            color: #ccc;
+            padding: 8px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: 0.2s;
+        }
+        .cache-clear-btn:hover:not(:disabled) {
+            background: rgba(156, 39, 176, 0.3);
+            color: #fff;
+        }
+        .cache-clear-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
     `;
     document.head.appendChild(styleSheet);
     
@@ -252,6 +306,23 @@ export function createSettingsView() {
                     <div style="color: #666; font-size: 11px; line-height: 1.5; padding: 8px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 2px solid #9C27B0;">
                         💡 ${t('settings.cache_trigger_desc')}
                     </div>
+                </div>
+            </div>
+            
+            <!-- 设置项：缓存统计与清理 -->
+            <div class="setting-item" style="flex-direction: column; align-items: flex-start; gap: 12px;">
+                <div style="flex: 1; width: 100%;">
+                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.cache_stats')}</div>
+                </div>
+                <div id="cache-stats-panel" style="width: 100%; display: flex; flex-direction: column; gap: 6px;">
+                    <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #888; font-size: 13px;">
+                        ${t('settings.no_cache')}
+                    </div>
+                </div>
+                <div style="display: flex; gap: 10px; width: 100%; flex-wrap: wrap;">
+                    <button id="btn-clear-browser-cache" class="cache-clear-btn">${t('settings.clear_browser_cache')}</button>
+                    <button id="btn-clear-disk-cache" class="cache-clear-btn">${t('settings.clear_disk_cache')}</button>
+                    <button id="btn-clear-all-cache" class="cache-clear-btn">${t('settings.clear_all_cache')}</button>
                 </div>
             </div>
             
@@ -378,6 +449,93 @@ export function createSettingsView() {
         
         showToast(`⏱️ ${t('settings.cache_expire')}: ${timeDisplay}`, "success");
     };
+    
+    // 📊 缓存统计面板
+    const cacheStatsPanel = container.querySelector("#cache-stats-panel");
+    
+    async function loadCacheStats() {
+        try {
+            const [diskRes, browserStats] = await Promise.all([
+                fetch("/community_hub/cache/stats").then(r => r.ok ? r.json() : null).catch(() => null),
+                Promise.resolve(getBrowserCacheStats())
+            ]);
+            
+            const imageCount = diskRes?.image_count || 0;
+            const imageSize = diskRes?.image_size || 0;
+            const videoCount = diskRes?.video_count || 0;
+            const videoSize = diskRes?.video_size || 0;
+            const browserCount = browserStats.count;
+            const browserSize = browserStats.totalSize;
+            
+            const hasAnyCache = imageCount > 0 || videoCount > 0 || browserCount > 0;
+            
+            if (!hasAnyCache) {
+                cacheStatsPanel.innerHTML = `
+                    <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #888; font-size: 13px;">
+                        ${t('settings.no_cache')}
+                    </div>
+                `;
+                return;
+            }
+            
+            cacheStatsPanel.innerHTML = `
+                <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #aaa; font-size: 13px;">
+                    <span style="color: #ccc;">${t('settings.cache_disk_images')}：</span>${imageCount} ${t('settings.files')} · ${formatSize(imageSize)}
+                </div>
+                <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #aaa; font-size: 13px;">
+                    <span style="color: #ccc;">${t('settings.cache_disk_videos')}：</span>${videoCount} ${t('settings.files')} · ${formatSize(videoSize)}
+                </div>
+                <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #aaa; font-size: 13px;">
+                    <span style="color: #ccc;">${t('settings.cache_browser')}：</span>${browserCount} ${t('settings.files')} · ${formatSize(browserSize)}
+                </div>
+            `;
+        } catch (e) {
+            cacheStatsPanel.innerHTML = `
+                <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #888; font-size: 13px;">
+                    ${t('settings.no_cache')}
+                </div>
+            `;
+        }
+    }
+    
+    // 🧹 缓存清理按钮
+    const btnClearBrowser = container.querySelector("#btn-clear-browser-cache");
+    const btnClearDisk = container.querySelector("#btn-clear-disk-cache");
+    const btnClearAll = container.querySelector("#btn-clear-all-cache");
+    
+    async function handleClearCache(btn, action) {
+        const originalText = btn.textContent;
+        btn.textContent = t('settings.cache_clearing');
+        btn.disabled = true;
+        
+        try {
+            if (action === 'browser' || action === 'all') {
+                clearAllCache();
+            }
+            if (action === 'disk' || action === 'all') {
+                await fetch("/community_hub/cache/clear", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ target: "all" })
+                });
+            }
+            await loadCacheStats();
+            showToast(t('settings.cache_cleared'), "success");
+        } catch (e) {
+            showToast(t('settings.cache_cleared'), "success");
+            await loadCacheStats();
+        } finally {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+    }
+    
+    btnClearBrowser.onclick = () => handleClearCache(btnClearBrowser, 'browser');
+    btnClearDisk.onclick = () => handleClearCache(btnClearDisk, 'disk');
+    btnClearAll.onclick = () => handleClearCache(btnClearAll, 'all');
+    
+    // 进入设置页时自动加载缓存统计
+    loadCacheStats();
     
     return container;
 }
