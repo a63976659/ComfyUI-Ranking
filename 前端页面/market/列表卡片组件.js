@@ -9,6 +9,7 @@ import { setupResourceInstall, checkItemStatus } from "./资源安装引擎.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 import { renderTipBoardHTML, isMaxTipLevel } from "../components/打赏等级工具.js";
+import { lazyLoadImages } from "../components/性能优化工具.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR, CACHE } from "../core/全局配置.js";
 
@@ -329,7 +330,10 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
             renderItemTrendChart(detailView.querySelector(`#${chartContainerId}`), itemData);
             setupImageSandboxEvents(detailView);
             isRendered = true;
-            
+
+            // 🖼️ 详情区图片懒加载
+            lazyLoadImages(detailView);
+
             // 🚀 恢复浏览量记录：工具、应用、推荐榜单的卡片展开即详情页，需要记录浏览量
             recordView(api.recordItemView, itemData.id, 'item', (result) => {
                 if (result?.views !== undefined) {
@@ -387,6 +391,9 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
         };
         detailView.appendChild(authorActionArea);
     }
+
+    // 🖼️ 启用图片懒加载（跳过 data URL 和已处理的）
+    lazyLoadImages(card);
 
     card.appendChild(summaryView);
     card.appendChild(detailView);

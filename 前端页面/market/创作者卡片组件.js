@@ -471,7 +471,8 @@ export function createCreatorCard(creatorData, currentUser = null) {
     };
 
     window.addEventListener('resize', () => { if (chartInstance) chartInstance.resize(); });
-    card.appendChild(summaryView); 
+
+    card.appendChild(summaryView);
     card.appendChild(detailView);
     return card;
 }

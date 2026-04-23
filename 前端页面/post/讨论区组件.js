@@ -17,7 +17,7 @@
 import { api } from "../core/网络请求API.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { setCache, getCache, createSkeleton } from "../components/性能优化工具.js";
+import { setCache, getCache, createSkeleton, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
 import { applyCardAnimation } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
@@ -43,10 +43,19 @@ const SORT_OPTIONS = [
 // 🔧 修复内存泄漏：保存当前筛选事件监听器引用，以便在重新创建时移除
 let currentFilterHandler = null;
 
+// 🔧 自动分页器引用（用于组件切换时清理）
+let currentPaginator = null;
+
 /**
  * 💬 创建讨论区视图
  */
 export function createPostsView(currentUser, keyword = "") {
+    // 清理旧分页器
+    if (currentPaginator) {
+        currentPaginator.stop();
+        currentPaginator = null;
+    }
+    
     currentUserCache = currentUser;
     const searchKeyword = keyword.toLowerCase();
     
@@ -91,6 +100,65 @@ export function createPostsView(currentUser, keyword = "") {
     const postsGrid = container.querySelector("#posts-grid");
     const loadMoreWrapper = container.querySelector("#load-more-wrapper");
     const loadMoreBtn = container.querySelector("#btn-load-more");
+    
+    // 🚀 自动分页加载回调
+    const loadMorePosts = async (page, pageSize) => {
+        try {
+            isLoadingFromNetwork = true;
+            const res = await api.getPosts(page, pageSize, currentSort);
+            const posts = res.data || [];
+            isLoadingFromNetwork = false;
+            
+            if (posts.length === 0) return [];
+            
+            allPostsData = [...allPostsData, ...posts];
+            
+            // 搜索过滤
+            let displayPosts = posts;
+            if (searchKeyword) {
+                displayPosts = posts.filter(post => {
+                    const text = `${post.title||''} ${post.content||''} ${post.author_name||''} ${post.author||''}`.toLowerCase();
+                    return text.includes(searchKeyword);
+                });
+            }
+            
+            // 渲染帖子卡片
+            displayPosts.forEach(post => {
+                const card = createPostCard(post);
+                postsGrid.appendChild(card);
+            });
+            
+            // 图片懒加载
+            lazyLoadImages(postsGrid);
+            
+            return posts;
+        } catch (err) {
+            console.error("分页加载帖子失败:", err);
+            isLoadingFromNetwork = false;
+            return [];
+        }
+    };
+    
+    // 🚀 启动自动分页
+    const startAutoPagination = () => {
+        if (currentPaginator) {
+            currentPaginator.stop();
+        }
+        
+        const scrollContainer = container.closest('.sidebar-scroll-container') || container;
+        
+        currentPaginator = createPaginationLoader({
+            container: scrollContainer,
+            loadMore: loadMorePosts,
+            pageSize: PAGE_SIZE,
+            threshold: 200
+        });
+        
+        currentPaginator.start();
+        
+        // 隐藏原有加载更多按钮
+        loadMoreWrapper.style.display = "none";
+    };
     
     // 获取缓存Key（包含排序参数）
     const getCacheKey = () => `${CACHE_KEY_PREFIX}_${currentSort}`;
@@ -139,6 +207,11 @@ export function createPostsView(currentUser, keyword = "") {
         if (sort) {
             currentSort = sort;
             currentPage = 1;
+            
+            // 🚀 重置分页器
+            if (currentPaginator) {
+                currentPaginator.reset();
+            }
             
             // 🚀 本地排序优先：已有数据时直接本地排序渲染
             if (allPostsData.length > 0) {
@@ -273,6 +346,14 @@ export function createPostsView(currentUser, keyword = "") {
                 });
             }
             
+            // 🚀 图片懒加载
+            lazyLoadImages(postsGrid);
+            
+            // 🚀 启动自动分页（首屏加载完成后）
+            if (!append && page === 1) {
+                startAutoPagination();
+            }
+            
             // 显示/隐藏加载更多（基于过滤后的数据）
             const loadedCount = page * PAGE_SIZE;
             const filteredTotal = searchKeyword ? displayPosts.length : total;
@@ -344,6 +425,12 @@ export function createPostsView(currentUser, keyword = "") {
         cards.forEach((card, index) => {
             applyCardAnimation(card, 'abyss', index, visibleCount);
         });
+        
+        // 🚀 图片懒加载
+        lazyLoadImages(postsGrid);
+        
+        // 🚀 启动自动分页
+        startAutoPagination();
         
         // 显示加载更多
         if (filteredPosts.length > PAGE_SIZE) {

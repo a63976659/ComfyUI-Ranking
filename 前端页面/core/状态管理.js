@@ -20,6 +20,7 @@
  */
 
 import { CACHE } from "./全局配置.js";
+import { clearSensitiveCache } from "../components/性能优化工具.js";
 
 
 // ==========================================
@@ -302,13 +303,19 @@ export function logout() {
         token: null,
         wallet: null
     };
-    
+
+    // 清除内存缓存（items/creators/users）
+    Object.values(state.cache).forEach(cache => cache.clear());
+
+    // 清除敏感数据内存缓存
+    clearSensitiveCache();
+
     // 清除存储
     localStorage.removeItem(CACHE.LEGACY_KEYS.USER);
     localStorage.removeItem(CACHE.LEGACY_KEYS.TOKEN);
     sessionStorage.removeItem(CACHE.LEGACY_KEYS.USER);
     sessionStorage.removeItem(CACHE.LEGACY_KEYS.TOKEN);
-    
+
     eventBus.emit(EVENTS.USER_LOGOUT);
 }
 

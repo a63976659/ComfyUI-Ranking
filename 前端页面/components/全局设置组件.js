@@ -312,7 +312,8 @@ export function createSettingsView() {
             <!-- 设置项：缓存统计与清理 -->
             <div class="setting-item" style="flex-direction: column; align-items: flex-start; gap: 12px;">
                 <div style="flex: 1; width: 100%;">
-                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.cache_stats')}</div>
+                    <div style="color: #fff; font-size: 14px; margin-bottom: 2px; font-weight: 500;">${t('settings.cache_stats')}</div>
+                    <div style="color: #999; font-size: 12px; line-height: 1.4;">${t('settings.cache_stats_hint')}</div>
                 </div>
                 <div id="cache-stats-panel" style="width: 100%; display: flex; flex-direction: column; gap: 6px;">
                     <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #888; font-size: 13px;">

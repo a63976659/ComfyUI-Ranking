@@ -179,6 +179,28 @@ export function createTopNav() {
             };
         }
     };
+
+    // 🔄 跨标签页登录状态同步：其他标签页修改 localStorage 时触发
+    window.addEventListener('storage', (event) => {
+        if (event.key === 'ComfyCommunity_Token' || event.key === 'ComfyCommunity_User') {
+            if (!event.newValue) {
+                // 其他标签页登出 → 本标签页也同步登出
+                if (currentUser) {
+                    currentUser = null;
+                    updateUserButtonState();
+                }
+            } else if (event.key === 'ComfyCommunity_User') {
+                // 其他标签页登入了不同账号 → 刷新本标签页用户状态
+                try {
+                    const data = JSON.parse(event.newValue);
+                    if (data.user && data.user.account !== (currentUser && currentUser.account)) {
+                        currentUser = data.user;
+                        updateUserButtonState();
+                    }
+                } catch (e) {}
+            }
+        }
+    });
     
     updateUserButtonState();
 

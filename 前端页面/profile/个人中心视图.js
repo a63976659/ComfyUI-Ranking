@@ -12,8 +12,10 @@ import { openRechargeModal } from "../market/资金与钱包_充值组件.js";
 import { openWithdrawModal } from "../market/资金与钱包_提现组件.js"; 
 import { buildProfileHTML } from "./个人中心_UI模板.js";   
 import { openTipModal } from "./个人中心_赞赏组件.js";     
-import { getBannerCacheKey, isAdmin } from "../core/全局配置.js";
+import { getBannerCacheKey, isAdmin, getCurrentAccount } from "../core/全局配置.js";
 import { getVersionConfig, getStageLabel } from "../components/关于插件组件.js";
+import { clearAllCache, clearSensitiveCache } from "../components/性能优化工具.js";
+import { logout } from "../core/状态管理.js";
 
 
 // ==========================================
@@ -170,9 +172,33 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                 container.querySelector("#btn-open-settings").onclick = () => { isSettingsView = true; render(); };
                 container.querySelector("#btn-logout").onclick = async () => {
                     if (await showConfirm(t('confirm.logout'))) {
-                        localStorage.removeItem("ComfyCommunity_User"); localStorage.removeItem("ComfyCommunity_Token");
-                        sessionStorage.removeItem("ComfyCommunity_User"); sessionStorage.removeItem("ComfyCommunity_Token");
-                        window.dispatchEvent(new CustomEvent("comfy-route-back")); 
+                        // 获取当前账号（清除前获取）
+                        const currentAccount = getCurrentAccount();
+
+                        // 1. 清除当前用户的 Profile 缓存
+                        if (currentAccount) {
+                            localStorage.removeItem(`ComfyCommunity_ProfileCache_${currentAccount}`);
+                            localStorage.removeItem(`ComfyRanking_SidebarBackground_${currentAccount}`);
+                            localStorage.removeItem(`ComfyRanking_ProfileBannerCache_${currentAccount}`);
+                        }
+
+                        // 2. 清除通用用户数据缓存
+                        localStorage.removeItem("ComfyCommunity_ListCache");
+                        localStorage.removeItem("ComfyCommunity_ChatHistory");
+                        localStorage.removeItem("ComfyRanking_Notifications");
+                        localStorage.removeItem("ComfyRanking_ChatList");
+
+                        // 3. 清除所有 ComfyRanking_ 前缀的数据缓存
+                        clearAllCache();
+
+                        // 4. 清除内存中的敏感数据缓存
+                        clearSensitiveCache();
+
+                        // 5. 调用状态管理 logout（清除 Token、User、内存状态）
+                        logout();
+
+                        // 6. 触发事件
+                        window.dispatchEvent(new CustomEvent("comfy-route-back"));
                         window.dispatchEvent(new CustomEvent("comfy-user-logout"));
                         showToast(t('feedback.logged_out'), "info");
                     }

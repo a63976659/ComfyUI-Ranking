@@ -18,7 +18,7 @@
 import { api } from "../core/网络请求API.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { setCache, getCache, createSkeleton } from "../components/性能优化工具.js";
+import { setCache, getCache, createSkeleton, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
 import { applyCardAnimation } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
@@ -103,6 +103,7 @@ export function createTasksView(currentUser, keyword = "") {
     let currentSort = "latest";
     let allTasksData = [];  // 全量数据缓存
     let isLoadingFromNetwork = false;
+    let paginator = null;
     
     // 🎯 监听外部筛选变化事件
     const handleFilterChange = (e) => {
@@ -112,6 +113,7 @@ export function createTasksView(currentUser, keyword = "") {
         if (status !== undefined && status !== currentStatus) {
             currentStatus = status;
             currentPage = 1;
+            if (paginator) paginator.reset();
             loadTasks(1, false);
             return;
         }
@@ -120,6 +122,7 @@ export function createTasksView(currentUser, keyword = "") {
         if (sort) {
             currentSort = sort;
             currentPage = 1;
+            if (paginator) paginator.reset();
             
             // 🚀 本地排序优先：已有数据时直接本地排序渲染
             if (allTasksData.length > 0) {
@@ -255,6 +258,9 @@ export function createTasksView(currentUser, keyword = "") {
                 tasksList.appendChild(card);
             });
             
+            // 🖼️ 懒加载新渲染的图片
+            lazyLoadImages(tasksList);
+            
             // ✨ 应用数据流动画（仅首次加载）
             if (!append && page === 1) {
                 const visibleCount = Math.min(cards.length, 8);
@@ -329,6 +335,9 @@ export function createTasksView(currentUser, keyword = "") {
             tasksList.appendChild(card);
         });
         
+        // 🖼️ 懒加载新渲染的图片
+        lazyLoadImages(tasksList);
+        
         // ✨ 应用数据流动画
         const visibleCount = Math.min(cards.length, 8);
         cards.forEach((card, index) => {
@@ -388,7 +397,7 @@ export function createTasksView(currentUser, keyword = "") {
         return false;
     };
     
-    // 加载更多
+    // 加载更多（原有按钮，将被自动分页替代）
     loadMoreBtn.onclick = () => {
         currentPage++;
         loadTasks(currentPage, true);
@@ -396,6 +405,66 @@ export function createTasksView(currentUser, keyword = "") {
     
     // 初始加载
     loadTasks(1);
+    
+    // 🚀 初始化自动分页（延迟以确保 DOM 已挂载）
+    requestAnimationFrame(() => {
+        setTimeout(() => {
+            const scrollContainer = container.closest('.sidebar-scroll-container') || container;
+            paginator = createPaginationLoader({
+                container: scrollContainer,
+                loadMore: async (page, pageSize) => {
+                    try {
+                        isLoadingFromNetwork = true;
+                        const res = await api.getTasks(page, pageSize, currentStatus || null, currentSort);
+                        const tasks = res.data || [];
+                        isLoadingFromNetwork = false;
+                        
+                        if (tasks.length > 0) {
+                            allTasksData = [...allTasksData, ...tasks];
+                            
+                            let displayTasks = tasks;
+                            if (searchKeyword) {
+                                displayTasks = tasks.filter(task => {
+                                    const text = `${task.title||''} ${task.description||''} ${task.publisher_name||''} ${task.publisher||''}`.toLowerCase();
+                                    return text.includes(searchKeyword);
+                                });
+                            }
+                            
+                            displayTasks.forEach(task => {
+                                const card = createTaskCard(task);
+                                tasksList.appendChild(card);
+                            });
+                            
+                            // 🖼️ 懒加载追加的图片
+                            lazyLoadImages(tasksList);
+                        }
+                        
+                        return tasks;
+                    } catch (err) {
+                        isLoadingFromNetwork = false;
+                        console.error("自动分页加载失败:", err);
+                        return [];
+                    }
+                },
+                pageSize: PAGE_SIZE,
+                threshold: 200
+            });
+            paginator.start();
+            loadMoreWrapper.style.display = "none";
+        }, 0);
+    });
+    
+    // 🧹 组件清理方法
+    container._cleanup = () => {
+        if (paginator) {
+            paginator.stop();
+            paginator = null;
+        }
+        if (currentFilterHandler) {
+            window.removeEventListener("comfy-task-filter-change", currentFilterHandler);
+            currentFilterHandler = null;
+        }
+    };
     
     return container;
 }

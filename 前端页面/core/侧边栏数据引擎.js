@@ -276,6 +276,7 @@ export async function loadSidebarContent({
     // 停止之前的分页加载器
     if (state.loader) {
         state.loader.stop();
+        state.loader = null;  // 清除引用，防止旧分页器状态残留
     }
     
     // ========== 渲染函数：渲染一批数据 ==========
@@ -335,7 +336,7 @@ export async function loadSidebarContent({
         
         // ✨ 应用动画（仅对首次渲染的可见卡片）
         if (!append) {
-            const visibleCount = Math.min(cards.length, 10); // 只对前10张卡片播放动画
+            const visibleCount = Math.min(cards.length, 12); // 只对前12张卡片播放动画
             cards.forEach((card, index) => {
                 applyCardAnimation(card, animationType, index, visibleCount);
             });
@@ -671,6 +672,12 @@ export async function loadSidebarContent({
 // 📜 设置分页加载器
 // ==========================================
 function _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab) {
+    // 安全清理旧分页器，防止状态残留和重复事件监听
+    if (state.loader) {
+        state.loader.stop();
+    }
+    state.loader = null;
+    
     // 获取滚动容器（侧边栏主容器）
     const scrollContainer = contentArea.closest(".sidebar-scroll-container") || contentArea.parentElement;
     
