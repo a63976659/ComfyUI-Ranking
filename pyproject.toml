@@ -1,7 +1,7 @@
 [project]
 name = "ComfyUI-Ranking"
-description = "ComfyUI-Ranking精选社区，一个排行榜工具"
-version = "1.0.3"
+description = "ComfyUI 精选社区 —— 让创作有价值，让分享有回报。一个深度集成于 ComfyUI 的内容社区插件，支持工具发布、应用分享、资源推荐、任务委托等功能，打造 ComfyUI 生态的价值闭环。"
+version = "1.2.0"
 license = { file = "LICENSE" }
 dependencies = []
 
