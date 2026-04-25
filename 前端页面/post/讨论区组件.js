@@ -111,7 +111,7 @@ export function createPostsView(currentUser, keyword = "") {
             
             if (posts.length === 0) return [];
             
-            allPostsData = [...allPostsData, ...posts];
+            allPostsData = [...allPostsData, ...proxyImages(posts)];
             
             // 搜索过滤
             let displayPosts = posts;
@@ -299,10 +299,10 @@ export function createPostsView(currentUser, keyword = "") {
             
             // 缓存第一页数据
             if (page === 1) {
-                allPostsData = posts;
+                allPostsData = proxyImages(posts);
                 setCache(cacheKey, posts, CACHE_TTL, true);
             } else {
-                allPostsData = [...allPostsData, ...posts];
+                allPostsData = [...allPostsData, ...proxyImages(posts)];
             }
             
             if (!append) {
