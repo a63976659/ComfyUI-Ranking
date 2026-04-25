@@ -247,24 +247,62 @@ async def cache_video_handler(request):
                             await stream_resp.write_eof()
                             return stream_resp
 
-                        # 下载并缓存（流式写入，不读入内存）
+                        # 🚀 Tee 流式缓存：边下载边转发给客户端，同时写入本地缓存
                         os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)
+                        content_type = response.headers.get('Content-Type', 'video/mp4')
+
+                        headers = {
+                            'Content-Type': content_type,
+                            'Accept-Ranges': 'bytes',
+                            'Cache-Control': 'public, max-age=86400',
+                        }
+                        if content_length:
+                            headers['Content-Length'] = content_length
+
+                        resp = web.StreamResponse(status=200, headers=headers)
+                        await resp.prepare(request)
+
                         tmp_path = local_path + f'.tmp.{uuid.uuid4().hex[:8]}'
+                        downloaded_size = 0
+                        expected_size = int(content_length) if content_length else None
+
                         try:
-                            with open(tmp_path, "wb") as f:
+                            with open(tmp_path, 'wb') as f:
                                 async for chunk in response.content.iter_chunked(256 * 1024):
-                                    f.write(chunk)
-                            os.replace(tmp_path, local_path)
-                            print(f"[ComfyUI-Ranking] ✅ 成功下载并缓存视频: {url_hash}.{ext}")
+                                    f.write(chunk)                # 写入本地缓存
+                                    await resp.write(chunk)       # 同时转发给客户端
+                                    downloaded_size += len(chunk)
+
+                            # 下载完成，校验文件大小
+                            if expected_size and downloaded_size == expected_size:
+                                os.replace(tmp_path, local_path)  # 原子重命名
+                                print(f"[ComfyUI-Ranking] ✅ 成功下载并缓存视频: {url_hash}.{ext}")
+                            elif not expected_size and downloaded_size > 0:
+                                os.replace(tmp_path, local_path)  # 无Content-Length但有数据，也保存
+                                print(f"[ComfyUI-Ranking] ✅ 成功下载并缓存视频: {url_hash}.{ext}")
+                            else:
+                                # 大小不一致或没有数据，删除不完整文件
+                                if os.path.exists(tmp_path):
+                                    os.remove(tmp_path)
+
                         except Exception as e:
+                            # 下载或转发过程中出错，清理临时文件
                             if os.path.exists(tmp_path):
                                 try:
                                     os.remove(tmp_path)
                                 except:
                                     pass
-                            raise e
+                            print(f"[ComfyUI-Ranking] ⚠️ 视频下载失败: {url[:80]}... 错误: {str(e)}")
+                            # 注意：此时客户端已收到部分数据，无法再发送错误响应
+                            # 浏览器会处理不完整的流（显示加载失败或自动重试）
 
-                        return await _serve_video_file(request, local_path)
+                        finally:
+                            try:
+                                await resp.write_eof()
+                            except Exception:
+                                pass  # 客户端已断开，忽略
+
+                        return resp
             except Exception as e:
                 print(f"[ComfyUI-Ranking] ⚠️ 视频下载失败: {url[:80]}... 错误: {str(e)}")
                 # 如果存在 0 字节的损坏缓存文件，清理掉以便下次重试

@@ -784,9 +784,9 @@ export function createPublishPostView(currentUser, editPostData = null) {
         }
         
         // 大小检查
-        const MAX_SIZE = 50 * 1024 * 1024;
+        const MAX_SIZE = 100 * 1024 * 1024;
         if (file.size > MAX_SIZE) {
-            showToast(t('post.error_video_size') || '视频大小不能超过 50MB', "warning");
+            showToast(t('post.error_video_size') || '视频大小不能超过 100MB', "warning");
             videoInput.value = '';
             return;
         }
