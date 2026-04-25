@@ -1,5 +1,5 @@
 // 前端页面/components/关于插件组件.js
-import { api } from "../core/网络请求API.js";
+import { api, request } from "../core/网络请求API.js";
 
 // 🏷️ 版本配置缓存
 let cachedVersionConfig = null;
@@ -9,7 +9,7 @@ async function getVersionConfig() {
     if (cachedVersionConfig) return cachedVersionConfig;
 
     try {
-        const res = await api.getSystemConfig('project_version');
+        const res = await request('/api/public/project-version');
         if (res?.data) {
             cachedVersionConfig = res.data;
             return cachedVersionConfig;
