@@ -45,6 +45,8 @@ export async function recordView(apiMethod, contentId, cachePrefix, onSuccess = 
             return res;
         }
     } catch (err) {
+        // 修复：即使失败也记录防抖时间戳，避免 401 等错误导致频繁重试
+        _viewRecordCache[cacheKey] = now;
         // 浏览记录失败不影响页面显示，但输出详细错误便于调试
         console.error(`[浏览量调试] 记录${cachePrefix}浏览量失败:`, err.message || err);
         console.error(`[浏览量调试] 请求参数 - contentId: ${contentId}, cachePrefix: ${cachePrefix}`);
