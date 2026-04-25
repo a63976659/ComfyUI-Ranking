@@ -3,8 +3,9 @@
 // 🖼️ 图片代理模块
 // ==========================================
 // 作用：处理图片URL的本地代理转换，支持入口清洗和出口剥离
-// 说明：此模块无任何外部依赖
 // ==========================================
+
+import { API } from './全局配置.js';
 
 // 🟢 入口清洗：接收云端数据时，转换为本地代理，并带【自愈机制】清理被污染的历史数据
 // 🚀 统一缓存：所有头像字段都走同一个缓存代理，无需重复下载
@@ -64,6 +65,10 @@ export function proxyImages(obj) {
                 // 只有外部网络链接才挂上本地视频缓存代理
                 if (originalUrl.startsWith('http')) {
                     obj[key] = `/community_hub/video?url=${encodeURIComponent(originalUrl)}`;
+                } else if (originalUrl && !originalUrl.startsWith('/') && !originalUrl.startsWith('data:')) {
+                    // 🎬 相对路径（如 uploads/post_video/...），拼接云端 API 基础 URL 构成完整 URL
+                    const fullUrl = `${API.BASE_URL}/api/image_proxy?path=${encodeURIComponent(originalUrl)}`;
+                    obj[key] = `/community_hub/video?url=${encodeURIComponent(fullUrl)}`;
                 } else {
                     obj[key] = originalUrl;
                 }
