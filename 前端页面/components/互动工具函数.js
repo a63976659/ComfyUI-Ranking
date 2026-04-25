@@ -14,7 +14,11 @@ import { t } from "./用户体验增强.js";
 // ==========================================
 
 const _viewRecordCache = {};
-const VIEW_DEBOUNCE_MS = 300000; // 5分钟防抖
+const VIEW_DEBOUNCE_MS = 300000;     // 5分钟成功冷却
+const VIEW_ERROR_COOLDOWN_MS = 30000; // 30秒错误冷却
+
+// 防重复提交状态跟踪
+const _pendingActions = new Set();
 
 /**
  * 记录内容浏览量（带5分钟防抖）
@@ -28,25 +32,26 @@ export async function recordView(apiMethod, contentId, cachePrefix, onSuccess = 
     console.log(`[浏览量调试] recordView 被调用 - prefix: ${cachePrefix}, id: ${contentId}`);
     const now = Date.now();
     const cacheKey = `${cachePrefix}_${contentId}`;
-    
-    // 检查是否在防抖时间内
-    if (_viewRecordCache[cacheKey] && now - _viewRecordCache[cacheKey] < VIEW_DEBOUNCE_MS) {
-        console.log(`[浏览量调试] 防抖拦截 - ${cacheKey}, 距上次: ${now - _viewRecordCache[cacheKey]}ms`);
+    const cached = _viewRecordCache[cacheKey];
+
+    // 检查是否在防抖/冷却时间内（成功5分钟，失败30秒）
+    if (cached && now - cached.time < (cached.success ? VIEW_DEBOUNCE_MS : VIEW_ERROR_COOLDOWN_MS)) {
+        console.log(`[浏览量调试] 防抖拦截 - ${cacheKey}, 距上次: ${now - cached.time}ms, 上次状态: ${cached.success ? 'success' : 'error'}`);
         return null; // 防抖中，跳过
     }
-    
+
     try {
         const res = await apiMethod(contentId);
         console.log(`[浏览量调试] API响应:`, res?.status, res);
         if (res.status === "success") {
-            // 成功后才记录时间戳
-            _viewRecordCache[cacheKey] = now;
+            // 成功后记录时间戳和成功状态
+            _viewRecordCache[cacheKey] = { time: now, success: true };
             if (onSuccess) onSuccess(res);
             return res;
         }
     } catch (err) {
-        // 修复：即使失败也记录防抖时间戳，避免 401 等错误导致频繁重试
-        _viewRecordCache[cacheKey] = now;
+        // 失败时记录较短冷却时间，网络恢复后可快速重试
+        _viewRecordCache[cacheKey] = { time: now, success: false };
         // 浏览记录失败不影响页面显示，但输出详细错误便于调试
         console.error(`[浏览量调试] 记录${cachePrefix}浏览量失败:`, err.message || err);
         console.error(`[浏览量调试] 请求参数 - contentId: ${contentId}, cachePrefix: ${cachePrefix}`);
@@ -113,32 +118,41 @@ export async function handleToggleLike(apiMethod, contentId, buttonEl, countEl, 
         showToast(t('auth.login_required'), "warning");
         return null;
     }
-    
+
+    const actionKey = `like_${contentId}`;
+    if (_pendingActions.has(actionKey)) return null; // 防重复
+    _pendingActions.add(actionKey);
+
+    if (buttonEl) buttonEl.disabled = true; // 立即禁用
+
     try {
         const res = await apiMethod(contentId);
-        
+
         // 🔥 防御性增强：检查响应数据有效性
         if (!res || res.status !== "success") {
             console.warn('点赞响应异常:', res);
             return null;
         }
-        
+
         const likeCount = typeof res.likes === 'number' ? res.likes : 0;
         if (countEl) countEl.textContent = likeCount;
-        
+
         if (res.action === "liked") {
-            buttonEl.style.background = "#FF5722";
-            buttonEl.style.borderColor = "#FF5722";
+            if (buttonEl) buttonEl.style.background = "#FF5722";
+            if (buttonEl) buttonEl.style.borderColor = "#FF5722";
             showToast(t('post.liked'), "success");
         } else {
-            buttonEl.style.background = "#333";
-            buttonEl.style.borderColor = "#555";
+            if (buttonEl) buttonEl.style.background = "#333";
+            if (buttonEl) buttonEl.style.borderColor = "#555";
         }
         return res;
     } catch (err) {
         console.error('点赞操作失败:', err);
         showToast(t('task.operation_failed'), "error");
         return null;
+    } finally {
+        _pendingActions.delete(actionKey);
+        if (buttonEl) buttonEl.disabled = false; // 恢复
     }
 }
 
@@ -156,34 +170,43 @@ export async function handleToggleFavorite(apiMethod, contentId, buttonEl, count
         showToast(t('auth.login_required'), "warning");
         return null;
     }
-    
+
+    const actionKey = `favorite_${contentId}`;
+    if (_pendingActions.has(actionKey)) return null; // 防重复
+    _pendingActions.add(actionKey);
+
+    if (buttonEl) buttonEl.disabled = true; // 立即禁用
+
     try {
         const res = await apiMethod(contentId);
-        
+
         // 🔥 防御性增强：检查响应数据有效性
         if (!res || res.status !== "success") {
             console.warn('收藏响应异常:', res);
             return null;
         }
-        
+
         const favoriteCount = typeof res.favorites === 'number' ? res.favorites : 0;
         if (countEl) countEl.textContent = favoriteCount;
-        
+
         if (res.action === "favorited") {
-            buttonEl.style.background = "#FFC107";
-            buttonEl.style.borderColor = "#FFC107";
-            buttonEl.style.color = "#000";
+            if (buttonEl) buttonEl.style.background = "#FFC107";
+            if (buttonEl) buttonEl.style.borderColor = "#FFC107";
+            if (buttonEl) buttonEl.style.color = "#000";
             showToast(t('post.favorited'), "success");
         } else {
-            buttonEl.style.background = "#333";
-            buttonEl.style.borderColor = "#555";
-            buttonEl.style.color = "#fff";
+            if (buttonEl) buttonEl.style.background = "#333";
+            if (buttonEl) buttonEl.style.borderColor = "#555";
+            if (buttonEl) buttonEl.style.color = "#fff";
         }
         return res;
     } catch (err) {
         console.error('收藏操作失败:', err);
         showToast(t('task.operation_failed'), "error");
         return null;
+    } finally {
+        _pendingActions.delete(actionKey);
+        if (buttonEl) buttonEl.disabled = false; // 恢复
     }
 }
 

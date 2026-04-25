@@ -135,7 +135,7 @@ export function createPostsView(currentUser, keyword = "") {
         } catch (err) {
             console.error("分页加载帖子失败:", err);
             isLoadingFromNetwork = false;
-            return [];
+            return null;  // 返回 null 表示加载失败（区别于空数组表示没有更多数据）
         }
     };
     

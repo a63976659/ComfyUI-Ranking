@@ -29,6 +29,7 @@ import {
     lazyLoadImages 
 } from "../components/性能优化工具.js";
 import { applyCardAnimation, getAnimationTypeForTab } from "../components/动画音效引擎.js";
+import { t } from "../components/用户体验增强.js";
 
 // 💬 讨论区组件（动态导入）
 let postsViewModule = null;
@@ -428,35 +429,40 @@ export async function loadSidebarContent({
             console.log(`🔄 缓存已过期，${tab}_${sort} 启动后台静默刷新...`);
             
             setTimeout(async () => {
-                // 防竞态检查1：用户是否已切走
-                if (renderToken !== getRenderToken()) return;
+                // 保存当前上下文快照，防止网络延迟期间用户切换Tab导致竞态
+                const savedToken = renderToken;
+                const savedTab = tab;
+                const savedSort = sort;
+                
+                // 防竞态检查1：回调开始执行时验证
+                if (savedToken !== getRenderToken()) return;
                 
                 try {
                     let newData;
-                    if (tab === "tools" || tab === "apps" || tab === "recommends") {
-                        const itemType = tab === "tools" ? "tool" : (tab === "apps" ? "app" : "recommend");
-                        const response = await api.getItems(itemType, sort, 200);
+                    if (savedTab === "tools" || savedTab === "apps" || savedTab === "recommends") {
+                        const itemType = savedTab === "tools" ? "tool" : (savedTab === "apps" ? "app" : "recommend");
+                        const response = await api.getItems(itemType, savedSort, 200);
                         newData = proxyImages(response.data || []);
-                    } else if (tab === "creators") {
-                        const response = await api.getCreators(sort, 100);
+                    } else if (savedTab === "creators") {
+                        const response = await api.getCreators(savedSort, 100);
                         newData = proxyImages(response.data || []);
                     } else {
                         return; // posts/tasks 不走这个路径
                     }
                     
-                    // 防竞态检查2：网络请求完成后再验证
-                    if (renderToken !== getRenderToken()) return;
+                    // 防竞态检查2：网络请求完成后再次验证
+                    if (savedToken !== getRenderToken()) return;
                     
-                    // 对比新旧数据
+                    // 只有token匹配时才同时更新state.allData和setCache
                     if (_shouldUpdateData(state.allData, newData)) {
-                        console.log(`✅ ${tab}_${sort} 检测到新数据，执行静默更新`);
+                        console.log(`✅ ${savedTab}_${savedSort} 检测到新数据，执行静默更新`);
                         state.allData = newData;
                         state.displayedCount = 0; // 重置分页计数
-                        const shouldPersist = tab !== "creators";
+                        const shouldPersist = savedTab !== "creators";
                         setCache(cacheKey, newData, getCacheExpireTime(), shouldPersist);
                         
                         // 更新创作者 sessionStorage 缓存
-                        if (tab === "creators") {
+                        if (savedTab === "creators") {
                             saveCreatorsToSessionStorage(newData);
                         }
                         
@@ -466,15 +472,15 @@ export async function loadSidebarContent({
                         renderBatch(firstPage, false);
                         
                         if (newData.length > pageSize) {
-                            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
+                            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, savedTab);
                         }
                     } else {
                         // 数据无变化，仅刷新缓存过期时间
-                        const shouldPersist = tab !== "creators";
+                        const shouldPersist = savedTab !== "creators";
                         setCache(cacheKey, state.allData, getCacheExpireTime(), shouldPersist);
                     }
                 } catch (err) {
-                    console.warn(`⚠️ ${tab}_${sort} 后台刷新失败:`, err);
+                    console.warn(`⚠️ ${savedTab}_${savedSort} 后台刷新失败:`, err);
                 }
             }, 0);
         }
@@ -645,6 +651,13 @@ export async function loadSidebarContent({
                 document.body.appendChild(toastDiv);
                 setTimeout(() => toastDiv.remove(), 3000);
                 return;
+            } else if (keyword) {
+                contentArea.innerHTML = '';
+                const emptyDiv = document.createElement('div');
+                emptyDiv.style.cssText = 'text-align:center; padding: 40px 20px; color:#888;';
+                emptyDiv.textContent = `🔌 ${t('common.network_error_retry') || '网络连接失败，请稍后重试'}`;
+                contentArea.appendChild(emptyDiv);
+                return;
             }
         }
         
@@ -683,6 +696,32 @@ function _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyw
     
     if (!scrollContainer) {
         console.warn("⚠️ 未找到滚动容器，分页加载无法启动");
+        
+        // 添加手动加载按钮作为 fallback
+        let nextPage = 2;
+        const loadMoreBtn = document.createElement('button');
+        loadMoreBtn.textContent = t('task.load_more') || '加载更多';
+        loadMoreBtn.style.cssText = 'width:100%;padding:10px;margin-top:10px;cursor:pointer;border:1px solid #555;border-radius:6px;background:transparent;color:inherit;';
+        loadMoreBtn.onclick = async () => {
+            loadMoreBtn.disabled = true;
+            loadMoreBtn.textContent = t('common.loading') || '加载中...';
+            try {
+                const result = await loadMoreData(nextPage, pageSize);
+                if (result && result.length > 0) {
+                    nextPage++;
+                    loadMoreBtn.textContent = t('task.load_more') || '加载更多';
+                } else {
+                    loadMoreBtn.textContent = t('common.no_more') || '没有更多了';
+                    loadMoreBtn.style.cursor = 'default';
+                    loadMoreBtn.onclick = null;
+                }
+            } catch (err) {
+                console.error("手动加载更多失败:", err);
+                loadMoreBtn.textContent = t('task.load_failed') || '加载失败，点击重试';
+            }
+            loadMoreBtn.disabled = false;
+        };
+        contentArea.appendChild(loadMoreBtn);
         return;
     }
     

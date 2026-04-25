@@ -66,9 +66,14 @@ export function proxyImages(obj) {
                 if (originalUrl.startsWith('http')) {
                     obj[key] = `/community_hub/video?url=${encodeURIComponent(originalUrl)}`;
                 } else if (originalUrl && !originalUrl.startsWith('/') && !originalUrl.startsWith('data:')) {
-                    // 🎬 相对路径（如 uploads/post_video/...），拼接云端 API 基础 URL 构成完整 URL
-                    const fullUrl = `${API.BASE_URL}/api/image_proxy?path=${encodeURIComponent(originalUrl)}`;
-                    obj[key] = `/community_hub/video?url=${encodeURIComponent(fullUrl)}`;
+                    // 🎬 相对路径（如 uploads/post_video/...）
+                    // 离线时不构造远程 URL，保持原样让浏览器从当前域尝试加载
+                    if (navigator.onLine === false) {
+                        obj[key] = originalUrl;
+                    } else {
+                        const fullUrl = `${API.BASE_URL}/api/image_proxy?path=${encodeURIComponent(originalUrl)}`;
+                        obj[key] = `/community_hub/video?url=${encodeURIComponent(fullUrl)}`;
+                    }
                 } else {
                     obj[key] = originalUrl;
                 }

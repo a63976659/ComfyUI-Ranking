@@ -443,7 +443,7 @@ export function createTasksView(currentUser, keyword = "") {
                     } catch (err) {
                         isLoadingFromNetwork = false;
                         console.error("自动分页加载失败:", err);
-                        return [];
+                        return null;
                     }
                 },
                 pageSize: PAGE_SIZE,

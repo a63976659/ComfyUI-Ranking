@@ -108,12 +108,11 @@ async def cache_image_handler(request):
                     content_type, _ = mimetypes.guess_type(local_path)
                     return web.FileResponse(local_path, headers={'Content-Type': content_type or 'image/jpeg'})
                 else:
-                    # 网络请求失败，返回对应状态码
+                    # 源站返回非200，转发原始状态码
                     print(f"[ComfyUI-Ranking] ⚠️ 图片下载失败 (状态码: {response.status}): {url[:80]}...")
-                    return web.Response(status=response.status, text=f"Image download failed: HTTP {response.status}")
-    except Exception as e:
-        # 网络异常（超时、无网络等）优雅处理
-        print(f"[ComfyUI-Ranking] ⚠️ 图片下载失败: {url[:80]}... 错误: {str(e)}")
+                    return web.Response(status=response.status, text=f"Upstream returned {response.status}")
+    except asyncio.TimeoutError as e:
+        print(f"[ComfyUI-Ranking] ⚠️ 图片代理超时: {url[:80]}... 错误: {str(e)}")
         # 如果存在0字节的损坏缓存文件，清理掉以便下次重试
         if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
             try:
@@ -121,7 +120,27 @@ async def cache_image_handler(request):
                 print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
             except:
                 pass
-        return web.Response(status=504, text="Image download failed: Network error")
+        return web.Response(status=504, text="Image proxy timeout")
+    except aiohttp.ClientError as e:
+        print(f"[ComfyUI-Ranking] ⚠️ 图片代理连接错误: {url[:80]}... 错误: {str(e)}")
+        # 如果存在0字节的损坏缓存文件，清理掉以便下次重试
+        if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
+            try:
+                os.remove(local_path)
+                print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
+            except:
+                pass
+        return web.Response(status=502, text=f"Image proxy connection error: {str(e)}")
+    except Exception as e:
+        print(f"[ComfyUI-Ranking] ⚠️ 图片代理内部错误: {url[:80]}... 错误: {str(e)}")
+        # 如果存在0字节的损坏缓存文件，清理掉以便下次重试
+        if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
+            try:
+                os.remove(local_path)
+                print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
+            except:
+                pass
+        return web.Response(status=500, text=f"Image proxy internal error: {str(e)}")
 
 
 async def _serve_video_file(request, file_path):
@@ -151,18 +170,26 @@ async def _serve_video_file(request, file_path):
             'Content-Length': str(end - start + 1),
         })
         await resp.prepare(request)
-        with open(file_path, 'rb') as f:
-            f.seek(start)
-            remaining = end - start + 1
-            chunk_size = 256 * 1024
-            while remaining > 0:
-                to_read = min(chunk_size, remaining)
-                data = f.read(to_read)
-                if not data:
-                    break
-                await resp.write(data)
-                remaining -= len(data)
-        await resp.write_eof()
+        try:
+            with open(file_path, 'rb') as f:
+                f.seek(start)
+                remaining = end - start + 1
+                chunk_size = 256 * 1024
+                while remaining > 0:
+                    to_read = min(chunk_size, remaining)
+                    data = f.read(to_read)
+                    if not data:
+                        break
+                    try:
+                        await resp.write(data)
+                    except (ConnectionResetError, RuntimeError, BrokenPipeError):
+                        break
+                    remaining -= len(data)
+        finally:
+            try:
+                await resp.write_eof()
+            except Exception:
+                pass
         return resp
     else:
         resp = web.StreamResponse(status=200, headers={
@@ -171,13 +198,21 @@ async def _serve_video_file(request, file_path):
             'Content-Length': str(file_size),
         })
         await resp.prepare(request)
-        with open(file_path, 'rb') as f:
-            while True:
-                data = f.read(256 * 1024)
-                if not data:
-                    break
-                await resp.write(data)
-        await resp.write_eof()
+        try:
+            with open(file_path, 'rb') as f:
+                while True:
+                    data = f.read(256 * 1024)
+                    if not data:
+                        break
+                    try:
+                        await resp.write(data)
+                    except (ConnectionResetError, RuntimeError, BrokenPipeError):
+                        break
+        finally:
+            try:
+                await resp.write_eof()
+            except Exception:
+                pass
         return resp
 
 
@@ -230,7 +265,7 @@ async def cache_video_handler(request):
                     async with session.get(url, headers=headers, ssl=False, timeout=VIDEO_TIMEOUT) as response:
                         if response.status != 200:
                             print(f"[ComfyUI-Ranking] ⚠️ 视频下载失败 (状态码: {response.status}): {url[:80]}...")
-                            return web.Response(status=response.status, text=f"Video download failed: HTTP {response.status}")
+                            return web.Response(status=response.status, text=f"Upstream returned {response.status}")
 
                         content_length = response.headers.get('Content-Length')
                         if content_length and int(content_length) > MAX_VIDEO_SIZE:
@@ -266,45 +301,49 @@ async def cache_video_handler(request):
                         downloaded_size = 0
                         expected_size = int(content_length) if content_length else None
 
+                        client_alive = True
+                        source_download_complete = False
                         try:
                             with open(tmp_path, 'wb') as f:
                                 async for chunk in response.content.iter_chunked(256 * 1024):
-                                    f.write(chunk)                # 写入本地缓存
-                                    await resp.write(chunk)       # 同时转发给客户端
+                                    f.write(chunk)
                                     downloaded_size += len(chunk)
-
-                            # 下载完成，校验文件大小
-                            if expected_size and downloaded_size == expected_size:
-                                os.replace(tmp_path, local_path)  # 原子重命名
-                                print(f"[ComfyUI-Ranking] ✅ 成功下载并缓存视频: {url_hash}.{ext}")
-                            elif not expected_size and downloaded_size > 0:
-                                os.replace(tmp_path, local_path)  # 无Content-Length但有数据，也保存
-                                print(f"[ComfyUI-Ranking] ✅ 成功下载并缓存视频: {url_hash}.{ext}")
-                            else:
-                                # 大小不一致或没有数据，删除不完整文件
-                                if os.path.exists(tmp_path):
-                                    os.remove(tmp_path)
-
+                                    if client_alive:
+                                        try:
+                                            await resp.write(chunk)
+                                        except (ConnectionResetError, RuntimeError, BrokenPipeError):
+                                            client_alive = False
+                                            print(f"[ComfyUI-Ranking] ℹ️ 客户端断连，继续后台缓存: {url_hash}")
+                                # 循环正常结束 = 源站下载完成
+                                source_download_complete = True
                         except Exception as e:
-                            # 下载或转发过程中出错，清理临时文件
-                            if os.path.exists(tmp_path):
-                                try:
-                                    os.remove(tmp_path)
-                                except:
-                                    pass
-                            print(f"[ComfyUI-Ranking] ⚠️ 视频下载失败: {url[:80]}... 错误: {str(e)}")
-                            # 注意：此时客户端已收到部分数据，无法再发送错误响应
-                            # 浏览器会处理不完整的流（显示加载失败或自动重试）
-
+                            # 源站下载中断（非客户端断连导致）
+                            print(f"[ComfyUI-Ranking] ⚠️ 源站下载中断: {str(e)}")
+                            source_download_complete = False
                         finally:
                             try:
                                 await resp.write_eof()
                             except Exception:
-                                pass  # 客户端已断开，忽略
+                                pass
+
+                            # 根据 source_download_complete 决定是否保存缓存
+                            if source_download_complete:
+                                if expected_size and downloaded_size == expected_size:
+                                    os.replace(tmp_path, local_path)
+                                    print(f"[ComfyUI-Ranking] ✅ 视频已缓存: {url_hash} ({downloaded_size} bytes)")
+                                elif not expected_size and downloaded_size > 0:
+                                    os.replace(tmp_path, local_path)
+                                    print(f"[ComfyUI-Ranking] ✅ 视频已缓存（无Content-Length）: {url_hash} ({downloaded_size} bytes)")
+                                else:
+                                    if os.path.exists(tmp_path):
+                                        os.remove(tmp_path)
+                            else:
+                                if os.path.exists(tmp_path):
+                                    os.remove(tmp_path)
 
                         return resp
-            except Exception as e:
-                print(f"[ComfyUI-Ranking] ⚠️ 视频下载失败: {url[:80]}... 错误: {str(e)}")
+            except asyncio.TimeoutError as e:
+                print(f"[ComfyUI-Ranking] ⚠️ 视频代理超时: {url[:80]}... 错误: {str(e)}")
                 # 如果存在 0 字节的损坏缓存文件，清理掉以便下次重试
                 if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
                     try:
@@ -312,7 +351,27 @@ async def cache_video_handler(request):
                         print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
                     except:
                         pass
-                return web.Response(status=504, text="Video download failed: Network error")
+                return web.Response(status=504, text="Video proxy timeout")
+            except aiohttp.ClientError as e:
+                print(f"[ComfyUI-Ranking] ⚠️ 视频代理连接错误: {url[:80]}... 错误: {str(e)}")
+                # 如果存在 0 字节的损坏缓存文件，清理掉以便下次重试
+                if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
+                    try:
+                        os.remove(local_path)
+                        print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
+                    except:
+                        pass
+                return web.Response(status=502, text=f"Video proxy connection error: {str(e)}")
+            except Exception as e:
+                print(f"[ComfyUI-Ranking] ⚠️ 视频代理内部错误: {url[:80]}... 错误: {str(e)}")
+                # 如果存在 0 字节的损坏缓存文件，清理掉以便下次重试
+                if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
+                    try:
+                        os.remove(local_path)
+                        print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
+                    except:
+                        pass
+                return web.Response(status=500, text=f"Video proxy internal error: {str(e)}")
     finally:
         # 🔒 锁释放后清理：如果没有其他等待者，删除锁对象防止内存泄漏
         if not lock._waiters:

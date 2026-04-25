@@ -679,6 +679,8 @@ export function createPaginationLoader(options) {
     let isLoading = false;
     let hasMore = true;
     let debounceTimer = null;
+    let consecutiveErrors = 0;
+    let retryTimer = null;
     
     // 加载指示器
     const loadingIndicator = document.createElement("div");
@@ -728,6 +730,27 @@ export function createPaginationLoader(options) {
             currentPage++;  // 先递增，再加载（首屏已渲染第1页，从第2页开始）
             const result = await loadMore(currentPage, pageSize);
             
+            // 加载失败，允许重试
+            if (result === null) {
+                consecutiveErrors++;
+                if (consecutiveErrors >= 3) {
+                    hasMore = false;
+                    loadingIndicator.style.display = "none";
+                    if (retryTimer) clearTimeout(retryTimer);
+                    retryTimer = setTimeout(() => {
+                        consecutiveErrors = 0;
+                        hasMore = true;
+                    }, 5000);
+                }
+                return;
+            }
+            
+            consecutiveErrors = 0;
+            if (retryTimer) {
+                clearTimeout(retryTimer);
+                retryTimer = null;
+            }
+            
             // 判断是否还有更多 - 返回空数组则停止
             if (!result || result.length === 0) {
                 hasMore = false;
@@ -756,6 +779,7 @@ export function createPaginationLoader(options) {
     const stop = () => {
         container.removeEventListener("scroll", handleScroll);
         if (debounceTimer) clearTimeout(debounceTimer);
+        if (retryTimer) clearTimeout(retryTimer);
     };
     
     // 重置状态
@@ -763,6 +787,11 @@ export function createPaginationLoader(options) {
         currentPage = 1;  // 首屏已渲染第1页，分页器从第2页开始
         hasMore = true;
         isLoading = false;
+        consecutiveErrors = 0;
+        if (retryTimer) {
+            clearTimeout(retryTimer);
+            retryTimer = null;
+        }
         loadingIndicator.style.display = "none";
         endIndicator.style.display = "none";
     };
