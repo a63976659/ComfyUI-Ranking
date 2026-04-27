@@ -9,7 +9,7 @@
 // ==========================================
 
 import { api } from "../core/网络请求API.js";
-import { showToast } from "../components/UI交互提示组件.js";
+import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { removeCache } from "../components/性能优化工具.js";
 import { API } from "../core/全局配置.js";
@@ -548,7 +548,30 @@ export function createPublishPostView(currentUser, editPostData = null) {
     }
     
     // 返回按钮
-    container.querySelector("#btn-back-publish").onclick = () => {
+    container.querySelector("#btn-back-publish").onclick = async () => {
+        // 检查是否有已编辑内容（图文或视频模式）
+        const titleVal = container.querySelector("#title-input")?.value?.trim();
+        const contentVal = container.querySelector("#content-input")?.value?.trim();
+        const hasChanges = !!(
+            titleVal ||
+            contentVal ||
+            imageFiles?.length > 0 ||
+            videoFile
+        );
+
+        if (hasChanges) {
+            const confirmed = await showConfirm(
+                isEditMode ? t('publish.unsaved_changes_desc') : t('publish.leave_confirm_desc'),
+                {
+                    title: isEditMode ? t('publish.unsaved_changes_title') : t('publish.leave_confirm_title'),
+                    confirmText: t('common.leave'),
+                    cancelText: t('common.stay'),
+                    type: 'warning'
+                }
+            );
+            if (!confirmed) return;
+        }
+
         window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
     

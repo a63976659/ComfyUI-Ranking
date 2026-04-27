@@ -6,7 +6,7 @@
 // ==========================================
 
 import { api } from "../core/网络请求API.js";
-import { showToast } from "../components/UI交互提示组件.js";
+import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { removeCache } from "../components/性能优化工具.js";
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
@@ -191,7 +191,27 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     // 🔌 绑定事件
     
     // 返回按钮
-    container.querySelector("#btn-back").onclick = () => {
+    container.querySelector("#btn-back").onclick = async () => {
+        const hasChanges = !!(
+            container.querySelector("#task-title")?.value?.trim() ||
+            container.querySelector("#task-description")?.value?.trim() ||
+            container.querySelector("#image-preview")?.children?.length > 0 ||
+            container.querySelector("#ref-link")?.value?.trim()
+        );
+
+        if (hasChanges) {
+            const confirmed = await showConfirm(
+                isEditMode ? t('publish.unsaved_changes_desc') : t('publish.leave_confirm_desc'),
+                {
+                    title: isEditMode ? t('publish.unsaved_changes_title') : t('publish.leave_confirm_title'),
+                    confirmText: t('common.leave'),
+                    cancelText: t('common.stay'),
+                    type: 'warning'
+                }
+            );
+            if (!confirmed) return;
+        }
+
         window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
     

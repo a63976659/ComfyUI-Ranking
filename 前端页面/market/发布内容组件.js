@@ -2,6 +2,7 @@
 import { generatePublishHTML } from "./发布内容_UI模板.js";
 import { handlePublishSubmit } from "./发布内容_提交引擎.js";
 import { t } from "../components/用户体验增强.js";
+import { showConfirm } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 
 // 🖼️ 编辑模式下回显已有图片的辅助函数
@@ -164,7 +165,30 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     // 1. 渲染分离出去的视图模板
     container.innerHTML = generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExistingToken, editItemData, t);
 
-    container.querySelector("#btn-back").onclick = () => { if (onBackCallback) onBackCallback(); };
+    container.querySelector("#btn-back").onclick = async () => {
+        // 检查是否有已编辑内容
+        const hasChanges = !!(
+            container.querySelector("#pub-title")?.value?.trim() ||
+            container.querySelector("#pub-short")?.value?.trim() ||
+            container.querySelector("#pub-full")?.value?.trim() ||
+            imageFiles?.length > 0
+        );
+
+        if (hasChanges) {
+            const confirmed = await showConfirm(
+                isEditMode ? t('publish.unsaved_changes_desc') : t('publish.leave_confirm_desc'),
+                {
+                    title: isEditMode ? t('publish.unsaved_changes_title') : t('publish.leave_confirm_title'),
+                    confirmText: t('common.leave'),
+                    cancelText: t('common.stay'),
+                    type: 'warning'
+                }
+            );
+            if (!confirmed) return;
+        }
+
+        if (onBackCallback) onBackCallback();
+    };
 
     // 2. DOM 节点引用
     const typeSelect = container.querySelector("#pub-type");
