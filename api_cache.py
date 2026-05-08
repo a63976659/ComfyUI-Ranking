@@ -292,9 +292,17 @@ async def cache_video_handler(request):
                             })
                             stream_resp.headers['Content-Length'] = content_length
                             await stream_resp.prepare(request)
-                            async for chunk in response.content.iter_chunked(256 * 1024):
-                                await stream_resp.write(chunk)
-                            await stream_resp.write_eof()
+                            try:
+                                async for chunk in response.content.iter_chunked(256 * 1024):
+                                    try:
+                                        await stream_resp.write(chunk)
+                                    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, RuntimeError):
+                                        break
+                            finally:
+                                try:
+                                    await stream_resp.write_eof()
+                                except Exception:
+                                    pass
                             return stream_resp
 
                         # 🚀 Tee 流式缓存：边下载边转发给客户端，同时写入本地缓存
