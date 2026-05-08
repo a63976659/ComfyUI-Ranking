@@ -1,7 +1,8 @@
 // 前端页面/market/资源安装引擎.js
 import { app } from "../../../scripts/app.js"; 
-import { showToast, showConfirm } from "../components/UI交互提示组件.js";
-import { api } from "../core/网络请求API.js"; 
+import { showToast, showConfirm, createInstallProgress } from "../components/UI交互提示组件.js";
+import { api } from "../core/网络请求API.js";
+import { requestSSE } from "../core/网络请求_基础设施.js";
 import { openUserProfileModal } from "../profile/个人中心视图.js";
 import { CACHE } from "../core/全局配置.js";
 import { removeCache } from "../components/性能优化工具.js";
@@ -290,109 +291,174 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             `;
             inlineStatusBox.querySelector('#btn-cancel-install').onclick = () => inlineStatusBox.style.display = "none";
             inlineStatusBox.querySelector('#btn-confirm-install').onclick = async () => {
-                inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在后台静默安装 (关闭侧边栏不影响进度)...</span>`;
-                
+                // 获取最新的 item 数据以确保路由决策准确
+                let freshHasPrivateToken = !!itemData.has_private_token;
                 try {
-                    // 🚀 双轨分流引擎：免费走直连 Clone，付费走云端防盗版 ZIP 覆写
-                    // 设置了 github_token 的工具（无论免费还是付费）都走云端代理
-                    
-                    // 获取最新的 item 数据以确保路由决策准确
-                    let freshHasPrivateToken = !!itemData.has_private_token;
-                    try {
-                        const freshRes = await api.getItemById(itemData.id);
-                        if (freshRes.status === "success" && freshRes.data) {
-                            freshHasPrivateToken = !!freshRes.data.has_private_token;
-                        }
-                    } catch (e) {
-                        // 获取失败时使用缓存数据的值
-                        console.warn("获取最新 item 数据失败，使用缓存值:", e);
+                    const freshRes = await api.getItemById(itemData.id);
+                    if (freshRes.status === "success" && freshRes.data) {
+                        freshHasPrivateToken = !!freshRes.data.has_private_token;
                     }
-                    const hasPrivateToken = freshHasPrivateToken;
-                    const localApiEndpoint = (isFree && !hasPrivateToken) 
-                        ? "/community_hub/install_tool" 
-                        : "/community_hub/install_private_tool";
-                    
-                    // 发起后台异步安装请求
-                    const res = await fetch(localApiEndpoint, {
-                        method: "POST", headers: { "Content-Type": "application/json" },
-                        // ✅ 补全 id 和 account 凭证参数
-                        body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account }) 
-                    });
-                    const data = await res.json();
-                    
-                    if (data.error) {
-                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 安装失败: ${data.error}</span>`;
-                        showToast(`插件 [${itemData.title}] 安装失败: ${data.error}`, "error"); 
-                    } else {
-                        inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🎉 工具安装成功！</div><div style="color: #aaa; margin-top: 5px;">请重启 ComfyUI 以加载新节点。</div>`;
+                } catch (e) {
+                    // 获取失败时使用缓存数据的值
+                    console.warn("获取最新 item 数据失败，使用缓存值:", e);
+                }
+                const hasPrivateToken = freshHasPrivateToken;
+                const localApiEndpoint = (isFree && !hasPrivateToken)
+                    ? "/community_hub/install_tool"
+                    : "/community_hub/install_private_tool";
+
+                const progress = createInstallProgress(inlineStatusBox);
+
+                try {
+                    // 发起 SSE 流式安装请求
+                    const result = await requestSSE(
+                        `${localApiEndpoint}_stream`,
+                        { url: itemData.link, id: itemData.id, account: currentUser.account },
+                        (event) => progress.update(event.progress, event.message)
+                    );
+
+                    if (result.status === "success") {
+                        progress.complete(result.message);
                         showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
-                        
+
                         // 🚀 安装成功后，盖上本地版本戳
                         if (itemData.latest_version) {
                             localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
                         }
-                        
+
                         // 记录使用量（后端自动去重）
                         try {
                             await api.recordItemUse(itemData.id);
                             clearUsesCache();
                         } catch(err) { console.warn('📊 使用量记录失败:', err); }
-                        
+
                         // 🚀 保存到已获取记录
                         saveAcquiredItem(itemData);
-                        
+
                         // 🚀 更新按钮状态
                         btnUse.innerHTML = `✅ 已安装`;
                         btnUse.style.background = "#4CAF50";
+                    } else {
+                        progress.error(result.message);
+                        showToast(`插件 [${itemData.title}] 安装失败: ${result.message}`, "error");
                     }
-                } catch(err) { 
-                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务。</span>`; 
+                } catch(err) {
+                    // 降级到原接口
+                    progress.destroy();
+                    inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在后台静默安装 (关闭侧边栏不影响进度)...</span>`;
+
+                    try {
+                        const res = await fetch(localApiEndpoint, {
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account })
+                        });
+                        const data = await res.json();
+
+                        if (data.error) {
+                            inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 安装失败: ${data.error}</span>`;
+                            showToast(`插件 [${itemData.title}] 安装失败: ${data.error}`, "error");
+                        } else {
+                            inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🎉 工具安装成功！</div><div style="color: #aaa; margin-top: 5px;">请重启 ComfyUI 以加载新节点。</div>`;
+                            showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
+
+                            if (itemData.latest_version) {
+                                localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
+                            }
+
+                            try {
+                                await api.recordItemUse(itemData.id);
+                                clearUsesCache();
+                            } catch(err2) { console.warn('📊 使用量记录失败:', err2); }
+
+                            saveAcquiredItem(itemData);
+
+                            btnUse.innerHTML = `✅ 已安装`;
+                            btnUse.style.background = "#4CAF50";
+                        }
+                    } catch(err2) {
+                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务。</span>`;
+                    }
                 }
             };
         } else if (isApp) {
-            inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 授权通过，正在安全鉴权并热加载入工作区...</span>`;
-            
+            const progress = createInstallProgress(inlineStatusBox);
+
             // 附带 account 凭证，解决问题 2 (一键鉴权加载)
             try {
-                const res = await fetch("/community_hub/download_app", { 
-                    method: "POST", 
-                    headers: { "Content-Type": "application/json" }, 
-                    body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account }) 
-                });
-                if (!res.ok) {
-                    const errText = await res.text().catch(() => '未知服务端错误');
-                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败 (${res.status})：${errText}</span>`;
-                    return;
-                }
-                const data = await res.json();
-                if (data.error) { 
-                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${data.error}</span>`; 
-                    showToast(`工作流加载失败：${data.error}`, "error");
-                } else {
-                    app.loadGraphData(data.data); 
-                    inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-weight: bold;">✅ 工作流已加载到画布！</div><div style="color: #888; margin-top: 4px;">由于本地节点差异可能出现飘红，请使用管理器补全节点。</div>`;
+                const result = await requestSSE(
+                    "/community_hub/download_app_stream",
+                    { url: itemData.link, id: itemData.id, account: currentUser.account },
+                    (event) => progress.update(event.progress, event.message)
+                );
+
+                if (result.status === "success") {
+                    progress.complete(result.message);
+                    app.loadGraphData(result.data);
                     showToast(`✅ 工作流 [${itemData.title}] 已成功加载到画布！`, "success");
-                    
+
                     // 🚀 安装成功后，盖上本地版本戳
                     if (itemData.latest_version) {
                         localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
                     }
-                    
+
                     // 记录使用量（后端自动去重）
                     api.recordItemUse(itemData.id).then(() => {
                         clearUsesCache();
                     }).catch(err => console.warn('📊 使用量记录失败:', err));
-                    
+
                     // 🚀 保存到已获取记录
                     saveAcquiredItem(itemData);
-                    
+
                     // 🚀 更新按钮状态
                     btnUse.innerHTML = `✅ 已下载`;
                     btnUse.style.background = "#4CAF50";
+                } else {
+                    progress.error(result.message);
+                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${result.message}</span>`;
+                    showToast(`工作流加载失败：${result.message}`, "error");
                 }
             } catch(err) {
-                console.error('❌ 应用下载失败:', err);
-                inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务：${err.message || '网络错误'}</span>`;
+                // 降级到原接口
+                progress.destroy();
+                inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 授权通过，正在安全鉴权并热加载入工作区...</span>`;
+
+                try {
+                    const res = await fetch("/community_hub/download_app", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account })
+                    });
+                    if (!res.ok) {
+                        const errText = await res.text().catch(() => '未知服务端错误');
+                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败 (${res.status})：${errText}</span>`;
+                        return;
+                    }
+                    const data = await res.json();
+                    if (data.error) {
+                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${data.error}</span>`;
+                        showToast(`工作流加载失败：${data.error}`, "error");
+                    } else {
+                        app.loadGraphData(data.data);
+                        inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-weight: bold;">✅ 工作流已加载到画布！</div><div style="color: #888; margin-top: 4px;">由于本地节点差异可能出现飘红，请使用管理器补全节点。</div>`;
+                        showToast(`✅ 工作流 [${itemData.title}] 已成功加载到画布！`, "success");
+
+                        if (itemData.latest_version) {
+                            localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
+                        }
+
+                        api.recordItemUse(itemData.id).then(() => {
+                            clearUsesCache();
+                        }).catch(err => console.warn('📊 使用量记录失败:', err));
+
+                        saveAcquiredItem(itemData);
+
+                        btnUse.innerHTML = `✅ 已下载`;
+                        btnUse.style.background = "#4CAF50";
+                    }
+                } catch(err2) {
+                    console.error('❌ 应用下载失败:', err2);
+                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务：${err2.message || '网络错误'}</span>`;
+                }
             }
         } else {
             // ☁️ 网盘链接或纯链接模式（recordItemUse 延迟到用户点击按钮后）

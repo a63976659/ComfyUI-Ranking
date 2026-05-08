@@ -83,7 +83,7 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
             <div id="github-token-container" style="display: ${hasExistingToken ? 'block' : 'none'}; margin-top: 10px; padding: 12px; background: rgba(33, 150, 243, 0.1); border: 1px dashed #2196F3; border-radius: 6px;">
                 <label style="display: block; margin-bottom: 6px; color: #2196F3; font-weight: bold;">🔒 ${t('publish.pat_label')} <span style="color: #F44336;">*</span></label>
                 <div style="font-size: 12px; color: #aaa; margin-bottom: 8px; line-height: 1.4;">${t('publish.pat_hint')}</div>
-                <input type="password" id="pub-github-token" value="${isEditMode ? (safeData.github_token || '') : ''}" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="width: 100%; padding: 8px; background: #222; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
+                <input type="password" id="pub-github-token" value="${isEditMode ? (safeData.github_token || '') : ''}" placeholder="${hasExistingToken && !safeData.github_token ? t('publish.token_keep_hint') : t('publish.token_placeholder')}" style="width: 100%; padding: 8px; background: #222; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
             </div>
         </div>
 

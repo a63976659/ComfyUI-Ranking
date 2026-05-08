@@ -9,6 +9,6 @@
 //   - 网络请求_业务API.js (api对象：40+个业务方法)
 // ==========================================
 
-export { request, requestCancelManager, invalidateRelatedCache } from './网络请求_基础设施.js';
+export { request, requestCancelManager, invalidateRelatedCache, requestSSE } from './网络请求_基础设施.js';
 export { proxyImages, unproxyImages } from './网络请求_图片代理.js';
 export { api } from './网络请求_业务API.js';

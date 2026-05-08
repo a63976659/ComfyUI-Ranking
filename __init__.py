@@ -1,7 +1,7 @@
 # __init__.py (完整替换)
 from server import PromptServer
-from .api_tool import install_tool_handler, install_private_tool_handler # 🚀 新增暴露
-from .api_app import download_app_handler
+from .api_tool import install_tool_handler, install_private_tool_handler, install_tool_stream_handler, install_private_tool_stream_handler
+from .api_app import download_app_handler, download_app_stream_handler
 from .api_cache import cache_image_handler, cache_video_handler, cache_stats_handler, cache_clear_handler  # 🟢 引入缓存代理模块（图片+视频+统计清理）
 
 WEB_DIRECTORY = "./前端页面"
@@ -10,8 +10,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {}
 
 routes = PromptServer.instance.routes
 routes.post("/community_hub/install_tool")(install_tool_handler)
-routes.post("/community_hub/install_private_tool")(install_private_tool_handler) # 🚀 注册路由
+routes.post("/community_hub/install_private_tool")(install_private_tool_handler)
 routes.post("/community_hub/download_app")(download_app_handler)
+routes.post("/community_hub/install_tool_stream")(install_tool_stream_handler)
+routes.post("/community_hub/install_private_tool_stream")(install_private_tool_stream_handler)
+routes.post("/community_hub/download_app_stream")(download_app_stream_handler)
 routes.get("/community_hub/image")(cache_image_handler)  # 🟢 注册图片缓存路由
 routes.get("/community_hub/video")(cache_video_handler)    # 🎬 注册视频缓存路由
 routes.get("/community_hub/cache/stats")(cache_stats_handler)   # 📊 注册缓存统计路由

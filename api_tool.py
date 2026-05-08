@@ -7,6 +7,7 @@ import urllib.request
 import urllib.error
 import subprocess
 import shutil
+import asyncio
 from aiohttp import web
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -171,3 +172,219 @@ async def install_private_tool_handler(request):
         return web.json_response({"error": f"拉取中断: {err_msg}"}, status=500)
     except Exception as e:
         return web.json_response({"error": f"本地解压覆盖异常: {str(e)}"}, status=500)
+
+async def install_tool_stream_handler(request):
+    """SSE 流式接口：通过 Git Clone 下载插件，实时推送进度"""
+    data = await request.json()
+    item_url = data.get("url")
+    item_id = data.get("id")
+    account = data.get("account")
+
+    resp = web.StreamResponse(
+        status=200,
+        headers={
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+        }
+    )
+    await resp.prepare(request)
+
+    async def send_progress(stage, progress, message, status=None):
+        event = {"stage": stage, "progress": progress, "message": message}
+        if status:
+            event["status"] = status
+        await resp.write(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode('utf-8'))
+
+    try:
+        if not item_url or not account:
+            await send_progress("error", -1, "缺少下载凭证或链接", "error")
+            await resp.write_eof()
+            return resp
+
+        await send_progress("validate", 5, "校验安装参数...")
+
+        target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
+        clone_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
+
+        await send_progress("cleanup", 15, "清理残留目录...")
+        if os.path.exists(clone_target_path):
+            try:
+                shutil.rmtree(clone_target_path)
+            except Exception as e:
+                await send_progress("error", -1, f"目录 {target_dir_name} 已存在且被占用，无法自动清理，请先手动删除。错误: {str(e)}", "error")
+                await resp.write_eof()
+                return resp
+
+        # 复制当前系统环境变量，防止 git 弹窗要求输入密码导致后台卡死
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        env["GCM_INTERACTIVE"] = "never"
+        env["GIT_CONFIG_NOSYSTEM"] = "1"
+        env["GCM_CREDENTIAL_STORE"] = ""
+
+        mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
+
+        await send_progress("git_mirror", 25, "尝试镜像源克隆...")
+
+        try:
+            await send_progress("git_cloning", 50, "正在克隆仓库...")
+            proc = await asyncio.create_subprocess_exec(
+                "git", "clone", mirror_url, clone_target_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env
+            )
+            stdout, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    proc.returncode, ["git", "clone", mirror_url, clone_target_path],
+                    output=stdout, stderr=stderr
+                )
+            await send_progress("complete", 100, "✅ 安装成功！", "success")
+
+        except subprocess.CalledProcessError as e1:
+            await send_progress("git_fallback", 55, "镜像失败，切换直连源...")
+
+            if os.path.exists(clone_target_path):
+                shutil.rmtree(clone_target_path)
+
+            await send_progress("git_direct", 70, "正在直连克隆...")
+            proc = await asyncio.create_subprocess_exec(
+                "git", "clone", item_url, clone_target_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env
+            )
+            stdout, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    proc.returncode, ["git", "clone", item_url, clone_target_path],
+                    output=stdout, stderr=stderr
+                )
+            await send_progress("complete", 100, "✅ 安装成功！", "success")
+
+    except FileNotFoundError:
+        await send_progress("error", -1, "系统中未检测到 Git，请先安装 Git 环境才能下载插件！", "error")
+    except subprocess.CalledProcessError as e2:
+        error_msg = e2.stderr.decode('utf-8', errors='ignore') if e2.stderr else (e2.stdout.decode('utf-8', errors='ignore') if e2.stdout else "")
+        await send_progress("error", -1, f"Git Clone 失败，镜像与直连均不可用。请检查网络或开启代理: {error_msg}", "error")
+    except Exception as e:
+        await send_progress("error", -1, f"安装过程发生未知失败: {str(e)}", "error")
+
+    await resp.write_eof()
+    return resp
+
+async def install_private_tool_stream_handler(request):
+    """SSE 流式接口：针对付费/私有库，通过云端鉴权代理下载 ZIP 包，静默内存解压并物理覆盖"""
+    data = await request.json()
+    item_url = data.get("url")
+    item_id = data.get("id")
+    account = data.get("account")
+
+    resp = web.StreamResponse(
+        status=200,
+        headers={
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+        }
+    )
+    await resp.prepare(request)
+
+    async def send_progress(stage, progress, message, status=None):
+        event = {"stage": stage, "progress": progress, "message": message}
+        if status:
+            event["status"] = status
+        await resp.write(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode('utf-8'))
+
+    try:
+        if not item_url or not account or not item_id:
+            await send_progress("error", -1, "缺少核心鉴权参数", "error")
+            await resp.write_eof()
+            return resp
+
+        await send_progress("validate", 5, "校验安装参数...")
+        await send_progress("auth", 15, "验证购买权限...")
+
+        target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
+        extract_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
+
+        proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_github_zip"
+        payload = json.dumps({"url": item_url, "item_id": item_id, "account": account}).encode("utf-8")
+        req = urllib.request.Request(proxy_api_url, data=payload, headers={'Content-Type': 'application/json'})
+
+        await send_progress("downloading", 30, "从云端下载资源包...")
+        with urllib.request.urlopen(req, timeout=120) as response:
+            zip_data = response.read()
+
+            if response.status != 200 or zip_data == b"GITHUB_DOWNLOAD_FAILED" or b'"error"' in zip_data[:50]:
+                try:
+                    err_msg = json.loads(zip_data.decode('utf-8')).get("error", "未知错误")
+                except:
+                    err_msg = "二进制流解析异常或云端拉取失败"
+                await send_progress("error", -1, f"云端拒绝访问或拉取失败: {err_msg}", "error")
+                await resp.write_eof()
+                return resp
+
+            await send_progress("download_done", 60, "下载完成，准备解压...")
+
+            with zipfile.ZipFile(io.BytesIO(zip_data)) as zip_ref:
+                namelist = zip_ref.namelist()
+                if not namelist:
+                    await send_progress("error", -1, "下载的压缩包结构为空", "error")
+                    await resp.write_eof()
+                    return resp
+
+                top_level_dir = namelist[0].split('/')[0] + '/'
+
+                await send_progress("extracting", 75, "解压安装文件...")
+
+                if os.path.exists(extract_target_path):
+                    try:
+                        shutil.rmtree(extract_target_path)
+                    except Exception as e:
+                        await send_progress("error", -1, "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。", "error")
+                        await resp.write_eof()
+                        return resp
+
+                os.makedirs(extract_target_path, exist_ok=True)
+
+                await send_progress("installing", 90, "写入目标目录...")
+
+                for member in namelist:
+                    if member.startswith(top_level_dir):
+                        target_path = member.replace(top_level_dir, "", 1)
+                        if not target_path:
+                            continue
+                        # 防止路径穿越攻击 - 第一层防御
+                        if ".." in target_path or target_path.startswith("/") or target_path.startswith("\\"):
+                            continue
+                        # 防止路径穿越攻击 - 第二层防御：使用 normpath 规范化检查
+                        abs_target = os.path.normpath(os.path.join(extract_target_path, target_path))
+                        abs_base = os.path.normpath(extract_target_path)
+                        if not abs_target.startswith(abs_base):
+                            continue
+
+                        source = zip_ref.open(member)
+                        dest_path = os.path.join(extract_target_path, target_path)
+
+                        if member.endswith('/'):
+                            os.makedirs(dest_path, exist_ok=True)
+                        else:
+                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                            with open(dest_path, "wb") as target:
+                                shutil.copyfileobj(source, target)
+
+        await send_progress("complete", 100, "✅ 安装成功！", "success")
+
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode('utf-8', errors='ignore')
+        await send_progress("error", -1, f"拉取中断: {err_msg}", "error")
+    except Exception as e:
+        await send_progress("error", -1, f"本地解压覆盖异常: {str(e)}", "error")
+
+    await resp.write_eof()
+    return resp

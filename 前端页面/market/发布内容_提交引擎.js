@@ -248,7 +248,15 @@ export async function handlePublishSubmit(params) {
     let github_token = null;
     if (boxPrivateRepo.style.display !== "none" && isPrivateCheck.checked) {
         github_token = container.querySelector("#pub-github-token").value.trim();
-        if (!github_token) return showToast(t('publish.pat_required'), "warning");
+        if (!github_token) {
+            const hasExistingToken = isEditMode && !!(editItemData?.github_token || editItemData?.has_private_token);
+            if (isEditMode && hasExistingToken) {
+                // 编辑模式下已有密钥，留空表示保留原值，不发送 github_token 字段
+                github_token = null;
+            } else {
+                return showToast(t('publish.pat_required'), "warning");
+            }
+        }
     }
 
     if (!title || !shortDesc) return showToast(t('publish.name_desc_required'), "warning");

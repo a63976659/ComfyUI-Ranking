@@ -78,7 +78,17 @@ function getCacheExpireTime() {
 // ==========================================
 // 🔄 本地排序函数
 // ==========================================
+let _lastSortInput = null;
+let _lastSortKey = '';
+let _lastSortResult = null;
+
 function sortDataLocally(data, tab, sort) {
+    const sortKey = `${tab}_${sort}`;
+    // 如果源数据引用相同且排序参数相同，返回缓存结果（避免重复创建数组拷贝）
+    if (data === _lastSortInput && sortKey === _lastSortKey && _lastSortResult) {
+        return _lastSortResult;
+    }
+    
     const sorted = [...data]; // 不修改原数组
     
     if (tab === "creators") {
@@ -123,6 +133,11 @@ function sortDataLocally(data, tab, sort) {
             default: sorted.sort((a, b) => (b.created_at || 0) - (a.created_at || 0)); break; // time
         }
     }
+    
+    // 缓存本次排序结果
+    _lastSortInput = data;
+    _lastSortKey = sortKey;
+    _lastSortResult = sorted;
     return sorted;
 }
 

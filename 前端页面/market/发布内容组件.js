@@ -160,7 +160,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     const isEditMode = !!editItemData;
     const viewTitle = isEditMode ? `✏️ ${t('publish.edit_content')}` : `🚀 ${t('publish.new_content')}`;
     const submitBtnText = isEditMode ? `💾 ${t('publish.save_changes')}` : `🚀 ${t('publish.confirm_publish')}`;
-    const hasExistingToken = isEditMode && !!editItemData.github_token;
+    const hasExistingToken = isEditMode && !!(editItemData.github_token || editItemData.has_private_token);
 
     // 1. 渲染分离出去的视图模板
     container.innerHTML = generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExistingToken, editItemData, t);

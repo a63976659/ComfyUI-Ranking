@@ -57,7 +57,7 @@ export function createPostsView(currentUser, keyword = "") {
     }
     
     currentUserCache = currentUser;
-    const searchKeyword = keyword.toLowerCase();
+    const searchKeyword = (keyword || "").substring(0, 100).toLowerCase();
     
     const container = document.createElement("div");
     Object.assign(container.style, {
@@ -460,7 +460,7 @@ export function createPostsView(currentUser, keyword = "") {
                 allPostsData = proxyImages(posts);
                 renderPostsFromCache(allPostsData);
             } else {
-                allPostsData = posts;
+                allPostsData = proxyImages(posts);
             }
         } catch (err) {
             isLoadingFromNetwork = false;
@@ -480,6 +480,7 @@ export function createPostsView(currentUser, keyword = "") {
             if ((oldData[i].views || 0) !== (newData[i].views || 0)) return true;
             if ((oldData[i].daily_views || 0) !== (newData[i].daily_views || 0)) return true;
             if ((oldData[i].comments_count || 0) !== (newData[i].comments_count || 0)) return true;
+            if (Math.abs((oldData[i].rating_avg || 0) - (newData[i].rating_avg || 0)) > 0.01) return true;
         }
         return false;
     };

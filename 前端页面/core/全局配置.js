@@ -414,6 +414,7 @@ export function getTipLevelConfig() {
 
 const PROFILE_CACHE_PREFIX = "ComfyCommunity_ProfileCache_";
 const _pendingProfileRequests = new Map();  // 防止 N+1 并发请求
+const PENDING_TIMEOUT = 30000;  // 挂起请求超时清理时间（毫秒）
 
 /**
  * 🚀 获取缓存的用户资料（同步）
@@ -478,6 +479,12 @@ export function getProfileWithSWR(account, apiFn, onUpdate) {
             _pendingProfileRequests.delete(account);
         });
         _pendingProfileRequests.set(account, promise);
+        // ⏱️ 超时自动清理：防止请求永不完成导致内存泄漏
+        setTimeout(() => {
+            if (_pendingProfileRequests.has(account)) {
+                _pendingProfileRequests.delete(account);
+            }
+        }, PENDING_TIMEOUT);
     }
     
     return cached;

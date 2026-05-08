@@ -1,5 +1,6 @@
 # api_cache.py
 import os
+import re
 import hashlib
 import asyncio
 import uuid
@@ -11,6 +12,7 @@ from aiohttp import web
 # 视频下载锁字典（按 URL hash 粒度加锁）
 _video_download_locks = {}
 _video_locks_lock = asyncio.Lock()
+_video_lock_refs = {}  # {url_hash: int} 引用计数器，替代 lock._waiters
 
 def _scan_dir_stats(dir_path):
     """使用 os.scandir() 统计目录下的直接文件数量和总大小"""
@@ -36,7 +38,30 @@ async def _get_video_lock(url_hash):
     async with _video_locks_lock:
         if url_hash not in _video_download_locks:
             _video_download_locks[url_hash] = asyncio.Lock()
+            _video_lock_refs[url_hash] = 0
+        _video_lock_refs[url_hash] += 1
         return _video_download_locks[url_hash]
+
+
+def _is_local_request(request):
+    """检查请求是否来自本机或内网（10.x.x.x），用于保护管理接口"""
+    remote = request.remote or ""
+    if remote in ("127.0.0.1", "localhost", "::1"):
+        return True
+    if remote.startswith("10."):
+        return True
+    return False
+
+
+def _cleanup_empty_cache(local_path, url_hash, ext):
+    """清理0字节的损坏缓存文件"""
+    if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
+        try:
+            os.remove(local_path)
+            print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
+        except (OSError, FileNotFoundError):
+            pass
+
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_NODES_DIR = os.path.dirname(THIS_DIR)
@@ -50,7 +75,7 @@ VIDEO_CACHE_DIR = os.path.join(CACHE_ROOT_DIR, "videos")
 os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
 os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)
 
-# 视频缓存限制
+# 视频缓存限制：100MB，平衡常见短视频需求与磁盘占用
 MAX_VIDEO_SIZE = 100 * 1024 * 1024  # 100MB
 VIDEO_TIMEOUT = aiohttp.ClientTimeout(total=300)
 
@@ -113,33 +138,15 @@ async def cache_image_handler(request):
                     return web.Response(status=response.status, text=f"Upstream returned {response.status}")
     except asyncio.TimeoutError as e:
         print(f"[ComfyUI-Ranking] ⚠️ 图片代理超时: {url[:80]}... 错误: {str(e)}")
-        # 如果存在0字节的损坏缓存文件，清理掉以便下次重试
-        if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
-            try:
-                os.remove(local_path)
-                print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
-            except:
-                pass
+        _cleanup_empty_cache(local_path, url_hash, ext)
         return web.Response(status=504, text="Image proxy timeout")
     except aiohttp.ClientError as e:
         print(f"[ComfyUI-Ranking] ⚠️ 图片代理连接错误: {url[:80]}... 错误: {str(e)}")
-        # 如果存在0字节的损坏缓存文件，清理掉以便下次重试
-        if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
-            try:
-                os.remove(local_path)
-                print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
-            except:
-                pass
+        _cleanup_empty_cache(local_path, url_hash, ext)
         return web.Response(status=502, text=f"Image proxy connection error: {str(e)}")
     except Exception as e:
         print(f"[ComfyUI-Ranking] ⚠️ 图片代理内部错误: {url[:80]}... 错误: {str(e)}")
-        # 如果存在0字节的损坏缓存文件，清理掉以便下次重试
-        if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
-            try:
-                os.remove(local_path)
-                print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
-            except:
-                pass
+        _cleanup_empty_cache(local_path, url_hash, ext)
         return web.Response(status=500, text=f"Image proxy internal error: {str(e)}")
 
 
@@ -155,8 +162,16 @@ async def _serve_video_file(request, file_path):
         try:
             range_str = range_header.replace('bytes=', '')
             start_str, end_str = range_str.split('-')
-            start = int(start_str) if start_str else 0
-            end = int(end_str) if end_str else file_size - 1
+            if not start_str and end_str:
+                # suffix-byte-range-spec: bytes=-N (最后N个字节)
+                suffix_length = int(end_str)
+                start = max(0, file_size - suffix_length)
+                end = file_size - 1
+            elif start_str:
+                start = int(start_str)
+                end = int(end_str) if end_str else file_size - 1
+            else:
+                raise ValueError("Invalid Range format")
             if start >= file_size or start < 0 or end >= file_size or end < start:
                 return web.Response(status=416, text="Range Not Satisfiable")
         except (ValueError, IndexError):
@@ -308,9 +323,14 @@ async def cache_video_handler(request):
                                 async for chunk in response.content.iter_chunked(256 * 1024):
                                     f.write(chunk)
                                     downloaded_size += len(chunk)
+                                    if downloaded_size > MAX_VIDEO_SIZE:
+                                        source_download_complete = False
+                                        print(f"[ComfyUI-Ranking] ⚠️ 视频超过最大缓存限制 ({MAX_VIDEO_SIZE} bytes)，中断下载: {url_hash}")
+                                        break
                                     if client_alive:
                                         try:
                                             await resp.write(chunk)
+                                            await asyncio.sleep(0)
                                         except (ConnectionResetError, RuntimeError, BrokenPipeError):
                                             client_alive = False
                                             print(f"[ComfyUI-Ranking] ℹ️ 客户端断连，继续后台缓存: {url_hash}")
@@ -344,44 +364,30 @@ async def cache_video_handler(request):
                         return resp
             except asyncio.TimeoutError as e:
                 print(f"[ComfyUI-Ranking] ⚠️ 视频代理超时: {url[:80]}... 错误: {str(e)}")
-                # 如果存在 0 字节的损坏缓存文件，清理掉以便下次重试
-                if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
-                    try:
-                        os.remove(local_path)
-                        print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
-                    except:
-                        pass
+                _cleanup_empty_cache(local_path, url_hash, ext)
                 return web.Response(status=504, text="Video proxy timeout")
             except aiohttp.ClientError as e:
                 print(f"[ComfyUI-Ranking] ⚠️ 视频代理连接错误: {url[:80]}... 错误: {str(e)}")
-                # 如果存在 0 字节的损坏缓存文件，清理掉以便下次重试
-                if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
-                    try:
-                        os.remove(local_path)
-                        print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
-                    except:
-                        pass
+                _cleanup_empty_cache(local_path, url_hash, ext)
                 return web.Response(status=502, text=f"Video proxy connection error: {str(e)}")
             except Exception as e:
                 print(f"[ComfyUI-Ranking] ⚠️ 视频代理内部错误: {url[:80]}... 错误: {str(e)}")
-                # 如果存在 0 字节的损坏缓存文件，清理掉以便下次重试
-                if os.path.exists(local_path) and os.path.getsize(local_path) == 0:
-                    try:
-                        os.remove(local_path)
-                        print(f"[ComfyUI-Ranking] 🧹 已清理空缓存文件: {url_hash}.{ext}")
-                    except:
-                        pass
+                _cleanup_empty_cache(local_path, url_hash, ext)
                 return web.Response(status=500, text=f"Video proxy internal error: {str(e)}")
     finally:
-        # 🔒 锁释放后清理：如果没有其他等待者，删除锁对象防止内存泄漏
-        if not lock._waiters:
-            async with _video_locks_lock:
-                if url_hash in _video_download_locks and _video_download_locks[url_hash] is lock and not lock._waiters:
-                    del _video_download_locks[url_hash]
+        # 🔒 锁释放后清理：引用计数归0时删除锁对象防止内存泄漏
+        async with _video_locks_lock:
+            if url_hash in _video_lock_refs:
+                _video_lock_refs[url_hash] -= 1
+                if _video_lock_refs[url_hash] <= 0:
+                    _video_download_locks.pop(url_hash, None)
+                    _video_lock_refs.pop(url_hash, None)
 
 
 async def cache_stats_handler(request):
     """GET /community_hub/cache/stats - 返回图片和视频缓存统计"""
+    if not _is_local_request(request):
+        return web.Response(status=403, text="Forbidden: local access only")
     image_count, image_size = _scan_dir_stats(IMAGE_CACHE_DIR)
     video_count, video_size = _scan_dir_stats(VIDEO_CACHE_DIR)
     return web.json_response({
@@ -394,6 +400,8 @@ async def cache_stats_handler(request):
 
 async def cache_clear_handler(request):
     """POST /community_hub/cache/clear - 清理缓存文件"""
+    if not _is_local_request(request):
+        return web.Response(status=403, text="Forbidden: local access only")
     try:
         body = await request.json()
     except Exception:
@@ -422,8 +430,8 @@ async def cache_clear_handler(request):
                 for entry in it:
                     if entry.is_file(follow_symlinks=False):
                         name = entry.name
-                        # 跳过临时文件：.tmp. 开头或包含 .tmp.
-                        if name.startswith(".tmp.") or ".tmp." in name:
+                        # 跳过正在下载的临时文件
+                        if re.search(r'\.tmp\.[a-f0-9]{8}$', name):
                             continue
                         try:
                             file_size = entry.stat(follow_symlinks=False).st_size

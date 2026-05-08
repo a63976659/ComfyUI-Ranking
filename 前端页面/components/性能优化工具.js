@@ -637,8 +637,8 @@ function _evictOldestStorage() {
         
         entries.sort((a, b) => a.expireAt - b.expireAt);
         
-        // 淘汰最旧的 1/2 项目
-        const evictCount = Math.max(1, Math.ceil(entries.length / 2));
+        // 🧹 批量淘汰策略：每次淘汰最旧的 30%（温和策略，减少频繁全量扫描）
+        const evictCount = Math.max(1, Math.ceil(entries.length * 0.3));
         for (let i = 0; i < evictCount; i++) {
             localStorage.removeItem(entries[i].key);
         }
@@ -681,6 +681,7 @@ export function createPaginationLoader(options) {
     let debounceTimer = null;
     let consecutiveErrors = 0;
     let retryTimer = null;
+    let generation = 0;  // 🔄 轻量级取消令牌，reset 时递增以丢弃飞行中请求
     
     // 加载指示器
     const loadingIndicator = document.createElement("div");
@@ -728,7 +729,9 @@ export function createPaginationLoader(options) {
         
         try {
             currentPage++;  // 先递增，再加载（首屏已渲染第1页，从第2页开始）
+            const savedGen = generation;
             const result = await loadMore(currentPage, pageSize);
+            if (savedGen !== generation) return;  // reset 被调用了，丢弃结果
             
             // 加载失败，允许重试
             if (result === null) {
@@ -784,6 +787,7 @@ export function createPaginationLoader(options) {
     
     // 重置状态
     const reset = () => {
+        generation++;  // 🔄 递增使飞行中请求结果被忽略
         currentPage = 1;  // 首屏已渲染第1页，分页器从第2页开始
         hasMore = true;
         isLoading = false;

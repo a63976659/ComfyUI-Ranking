@@ -113,3 +113,113 @@ async def download_app_handler(request):
         print(f"❌ 应用下载错误：{type(e).__name__}: {str(e)}")
         print(traceback.format_exc())
         return web.json_response({"error": f"{type(e).__name__}: {str(e)}"}, status=500)
+
+async def download_app_stream_handler(request):
+    """SSE 流式接口：处理应用(JSON)的下载与鉴权，支持本地缓存优先，实时推送进度"""
+    data = await request.json()
+    download_url = data.get("url")
+    app_id = data.get("id", "default_app")
+    account = data.get("account")
+    force_download = data.get("force", False)
+
+    resp = web.StreamResponse(
+        status=200,
+        headers={
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+        }
+    )
+    await resp.prepare(request)
+
+    async def send_progress(stage, progress, message, status=None, extra=None):
+        event = {"stage": stage, "progress": progress, "message": message}
+        if status:
+            event["status"] = status
+        if extra:
+            event.update(extra)
+        await resp.write(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode('utf-8'))
+
+    try:
+        if not download_url or not account:
+            await send_progress("error", -1, "缺少下载凭证或应用链接", "error")
+            await resp.write_eof()
+            return resp
+
+        await send_progress("validate", 10, "校验请求参数...")
+
+        os.makedirs(APP_MODELS_DIR, exist_ok=True)
+        file_path = os.path.join(APP_MODELS_DIR, f"{app_id}.json")
+
+        await send_progress("cache_check", 20, "检查本地缓存...")
+
+        if os.path.exists(file_path) and not force_download:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    json_data = json.loads(content)
+                    await send_progress("cache_hit", 50, "命中本地缓存！")
+                    await send_progress("complete", 100, "✅ 加载完成！", "success", extra={"data": json_data})
+                    await resp.write_eof()
+                    return resp
+            except (json.JSONDecodeError, IOError) as e:
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+
+        proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_download"
+        payload = json.dumps({
+            "url": download_url,
+            "item_id": app_id,
+            "account": account
+        }).encode("utf-8")
+
+        ssl_context = ssl.create_default_context()
+        if os.environ.get("DISABLE_SSL_VERIFY", "").lower() in ("1", "true"):
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+        await send_progress("downloading", 50, "从云端下载工作流...")
+
+        loop = asyncio.get_event_loop()
+        content = await loop.run_in_executor(None, _sync_download, proxy_api_url, payload, ssl_context, 120)
+
+        json_data = None
+        try:
+            json_data = json.loads(content)
+            if isinstance(json_data, dict) and "error" in json_data:
+                await send_progress("error", -1, json_data["error"], "error")
+                await resp.write_eof()
+                return resp
+        except json.JSONDecodeError as e:
+            await send_progress("error", -1, "云端返回的数据格式错误，无法解析为 JSON", "error")
+            await resp.write_eof()
+            return resp
+
+        await send_progress("saving", 80, "保存到本地缓存...")
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except IOError as e:
+            pass
+
+        await send_progress("complete", 100, "✅ 下载完成！", "success", extra={"data": json_data})
+        await resp.write_eof()
+        return resp
+
+    except urllib.error.HTTPError as e:
+        try:
+            err_msg = e.read().decode('utf-8', errors='ignore')[:500]
+        except Exception:
+            err_msg = str(e)
+        await send_progress("error", -1, f"云端代理错误({e.code})：{err_msg[:200]}", "error")
+    except urllib.error.URLError as e:
+        await send_progress("error", -1, f"网络连接失败：{str(e)}", "error")
+    except (TimeoutError, Exception) as e:
+        await send_progress("error", -1, f"{type(e).__name__}: {str(e)}", "error")
+
+    await resp.write_eof()
+    return resp

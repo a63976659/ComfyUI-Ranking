@@ -600,3 +600,68 @@ if (typeof window !== "undefined") {
         initNetworkStatusListener();
     }
 }
+
+
+// ==========================================
+// 📦 安装进度条
+// ==========================================
+
+/**
+ * 创建安装进度条
+ * @param {HTMLElement} container - 进度条容器元素
+ * @returns {{update: Function, complete: Function, error: Function, destroy: Function}}
+ */
+export function createInstallProgress(container) {
+    // 创建进度条DOM
+    const wrapper = document.createElement("div");
+    wrapper.className = "install-progress-wrapper";
+    wrapper.innerHTML = `
+        <div style="width: 100%; margin: 12px 0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span class="progress-stage" style="font-size: 12px; color: #aaa;">准备中...</span>
+                <span class="progress-percent" style="font-size: 12px; color: #2196F3; font-weight: bold;">0%</span>
+            </div>
+            <div style="position: relative; width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
+                <div class="progress-fill" style="
+                    width: 0%;
+                    height: 100%;
+                    background: linear-gradient(90deg, #2196F3, #4CAF50);
+                    border-radius: 3px;
+                    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+                "></div>
+            </div>
+        </div>
+    `;
+    container.innerHTML = "";
+    container.appendChild(wrapper);
+
+    const fill = wrapper.querySelector(".progress-fill");
+    const stage = wrapper.querySelector(".progress-stage");
+    const percent = wrapper.querySelector(".progress-percent");
+
+    return {
+        update(progress, message) {
+            const p = Math.max(0, Math.min(100, progress));
+            fill.style.width = `${p}%`;
+            percent.textContent = `${p}%`;
+            if (message) stage.textContent = message;
+        },
+        complete(message) {
+            fill.style.width = "100%";
+            fill.style.background = "linear-gradient(90deg, #4CAF50, #8BC34A)";
+            percent.textContent = "100%";
+            percent.style.color = "#4CAF50";
+            stage.textContent = message || "✅ 安装完成！";
+            stage.style.color = "#4CAF50";
+        },
+        error(message) {
+            fill.style.background = "#F44336";
+            percent.style.color = "#F44336";
+            stage.textContent = message || "❌ 安装失败";
+            stage.style.color = "#F44336";
+        },
+        destroy() {
+            wrapper.remove();
+        }
+    };
+}

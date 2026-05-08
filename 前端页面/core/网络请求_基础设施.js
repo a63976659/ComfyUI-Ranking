@@ -339,6 +339,75 @@ async function request(endpoint, options = {}) {
     return requestPromise;
 }
 
+// ==========================================
+// 📡 SSE 流式请求（用于安装进度等长时间操作）
+// ==========================================
+
+/**
+ * 发起 SSE 流式请求（用于安装进度等长时间操作）
+ * @param {string} endpoint - API端点路径（本地ComfyUI路径，如 /community_hub/install_tool_stream）
+ * @param {Object} body - POST请求体
+ * @param {Function} onProgress - 进度回调 ({stage, progress, message, status, data}) => void
+ * @param {Object} [options] - 可选配置 { timeout: 300000 }
+ * @returns {Promise<Object>} 最终结果事件
+ */
+export async function requestSSE(endpoint, body, onProgress, options = {}) {
+    const timeout = options.timeout || 300000; // 5分钟超时
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+
+    try {
+        const response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: controller.signal
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResult = null;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || ""; // 保留不完整行
+
+            for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        onProgress?.(data);
+
+                        if (data.status === "success" || data.status === "error") {
+                            finalResult = data;
+                        }
+                    } catch (e) {
+                        console.warn("[SSE] 解析事件失败:", line);
+                    }
+                }
+            }
+        }
+
+        return finalResult || { status: "error", message: "未收到最终结果" };
+    } catch (err) {
+        if (err.name === "AbortError") {
+            return { status: "error", message: "安装超时，请检查网络后重试" };
+        }
+        throw err;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 // 导出给外部使用
 export { requestCancelManager, invalidateRelatedCache, request };
 export default request;
