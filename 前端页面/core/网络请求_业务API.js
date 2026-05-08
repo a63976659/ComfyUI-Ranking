@@ -95,7 +95,12 @@ const api = {
     async getChatList(account) { return request(`/api/chats/${account}`); },
     async getChatHistory(account, targetAccount) { return request(`/api/chats/${account}/${targetAccount}`); },
     async getWallet(account) { return request(`/api/wallet/${account}`); },
-    
+
+    // 🛒 获取用户购买记录（从云端 ownerships 表）
+    async getUserPurchases(account) {
+        return request(`/api/wallet/${account}/purchases`);
+    },
+
     // 💳 P6支付增强：交易明细查询
     async getTransactions(account, page = 1, limit = 20, txType = null) {
         let url = `/api/wallet/${account}/transactions?page=${page}&limit=${limit}`;

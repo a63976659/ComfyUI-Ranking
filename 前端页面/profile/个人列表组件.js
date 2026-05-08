@@ -167,10 +167,29 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
 
     // 🚀 已获取的资源列表（使用标准 createItemCard 组件）
     if (tabId === "acquired") {
-        const acquiredItems = getAcquiredItems();
-        domElement.innerHTML = "";
+        let acquiredItemIds = [];
+        let useCloudData = false;
 
-        if (acquiredItems.length === 0) {
+        // 优先从云端获取购买记录
+        try {
+            if (currentUser?.account) {
+                const purchasesRes = await api.getUserPurchases(currentUser.account);
+                if (purchasesRes?.status === "success" && purchasesRes.data) {
+                    acquiredItemIds = purchasesRes.data.map(p => p.item_id);
+                    useCloudData = true;
+                }
+            }
+        } catch (e) {
+            console.warn("云端购买记录获取失败，降级使用本地缓存:", e);
+        }
+
+        // 降级：从 localStorage 获取
+        if (!useCloudData) {
+            const localItems = getAcquiredItems();
+            acquiredItemIds = localItems.map(item => item.id);
+        }
+
+        if (acquiredItemIds.length === 0) {
             domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#666;'>
                 <div style="font-size: 40px; margin-bottom: 10px;">📦</div>
                 <div>还没有购买任何资源</div>
@@ -182,18 +201,32 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
         domElement.innerHTML = `<div style='padding: 20px; color:#888;'>⏳ 正在加载...</div>`;
 
         try {
-            // 从云端获取完整数据（与 published 一致）
-            const [toolsRes, appsRes] = await Promise.all([
+            // 获取资源详情（用于完整显示卡片，5秒超时）
+            let cloudItems = [];
+            const timeoutMs = 5000;
+            const fetchPromise = Promise.all([
                 api.getItems("tool", "time", 200),
                 api.getItems("app", "time", 200)
             ]);
-            const cloudItems = [...(toolsRes.data || []), ...(appsRes.data || [])];
+            const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs));
+            const result = await Promise.race([fetchPromise, timeoutPromise]);
+
+            if (result) {
+                const [toolsRes, appsRes] = result;
+                cloudItems = [...(toolsRes?.data || []), ...(appsRes?.data || [])];
+            }
+
             const cloudMap = {};
             cloudItems.forEach(item => { cloudMap[item.id] = item; });
 
-            // 用云端数据丰富本地记录
-            const enrichedItems = acquiredItems.map(localItem => {
-                return cloudMap[localItem.id] || localItem;
+            // 用 acquiredItemIds 过滤出已购买的资源
+            const enrichedItems = acquiredItemIds.map(itemId => {
+                const cloudItem = cloudMap[itemId];
+                if (cloudItem) return cloudItem;
+                // 云端资源列表中找不到（可能已下架），尝试从本地缓存恢复
+                const localItems = getAcquiredItems();
+                const localItem = localItems.find(l => l.id === itemId);
+                return localItem ? { ...localItem, _isOffline: true } : null;
             }).filter(Boolean);
 
             // 使用 createItemCard 渲染（与 published 一致）
@@ -209,11 +242,12 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             domElement.appendChild(listDiv);
 
         } catch (e) {
-            console.warn("获取云端资源失败，使用本地缓存:", e);
+            console.warn("获取云端资源超时或失败，使用本地数据:", e);
             // 网络失败时也用 createItemCard 渲染本地数据
+            const localItems = getAcquiredItems();
             const listDiv = document.createElement("div");
             listDiv.style.cssText = "display:flex;flex-direction:column;gap:10px;";
-            acquiredItems.forEach(item => {
+            localItems.forEach(item => {
                 const card = createItemCard(item, currentUser, "acquired");
                 listDiv.appendChild(card);
             });

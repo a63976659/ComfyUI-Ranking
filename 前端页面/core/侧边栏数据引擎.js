@@ -146,7 +146,7 @@ function sortDataLocally(data, tab, sort) {
  */
 function findExistingTabData(tab) {
     for (const [key, state] of paginationStates) {
-        if (key.startsWith(tab + "_") && state.allData.length > 0) {
+        if (key.startsWith(tab + "_") && state.allData.length > 0 && state.isFullyLoaded) {
             return state.allData;
         }
     }
@@ -241,6 +241,10 @@ export async function loadSidebarContent({
         try {
             const postsModule = await getPostsView();
             const postsView = postsModule.createPostsView(currentUser, keyword);
+            // 🔧 清理旧视图事件监听器
+            Array.from(contentArea.children).forEach(child => {
+                if (child._cleanup) child._cleanup();
+            });
             contentArea.innerHTML = "";
             contentArea.appendChild(postsView);
             // 触发帖子列表加载
@@ -264,6 +268,10 @@ export async function loadSidebarContent({
         try {
             const tasksModule = await getTasksView();
             const tasksView = tasksModule.createTasksView(currentUser, keyword);
+            // 🔧 清理旧视图事件监听器
+            Array.from(contentArea.children).forEach(child => {
+                if (child._cleanup) child._cleanup();
+            });
             contentArea.innerHTML = "";
             contentArea.appendChild(tasksView);
         } catch (error) {
@@ -459,7 +467,7 @@ export async function loadSidebarContent({
                         const response = await api.getItems(itemType, savedSort, 200);
                         newData = proxyImages(response.data || []);
                     } else if (savedTab === "creators") {
-                        const response = await api.getCreators(savedSort, 100);
+                        const response = await api.getCreators(savedSort, 500);
                         newData = proxyImages(response.data || []);
                     } else {
                         return; // posts/tasks 不走这个路径
@@ -516,6 +524,7 @@ export async function loadSidebarContent({
         const locallySorted = sortDataLocally(existingData, tab, sort);
         state.allData = locallySorted;
         state.isFullyLoaded = true;
+        state.displayedCount = 0;  // 重置已显示计数，因为数据重新排序了
         
         // 首屏渲染
         const firstPage = locallySorted.slice(0, pageSize);
@@ -556,7 +565,7 @@ export async function loadSidebarContent({
                 // 标记为搜索结果，不存入缓存，避免污染正常数据
                 state.isSearchResult = true;
             } else {
-                response = await api.getCreators(sort, 100);
+                response = await api.getCreators(sort, 500);
                 realData = response.data || [];
                 realData = proxyImages(realData);  // 确保图片走本地缓存代理
                 // 正常数据，清除搜索标记
@@ -867,7 +876,7 @@ export async function preloadAdjacentTabs(currentTab, sort) {
                 let response;
                 let data;
                 if (tab === "creators") {
-                    response = await api.getCreators(sort, 100);
+                    response = await api.getCreators(sort, 500);
                     data = proxyImages(response.data || []);  // 确保图片走本地缓存代理
                     // 创作者数据不持久化到 localStorage，避免空间不足
                     setCache(cacheKey, data, getCacheExpireTime(), false);

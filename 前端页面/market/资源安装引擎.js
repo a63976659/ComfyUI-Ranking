@@ -43,11 +43,15 @@ function saveAcquiredItem(itemData) {
             title: itemData.title,
             type: itemData.type,
             author: itemData.author,
-            shortDesc: itemData.shortDesc,
+            shortDesc: itemData.shortDesc || itemData.short_desc || '',
+            coverUrl: itemData.coverUrl || itemData.cover_url || '',  // 新增
             coverBase64: itemData.coverBase64,
-            link: itemData.link,
+            imageUrls: itemData.imageUrls || itemData.image_urls || [],  // 新增
+            link: itemData.link || itemData.github_url || '',
             price: itemData.price || 0,
-            local_version: itemData.latest_version,
+            likes: itemData.likes || 0,  // 新增
+            uses: itemData.uses || 0,  // 新增
+            local_version: itemData.latest_version || itemData.local_version || itemData.version || '',
             acquired_at: Date.now()
         };
         
@@ -388,7 +392,8 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 const result = await requestSSE(
                     "/community_hub/download_app_stream",
                     { url: itemData.link, id: itemData.id, account: currentUser.account },
-                    (event) => progress.update(event.progress, event.message)
+                    (event) => progress.update(event.progress, event.message),
+                    { timeout: 120000 }  // 应用JSON下载2分钟足够
                 );
 
                 if (result.status === "success") {

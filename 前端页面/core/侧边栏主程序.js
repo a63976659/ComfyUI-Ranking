@@ -179,9 +179,12 @@ export function buildSidebarDOM() {
     let activeInlineView = null; 
 
     const showInlineView = (viewDOM) => {
-        if (activeInlineView) activeInlineView.remove();
-        tabsContainer.style.display = "none"; 
-        sortContainer.style.display = "none"; 
+        if (activeInlineView) {
+            if (activeInlineView._cleanup) activeInlineView._cleanup();
+            activeInlineView.remove();
+        }
+        tabsContainer.style.display = "none";
+        sortContainer.style.display = "none";
         contentBoxWrapper.style.display = "none";
         footerContainer.style.display = "none"; // 【核心】：打开详情/发布页时隐藏底部
         activeInlineView = viewDOM;
@@ -191,8 +194,9 @@ export function buildSidebarDOM() {
     const hideInlineView = () => {
         if (activeInlineView) {
             // 🔧 P3优化：在移除视图前清理事件监听器
+            if (activeInlineView._cleanup) activeInlineView._cleanup();
             cleanupImageSandbox(activeInlineView);
-            
+
             activeInlineView.remove();
             activeInlineView = null;
         }

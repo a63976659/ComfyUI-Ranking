@@ -8,13 +8,16 @@ import urllib.error
 import subprocess
 import shutil
 import asyncio
+import tempfile
+import time
+import contextlib
 from aiohttp import web
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_NODES_DIR = os.path.dirname(THIS_DIR)
 
 async def install_tool_handler(request):
-    """本地 API：通过 Git Clone 下载插件，保留 .git 文件夹以便后续无缝更新"""
+    """本地 API：通过 Git Clone 下载插件，使用浅克隆（--depth 1）加速大仓库安装，保留 .git 文件夹以便后续无缝更新"""
     data = await request.json()
     item_url = data.get("url")
     item_id = data.get("id")
@@ -48,14 +51,18 @@ async def install_tool_handler(request):
         try:
             print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
             subprocess.run(
-                ["git", "clone", mirror_url, clone_target_path],
+                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
-                env=env
+                env=env,
+                timeout=1200  # 20分钟超时
             )
             print("✅ 镜像 Git Clone 安装成功！保留了完整的版本控制 (.git)。")
             return web.json_response({"status": "success"})
+            
+        except subprocess.TimeoutExpired:
+            return web.json_response({"error": "安装超时：仓库过大或网络异常，请检查网络后重试"}, status=504)
             
         except subprocess.CalledProcessError as e1:
             print(f"⚠️ 镜像源不可用或发生冲突，系统正在自动无缝回退至直连: {item_url}")
@@ -66,14 +73,18 @@ async def install_tool_handler(request):
                 
             # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
             subprocess.run(
-                ["git", "clone", item_url, clone_target_path],
+                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
-                env=env
+                env=env,
+                timeout=1200  # 20分钟超时
             )
             print("✅ 直连 Git Clone 安装成功！")
             return web.json_response({"status": "success"})
+            
+    except subprocess.TimeoutExpired:
+        return web.json_response({"error": "安装超时：仓库过大或网络异常，请检查网络后重试"}, status=504)
             
     except FileNotFoundError:
         # 拦截用户电脑根本没装 Git 的情况
@@ -89,7 +100,7 @@ async def install_tool_handler(request):
         return web.json_response({"error": f"安装过程发生未知失败: {str(e)}"}, status=500)
 
 async def install_private_tool_handler(request):
-    """本地 API：针对付费/私有库，通过云端鉴权代理下载 ZIP 包，静默内存解压并物理覆盖"""
+    """本地 API：针对付费/私有库，通过云端鉴权代理下载 ZIP 包，流式写入临时文件并磁盘解压覆盖"""
     data = await request.json()
     item_url = data.get("url")
     item_id = data.get("id")
@@ -100,6 +111,7 @@ async def install_private_tool_handler(request):
         
     target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
     extract_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
+    tmp_path = None
     
     try:
         proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_github_zip"
@@ -107,21 +119,47 @@ async def install_private_tool_handler(request):
         req = urllib.request.Request(proxy_api_url, data=payload, headers={'Content-Type': 'application/json'})
         
         print(f"[ComfyUI-Ranking] 🔒 正在向云端发起私有资产鉴权与加密拉取: {item_id}")
-        with urllib.request.urlopen(req, timeout=120) as response:
-            zip_data = response.read()
+        with urllib.request.urlopen(req, timeout=600) as response:
+            content_length = int(response.headers.get('Content-Length', 0))
             
-            # 校验云端是否抛出拒绝信息或空流
-            if response.status != 200 or zip_data == b"GITHUB_DOWNLOAD_FAILED" or b'"error"' in zip_data[:50]:
-                try:
-                    err_msg = json.loads(zip_data.decode('utf-8')).get("error", "未知错误")
-                except:
-                    err_msg = "二进制流解析异常或云端拉取失败"
-                return web.json_response({"error": f"云端拒绝访问或拉取失败: {err_msg}"}, status=403)
+            # 检查磁盘剩余空间（ZIP文件 + 预估解压后大小约3倍，共4倍余量）
+            if content_length > 0:
+                required_space = content_length * 4
+                free_space = shutil.disk_usage(CUSTOM_NODES_DIR).free
+                if free_space < required_space:
+                    free_gb = free_space / (1024**3)
+                    need_gb = required_space / (1024**3)
+                    return web.json_response({"error": f"磁盘空间不足：需要约 {need_gb:.1f}GB，当前剩余 {free_gb:.1f}GB"}, status=500)
+            
+            # 流式下载到临时文件，避免大文件 OOM
+            with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+                downloaded = 0
+                chunk_size = 1024 * 1024  # 1MB 分块
+                
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    
+                    # 检查是否为错误响应（仅检查第一个 chunk）
+                    if downloaded == 0 and (chunk.startswith(b'{"') or chunk.startswith(b'GITHUB_DOWNLOAD_FAILED')):
+                        os.unlink(tmp_path)
+                        tmp_path = None
+                        try:
+                            error_data = json.loads(chunk.decode('utf-8'))
+                            err_msg = error_data.get("detail", error_data.get("error", "云端下载失败"))
+                        except:
+                            err_msg = "云端下载失败，请稍后重试"
+                        return web.json_response({"error": f"云端拒绝访问或拉取失败: {err_msg}"}, status=403)
+                    
+                    tmp_file.write(chunk)
+                    downloaded += len(chunk)
             
             print("[ComfyUI-Ranking] ✅ 成功接收云端安全 ZIP 数据流，执行热覆盖解压...")
             
-            # 【修复点】：在内存中剥离顶层包裹目录
-            with zipfile.ZipFile(io.BytesIO(zip_data)) as zip_ref:
+            # 从临时文件磁盘解压（不占内存）
+            with zipfile.ZipFile(tmp_path) as zip_ref:
                 namelist = zip_ref.namelist()
                 if not namelist:
                     return web.json_response({"error": "下载的压缩包结构为空"}, status=500)
@@ -172,6 +210,10 @@ async def install_private_tool_handler(request):
         return web.json_response({"error": f"拉取中断: {err_msg}"}, status=500)
     except Exception as e:
         return web.json_response({"error": f"本地解压覆盖异常: {str(e)}"}, status=500)
+    finally:
+        # 清理临时文件，防止异常时残留
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 async def install_tool_stream_handler(request):
     """SSE 流式接口：通过 Git Clone 下载插件，实时推送进度"""
@@ -229,17 +271,40 @@ async def install_tool_stream_handler(request):
         await send_progress("git_mirror", 25, "尝试镜像源克隆...")
 
         try:
-            await send_progress("git_cloning", 50, "正在克隆仓库...")
+            await send_progress("git_cloning", 50, "正在克隆仓库（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", mirror_url, clone_target_path,
+                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
             )
-            stdout, stderr = await proc.communicate()
+            # 使用心跳机制等待克隆完成，防止连接被代理/浏览器认为空闲而断开
+            clone_task = asyncio.create_task(proc.communicate())
+            start_time = time.time()
+
+            while not clone_task.done():
+                await asyncio.sleep(15)  # 每15秒检查一次
+                if clone_task.done():
+                    break
+                elapsed = time.time() - start_time
+                if elapsed > 1200:  # 总超时20分钟
+                    proc.kill()
+                    await proc.wait()
+                    clone_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await clone_task
+                    await send_progress("error", -1, "安装超时：仓库过大或网络异常（已等待20分钟）", "error")
+                    await resp.write_eof()
+                    return resp
+                progress_pct = min(30 + int(elapsed / 1200 * 50), 79)
+                minutes = int(elapsed // 60)
+                seconds = int(elapsed % 60)
+                await send_progress("git_cloning", progress_pct, f"正在克隆仓库（浅克隆模式）... 已等待 {minutes}分{seconds}秒")
+
+            stdout, stderr = await clone_task
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    proc.returncode, ["git", "clone", mirror_url, clone_target_path],
+                    proc.returncode, ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
                     output=stdout, stderr=stderr
                 )
             await send_progress("complete", 100, "✅ 安装成功！", "success")
@@ -250,17 +315,40 @@ async def install_tool_stream_handler(request):
             if os.path.exists(clone_target_path):
                 shutil.rmtree(clone_target_path)
 
-            await send_progress("git_direct", 70, "正在直连克隆...")
+            await send_progress("git_direct", 70, "正在直连克隆（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", item_url, clone_target_path,
+                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
             )
-            stdout, stderr = await proc.communicate()
+            # 使用心跳机制等待克隆完成，防止连接被代理/浏览器认为空闲而断开
+            clone_task = asyncio.create_task(proc.communicate())
+            start_time = time.time()
+
+            while not clone_task.done():
+                await asyncio.sleep(15)
+                if clone_task.done():
+                    break
+                elapsed = time.time() - start_time
+                if elapsed > 1200:
+                    proc.kill()
+                    await proc.wait()
+                    clone_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await clone_task
+                    await send_progress("error", -1, "安装超时：仓库过大或网络异常（已等待20分钟）", "error")
+                    await resp.write_eof()
+                    return resp
+                progress_pct = min(30 + int(elapsed / 1200 * 50), 79)
+                minutes = int(elapsed // 60)
+                seconds = int(elapsed % 60)
+                await send_progress("git_cloning", progress_pct, f"正在克隆仓库（浅克隆模式）... 已等待 {minutes}分{seconds}秒")
+
+            stdout, stderr = await clone_task
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    proc.returncode, ["git", "clone", item_url, clone_target_path],
+                    proc.returncode, ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
                     output=stdout, stderr=stderr
                 )
             await send_progress("complete", 100, "✅ 安装成功！", "success")
@@ -277,7 +365,7 @@ async def install_tool_stream_handler(request):
     return resp
 
 async def install_private_tool_stream_handler(request):
-    """SSE 流式接口：针对付费/私有库，通过云端鉴权代理下载 ZIP 包，静默内存解压并物理覆盖"""
+    """SSE 流式接口：针对付费/私有库，通过云端鉴权代理下载 ZIP 包，流式写入临时文件并磁盘解压覆盖"""
     data = await request.json()
     item_url = data.get("url")
     item_id = data.get("id")
@@ -300,6 +388,8 @@ async def install_private_tool_stream_handler(request):
             event["status"] = status
         await resp.write(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode('utf-8'))
 
+    tmp_path = None
+
     try:
         if not item_url or not account or not item_id:
             await send_progress("error", -1, "缺少核心鉴权参数", "error")
@@ -317,66 +407,117 @@ async def install_private_tool_stream_handler(request):
         req = urllib.request.Request(proxy_api_url, data=payload, headers={'Content-Type': 'application/json'})
 
         await send_progress("downloading", 30, "从云端下载资源包...")
-        with urllib.request.urlopen(req, timeout=120) as response:
-            zip_data = response.read()
+        with urllib.request.urlopen(req, timeout=600) as response:
+            content_length = int(response.headers.get('Content-Length', 0))
 
-            if response.status != 200 or zip_data == b"GITHUB_DOWNLOAD_FAILED" or b'"error"' in zip_data[:50]:
-                try:
-                    err_msg = json.loads(zip_data.decode('utf-8')).get("error", "未知错误")
-                except:
-                    err_msg = "二进制流解析异常或云端拉取失败"
-                await send_progress("error", -1, f"云端拒绝访问或拉取失败: {err_msg}", "error")
-                await resp.write_eof()
-                return resp
-
-            await send_progress("download_done", 60, "下载完成，准备解压...")
-
-            with zipfile.ZipFile(io.BytesIO(zip_data)) as zip_ref:
-                namelist = zip_ref.namelist()
-                if not namelist:
-                    await send_progress("error", -1, "下载的压缩包结构为空", "error")
+            # 检查磁盘剩余空间（ZIP文件 + 预估解压后大小约3倍，共4倍余量）
+            if content_length > 0:
+                required_space = content_length * 4
+                free_space = shutil.disk_usage(CUSTOM_NODES_DIR).free
+                if free_space < required_space:
+                    free_gb = free_space / (1024**3)
+                    need_gb = required_space / (1024**3)
+                    await send_progress("error", -1, f"磁盘空间不足：需要约 {need_gb:.1f}GB，当前剩余 {free_gb:.1f}GB", "error")
                     await resp.write_eof()
                     return resp
 
-                top_level_dir = namelist[0].split('/')[0] + '/'
+            # 流式下载到临时文件，避免大文件 OOM
+            with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+                downloaded = 0
+                chunk_size = 1024 * 1024  # 1MB 分块
+                last_progress_time = time.time()
 
-                await send_progress("extracting", 75, "解压安装文件...")
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
 
-                if os.path.exists(extract_target_path):
-                    try:
-                        shutil.rmtree(extract_target_path)
-                    except Exception as e:
-                        await send_progress("error", -1, "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。", "error")
+                    # 检查是否为错误响应（仅检查第一个 chunk）
+                    if downloaded == 0 and (chunk.startswith(b'{"') or chunk.startswith(b'GITHUB_DOWNLOAD_FAILED')):
+                        os.unlink(tmp_path)
+                        tmp_path = None
+                        try:
+                            error_data = json.loads(chunk.decode('utf-8'))
+                            err_msg = error_data.get("detail", error_data.get("error", "云端下载失败"))
+                        except:
+                            err_msg = "云端下载失败，请稍后重试"
+                        await send_progress("error", -1, f"云端拒绝访问或拉取失败: {err_msg}", "error")
                         await resp.write_eof()
                         return resp
 
-                os.makedirs(extract_target_path, exist_ok=True)
+                    tmp_file.write(chunk)
+                    downloaded += len(chunk)
 
-                await send_progress("installing", 90, "写入目标目录...")
-
-                for member in namelist:
-                    if member.startswith(top_level_dir):
-                        target_path = member.replace(top_level_dir, "", 1)
-                        if not target_path:
-                            continue
-                        # 防止路径穿越攻击 - 第一层防御
-                        if ".." in target_path or target_path.startswith("/") or target_path.startswith("\\"):
-                            continue
-                        # 防止路径穿越攻击 - 第二层防御：使用 normpath 规范化检查
-                        abs_target = os.path.normpath(os.path.join(extract_target_path, target_path))
-                        abs_base = os.path.normpath(extract_target_path)
-                        if not abs_target.startswith(abs_base):
-                            continue
-
-                        source = zip_ref.open(member)
-                        dest_path = os.path.join(extract_target_path, target_path)
-
-                        if member.endswith('/'):
-                            os.makedirs(dest_path, exist_ok=True)
+                    # 每5MB或每10秒更新一次下载进度
+                    current_time = time.time()
+                    if downloaded % (5 * 1024 * 1024) < chunk_size or current_time - last_progress_time >= 10:
+                        mb_done = downloaded / (1024 * 1024)
+                        if content_length > 0:
+                            pct = 30 + int(downloaded / content_length * 30)  # 30%~60%
+                            mb_total = content_length / (1024 * 1024)
+                            await send_progress("downloading", pct, f"下载中... {mb_done:.1f}MB / {mb_total:.1f}MB")
                         else:
-                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                            with open(dest_path, "wb") as target:
-                                shutil.copyfileobj(source, target)
+                            # 无法获取总大小时，显示已下载量，进度缓慢递增（按200MB估算）
+                            pct = min(30 + int(downloaded / (200 * 1024 * 1024) * 30), 59)
+                            await send_progress("downloading", pct, f"下载中... 已接收 {mb_done:.1f}MB")
+                        last_progress_time = current_time
+
+        await send_progress("download_done", 60, "下载完成，准备解压...")
+
+        # 从临时文件磁盘解压（不占内存）
+        with zipfile.ZipFile(tmp_path) as zip_ref:
+            namelist = zip_ref.namelist()
+            if not namelist:
+                await send_progress("error", -1, "下载的压缩包结构为空", "error")
+                await resp.write_eof()
+                return resp
+
+            top_level_dir = namelist[0].split('/')[0] + '/'
+
+            await send_progress("extracting", 75, "解压安装文件...")
+
+            if os.path.exists(extract_target_path):
+                try:
+                    shutil.rmtree(extract_target_path)
+                except Exception as e:
+                    await send_progress("error", -1, "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。", "error")
+                    await resp.write_eof()
+                    return resp
+
+            os.makedirs(extract_target_path, exist_ok=True)
+
+            total_files = len(namelist)
+            processed = 0
+            for member in namelist:
+                if member.startswith(top_level_dir):
+                    target_path = member.replace(top_level_dir, "", 1)
+                    if not target_path:
+                        continue
+                    # 防止路径穿越攻击 - 第一层防御
+                    if ".." in target_path or target_path.startswith("/") or target_path.startswith("\\"):
+                        continue
+                    # 防止路径穿越攻击 - 第二层防御：使用 normpath 规范化检查
+                    abs_target = os.path.normpath(os.path.join(extract_target_path, target_path))
+                    abs_base = os.path.normpath(extract_target_path)
+                    if not abs_target.startswith(abs_base):
+                        continue
+
+                    source = zip_ref.open(member)
+                    dest_path = os.path.join(extract_target_path, target_path)
+
+                    if member.endswith('/'):
+                        os.makedirs(dest_path, exist_ok=True)
+                    else:
+                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                        with open(dest_path, "wb") as target:
+                            shutil.copyfileobj(source, target)
+
+                processed += 1
+                # 每解压 50 个文件推送一次进度
+                if processed % 50 == 0:
+                    progress_pct = 75 + int(processed / total_files * 15)  # 75%~90%
+                    await send_progress("installing", progress_pct, f"写入目标目录... {processed}/{total_files}")
 
         await send_progress("complete", 100, "✅ 安装成功！", "success")
 
@@ -385,6 +526,10 @@ async def install_private_tool_stream_handler(request):
         await send_progress("error", -1, f"拉取中断: {err_msg}", "error")
     except Exception as e:
         await send_progress("error", -1, f"本地解压覆盖异常: {str(e)}", "error")
+    finally:
+        # 清理临时文件，防止异常时残留
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
     await resp.write_eof()
     return resp

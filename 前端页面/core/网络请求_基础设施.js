@@ -352,7 +352,7 @@ async function request(endpoint, options = {}) {
  * @returns {Promise<Object>} 最终结果事件
  */
 export async function requestSSE(endpoint, body, onProgress, options = {}) {
-    const timeout = options.timeout || 300000; // 5分钟超时
+    const timeout = options.timeout || 1200000; // 20分钟超时（大型工具克隆需要较长时间）
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
 

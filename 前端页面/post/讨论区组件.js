@@ -234,13 +234,14 @@ export function createPostsView(currentUser, keyword = "") {
     window.addEventListener("comfy-posts-filter-change", handleFilterChange);
     
     // 监听外部评分刷新事件（帖子详情页评分后通知列表刷新）
-    window.addEventListener("comfy-posts-refresh", () => {
+    const refreshHandler = () => {
         if (allPostsData.length > 0) {
             const sorted = sortPostsLocally(allPostsData, currentSort);
             renderPostsFromCache(sorted);
         }
         silentRefresh();
-    });
+    };
+    window.addEventListener("comfy-posts-refresh", refreshHandler);
     
     // 显示骨架屏
     const showSkeleton = () => {
@@ -493,6 +494,24 @@ export function createPostsView(currentUser, keyword = "") {
     
     // 初始加载
     loadPosts(1);
+    
+    // 🔧 组件生命周期清理方法
+    container._cleanup = () => {
+        // 清理筛选事件监听器
+        if (currentFilterHandler) {
+            window.removeEventListener("comfy-posts-filter-change", currentFilterHandler);
+            currentFilterHandler = null;
+        }
+        // 清理刷新事件监听器
+        if (typeof refreshHandler !== 'undefined') {
+            window.removeEventListener("comfy-posts-refresh", refreshHandler);
+        }
+        // 如果有分页器，停止它
+        if (currentPaginator) {
+            currentPaginator.stop();
+            currentPaginator = null;
+        }
+    };
     
     return container;
 }
