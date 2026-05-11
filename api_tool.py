@@ -5,7 +5,6 @@ import zipfile
 import io
 import urllib.request
 import urllib.error
-import http.client
 import subprocess
 import shutil
 import asyncio
@@ -44,15 +43,17 @@ async def install_tool_handler(request):
         
         # 复制当前系统环境变量，防止 git 弹窗要求输入密码导致后台卡死
         env = os.environ.copy()
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        env["GCM_INTERACTIVE"] = "never"           # 禁止 Git Credential Manager 交互
-        env["GIT_CONFIG_NOSYSTEM"] = "1"           # 忽略系统级 git 配置
-        env["GCM_CREDENTIAL_STORE"] = ""           # 不使用凭证存储
+        env["GIT_TERMINAL_PROMPT"] = "0"  # 禁用交互式密码提示
+        env["GCM_INTERACTIVE"] = "never"  # 禁止 Git Credential Manager 交互
+        # 注意：不再设置 GIT_CONFIG_NOSYSTEM 和 GCM_CREDENTIAL_STORE
+        # 允许 Git 使用系统配置和已缓存的凭据
 
         try:
             print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
             subprocess.run(
-                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
+                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", 
+                 "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30",
+                 mirror_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -74,7 +75,9 @@ async def install_tool_handler(request):
                 
             # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
             subprocess.run(
-                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
+                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags",
+                 "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30",
+                 item_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -117,117 +120,91 @@ async def install_private_tool_handler(request):
     try:
         proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_github_zip"
         payload = json.dumps({"url": item_url, "item_id": item_id, "account": account}).encode("utf-8")
-        headers = {'Content-Type': 'application/json'}
+        req = urllib.request.Request(proxy_api_url, data=payload, headers={'Content-Type': 'application/json'})
         
-        # ZIP 下载（最多重试3次）
-        max_retries = 3
-        
-        for attempt in range(max_retries):
-            try:
-                req = urllib.request.Request(proxy_api_url, data=payload, headers=headers)
-                print(f"[ComfyUI-Ranking] 🔒 正在向云端发起私有资产鉴权与加密拉取: {item_id}" + (f"（第{attempt+1}次尝试）" if attempt > 0 else ""))
-                with urllib.request.urlopen(req, timeout=600) as response:
-                    content_length = int(response.headers.get('Content-Length', 0))
-                    
-                    # 磁盘空间检查（仅第一次）
-                    if attempt == 0 and content_length > 0:
-                        required_space = content_length * 4
-                        free_space = shutil.disk_usage(CUSTOM_NODES_DIR).free
-                        if free_space < required_space:
-                            free_gb = free_space / (1024**3)
-                            need_gb = required_space / (1024**3)
-                            return web.json_response({"error": f"磁盘空间不足：需要约 {need_gb:.1f}GB，当前剩余 {free_gb:.1f}GB"}, status=500)
-                    
-                    # 流式下载到临时文件，避免大文件 OOM
-                    with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
-                        tmp_path = tmp_file.name
-                        downloaded = 0
-                        chunk_size = 1024 * 1024  # 1MB 分块
-                        
-                        while True:
-                            chunk = response.read(chunk_size)
-                            if not chunk:
-                                break
-                            
-                            # 检查是否为错误响应（仅检查第一个 chunk）
-                            if downloaded == 0 and (chunk.startswith(b'{"') or chunk.startswith(b'GITHUB_DOWNLOAD_FAILED')):
-                                os.unlink(tmp_path)
-                                tmp_path = None
-                                try:
-                                    error_data = json.loads(chunk.decode('utf-8'))
-                                    err_msg = error_data.get("detail", error_data.get("error", "云端下载失败"))
-                                except:
-                                    err_msg = "云端下载失败，请稍后重试"
-                                return web.json_response({"error": f"云端拒绝访问或拉取失败: {err_msg}"}, status=403)
-                            
-                            tmp_file.write(chunk)
-                            downloaded += len(chunk)
+        print(f"[ComfyUI-Ranking] 🔒 正在向云端发起私有资产鉴权与加密拉取: {item_id}")
+        with urllib.request.urlopen(req, timeout=600) as response:
+            content_length = int(response.headers.get('Content-Length', 0))
+            
+            # 检查磁盘剩余空间（ZIP文件 + 预估解压后大小约3倍，共4倍余量）
+            if content_length > 0:
+                required_space = content_length * 4
+                free_space = shutil.disk_usage(CUSTOM_NODES_DIR).free
+                if free_space < required_space:
+                    free_gb = free_space / (1024**3)
+                    need_gb = required_space / (1024**3)
+                    return web.json_response({"error": f"磁盘空间不足：需要约 {need_gb:.1f}GB，当前剩余 {free_gb:.1f}GB"}, status=500)
+            
+            # 流式下载到临时文件，避免大文件 OOM
+            with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+                downloaded = 0
+                chunk_size = 1024 * 1024  # 1MB 分块
                 
-                # 下载成功，跳出重试循环
-                break
-                
-            except (http.client.IncompleteRead, urllib.error.URLError, ConnectionResetError, TimeoutError) as e:
-                # 清理失败的临时文件
-                if tmp_path and os.path.exists(tmp_path):
-                    try:
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+                    
+                    # 检查是否为错误响应（仅检查第一个 chunk）
+                    if downloaded == 0 and (chunk.startswith(b'{"') or chunk.startswith(b'GITHUB_DOWNLOAD_FAILED')):
                         os.unlink(tmp_path)
-                    except:
-                        pass
-                    tmp_path = None
-                
-                if attempt < max_retries - 1:
-                    wait_time = [2, 5][attempt]
-                    print(f"[ComfyUI-Ranking] ⚠️ ZIP 下载失败（第{attempt+1}次），{wait_time}秒后重试: {e}")
-                    time.sleep(wait_time)
-                else:
-                    print(f"[ComfyUI-Ranking] ❌ ZIP 下载失败（已重试{max_retries}次）: {e}")
-                    return web.json_response({"status": "error", "message": f"下载失败（网络不稳定，已重试{max_retries}次）: {str(e)}"}, status=500)
-        
-        print("[ComfyUI-Ranking] ✅ 成功接收云端安全 ZIP 数据流，执行热覆盖解压...")
-        
-        # 从临时文件磁盘解压（不占内存）
-        with zipfile.ZipFile(tmp_path) as zip_ref:
-            namelist = zip_ref.namelist()
-            if not namelist:
-                return web.json_response({"error": "下载的压缩包结构为空"}, status=500)
-                
-            top_level_dir = namelist[0].split('/')[0] + '/'
-            
-            # 🚀 核心修复 1：执行纯净更新！在确认 ZIP 完好无损后，先彻底抹除旧版本文件夹，防止残留的废弃 .py 文件引发报错
-            if os.path.exists(extract_target_path):
-                try:
-                    shutil.rmtree(extract_target_path)
-                except Exception as e:
-                    # 🚀 核心修复 2：拦截 Windows 下 Python 文件被 ComfyUI 进程死锁的情况
-                    return web.json_response({"error": "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。"}, status=500)
-            
-            os.makedirs(extract_target_path, exist_ok=True)
-            
-            for member in namelist:
-                if member.startswith(top_level_dir):
-                    target_path = member.replace(top_level_dir, "", 1)
-                    if not target_path: continue
-                    # 防止路径穿越攻击 - 第一层防御
-                    if ".." in target_path or target_path.startswith("/") or target_path.startswith("\\"):
-                        print(f"[ComfyUI-Ranking] ⚠️ 跳过不安全路径: {target_path}")
-                        continue
+                        tmp_path = None
+                        try:
+                            error_data = json.loads(chunk.decode('utf-8'))
+                            err_msg = error_data.get("detail", error_data.get("error", "云端下载失败"))
+                        except:
+                            err_msg = "云端下载失败，请稍后重试"
+                        return web.json_response({"error": f"云端拒绝访问或拉取失败: {err_msg}"}, status=403)
                     
-                    # 防止路径穿越攻击 - 第二层防御：使用 normpath 规范化检查
-                    abs_target = os.path.normpath(os.path.join(extract_target_path, target_path))
-                    abs_base = os.path.normpath(extract_target_path)
-                    if not abs_target.startswith(abs_base):
-                        print(f"[ComfyUI-Ranking] ⚠️ 跳过不安全路径: {target_path}")
-                        continue
+                    tmp_file.write(chunk)
+                    downloaded += len(chunk)
+            
+            print("[ComfyUI-Ranking] ✅ 成功接收云端安全 ZIP 数据流，执行热覆盖解压...")
+            
+            # 从临时文件磁盘解压（不占内存）
+            with zipfile.ZipFile(tmp_path) as zip_ref:
+                namelist = zip_ref.namelist()
+                if not namelist:
+                    return web.json_response({"error": "下载的压缩包结构为空"}, status=500)
+                    
+                top_level_dir = namelist[0].split('/')[0] + '/'
+                
+                # 🚀 核心修复 1：执行纯净更新！在确认 ZIP 完好无损后，先彻底抹除旧版本文件夹，防止残留的废弃 .py 文件引发报错
+                if os.path.exists(extract_target_path):
+                    try:
+                        shutil.rmtree(extract_target_path)
+                    except Exception as e:
+                        # 🚀 核心修复 2：拦截 Windows 下 Python 文件被 ComfyUI 进程死锁的情况
+                        return web.json_response({"error": "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。"}, status=500)
+                
+                os.makedirs(extract_target_path, exist_ok=True)
+                
+                for member in namelist:
+                    if member.startswith(top_level_dir):
+                        target_path = member.replace(top_level_dir, "", 1)
+                        if not target_path: continue
+                        # 防止路径穿越攻击 - 第一层防御
+                        if ".." in target_path or target_path.startswith("/") or target_path.startswith("\\"):
+                            print(f"[ComfyUI-Ranking] ⚠️ 跳过不安全路径: {target_path}")
+                            continue
                         
-                    source = zip_ref.open(member)
-                    dest_path = os.path.join(extract_target_path, target_path)
-                    
-                    if member.endswith('/'):
-                        os.makedirs(dest_path, exist_ok=True)
-                    else:
-                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                        with open(dest_path, "wb") as target:
-                            shutil.copyfileobj(source, target) # 强制写入纯净新文件
+                        # 防止路径穿越攻击 - 第二层防御：使用 normpath 规范化检查
+                        abs_target = os.path.normpath(os.path.join(extract_target_path, target_path))
+                        abs_base = os.path.normpath(extract_target_path)
+                        if not abs_target.startswith(abs_base):
+                            print(f"[ComfyUI-Ranking] ⚠️ 跳过不安全路径: {target_path}")
+                            continue
+                            
+                        source = zip_ref.open(member)
+                        dest_path = os.path.join(extract_target_path, target_path)
+                        
+                        if member.endswith('/'):
+                            os.makedirs(dest_path, exist_ok=True)
+                        else:
+                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                            with open(dest_path, "wb") as target:
+                                shutil.copyfileobj(source, target) # 强制写入纯净新文件
                                 
         print(f"[ComfyUI-Ranking] 🎉 私有插件 {target_dir_name} 静默更新/安装完成！无 .git 目录残留。")
         return web.json_response({"status": "success"})
@@ -238,12 +215,9 @@ async def install_private_tool_handler(request):
     except Exception as e:
         return web.json_response({"error": f"本地解压覆盖异常: {str(e)}"}, status=500)
     finally:
-        # 清理临时文件，捕获异常防止覆盖响应
+        # 清理临时文件，防止异常时残留
         if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception as cleanup_err:
-                print(f"[ComfyUI-Ranking] ⚠️ 临时文件清理失败（不影响安装结果）: {cleanup_err}")
+            os.unlink(tmp_path)
 
 async def install_tool_stream_handler(request):
     """SSE 流式接口：通过 Git Clone 下载插件，实时推送进度"""
@@ -291,10 +265,10 @@ async def install_tool_stream_handler(request):
 
         # 复制当前系统环境变量，防止 git 弹窗要求输入密码导致后台卡死
         env = os.environ.copy()
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        env["GCM_INTERACTIVE"] = "never"
-        env["GIT_CONFIG_NOSYSTEM"] = "1"
-        env["GCM_CREDENTIAL_STORE"] = ""
+        env["GIT_TERMINAL_PROMPT"] = "0"  # 禁用交互式密码提示
+        env["GCM_INTERACTIVE"] = "never"  # 禁止 Git Credential Manager 交互
+        # 注意：不再设置 GIT_CONFIG_NOSYSTEM 和 GCM_CREDENTIAL_STORE
+        # 允许 Git 使用系统配置和已缓存的凭据
 
         mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
 
@@ -303,7 +277,9 @@ async def install_tool_stream_handler(request):
         try:
             await send_progress("git_cloning", 50, "正在克隆仓库（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path,
+                "git", "clone", "--depth", "1", "--single-branch", "--no-tags",
+                "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30",
+                mirror_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
@@ -347,7 +323,9 @@ async def install_tool_stream_handler(request):
 
             await send_progress("git_direct", 70, "正在直连克隆（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path,
+                "git", "clone", "--depth", "1", "--single-branch", "--no-tags",
+                "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=30",
+                item_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
@@ -434,90 +412,64 @@ async def install_private_tool_stream_handler(request):
 
         proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_github_zip"
         payload = json.dumps({"url": item_url, "item_id": item_id, "account": account}).encode("utf-8")
-        headers = {'Content-Type': 'application/json'}
-        
-        # ZIP 下载（最多重试3次）
-        max_retries = 3
-        
-        for attempt in range(max_retries):
-            try:
-                req = urllib.request.Request(proxy_api_url, data=payload, headers=headers)
-                await send_progress("downloading", 30, "从云端下载资源包..." + (f"（第{attempt+1}次尝试）" if attempt > 0 else ""))
-                with urllib.request.urlopen(req, timeout=600) as response:
-                    content_length = int(response.headers.get('Content-Length', 0))
-                    
-                    # 磁盘空间检查（仅第一次）
-                    if attempt == 0 and content_length > 0:
-                        required_space = content_length * 4
-                        free_space = shutil.disk_usage(CUSTOM_NODES_DIR).free
-                        if free_space < required_space:
-                            free_gb = free_space / (1024**3)
-                            need_gb = required_space / (1024**3)
-                            await send_progress("error", -1, f"磁盘空间不足：需要约 {need_gb:.1f}GB，当前剩余 {free_gb:.1f}GB", "error")
-                            await resp.write_eof()
-                            return resp
-                    
-                    # 流式下载到临时文件，避免大文件 OOM
-                    with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
-                        tmp_path = tmp_file.name
-                        downloaded = 0
-                        chunk_size = 1024 * 1024  # 1MB 分块
-                        last_progress_time = time.time()
-                        
-                        while True:
-                            chunk = response.read(chunk_size)
-                            if not chunk:
-                                break
-                            
-                            # 检查是否为错误响应（仅检查第一个 chunk）
-                            if downloaded == 0 and (chunk.startswith(b'{"') or chunk.startswith(b'GITHUB_DOWNLOAD_FAILED')):
-                                os.unlink(tmp_path)
-                                tmp_path = None
-                                try:
-                                    error_data = json.loads(chunk.decode('utf-8'))
-                                    err_msg = error_data.get("detail", error_data.get("error", "云端下载失败"))
-                                except:
-                                    err_msg = "云端下载失败，请稍后重试"
-                                await send_progress("error", -1, f"云端拒绝访问或拉取失败: {err_msg}", "error")
-                                await resp.write_eof()
-                                return resp
-                            
-                            tmp_file.write(chunk)
-                            downloaded += len(chunk)
-                            
-                            # 每5MB或每10秒更新一次下载进度
-                            current_time = time.time()
-                            if downloaded % (5 * 1024 * 1024) < chunk_size or current_time - last_progress_time >= 10:
-                                mb_done = downloaded / (1024 * 1024)
-                                if content_length > 0:
-                                    pct = 30 + int(downloaded / content_length * 30)  # 30%~60%
-                                    mb_total = content_length / (1024 * 1024)
-                                    await send_progress("downloading", pct, f"下载中... {mb_done:.1f}MB / {mb_total:.1f}MB")
-                                else:
-                                    # 无法获取总大小时，显示已下载量，进度缓慢递增（按200MB估算）
-                                    pct = min(30 + int(downloaded / (200 * 1024 * 1024) * 30), 59)
-                                    await send_progress("downloading", pct, f"下载中... 已接收 {mb_done:.1f}MB")
-                                last_progress_time = current_time
-                
-                # 下载成功，跳出重试循环
-                break
-                
-            except (http.client.IncompleteRead, urllib.error.URLError, ConnectionResetError, TimeoutError) as e:
-                if tmp_path and os.path.exists(tmp_path):
-                    try:
-                        os.unlink(tmp_path)
-                    except:
-                        pass
-                    tmp_path = None
-                
-                if attempt < max_retries - 1:
-                    wait_time = [2, 5][attempt]
-                    await send_progress("downloading", 10, f"⚠️ 下载中断，{wait_time}秒后重试（第{attempt+2}次）...")
-                    await asyncio.sleep(wait_time)
-                else:
-                    await send_progress("error", -1, f"下载失败（网络不稳定，已重试{max_retries}次）: {str(e)}", "error")
+        req = urllib.request.Request(proxy_api_url, data=payload, headers={'Content-Type': 'application/json'})
+
+        await send_progress("downloading", 30, "从云端下载资源包...")
+        with urllib.request.urlopen(req, timeout=600) as response:
+            content_length = int(response.headers.get('Content-Length', 0))
+
+            # 检查磁盘剩余空间（ZIP文件 + 预估解压后大小约3倍，共4倍余量）
+            if content_length > 0:
+                required_space = content_length * 4
+                free_space = shutil.disk_usage(CUSTOM_NODES_DIR).free
+                if free_space < required_space:
+                    free_gb = free_space / (1024**3)
+                    need_gb = required_space / (1024**3)
+                    await send_progress("error", -1, f"磁盘空间不足：需要约 {need_gb:.1f}GB，当前剩余 {free_gb:.1f}GB", "error")
                     await resp.write_eof()
                     return resp
+
+            # 流式下载到临时文件，避免大文件 OOM
+            with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+                downloaded = 0
+                chunk_size = 1024 * 1024  # 1MB 分块
+                last_progress_time = time.time()
+
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+
+                    # 检查是否为错误响应（仅检查第一个 chunk）
+                    if downloaded == 0 and (chunk.startswith(b'{"') or chunk.startswith(b'GITHUB_DOWNLOAD_FAILED')):
+                        os.unlink(tmp_path)
+                        tmp_path = None
+                        try:
+                            error_data = json.loads(chunk.decode('utf-8'))
+                            err_msg = error_data.get("detail", error_data.get("error", "云端下载失败"))
+                        except:
+                            err_msg = "云端下载失败，请稍后重试"
+                        await send_progress("error", -1, f"云端拒绝访问或拉取失败: {err_msg}", "error")
+                        await resp.write_eof()
+                        return resp
+
+                    tmp_file.write(chunk)
+                    downloaded += len(chunk)
+
+                    # 每5MB或每10秒更新一次下载进度
+                    current_time = time.time()
+                    if downloaded % (5 * 1024 * 1024) < chunk_size or current_time - last_progress_time >= 10:
+                        mb_done = downloaded / (1024 * 1024)
+                        if content_length > 0:
+                            pct = 30 + int(downloaded / content_length * 30)  # 30%~60%
+                            mb_total = content_length / (1024 * 1024)
+                            await send_progress("downloading", pct, f"下载中... {mb_done:.1f}MB / {mb_total:.1f}MB")
+                        else:
+                            # 无法获取总大小时，显示已下载量，进度缓慢递增（按200MB估算）
+                            pct = min(30 + int(downloaded / (200 * 1024 * 1024) * 30), 59)
+                            await send_progress("downloading", pct, f"下载中... 已接收 {mb_done:.1f}MB")
+                        last_progress_time = current_time
 
         await send_progress("download_done", 60, "下载完成，准备解压...")
 
@@ -583,12 +535,9 @@ async def install_private_tool_stream_handler(request):
     except Exception as e:
         await send_progress("error", -1, f"本地解压覆盖异常: {str(e)}", "error")
     finally:
-        # 清理临时文件，捕获异常防止覆盖响应
+        # 清理临时文件，防止异常时残留
         if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception as cleanup_err:
-                print(f"[ComfyUI-Ranking] ⚠️ 临时文件清理失败（不影响安装结果）: {cleanup_err}")
+            os.unlink(tmp_path)
 
     await resp.write_eof()
     return resp
