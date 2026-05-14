@@ -359,7 +359,10 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         const data = await res.json();
 
                         if (data.error) {
-                            inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 安装失败: ${data.error}</span>`;
+                            const isLinkError = data.error.includes('不是有效的 Git');
+                            inlineStatusBox.innerHTML = isLinkError
+                                ? `<span style="color: #F44336;">❌ ${data.error}</span><br><button onclick="window.open('${itemData.link}', '_blank')" style="margin-top:8px;padding:6px 14px;background:#2563eb;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;">🔗 前往资源原始页面</button>`
+                                : `<span style="color: #F44336;">❌ 安装失败: ${data.error}</span>`;
                             showToast(`插件 [${itemData.title}] 安装失败: ${data.error}`, "error");
                         } else {
                             inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🎉 工具安装成功！</div><div style="color: #aaa; margin-top: 5px;">请重启 ComfyUI 以加载新节点。</div>`;

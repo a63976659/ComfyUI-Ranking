@@ -26,6 +26,11 @@ async def install_tool_handler(request):
     
     if not item_url or not account: 
         return web.json_response({"error": "缺少下载凭证或链接"}, status=400)
+    
+    # 校验 URL 是否为有效的 Git 仓库地址
+    valid_git_hosts = ["github.com", "gitlab.com", "gitee.com", "bitbucket.org", "kkgithub.com"]
+    if not any(host in item_url for host in valid_git_hosts):
+        return web.json_response({"error": "该资源链接不是有效的 Git 仓库地址，无法自动安装。请前往资源原始页面手动下载。"}, status=400)
         
     target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
     clone_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
@@ -46,8 +51,6 @@ async def install_tool_handler(request):
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
         env["GCM_INTERACTIVE"] = "never"           # 禁止 Git Credential Manager 交互
-        env["GIT_CONFIG_NOSYSTEM"] = "1"           # 忽略系统级 git 配置
-        env["GCM_CREDENTIAL_STORE"] = ""           # 不使用凭证存储
 
         try:
             print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
@@ -275,6 +278,13 @@ async def install_tool_stream_handler(request):
             await resp.write_eof()
             return resp
 
+        # 校验 URL 是否为有效的 Git 仓库地址
+        valid_git_hosts = ["github.com", "gitlab.com", "gitee.com", "bitbucket.org", "kkgithub.com"]
+        if not any(host in item_url for host in valid_git_hosts):
+            await send_progress("error", -1, "该资源链接不是有效的 Git 仓库地址，无法自动安装。请前往资源原始页面手动下载。", "error")
+            await resp.write_eof()
+            return resp
+
         await send_progress("validate", 5, "校验安装参数...")
 
         target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
@@ -293,8 +303,6 @@ async def install_tool_stream_handler(request):
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
         env["GCM_INTERACTIVE"] = "never"
-        env["GIT_CONFIG_NOSYSTEM"] = "1"
-        env["GCM_CREDENTIAL_STORE"] = ""
 
         mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
 
