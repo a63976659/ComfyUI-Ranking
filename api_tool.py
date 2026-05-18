@@ -29,7 +29,7 @@ async def install_tool_handler(request):
     
     # 校验 URL 是否为有效的 Git 仓库地址
     valid_git_hosts = ["github.com", "gitlab.com", "gitee.com", "bitbucket.org", "kkgithub.com"]
-    if not any(host in item_url.lower() for host in valid_git_hosts):
+    if not any(host in item_url for host in valid_git_hosts):
         return web.json_response({"error": "该资源链接不是有效的 Git 仓库地址，无法自动安装。请前往资源原始页面手动下载。"}, status=400)
         
     target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
@@ -44,9 +44,8 @@ async def install_tool_handler(request):
         
     try:
         # 🚀 核心升级：双链路容灾机制
-        # 链路 A：国内镜像加速（优先）
-        direct_url = item_url.replace("https://kkgithub.com", "https://github.com")
-        mirror_url = direct_url.replace("https://github.com", "https://kkgithub.com")
+        # 链路 A：使用目前最稳定的域名级直接替换镜像
+        mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
         
         # 复制当前系统环境变量，防止 git 弹窗要求输入密码导致后台卡死
         env = os.environ.copy()
@@ -56,21 +55,18 @@ async def install_tool_handler(request):
         try:
             print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
             subprocess.run(
-                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
+                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
                 env=env,
-                timeout=120  # 2分钟超时
+                timeout=1200  # 20分钟超时
             )
             print("✅ 镜像 Git Clone 安装成功！保留了完整的版本控制 (.git)。")
             return web.json_response({"status": "success"})
             
         except subprocess.TimeoutExpired:
-            print("⚠️ 镜像源克隆超时（已等待2分钟），自动回退至直连...")
-            if os.path.exists(clone_target_path):
-                shutil.rmtree(clone_target_path)
-            raise subprocess.CalledProcessError(-1, "git clone", output="", stderr="镜像克隆超时（2分钟）")
+            return web.json_response({"error": "安装超时：仓库过大或网络异常，请检查网络后重试"}, status=504)
             
         except subprocess.CalledProcessError as e1:
             print(f"⚠️ 镜像源不可用或发生冲突，系统正在自动无缝回退至直连: {item_url}")
@@ -81,119 +77,27 @@ async def install_tool_handler(request):
                 
             # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
             subprocess.run(
-                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", direct_url, clone_target_path],
+                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
                 env=env,
-                timeout=120  # 2分钟超时
+                timeout=1200  # 20分钟超时
             )
             print("✅ 直连 Git Clone 安装成功！")
             return web.json_response({"status": "success"})
             
     except subprocess.TimeoutExpired:
-        print("⚠️ 直连克隆超时（已等待2分钟），切换云端备用下载...")
-        if os.path.exists(clone_target_path):
-            shutil.rmtree(clone_target_path)
-        raise subprocess.CalledProcessError(-1, "git clone", output="", stderr="直连克隆超时（2分钟）")
+        return web.json_response({"error": "安装超时：仓库过大或网络异常，请检查网络后重试"}, status=504)
             
     except FileNotFoundError:
         # 拦截用户电脑根本没装 Git 的情况
         return web.json_response({"error": "系统中未检测到 Git，请先安装 Git 环境才能下载插件！"}, status=500)
         
     except subprocess.CalledProcessError as e2:
-        # 两条链路都失败了，尝试云端 ZIP 代理兜底
-        if item_id and account:
-            print("[ComfyUI-Ranking] ⚡ Git 网络受限，自动切换到云端备用下载...")
-            tmp_path = None
-            try:
-                proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_github_zip"
-                payload = json.dumps({"url": item_url, "item_id": item_id, "account": account}).encode("utf-8")
-                req_headers = {'Content-Type': 'application/json'}
-                
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        req = urllib.request.Request(proxy_api_url, data=payload, headers=req_headers)
-                        print(f"[ComfyUI-Ranking] 从云端下载资源包..." + (f"（第{attempt+1}次尝试）" if attempt > 0 else ""))
-                        with urllib.request.urlopen(req, timeout=600) as response:
-                            content_length = int(response.headers.get('Content-Length', 0))
-                            
-                            with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
-                                tmp_path = tmp_file.name
-                                downloaded = 0
-                                chunk_size = 1024 * 1024
-                                
-                                while True:
-                                    chunk = response.read(chunk_size)
-                                    if not chunk:
-                                        break
-                                    if downloaded == 0 and (chunk.startswith(b'{"') or chunk.startswith(b'GITHUB_DOWNLOAD_FAILED')):
-                                        os.unlink(tmp_path)
-                                        tmp_path = None
-                                        try:
-                                            error_data = json.loads(chunk.decode('utf-8'))
-                                            err_msg = error_data.get("detail", error_data.get("error", "云端下载失败"))
-                                        except:
-                                            err_msg = "云端下载失败，请稍后重试"
-                                        raise Exception(f"云端拒绝: {err_msg}")
-                                    
-                                    tmp_file.write(chunk)
-                                    downloaded += len(chunk)
-                        break
-                        
-                    except (http.client.IncompleteRead, urllib.error.URLError, ConnectionResetError, TimeoutError) as dl_err:
-                        if tmp_path and os.path.exists(tmp_path):
-                            try: os.unlink(tmp_path)
-                            except: pass
-                            tmp_path = None
-                        if attempt < max_retries - 1:
-                            time.sleep(3)
-                        else:
-                            raise Exception(f"云端下载失败（已重试{max_retries}次）: {str(dl_err)}")
-                
-                # 解压
-                print("[ComfyUI-Ranking] 云端下载完成，正在解压...")
-                with zipfile.ZipFile(tmp_path) as zip_ref:
-                    namelist = zip_ref.namelist()
-                    if not namelist:
-                        raise Exception("压缩包为空")
-                    top_dirs = set(n.split('/')[0] for n in namelist if '/' in n)
-                    strip_prefix = ""
-                    if len(top_dirs) == 1:
-                        strip_prefix = list(top_dirs)[0] + "/"
-                    
-                    if os.path.exists(clone_target_path):
-                        shutil.rmtree(clone_target_path)
-                    os.makedirs(clone_target_path, exist_ok=True)
-                    
-                    for member in namelist:
-                        if member.endswith('/'):
-                            continue
-                        relative_path = member[len(strip_prefix):] if strip_prefix and member.startswith(strip_prefix) else member
-                        if not relative_path:
-                            continue
-                        target_path = os.path.join(clone_target_path, relative_path)
-                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                        with zip_ref.open(member) as src, open(target_path, 'wb') as dst:
-                            shutil.copyfileobj(src, dst)
-                
-                git_dir = os.path.join(clone_target_path, ".git")
-                if os.path.exists(git_dir):
-                    shutil.rmtree(git_dir)
-                
-                print(f"[ComfyUI-Ranking] ✅ 安装成功！（通过云端备用通道）: {target_dir_name}")
-                return web.json_response({"status": "success"})
-                
-            except Exception as cloud_err:
-                return web.json_response({"error": f"所有安装通道均失败: {str(cloud_err)}"}, status=500)
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    try: os.unlink(tmp_path)
-                    except: pass
-        else:
-            error_msg = e2.stderr or e2.stdout
-            return web.json_response({"error": f"Git Clone 失败，镜像与直连均不可用。请检查网络或开启代理: {error_msg}"}, status=500)
+        # 两条链路都失败了的最终兜底
+        error_msg = e2.stderr or e2.stdout
+        return web.json_response({"error": f"Git Clone 失败，镜像与直连均不可用。请检查网络或开启代理: {error_msg}"}, status=500)
         
     except Exception as e:
         # 兜底异常拦截
@@ -376,7 +280,7 @@ async def install_tool_stream_handler(request):
 
         # 校验 URL 是否为有效的 Git 仓库地址
         valid_git_hosts = ["github.com", "gitlab.com", "gitee.com", "bitbucket.org", "kkgithub.com"]
-        if not any(host in item_url.lower() for host in valid_git_hosts):
+        if not any(host in item_url for host in valid_git_hosts):
             await send_progress("error", -1, "该资源链接不是有效的 Git 仓库地址，无法自动安装。请前往资源原始页面手动下载。", "error")
             await resp.write_eof()
             return resp
@@ -401,15 +305,13 @@ async def install_tool_stream_handler(request):
         env["GCM_INTERACTIVE"] = "never"
 
         mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
-        mirror_url = mirror_url.replace("https://github.com", "https://kkgithub.com")
-        direct_url = item_url.replace("https://kkgithub.com", "https://github.com")
 
         await send_progress("git_mirror", 25, "尝试镜像源克隆...")
 
         try:
             await send_progress("git_cloning", 50, "正在克隆仓库（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path,
+                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
@@ -423,14 +325,16 @@ async def install_tool_stream_handler(request):
                 if clone_task.done():
                     break
                 elapsed = time.time() - start_time
-                if elapsed > 120:  # 总超时2分钟
+                if elapsed > 1200:  # 总超时20分钟
                     proc.kill()
                     await proc.wait()
                     clone_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await clone_task
-                    raise subprocess.CalledProcessError(-1, "git clone", output=b"", stderr=b"Mirror clone timeout (2min)")
-                progress_pct = min(30 + int(elapsed / 120 * 50), 79)
+                    await send_progress("error", -1, "安装超时：仓库过大或网络异常（已等待20分钟）", "error")
+                    await resp.write_eof()
+                    return resp
+                progress_pct = min(30 + int(elapsed / 1200 * 50), 79)
                 minutes = int(elapsed // 60)
                 seconds = int(elapsed % 60)
                 await send_progress("git_cloning", progress_pct, f"正在克隆仓库（浅克隆模式）... 已等待 {minutes}分{seconds}秒")
@@ -451,7 +355,7 @@ async def install_tool_stream_handler(request):
 
             await send_progress("git_direct", 70, "正在直连克隆（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", direct_url, clone_target_path,
+                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
@@ -465,14 +369,16 @@ async def install_tool_stream_handler(request):
                 if clone_task.done():
                     break
                 elapsed = time.time() - start_time
-                if elapsed > 120:
+                if elapsed > 1200:
                     proc.kill()
                     await proc.wait()
                     clone_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await clone_task
-                    raise subprocess.CalledProcessError(-1, "git clone", output=b"", stderr=b"Direct clone timeout (2min)")
-                progress_pct = min(30 + int(elapsed / 120 * 50), 79)
+                    await send_progress("error", -1, "安装超时：仓库过大或网络异常（已等待20分钟）", "error")
+                    await resp.write_eof()
+                    return resp
+                progress_pct = min(30 + int(elapsed / 1200 * 50), 79)
                 minutes = int(elapsed // 60)
                 seconds = int(elapsed % 60)
                 await send_progress("git_cloning", progress_pct, f"正在克隆仓库（浅克隆模式）... 已等待 {minutes}分{seconds}秒")
@@ -488,109 +394,8 @@ async def install_tool_stream_handler(request):
     except FileNotFoundError:
         await send_progress("error", -1, "系统中未检测到 Git，请先安装 Git 环境才能下载插件！", "error")
     except subprocess.CalledProcessError as e2:
-        if item_id and account:
-            await send_progress("cloud_fallback", 82, "⚡ Git 网络受限，自动切换到云端备用下载...")
-            
-            tmp_path = None
-            try:
-                proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_github_zip"
-                payload = json.dumps({"url": item_url, "item_id": item_id, "account": account}).encode("utf-8")
-                req_headers = {'Content-Type': 'application/json'}
-                
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        req = urllib.request.Request(proxy_api_url, data=payload, headers=req_headers)
-                        await send_progress("downloading", 84, "从云端下载资源包..." + (f"（第{attempt+1}次尝试）" if attempt > 0 else ""))
-                        with urllib.request.urlopen(req, timeout=600) as response:
-                            content_length = int(response.headers.get('Content-Length', 0))
-                            
-                            with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp_file:
-                                tmp_path = tmp_file.name
-                                downloaded = 0
-                                chunk_size = 1024 * 1024
-                                
-                                while True:
-                                    chunk = response.read(chunk_size)
-                                    if not chunk:
-                                        break
-                                    if downloaded == 0 and (chunk.startswith(b'{"') or chunk.startswith(b'GITHUB_DOWNLOAD_FAILED')):
-                                        os.unlink(tmp_path)
-                                        tmp_path = None
-                                        try:
-                                            error_data = json.loads(chunk.decode('utf-8'))
-                                            err_msg = error_data.get("detail", error_data.get("error", "云端下载失败"))
-                                        except:
-                                            err_msg = "云端下载失败，请稍后重试"
-                                        raise Exception(f"云端拒绝: {err_msg}")
-                                    
-                                    tmp_file.write(chunk)
-                                    downloaded += len(chunk)
-                                    
-                                    if downloaded % (5 * 1024 * 1024) < chunk_size:
-                                        mb_done = downloaded / (1024 * 1024)
-                                        if content_length > 0:
-                                            pct = 84 + int(downloaded / content_length * 10)  # 84%~94%
-                                            mb_total = content_length / (1024 * 1024)
-                                            await send_progress("downloading", min(pct, 94), f"云端下载中... {mb_done:.1f}MB / {mb_total:.1f}MB")
-                                        else:
-                                            await send_progress("downloading", min(84 + int(downloaded / (200*1024*1024) * 10), 94), f"云端下载中... 已接收 {mb_done:.1f}MB")
-                        break  # 下载成功，跳出重试
-                        
-                    except (http.client.IncompleteRead, urllib.error.URLError, ConnectionResetError, TimeoutError) as dl_err:
-                        if tmp_path and os.path.exists(tmp_path):
-                            try: os.unlink(tmp_path)
-                            except: pass
-                            tmp_path = None
-                        if attempt < max_retries - 1:
-                            await send_progress("downloading", 84, f"⚠️ 下载中断，重试中（第{attempt+2}次）...")
-                            await asyncio.sleep(3)
-                        else:
-                            raise Exception(f"云端下载失败（已重试{max_retries}次）: {str(dl_err)}")
-                
-                # 解压
-                await send_progress("extracting", 95, "解压覆盖中...")
-                
-                with zipfile.ZipFile(tmp_path) as zip_ref:
-                    namelist = zip_ref.namelist()
-                    if not namelist:
-                        raise Exception("压缩包为空")
-                    top_dirs = set(n.split('/')[0] for n in namelist if '/' in n)
-                    strip_prefix = ""
-                    if len(top_dirs) == 1:
-                        strip_prefix = list(top_dirs)[0] + "/"
-                    
-                    if os.path.exists(clone_target_path):
-                        shutil.rmtree(clone_target_path)
-                    os.makedirs(clone_target_path, exist_ok=True)
-                    
-                    for member in namelist:
-                        if member.endswith('/'):
-                            continue
-                        relative_path = member[len(strip_prefix):] if strip_prefix and member.startswith(strip_prefix) else member
-                        if not relative_path:
-                            continue
-                        target_path = os.path.join(clone_target_path, relative_path)
-                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                        with zip_ref.open(member) as src, open(target_path, 'wb') as dst:
-                            shutil.copyfileobj(src, dst)
-                
-                # 清理 .git 目录（ZIP方式不需要）
-                git_dir = os.path.join(clone_target_path, ".git")
-                if os.path.exists(git_dir):
-                    shutil.rmtree(git_dir)
-                
-                await send_progress("complete", 100, "✅ 安装成功！（通过云端备用通道）", "success")
-                
-            except Exception as cloud_err:
-                await send_progress("error", -1, f"所有安装通道均失败: {str(cloud_err)}", "error")
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    try: os.unlink(tmp_path)
-                    except: pass
-        else:
-            error_msg = e2.stderr.decode('utf-8', errors='ignore') if e2.stderr else (e2.stdout.decode('utf-8', errors='ignore') if e2.stdout else "")
-            await send_progress("error", -1, f"Git Clone 失败，镜像与直连均不可用。请检查网络或开启代理: {error_msg}", "error")
+        error_msg = e2.stderr.decode('utf-8', errors='ignore') if e2.stderr else (e2.stdout.decode('utf-8', errors='ignore') if e2.stdout else "")
+        await send_progress("error", -1, f"Git Clone 失败，镜像与直连均不可用。请检查网络或开启代理: {error_msg}", "error")
     except Exception as e:
         await send_progress("error", -1, f"安装过程发生未知失败: {str(e)}", "error")
 
