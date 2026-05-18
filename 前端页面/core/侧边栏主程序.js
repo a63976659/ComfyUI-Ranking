@@ -13,6 +13,7 @@ import { createTopNav } from "../components/顶部导航组件.js";
 import { loadSidebarContent } from "./侧边栏数据引擎.js";
 import { createItemDetailView } from "../market/资源详情页面组件.js";
 import { showToast } from "../components/UI交互提示组件.js";
+import { api } from "./网络请求API.js";  // 🔴 编辑模式需调用详情API获取完整数据
 import { CACHE, getBackgroundKey } from "./全局配置.js";
 import { cleanupImageSandbox } from "../components/图片沙盒组件.js";  // 🔧 P3优化：导入清理函数
 // 🎯 P2 用户体验增强
@@ -221,12 +222,32 @@ export function buildSidebarDOM() {
     });
 
     // 监听进入修改编辑页面的请求
-    window.addEventListener("comfy-route-edit-publish", (e) => {
+    // 🔴 修复：编辑时先获取详情API数据，确保 has_private_token 等字段完整（列表缓存可能缺少该字段）
+    window.addEventListener("comfy-route-edit-publish", async (e) => {
         const { itemData, currentUser } = e.detail;
+
+        // 先展示加载状态，避免用户感知延迟
+        const loadingView = document.createElement("div");
+        loadingView.style.cssText = "display:flex;flex-direction:column;align-items:center;justify-content:center;height:400px;color:#888;font-size:14px;";
+        loadingView.innerHTML = `<div style=\"font-size:24px;margin-bottom:10px;\">⏳</div><div>${t('common.loading') || '加载中...'}</div>`;
+        showInlineView(loadingView);
+
+        // 从详情API获取完整数据（确保 has_private_token、netdisk_password 等字段不缺失）
+        let enrichedItemData = itemData;
+        try {
+            const detailRes = await api.getItemById(itemData.id);
+            if (detailRes?.status === "success" && detailRes?.data) {
+                // 合并详情数据，保留列表中的图片URL等已有字段
+                enrichedItemData = { ...itemData, ...detailRes.data };
+            }
+        } catch (err) {
+            console.warn("获取编辑详情失败，使用列表数据:", err);
+        }
+
         const publishView = createPublishView(currentUser, 
             () => hideInlineView(), 
             () => { hideInlineView(); triggerLoad(true); },
-            itemData 
+            enrichedItemData 
         );
         showInlineView(publishView);
     });
