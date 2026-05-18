@@ -297,17 +297,21 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             inlineStatusBox.querySelector('#btn-confirm-install').onclick = async () => {
                 // 获取最新的 item 数据以确保路由决策准确
                 let freshHasPrivateToken = !!itemData.has_private_token;
+                let apiFetchFailed = false;
                 try {
                     const freshRes = await api.getItemById(itemData.id);
                     if (freshRes.status === "success" && freshRes.data) {
                         freshHasPrivateToken = !!freshRes.data.has_private_token;
                     }
                 } catch (e) {
-                    // 获取失败时使用缓存数据的值
+                    apiFetchFailed = true;
                     console.warn("获取最新 item 数据失败，使用缓存值:", e);
                 }
                 const hasPrivateToken = freshHasPrivateToken;
-                const localApiEndpoint = (isFree && !hasPrivateToken)
+                // 路由决策：仅当确认是免费+无私有Token时才走 git clone
+                // 如果 API 获取失败且缓存中无 has_private_token 信息，保守地走 ZIP 代理路径
+                const useGitClone = isFree && !hasPrivateToken && !apiFetchFailed;
+                const localApiEndpoint = useGitClone
                     ? "/community_hub/install_tool"
                     : "/community_hub/install_private_tool";
 

@@ -51,11 +51,15 @@ async def install_tool_handler(request):
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
         env["GCM_INTERACTIVE"] = "never"           # 禁止 Git Credential Manager 交互
+        env["GIT_CONFIG_NOSYSTEM"] = "1"           # 禁用系统级 gitconfig（可能配置了 credential.helper）
+        env["GCM_PROVIDER"] = ""                    # 清空 GCM provider，阻止任何凭证提供者
+        env["GIT_ASKPASS"] = ""                     # 禁用 Git ASKPASS 外部程序
+        env["SSH_ASKPASS"] = ""                     # 禁用 SSH ASKPASS 外部程序
 
         try:
             print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
             subprocess.run(
-                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
+                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -77,7 +81,7 @@ async def install_tool_handler(request):
                 
             # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
             subprocess.run(
-                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
+                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -302,7 +306,11 @@ async def install_tool_stream_handler(request):
         # 复制当前系统环境变量，防止 git 弹窗要求输入密码导致后台卡死
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
-        env["GCM_INTERACTIVE"] = "never"
+        env["GCM_INTERACTIVE"] = "never"           # 禁止 Git Credential Manager 交互
+        env["GIT_CONFIG_NOSYSTEM"] = "1"           # 禁用系统级 gitconfig（可能配置了 credential.helper）
+        env["GCM_PROVIDER"] = ""                    # 清空 GCM provider，阻止任何凭证提供者
+        env["GIT_ASKPASS"] = ""                     # 禁用 Git ASKPASS 外部程序
+        env["SSH_ASKPASS"] = ""                     # 禁用 SSH ASKPASS 外部程序
 
         mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
 
@@ -311,7 +319,7 @@ async def install_tool_stream_handler(request):
         try:
             await send_progress("git_cloning", 50, "正在克隆仓库（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path,
+                "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
@@ -342,7 +350,7 @@ async def install_tool_stream_handler(request):
             stdout, stderr = await clone_task
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    proc.returncode, ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
+                    proc.returncode, ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
                     output=stdout, stderr=stderr
                 )
             await send_progress("complete", 100, "✅ 安装成功！", "success")
@@ -355,7 +363,7 @@ async def install_tool_stream_handler(request):
 
             await send_progress("git_direct", 70, "正在直连克隆（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path,
+                "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
@@ -386,7 +394,7 @@ async def install_tool_stream_handler(request):
             stdout, stderr = await clone_task
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    proc.returncode, ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
+                    proc.returncode, ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
                     output=stdout, stderr=stderr
                 )
             await send_progress("complete", 100, "✅ 安装成功！", "success")
