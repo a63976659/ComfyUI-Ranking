@@ -44,8 +44,9 @@ async def install_tool_handler(request):
         
     try:
         # 🚀 核心升级：双链路容灾机制
-        # 链路 A：使用目前最稳定的域名级直接替换镜像
-        mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
+        # 链路 A：国内镜像加速（优先）
+        direct_url = item_url.replace("https://kkgithub.com", "https://github.com")
+        mirror_url = direct_url.replace("https://github.com", "https://kkgithub.com")
         
         # 复制当前系统环境变量，防止 git 弹窗要求输入密码导致后台卡死
         env = os.environ.copy()
@@ -77,7 +78,7 @@ async def install_tool_handler(request):
                 
             # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
             subprocess.run(
-                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
+                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", direct_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -305,6 +306,8 @@ async def install_tool_stream_handler(request):
         env["GCM_INTERACTIVE"] = "never"
 
         mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
+        mirror_url = mirror_url.replace("https://github.com", "https://kkgithub.com")
+        direct_url = item_url.replace("https://kkgithub.com", "https://github.com")
 
         await send_progress("git_mirror", 25, "尝试镜像源克隆...")
 
@@ -355,7 +358,7 @@ async def install_tool_stream_handler(request):
 
             await send_progress("git_direct", 70, "正在直连克隆（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path,
+                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", direct_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
