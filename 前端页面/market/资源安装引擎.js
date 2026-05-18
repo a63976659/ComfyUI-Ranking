@@ -305,6 +305,10 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 } catch (e) {
                     // 获取失败时使用缓存数据的值
                     console.warn("获取最新 item 数据失败，使用缓存值:", e);
+                    // 显示非阻塞式警告提示
+                    if (inlineStatusBox) {
+                        inlineStatusBox.innerHTML = `<span style="color: #FFA726; font-size: 12px;">⚠️ 网络波动，正在使用缓存数据安装...</span>`;
+                    }
                 }
                 const hasPrivateToken = freshHasPrivateToken;
                 const localApiEndpoint = (isFree && !hasPrivateToken)
@@ -345,7 +349,14 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     } else {
                         progress.error(result.message);
                         const isLinkError = result.message && result.message.includes('不是有效的 Git');
-                        if (isLinkError) {
+                        const isAuthError = result.message && (
+                            result.message.includes('could not read Username') ||
+                            result.message.includes('Authentication failed') ||
+                            result.message.includes('terminal prompts disabled')
+                        );
+                        if (isAuthError) {
+                            inlineStatusBox.innerHTML = `<span style="color: #F44336;">🔒 该工具使用了私有仓库保护，但未正确配置访问凭证。请联系创作者配置 GitHub Token。</span>`;
+                        } else if (isLinkError) {
                             inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ ${result.message}</span>`;
                             const btn = document.createElement('button');
                             btn.textContent = '🔗 前往资源原始页面';
@@ -370,14 +381,23 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
 
                         if (data.error) {
                             const isLinkError = data.error.includes('不是有效的 Git');
-                            inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ ${isLinkError ? data.error : '安装失败: ' + data.error}</span>`;
-                            if (isLinkError) {
-                                const btn = document.createElement('button');
-                                btn.textContent = '🔗 前往资源原始页面';
-                                btn.style.cssText = 'margin-top:8px;padding:6px 14px;background:#2563eb;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;';
-                                btn.onclick = () => window.open(itemData.link, '_blank');
-                                inlineStatusBox.appendChild(document.createElement('br'));
-                                inlineStatusBox.appendChild(btn);
+                            const isAuthError = (
+                                data.error.includes('could not read Username') ||
+                                data.error.includes('Authentication failed') ||
+                                data.error.includes('terminal prompts disabled')
+                            );
+                            if (isAuthError) {
+                                inlineStatusBox.innerHTML = `<span style="color: #F44336;">🔒 该工具使用了私有仓库保护，但未正确配置访问凭证。请联系创作者配置 GitHub Token。</span>`;
+                            } else {
+                                inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ ${isLinkError ? data.error : '安装失败: ' + data.error}</span>`;
+                                if (isLinkError) {
+                                    const btn = document.createElement('button');
+                                    btn.textContent = '🔗 前往资源原始页面';
+                                    btn.style.cssText = 'margin-top:8px;padding:6px 14px;background:#2563eb;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;';
+                                    btn.onclick = () => window.open(itemData.link, '_blank');
+                                    inlineStatusBox.appendChild(document.createElement('br'));
+                                    inlineStatusBox.appendChild(btn);
+                                }
                             }
                             showToast(`插件 [${itemData.title}] 安装失败: ${data.error}`, "error");
                         } else {
