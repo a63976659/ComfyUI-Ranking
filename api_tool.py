@@ -56,7 +56,7 @@ async def install_tool_handler(request):
         try:
             print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
             subprocess.run(
-                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
+                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -81,7 +81,7 @@ async def install_tool_handler(request):
                 
             # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
             subprocess.run(
-                ["git", "clone", "--depth", "1", "--single-branch", "--no-tags", direct_url, clone_target_path],
+                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", direct_url, clone_target_path],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -409,7 +409,7 @@ async def install_tool_stream_handler(request):
         try:
             await send_progress("git_cloning", 50, "正在克隆仓库（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path,
+                "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
@@ -451,7 +451,7 @@ async def install_tool_stream_handler(request):
 
             await send_progress("git_direct", 70, "正在直连克隆（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", "--depth", "1", "--single-branch", "--no-tags", direct_url, clone_target_path,
+                "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", direct_url, clone_target_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
