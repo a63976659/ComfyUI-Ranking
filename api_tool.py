@@ -29,7 +29,7 @@ async def install_tool_handler(request):
     
     # 校验 URL 是否为有效的 Git 仓库地址
     valid_git_hosts = ["github.com", "gitlab.com", "gitee.com", "bitbucket.org", "kkgithub.com"]
-    if not any(host in item_url for host in valid_git_hosts):
+    if not any(host in item_url.lower() for host in valid_git_hosts):
         return web.json_response({"error": "该资源链接不是有效的 Git 仓库地址，无法自动安装。请前往资源原始页面手动下载。"}, status=400)
         
     target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
@@ -280,7 +280,7 @@ async def install_tool_stream_handler(request):
 
         # 校验 URL 是否为有效的 Git 仓库地址
         valid_git_hosts = ["github.com", "gitlab.com", "gitee.com", "bitbucket.org", "kkgithub.com"]
-        if not any(host in item_url for host in valid_git_hosts):
+        if not any(host in item_url.lower() for host in valid_git_hosts):
             await send_progress("error", -1, "该资源链接不是有效的 Git 仓库地址，无法自动安装。请前往资源原始页面手动下载。", "error")
             await resp.write_eof()
             return resp
