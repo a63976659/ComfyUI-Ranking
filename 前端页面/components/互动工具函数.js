@@ -29,6 +29,12 @@ const _pendingActions = new Set();
  * @returns {Promise<Object|null>}
  */
 export async function recordView(apiMethod, contentId, cachePrefix, onSuccess = null) {
+    // 🚀 登录检查：未登录时跳过浏览量记录，避免 401 错误
+    const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
+    if (!token || token.split(".").length !== 3) {
+        return null;
+    }
+
     console.log(`[浏览量调试] recordView 被调用 - prefix: ${cachePrefix}, id: ${contentId}`);
     const now = Date.now();
     const cacheKey = `${cachePrefix}_${contentId}`;
