@@ -2,7 +2,6 @@
 import os
 import json
 import zipfile
-import io
 import urllib.request
 import urllib.error
 import http.client
@@ -133,7 +132,8 @@ async def install_private_tool_handler(request):
             try:
                 req = urllib.request.Request(proxy_api_url, data=payload, headers=headers)
                 print(f"[ComfyUI-Ranking] 🔒 正在向云端发起私有资产鉴权与加密拉取: {item_id}" + (f"（第{attempt+1}次尝试）" if attempt > 0 else ""))
-                with urllib.request.urlopen(req, timeout=600) as response:
+                response = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=600))
+                try:
                     content_length = int(response.headers.get('Content-Length', 0))
                     
                     # 磁盘空间检查（仅第一次）
@@ -152,7 +152,7 @@ async def install_private_tool_handler(request):
                         chunk_size = 1024 * 1024  # 1MB 分块
                         
                         while True:
-                            chunk = response.read(chunk_size)
+                            chunk = await asyncio.to_thread(response.read, chunk_size)
                             if not chunk:
                                 break
                             
@@ -171,6 +171,8 @@ async def install_private_tool_handler(request):
                             
                             tmp_file.write(chunk)
                             downloaded += len(chunk)
+                finally:
+                    response.close()
                 
                 # 下载成功，跳出重试循环
                 break
@@ -187,7 +189,7 @@ async def install_private_tool_handler(request):
                 if attempt < max_retries - 1:
                     wait_time = [2, 5][attempt]
                     print(f"[ComfyUI-Ranking] ⚠️ ZIP 下载失败（第{attempt+1}次），{wait_time}秒后重试: {e}")
-                    time.sleep(wait_time)
+                    await asyncio.sleep(wait_time)
                 else:
                     print(f"[ComfyUI-Ranking] ❌ ZIP 下载失败（已重试{max_retries}次）: {e}")
                     return web.json_response({"status": "error", "message": f"下载失败（网络不稳定，已重试{max_retries}次）: {str(e)}"}, status=500)
