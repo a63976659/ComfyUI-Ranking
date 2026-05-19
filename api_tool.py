@@ -157,14 +157,16 @@ async def install_private_tool_handler(request):
                                 break
                             
                             # 检查是否为错误响应（仅检查第一个 chunk）
-                            if downloaded == 0 and (chunk.startswith(b'{"') or chunk.startswith(b'GITHUB_DOWNLOAD_FAILED')):
-                                os.unlink(tmp_path)
+                            if downloaded == 0 and not chunk.startswith(b'PK\x03\x04'):
+                                await asyncio.to_thread(os.unlink, tmp_path)
                                 tmp_path = None
                                 try:
-                                    error_data = json.loads(chunk.decode('utf-8'))
-                                    err_msg = error_data.get("detail", error_data.get("error", "云端下载失败"))
-                                except:
-                                    err_msg = "云端下载失败，请稍后重试"
+                                    text = chunk[:2000].decode('utf-8', errors='ignore')
+                                    error_data = json.loads(text)
+                                    err_msg = error_data.get("detail", error_data.get("error", "云端返回非ZIP内容"))
+                                except (json.JSONDecodeError, ValueError):
+                                    preview = chunk[:200].decode('utf-8', errors='ignore').strip()
+                                    err_msg = f"云端返回非ZIP内容（可能是认证失败或仓库不可达）: {preview[:100]}"
                                 return web.json_response({"error": f"云端拒绝访问或拉取失败: {err_msg}"}, status=403)
                             
                             tmp_file.write(chunk)
@@ -177,7 +179,7 @@ async def install_private_tool_handler(request):
                 # 清理失败的临时文件
                 if tmp_path and os.path.exists(tmp_path):
                     try:
-                        os.unlink(tmp_path)
+                        await asyncio.to_thread(os.unlink, tmp_path)
                     except:
                         pass
                     tmp_path = None
@@ -242,15 +244,21 @@ async def install_private_tool_handler(request):
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode('utf-8', errors='ignore')
         return web.json_response({"error": f"拉取中断: {err_msg}"}, status=500)
+    except zipfile.BadZipFile:
+        return web.json_response({"error": "下载的文件不是有效的ZIP格式，可能原因：云端代理认证失败、私有仓库权限不足或已删除、GitHub 返回了错误页面。请检查仓库地址和密钥是否正确。"}, status=500)
     except Exception as e:
         return web.json_response({"error": f"本地解压覆盖异常: {str(e)}"}, status=500)
     finally:
-        # 清理临时文件，捕获异常防止覆盖响应
+        # 清理临时文件，捕获异常防止覆盖响应（Windows下需重试避免WinError 32）
         if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception as cleanup_err:
-                print(f"[ComfyUI-Ranking] ⚠️ 临时文件清理失败（不影响安装结果）: {cleanup_err}")
+            for _retry in range(5):
+                try:
+                    await asyncio.to_thread(os.unlink, tmp_path)
+                    break
+                except Exception:
+                    await asyncio.sleep(0.5)
+            else:
+                print(f"[ComfyUI-Ranking] ⚠️ 临时文件清理失败（已重试5次，不影响安装结果）: {tmp_path}")
 
 async def install_tool_stream_handler(request):
     """SSE 流式接口：通过 Git Clone 下载插件，实时推送进度"""
@@ -481,19 +489,42 @@ async def install_private_tool_stream_handler(request):
                         last_progress_time = time.time()
                         
                         while True:
-                            chunk = response.read(chunk_size)
+                            # 使用异步读取避免阻塞事件循环，配合心跳机制防止慢网络下连接空闲断开
+                            read_task = asyncio.create_task(asyncio.to_thread(response.read, chunk_size))
+                            
+                            # 等待读取完成，每15秒发送一次心跳保活
+                            while not read_task.done():
+                                done, _ = await asyncio.wait([read_task], timeout=15)
+                                if done:
+                                    break
+                                # 读取超过15秒未完成，发送心跳保活
+                                current_time = time.time()
+                                if current_time - last_progress_time >= 15:
+                                    mb_done = downloaded / (1024 * 1024)
+                                    if content_length > 0:
+                                        pct = 30 + int(downloaded / content_length * 30)
+                                        mb_total = content_length / (1024 * 1024)
+                                        await send_progress("downloading", pct, f"下载中... {mb_done:.1f}MB / {mb_total:.1f}MB")
+                                    else:
+                                        pct = min(30 + int(downloaded / (200 * 1024 * 1024) * 30), 59)
+                                        await send_progress("downloading", pct, f"下载中... 已接收 {mb_done:.1f}MB")
+                                    last_progress_time = current_time
+                            
+                            chunk = read_task.result()
                             if not chunk:
                                 break
                             
                             # 检查是否为错误响应（仅检查第一个 chunk）
-                            if downloaded == 0 and (chunk.startswith(b'{"') or chunk.startswith(b'GITHUB_DOWNLOAD_FAILED')):
-                                os.unlink(tmp_path)
+                            if downloaded == 0 and not chunk.startswith(b'PK\x03\x04'):
+                                await asyncio.to_thread(os.unlink, tmp_path)
                                 tmp_path = None
                                 try:
-                                    error_data = json.loads(chunk.decode('utf-8'))
-                                    err_msg = error_data.get("detail", error_data.get("error", "云端下载失败"))
-                                except:
-                                    err_msg = "云端下载失败，请稍后重试"
+                                    text = chunk[:2000].decode('utf-8', errors='ignore')
+                                    error_data = json.loads(text)
+                                    err_msg = error_data.get("detail", error_data.get("error", "云端返回非ZIP内容"))
+                                except (json.JSONDecodeError, ValueError):
+                                    preview = chunk[:200].decode('utf-8', errors='ignore').strip()
+                                    err_msg = f"云端返回非ZIP内容（可能是认证失败或仓库不可达）: {preview[:100]}"
                                 await send_progress("error", -1, f"云端拒绝访问或拉取失败: {err_msg}", "error")
                                 await resp.write_eof()
                                 return resp
@@ -521,7 +552,7 @@ async def install_private_tool_stream_handler(request):
             except (http.client.IncompleteRead, urllib.error.URLError, ConnectionResetError, TimeoutError) as e:
                 if tmp_path and os.path.exists(tmp_path):
                     try:
-                        os.unlink(tmp_path)
+                        await asyncio.to_thread(os.unlink, tmp_path)
                     except:
                         pass
                     tmp_path = None
@@ -596,15 +627,21 @@ async def install_private_tool_stream_handler(request):
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode('utf-8', errors='ignore')
         await send_progress("error", -1, f"拉取中断: {err_msg}", "error")
+    except zipfile.BadZipFile:
+        await send_progress("error", -1, "下载的文件不是有效的ZIP格式，可能原因：云端代理认证失败、私有仓库权限不足或已删除、GitHub 返回了错误页面。请检查仓库地址和密钥是否正确。", "error")
     except Exception as e:
         await send_progress("error", -1, f"本地解压覆盖异常: {str(e)}", "error")
     finally:
-        # 清理临时文件，捕获异常防止覆盖响应
+        # 清理临时文件，捕获异常防止覆盖响应（Windows下需重试避免WinError 32）
         if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.unlink(tmp_path)
-            except Exception as cleanup_err:
-                print(f"[ComfyUI-Ranking] ⚠️ 临时文件清理失败（不影响安装结果）: {cleanup_err}")
+            for _retry in range(5):
+                try:
+                    await asyncio.to_thread(os.unlink, tmp_path)
+                    break
+                except Exception:
+                    await asyncio.sleep(0.5)
+            else:
+                print(f"[ComfyUI-Ranking] ⚠️ 临时文件清理失败（已重试5次，不影响安装结果）: {tmp_path}")
 
     await resp.write_eof()
     return resp

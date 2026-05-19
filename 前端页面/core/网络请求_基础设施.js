@@ -352,9 +352,22 @@ async function request(endpoint, options = {}) {
  * @returns {Promise<Object>} 最终结果事件
  */
 export async function requestSSE(endpoint, body, onProgress, options = {}) {
-    const timeout = options.timeout || 1200000; // 20分钟超时（大型工具克隆需要较长时间）
+    const timeout = options.timeout || 1200000; // 20分钟全局超时（大型工具克隆需要较长时间）
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
+    const globalTimer = setTimeout(() => controller.abort(), timeout);
+
+    // 📡 空闲超时检测：长时间无数据视为连接已断
+    const IDLE_TIMEOUT_DEFAULT = 30000;  // 30 秒无数据视为空闲
+    const IDLE_TIMEOUT_GRACE = 5000;     // 收到 finalResult 后的宽限期 5 秒
+    let currentIdleTimeout = options.idleTimeout || IDLE_TIMEOUT_DEFAULT;
+    let idleTimer = null;
+
+    const clearIdleTimer = () => {
+        if (idleTimer !== null) {
+            clearTimeout(idleTimer);
+            idleTimer = null;
+        }
+    };
 
     try {
         const response = await fetch(endpoint, {
@@ -374,7 +387,31 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
         let finalResult = null;
 
         while (true) {
-            const { done, value } = await reader.read();
+            // 使用 Promise.race 实现空闲超时：reader.read() 与空闲定时器竞争
+            const idlePromise = new Promise((_, reject) => {
+                idleTimer = setTimeout(() => reject(new Error("SSE_IDLE_TIMEOUT")), currentIdleTimeout);
+            });
+
+            let readResult;
+            try {
+                readResult = await Promise.race([
+                    reader.read(),
+                    idlePromise
+                ]);
+            } catch (e) {
+                clearIdleTimer();
+                if (e.message === "SSE_IDLE_TIMEOUT") {
+                    controller.abort();
+                    // 如果已收到 finalResult，优先返回它（服务器只是没正确关闭连接）
+                    if (finalResult) return finalResult;
+                    // 否则返回空闲超时错误
+                    return { status: "error", message: "连接超时：30秒未收到数据" };
+                }
+                throw e;
+            }
+            clearIdleTimer();
+
+            const { done, value } = readResult;
             if (done) break;
 
             buffer += decoder.decode(value, { stream: true });
@@ -389,6 +426,8 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
 
                         if (data.status === "success" || data.status === "error") {
                             finalResult = data;
+                            // 收到最终结果后，缩短空闲超时为宽限期，避免无谓等待连接关闭
+                            currentIdleTimeout = IDLE_TIMEOUT_GRACE;
                         }
                     } catch (e) {
                         console.warn("[SSE] 解析事件失败:", line);
@@ -400,11 +439,14 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
         return finalResult || { status: "error", message: "未收到最终结果" };
     } catch (err) {
         if (err.name === "AbortError") {
+            // 全局超时时，如果已收到 finalResult 仍返回它
+            if (finalResult) return finalResult;
             return { status: "error", message: "安装超时，请检查网络后重试" };
         }
         throw err;
     } finally {
-        clearTimeout(timer);
+        clearTimeout(globalTimer);
+        clearIdleTimer();
     }
 }
 
