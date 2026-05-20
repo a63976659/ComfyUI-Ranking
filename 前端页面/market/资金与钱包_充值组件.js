@@ -27,13 +27,13 @@ export function openRechargeModal(currentUser, onBalanceChange) {
         const isSelected = selectedOption === opt;
         if (opt.isCustom) {
             return `
-            <div class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : '#2a2a2a'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">
+            <div class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : 'var(--comfy-input-bg)'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">
                 <div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px; line-height: 22px;">${opt.label}</div>
                 <div style="font-size: 12px; color: #888;">${t('wallet.recharge.any_amount')}</div>
             </div>`;
         } else {
             return `
-            <div class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : '#2a2a2a'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">
+            <div class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : 'var(--comfy-input-bg)'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">
                 <div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px;">${opt.points} ${t('wallet.recharge.points_suffix')}</div>
                 <div style="font-size: 12px; color: #888;">${t('wallet.recharge.price_prefix')}${opt.price.toFixed(2)}</div>
             </div>`;
@@ -52,7 +52,7 @@ export function openRechargeModal(currentUser, onBalanceChange) {
                 ${renderOptions()}
             </div>
             <div id="custom-input-container" style="display: none; margin-top: 10px;">
-                <input type="number" id="custom-amount" placeholder="${t('wallet.recharge.custom_placeholder')}" min="1" max="999999" step="1" style="width: 100%; padding: 10px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center; font-size: 16px; font-weight: bold; outline: none;">
+                <input type="number" id="custom-amount" placeholder="${t('wallet.recharge.custom_placeholder')}" min="1" max="10000" step="1" style="width: 100%; padding: 10px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center; font-size: 16px; font-weight: bold; outline: none;">
             </div>
         </div>
 
@@ -113,13 +113,17 @@ export function openRechargeModal(currentUser, onBalanceChange) {
     let pollingInterval = null;
 
     btnCreateOrder.onclick = async () => {
+        if (btnCreateOrder.disabled) return;
         let finalPoints = 0;
         let finalPrice = 0;
 
         if (selectedOption.isCustom) {
             const customVal = Number(customAmountInput.value);
-            if (!Number.isInteger(customVal) || customVal <= 0 || customVal > 999999) {
+            if (!Number.isInteger(customVal) || customVal <= 0) {
                 return showToast(t('wallet.recharge.invalid_amount'), "warning");
+            }
+            if (customVal > 10000) {
+                return showToast(t('wallet.recharge.max_amount_exceeded') || "单次充值金额不得超过10000元", "warning");
             }
             finalPoints = customVal;
             finalPrice = customVal;
@@ -128,7 +132,10 @@ export function openRechargeModal(currentUser, onBalanceChange) {
             finalPrice = selectedOption.price;
         }
 
-        btnCreateOrder.style.display = "none";
+        btnCreateOrder.disabled = true;
+        btnCreateOrder.innerText = t('wallet.recharge.processing') || "处理中...";
+        btnCreateOrder.style.background = "#888";
+        btnCreateOrder.style.cursor = "not-allowed";
         qrContainer.style.display = "block";
         qrLoading.style.display = "block";
         qrImage.style.display = "none";
@@ -192,6 +199,11 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
         } catch (error) {
             qrLoading.innerText = t('wallet.recharge.order_failed') + error.message;
             qrLoading.style.color = "#F44336";
+        } finally {
+            btnCreateOrder.disabled = false;
+            btnCreateOrder.innerText = t('wallet.recharge.get_qr');
+            btnCreateOrder.style.background = "#4CAF50";
+            btnCreateOrder.style.cursor = "pointer";
         }
     };
 

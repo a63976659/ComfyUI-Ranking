@@ -197,9 +197,9 @@ export const UI = {
         TIP: "#E91E63",
         
         // 深色主题背景
-        BG_DARK: "#1e1e1e",
-        BG_CARD: "#2b2b2b",
-        BG_INPUT: "#333",
+        BG_DARK: "var(--comfy-menu-bg)",
+        BG_CARD: "var(--comfy-input-bg)",
+        BG_INPUT: "var(--comfy-input-bg)",
         
         // 边框
         BORDER: "#444",

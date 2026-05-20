@@ -18,7 +18,7 @@ export function createTopNav() {
     const userHeader = document.createElement("div");
     Object.assign(userHeader.style, {
         display: "flex", justifyContent: "space-between", alignItems: "center",
-        padding: "15px 10px", backgroundColor: "#1a1a1a", borderBottom: "1px solid #333"
+        padding: "15px 10px", backgroundColor: "#1a1a1a", borderBottom: "1px solid var(--border-color, #333)"
     });
 
     const titleSpan = document.createElement("div");

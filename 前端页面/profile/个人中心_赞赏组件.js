@@ -60,11 +60,11 @@ export async function openTipModal(currentUser, targetUser, onSuccess, itemId = 
         <div style="margin-bottom: 12px;">
             <label style="display:block; margin-bottom:5px; color:#ccc;">输入打赏金额</label>
             <input type="number" id="tip-amount" min="10" max="${MAX_TIP_POINTS}" step="10" value="100" 
-                   style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#FF9800; font-weight:bold; font-size:16px; border-radius:4px; box-sizing:border-box;">
+                   style="width:100%; padding:10px; background:var(--comfy-input-bg); border:1px solid #555; color:#FF9800; font-weight:bold; font-size:16px; border-radius:4px; box-sizing:border-box;">
         </div>
         
         <!-- 🚀 新增：等级预览区域 -->
-        <div id="tip-level-preview" style="margin-bottom: 15px; background: #1e1e1e; padding: 10px; border-radius: 4px; border: 1px dashed #444;">
+        <div id="tip-level-preview" style="margin-bottom: 15px; background: var(--comfy-menu-bg); padding: 10px; border-radius: 4px; border: 1px dashed #444;">
             <div style="font-size: 11px; color: #888; margin-bottom: 6px;">打赏后等级预览</div>
             <div id="preview-level" style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
                 ${renderTipLevelHTML(100, false)}

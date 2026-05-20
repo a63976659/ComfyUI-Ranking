@@ -7,10 +7,14 @@
 
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { createDisputeDetailView } from "./申诉详情组件.js";
-import { t } from "../components/用户体验增强.js";
+import { t, getLanguage } from "../components/用户体验增强.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { setCache, getCache, removeCache, createSkeleton } from "../components/性能优化工具.js";
+
+const escapeHtml = (str) => {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+};
 
 // 缓存配置
 const CACHE_KEY = "AdminDisputesCache";
@@ -45,7 +49,7 @@ async function renderDisputeList(container, currentUser, statusFilter = null) {
             .admin-tab.active { background: #FF5722; color: white; }
             .admin-tab:not(.active) { background: var(--comfy-input-bg); color: var(--input-text); }
             
-            .admin-back-btn { background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s; backdrop-filter: blur(4px); margin-bottom: 16px; width: fit-content; }
+            .admin-back-btn { background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s; backdrop-filter: blur(4px); margin-left: 14px; margin-top: 14px; margin-bottom: 10px; }
             .admin-back-btn:hover { background: #4CAF50; border-color: #4CAF50; }
             
             .dispute-list { display: flex; flex-direction: column; gap: 12px; }
@@ -70,7 +74,7 @@ async function renderDisputeList(container, currentUser, statusFilter = null) {
         </style>
         
         <button class="admin-back-btn" id="btn-back-arbitrate">
-            <span style="font-size: 14px;">⬅</span> ${t('common.back')}
+            ⬅ ${t('common.back')}
         </button>
         
         <div class="admin-dispute-header">
@@ -94,9 +98,15 @@ async function renderDisputeList(container, currentUser, statusFilter = null) {
     const listEl = container.querySelector("#disputeList");
     const cacheIndicator = container.querySelector("#cacheIndicator");
 
-    // 返回按钮事件
+    // 返回按钮事件 — 返回管理后台
     container.querySelector("#btn-back-arbitrate").onclick = () => {
-        window.dispatchEvent(new CustomEvent("comfy-route-back"));
+        import("../profile/管理后台组件.js").then(module => {
+            const view = module.createAdminPanelView(currentUser);
+            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+        }).catch(err => {
+            console.error('加载失败:', err);
+            window.dispatchEvent(new CustomEvent("comfy-route-back"));
+        });
     };
 
     // Tab切换
@@ -160,15 +170,15 @@ function renderDisputeCards(listEl, disputes, currentUser, statusFilter) {
         return `
             <div class="dispute-card" data-id="${d.id}">
                 <div class="dispute-card-header">
-                    <div class="dispute-card-title">${d.task_title || t('common.unknown_task')}</div>
+                    <div class="dispute-card-title">${escapeHtml(d.task_title) || t('common.unknown_task')}</div>
                     <span class="dispute-card-status" style="background: ${status.bg}; color: ${status.color};">${status.label}</span>
                 </div>
                 <div class="dispute-card-parties">
-                    <span>${d.publisher_name || d.publisher}</span>
+                    <span>${escapeHtml(d.publisher_name || d.publisher)}</span>
                     <span class="vs">VS</span>
-                    <span>${d.assignee_name || d.assignee}</span>
+                    <span>${escapeHtml(d.assignee_name || d.assignee)}</span>
                 </div>
-                <div class="dispute-card-reason">${d.reason || t('arbitrate.no_reason')}</div>
+                <div class="dispute-card-reason">${escapeHtml(d.reason) || t('arbitrate.no_reason')}</div>
                 <div class="dispute-card-meta">
                     <span>${t('arbitrate.initiator')}: ${d.initiator_role === "publisher" ? t('dispute.publisher') : t('task.assignee')}</span>
                     <span>${formatTime(d.created_at)}</span>
@@ -352,10 +362,10 @@ async function loadDisputeModalContent(content, disputeId, currentUser, onClose)
                 <div class="modal-section">
                     <div class="modal-section-title">📝 ${t('dispute.initiator_statement')} (${dispute.initiator_role === "publisher" ? t('dispute.publisher') : t('task.assignee')})</div>
                     <div class="modal-section-content">
-                        ${dispute.reason || t('common.none')}
+                        ${escapeHtml(dispute.reason) || t('common.none')}
                         ${dispute.evidence && dispute.evidence.length > 0 ? `
                             <div class="evidence-row">
-                                ${dispute.evidence.map(img => `<img src="${img}" onclick="window.open('${img}')">`).join("")}
+                                ${dispute.evidence.map(img => `<img src="${escapeHtml(img)}" onclick="window.open('${escapeHtml(img)}')">`).join("")}
                             </div>
                         ` : ""}
                     </div>
@@ -364,10 +374,10 @@ async function loadDisputeModalContent(content, disputeId, currentUser, onClose)
                 <div class="modal-section">
                     <div class="modal-section-title">💬 ${t('dispute.respondent_response')} (${dispute.initiator_role === "publisher" ? t('task.assignee') : t('dispute.publisher')})</div>
                     <div class="modal-section-content">
-                        ${dispute.response || `（${t('dispute.no_response')}）`}
+                        ${escapeHtml(dispute.response) || `（${t('dispute.no_response')}）`}
                         ${dispute.response_evidence && dispute.response_evidence.length > 0 ? `
                             <div class="evidence-row">
-                                ${dispute.response_evidence.map(img => `<img src="${img}" onclick="window.open('${img}')">`).join("")}
+                                ${dispute.response_evidence.map(img => `<img src="${escapeHtml(img)}" onclick="window.open('${escapeHtml(img)}')">`).join("")}
                             </div>
                         ` : ""}
                     </div>
@@ -421,7 +431,7 @@ async function loadDisputeModalContent(content, disputeId, currentUser, onClose)
                         <div class="modal-section-title">✅ ${t('dispute.resolution_result')}</div>
                         <div class="modal-section-content" style="background: rgba(76,175,80,0.1); border: 1px solid rgba(76,175,80,0.3);">
                             <div style="font-weight: bold; color: #4CAF50; margin-bottom: 8px;">${getResolutionText(dispute.resolution, dispute.resolution_ratio)}</div>
-                            ${dispute.resolution_note ? `<div style="color: #888; font-size: 13px;">${dispute.resolution_note}</div>` : ""}
+                            ${dispute.resolution_note ? `<div style="color: #888; font-size: 13px;">${escapeHtml(dispute.resolution_note)}</div>` : ""}
                         </div>
                     </div>
                 `}
@@ -493,5 +503,5 @@ function getResolutionText(resolution, ratio) {
 function formatTime(timestamp) {
     if (!timestamp) return t('common.unknown');
     const date = new Date(timestamp * 1000);
-    return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleString(getLanguage(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }

@@ -357,7 +357,7 @@ export function createItemDetailView(itemData, currentUser) {
     // 🚀 返回按钮位置可调整参数：margin-left 控制右移，margin-top 控制下移
     container.innerHTML = `
         <button id="btn-back-detail" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); margin-bottom: 15px; width: fit-content; transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-            <span style="font-size: 14px;">⬅</span> ${t('common.back')}
+            ⬅ ${t('common.back')}
         </button>
 
         <div style="background: #181b28; border: 1px solid #2d334a; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); margin-bottom: 15px;">
@@ -380,7 +380,7 @@ export function createItemDetailView(itemData, currentUser) {
     // 🚀 创建安装状态容器
     const inlineStatusBox = document.createElement("div");
     inlineStatusBox.id = "inline-status-box";
-    Object.assign(inlineStatusBox.style, { display: "none", marginTop: "15px", padding: "12px", background: "#1e1e1e", borderRadius: "6px", border: "1px solid #333", fontSize: "13px" });
+    Object.assign(inlineStatusBox.style, { display: "none", marginTop: "15px", padding: "12px", background: "var(--comfy-menu-bg)", borderRadius: "6px", border: "1px solid var(--border-color, #333)", fontSize: "13px" });
     container.appendChild(inlineStatusBox);
 
     container.querySelector("#btn-back-detail").onclick = () => window.dispatchEvent(new CustomEvent("comfy-route-back"));

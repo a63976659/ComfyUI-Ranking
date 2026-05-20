@@ -47,7 +47,7 @@ export class ModalManager {
             left: "50%",
             transform: "translate(-50%, -50%)",
             width: options.width,
-            backgroundColor: "var(--bg-color, #202020)",
+            backgroundColor: "var(--comfy-menu-bg)",
             border: "1px solid #555",
             borderRadius: "12px",
             boxShadow: "0 10px 30px rgba(0,0,0,0.8)",
@@ -65,7 +65,7 @@ export class ModalManager {
             alignItems: "center",
             padding: "15px 20px",
             borderBottom: "1px solid #444",
-            backgroundColor: "#2a2a2a"
+            backgroundColor: "var(--comfy-input-bg)",
         });
 
         const titleSpan = document.createElement("span");

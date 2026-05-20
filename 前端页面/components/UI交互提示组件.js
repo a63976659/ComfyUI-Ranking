@@ -426,7 +426,7 @@ export function showLoading(message = "加载中...") {
     });
     
     loadingOverlay.innerHTML = `
-        <div class="loading-spinner" style="width: 48px; height: 48px; border: 4px solid #333; border-top-color: #2196F3; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+        <div class="loading-spinner" style="width: 48px; height: 48px; border: 4px solid var(--border-color, #333); border-top-color: #2196F3; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
         <div class="loading-text" style="color: #fff; font-size: 14px; font-weight: 500;">${message}</div>
     `;
     

@@ -86,8 +86,8 @@ export function createTasksView(currentUser, keyword = "") {
         </div>
         
         <!-- 加载更多 -->
-        <div id="load-more-wrapper" style="display: none; padding: 15px; text-align: center; border-top: 1px solid #333;">
-            <button id="btn-load-more" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
+        <div id="load-more-wrapper" style="display: none; padding: 15px; text-align: center; border-top: 1px solid var(--border-color, #333);">
+            <button id="btn-load-more" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='var(--comfy-input-bg)'">
                 ${t('task.load_more')}
             </button>
         </div>
@@ -475,12 +475,12 @@ export function createTasksView(currentUser, keyword = "") {
 function createTaskCard(task) {
     const card = document.createElement("div");
     Object.assign(card.style, {
-        background: "#1e1e1e",
+        background: "var(--comfy-menu-bg)",
         borderRadius: "10px",
         padding: "15px",
         cursor: "pointer",
         transition: "transform 0.2s, box-shadow 0.2s",
-        border: "1px solid #333"
+        border: "1px solid var(--border-color, #333)"
     });
     
     // 状态标签样式
@@ -534,7 +534,7 @@ function createTaskCard(task) {
         </div>
         
         <!-- 底部信息 -->
-        <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: #888; padding-top: 10px; border-top: 1px solid #333;">
+        <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: #888; padding-top: 10px; border-top: 1px solid var(--border-color, #333);">
             <!-- 发布者（SWR 缓存头像） -->
             <div id="task-author-${task.id}" style="display: flex; align-items: center; gap: 6px;"></div>
             
@@ -564,7 +564,7 @@ function createTaskCard(task) {
         
         // 渲染头像（始终使用 img 标签）
         const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
-        const avatarHtml = `<img class="swr-avatar" src="${avatarSrc}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
+        const avatarHtml = `<img class="swr-avatar" src="${avatarSrc}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: var(--comfy-input-bg);">`;
         
         authorContainer.innerHTML = `${avatarHtml}<span class="swr-name">${escapeHtml(name)}</span>`;
         

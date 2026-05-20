@@ -1049,8 +1049,8 @@ export function createSkeleton(type = "card", count = 1) {
             border-radius: 6px;
         }
         .skeleton-card {
-            background: #1e1e1e;
-            border: 1px solid #333;
+            background: var(--comfy-menu-bg);
+            border: 1px solid var(--border-color, #333);
             border-radius: 8px;
             padding: 12px;
             margin-bottom: 12px;
@@ -1116,7 +1116,7 @@ export function createSkeleton(type = "card", count = 1) {
             case "list":
                 item.style.marginBottom = "12px";
                 item.innerHTML = `
-                    <div style="display:flex;gap:12px;align-items:center;padding:8px;background:#1e1e1e;border-radius:6px;border:1px solid #333;">
+                    <div style="display:flex;gap:12px;align-items:center;padding:8px;background:var(--comfy-menu-bg);border-radius:6px;border:1px solid var(--border-color, #333);">
                         <div class="skeleton-item" style="width:48px;height:48px;border-radius:50%;flex-shrink:0;"></div>
                         <div style="flex:1;">
                             <div class="skeleton-item" style="width:55%;height:14px;margin-bottom:8px;"></div>

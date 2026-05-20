@@ -36,42 +36,42 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     container.innerHTML = `
         <div style="margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #444; font-weight: bold; font-size: 16px;">⚙️ ${t('settings_form.title')}</div>
         <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;">
-            <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 5px; background: #2a2a2a; padding: 10px; border-radius: 6px; border: 1px dashed #555;">
+            <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 5px; background: var(--comfy-input-bg); padding: 10px; border-radius: 6px; border: 1px dashed #555;">
                 <img id="setting-avatar-preview" src="${userData.avatarDataUrl || PLACEHOLDERS.AVATAR}" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid #666;">
                 <div>
-                    <button id="btn-trigger-avatar" style="padding: 6px 12px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; margin-bottom: 5px;">${t('settings_form.change_avatar')}</button>
+                    <button id="btn-trigger-avatar" style="padding: 6px 12px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; margin-bottom: 5px;">${t('settings_form.change_avatar')}</button>
                     <div style="font-size: 11px; color: #888;">${t('settings_form.avatar_hint')}</div>
                 </div>
                 <input type="file" id="setting-avatar" accept="image/*" style="display: none;">
             </div>
 
-            <div style="background: #2a2a2a; padding: 10px; border-radius: 6px; border: 1px dashed #555;">
+            <div style="background: var(--comfy-input-bg); padding: 10px; border-radius: 6px; border: 1px dashed #555;">
                 <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">🇺️ ${t('settings_form.banner_title')}</div>
                 <div id="setting-banner-preview" style="width: 100%; height: 80px; border-radius: 4px; background: ${userData.bannerUrl ? `url(${userData.bannerUrl})` : '#1a1a1a'}; background-size: cover; background-position: center; margin-bottom: 8px; border: 1px solid #444;"></div>
                 <div style="display: flex; gap: 8px;">
-                    <button id="btn-trigger-banner" style="flex: 1; padding: 6px 12px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px;">📷 ${t('settings_form.banner_upload')}</button>
+                    <button id="btn-trigger-banner" style="flex: 1; padding: 6px 12px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px;">📷 ${t('settings_form.banner_upload')}</button>
                     <button id="btn-clear-banner" style="padding: 6px 12px; background: transparent; border: 1px solid #555; color: #888; border-radius: 4px; cursor: pointer; font-size: 12px;">🗑️ ${t('settings_form.banner_clear')}</button>
                 </div>
                 <div style="font-size: 11px; color: #666; margin-top: 5px;">${t('settings_form.banner_hint')}</div>
                 <input type="file" id="setting-banner" accept="image/*" style="display: none;">
             </div>
 
-            <div style="background: #2a2a2a; padding: 10px; border-radius: 6px; border: 1px dashed #555;">
+            <div style="background: var(--comfy-input-bg); padding: 10px; border-radius: 6px; border: 1px dashed #555;">
                 <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">🎨 ${t('settings_form.ui_bg_title')}</div>
                 <div id="setting-ui-bg-preview" style="width: 100%; height: 100px; border-radius: 4px; background: #1a1a1a; background-size: cover; background-position: center; margin-bottom: 8px; border: 1px solid #444;"></div>
                 <div style="display: flex; gap: 8px;">
-                    <button id="btn-trigger-ui-bg" style="flex: 1; padding: 6px 12px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px;">📷 ${t('settings_form.banner_upload')}</button>
+                    <button id="btn-trigger-ui-bg" style="flex: 1; padding: 6px 12px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px;">📷 ${t('settings_form.banner_upload')}</button>
                     <button id="btn-clear-ui-bg" style="padding: 6px 12px; background: transparent; border: 1px solid #555; color: #888; border-radius: 4px; cursor: pointer; font-size: 12px;">🗑️ ${t('settings_form.banner_clear')}</button>
                 </div>
                 <div style="font-size: 11px; color: #666; margin-top: 5px;">${t('settings_form.ui_bg_hint')}</div>
                 <input type="file" id="setting-ui-bg" accept="image/*" style="display: none;">
             </div>
 
-            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.display_name')}</label><input type="text" id="setting-name" value="${userData.name || ''}" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
+            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.display_name')}</label><input type="text" id="setting-name" value="${userData.name || ''}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
             
             <div style="display: flex; gap: 10px;">
                 <div style="flex: 1;"><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.gender')}</label>
-                    <select id="setting-gender" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">
+                    <select id="setting-gender" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px;">
                         <option value="male" ${userData.gender === 'male' ? 'selected' : ''}>${t('settings_form.gender_male')}</option>
                         <option value="female" ${userData.gender === 'female' ? 'selected' : ''}>${t('settings_form.gender_female')}</option>
                         <option value="other" ${userData.gender === 'other' ? 'selected' : ''}>${t('settings_form.gender_secret')}</option>
@@ -80,23 +80,23 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                 <div style="flex: 1;">
                     <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.birthday')}</label>
                     <div style="display: flex; align-items: center; gap: 8px;">
-                        <input type="date" id="setting-birthday" value="${userData.birthday || ''}" style="flex: 1; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
+                        <input type="date" id="setting-birthday" value="${userData.birthday || ''}" style="flex: 1; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
                         <span id="setting-age-display" style="color: #888; font-size: 12px; white-space: nowrap;">${userData.age ? userData.age + ' ' + t('profile.age_years') : ''}</span>
                     </div>
                 </div>
             </div>
 
             <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.country')}</label>
-                <select id="setting-country" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; margin-bottom: 10px;">
+                <select id="setting-country" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; margin-bottom: 10px;">
                     <option value="">${t('settings_form.select_country')}</option>
                     ${countryOptions}
                 </select>
-                <select id="setting-region" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">
+                <select id="setting-region" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px;">
                     <option value="${userData.region || ''}">${userData.region || t('settings_form.select_country_first')}</option>
                 </select>
             </div>
 
-            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.intro')}</label><textarea id="setting-intro" rows="3" placeholder="${t('settings_form.intro_placeholder')}" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box; resize: vertical;">${userData.intro || ''}</textarea></div>
+            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.intro')}</label><textarea id="setting-intro" rows="3" placeholder="${t('settings_form.intro_placeholder')}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box; resize: vertical;">${userData.intro || ''}</textarea></div>
             
             <div style="margin-top: 15px; border-top: 1px solid #444; padding-top: 15px;">
                 <div style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #4CAF50;">🛡️ ${t('settings_form.privacy_title')}</div>
@@ -129,7 +129,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                 
                 <div style="display: flex; flex-direction: column; gap: 10px;">
                     <!-- 图像审核开关 -->
-                    <div style="background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #444;">
+                    <div style="background: var(--comfy-input-bg); padding: 12px; border-radius: 6px; border: 1px solid #444;">
                         <div style="display: flex; align-items: center; justify-content: space-between;">
                             <div>
                                 <div style="font-size: 13px; color: #fff; margin-bottom: 4px;">🖼️ 图像内容审核</div>
@@ -137,14 +137,14 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                             </div>
                             <label class="toggle-switch" style="position: relative; display: inline-block; width: 50px; height: 26px;">
                                 <input type="checkbox" id="admin-image-moderation" style="opacity: 0; width: 0; height: 0;">
-                                <span class="toggle-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #333; transition: .3s; border-radius: 26px;"></span>
+                                <span class="toggle-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--comfy-input-bg); transition: .3s; border-radius: 26px;"></span>
                             </label>
                         </div>
                         <div id="moderation-status" style="margin-top: 8px; font-size: 11px; color: #666;"></div>
                     </div>
                     
                     <!-- 🏷️ 版本管理面板 -->
-                    <div style="background: #2a2a2a; padding: 12px; border-radius: 6px; border: 1px solid #444;">
+                    <div style="background: var(--comfy-input-bg); padding: 12px; border-radius: 6px; border: 1px solid #444;">
                         <div style="font-size: 13px; color: #fff; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
                             <span>🏷️</span> 工具版本管理
                         </div>
@@ -153,7 +153,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                         <div style="display: flex; gap: 10px; margin-bottom: 10px;">
                             <div style="flex: 1;">
                                 <label style="display: block; font-size: 11px; color: #aaa; margin-bottom: 4px;">项目阶段</label>
-                                <select id="admin-project-stage" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer;">
+                                <select id="admin-project-stage" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer;">
                                     <option value="alpha">Alpha 内测</option>
                                     <option value="beta">Beta 公测</option>
                                     <option value="rc">RC 候选版</option>
@@ -163,11 +163,11 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                             <div style="flex: 1;">
                                 <label style="display: block; font-size: 11px; color: #aaa; margin-bottom: 4px;">版本号</label>
                                 <div style="display: flex; gap: 4px;">
-                                    <input type="number" id="admin-version-major" min="0" max="99" value="1" style="width: 40px; padding: 8px 4px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; text-align: center;">
+                                    <input type="number" id="admin-version-major" min="0" max="99" value="1" style="width: 40px; padding: 8px 4px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; text-align: center;">
                                     <span style="color: #666; line-height: 36px;">.</span>
-                                    <input type="number" id="admin-version-minor" min="0" max="99" value="0" style="width: 40px; padding: 8px 4px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; text-align: center;">
+                                    <input type="number" id="admin-version-minor" min="0" max="99" value="0" style="width: 40px; padding: 8px 4px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; text-align: center;">
                                     <span style="color: #666; line-height: 36px;">.</span>
-                                    <input type="number" id="admin-version-patch" min="0" max="99" value="0" style="width: 40px; padding: 8px 4px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; text-align: center;">
+                                    <input type="number" id="admin-version-patch" min="0" max="99" value="0" style="width: 40px; padding: 8px 4px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; text-align: center;">
                                 </div>
                             </div>
                         </div>

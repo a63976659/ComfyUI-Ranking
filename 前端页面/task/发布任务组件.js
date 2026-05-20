@@ -72,9 +72,9 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     
     container.innerHTML = `
         <!-- 顶部导航 -->
-        <div style="display: flex; align-items: center; padding: 12px 15px; background: #1a1a1a; border-bottom: 1px solid #333;">
+        <div style="display: flex; align-items: center; padding: 12px 15px; background: #1a1a1a; border-bottom: 1px solid var(--border-color, #333);">
             <button id="btn-back" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px;" onmouseover="this.style.background='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'">
-                <span>⬅</span> ${t('common.back')}
+                ⬅ ${t('common.back')}
             </button>
             <span style="flex: 1; text-align: center; font-size: 15px; font-weight: bold; color: #fff;">📝 ${isEditMode ? (t('task.edit_task') || '编辑任务') : t('task.publish')}</span>
             <div style="width: 60px;"></div>
@@ -89,7 +89,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                     📌 ${t('task.task_title')} <span style="color: #F44336;">*</span>
                 </label>
                 <input type="text" id="task-title" maxlength="50" placeholder="${t('task.title_placeholder')}" value="${editTitle}" 
-                       style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
+                       style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
             </div>
             
             <!-- 任务描述 -->
@@ -98,7 +98,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                     📄 ${t('task.description')} <span style="color: #F44336;">*</span>
                 </label>
                 <textarea id="task-description" rows="6" maxlength="2000" placeholder="${t('task.description_placeholder')}"
-                          style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; resize: none; box-sizing: border-box; line-height: 1.5;">${editDescription}</textarea>
+                          style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; resize: none; box-sizing: border-box; line-height: 1.5;">${editDescription}</textarea>
                 <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
                     <span id="desc-count">${editDescription.length}</span>/2000
                 </div>
@@ -112,7 +112,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                 <input type="file" id="ref-images" multiple accept="image/*" 
                        style="display: none;">
                 <div id="image-preview" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px;"></div>
-                <button id="btn-add-image" style="width: 100%; padding: 12px; background: #1e1e1e; border: 1px dashed #555; border-radius: 8px; color: #888; cursor: pointer; font-size: 13px;">
+                <button id="btn-add-image" style="width: 100%; padding: 12px; background: var(--comfy-menu-bg); border: 1px dashed #555; border-radius: 8px; color: #888; cursor: pointer; font-size: 13px;">
                     + ${t('task.add_reference_image')}
                 </button>
             </div>
@@ -123,7 +123,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                     🔗 ${t('task.reference_link_optional')}
                 </label>
                 <input type="url" id="ref-link" placeholder="https://..." value="${editRefLink}" 
-                       style="width: 100%; padding: 10px 12px; background: #1e1e1e; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
+                       style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
             </div>
             
             <!-- 价格设置 -->
@@ -135,7 +135,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                     </label>
                     <div style="position: relative;">
                         <input type="number" id="total-price" min="0" step="10" placeholder="100" value="${editTotalPrice}" ${isLockedStatus ? 'disabled' : ''}
-                               style="width: 100%; padding: 10px 12px; padding-right: 40px; background: ${isLockedStatus ? '#2a2a2a' : '#1e1e1e'}; border: 1px solid #333; border-radius: 8px; color: ${isLockedStatus ? '#666' : '#FF9800'}; font-size: 16px; font-weight: bold; box-sizing: border-box; cursor: ${isLockedStatus ? 'not-allowed' : 'auto'};">
+                               style="width: 100%; padding: 10px 12px; padding-right: 40px; background: ${isLockedStatus ? 'var(--comfy-input-bg)' : 'var(--comfy-menu-bg)'}; border: 1px solid var(--border-color, #333); border-radius: 8px; color: ${isLockedStatus ? '#666' : '#FF9800'}; font-size: 16px; font-weight: bold; box-sizing: border-box; cursor: ${isLockedStatus ? 'not-allowed' : 'auto'};">
                         <span style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: #888; font-size: 12px;">${t('common.credits')}</span>
                     </div>
                     <div style="font-size: 11px; color: #666; margin-top: 4px;">${isLockedStatus ? '⚠️ 任务进行中，价格不可修改' : t('task.min_10_credits')}</div>
@@ -146,7 +146,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                     <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
                         📊 ${t('task.deposit_ratio')} <span style="color: #F44336;">*</span>
                     </label>
-                    <select id="deposit-ratio" ${isLockedStatus ? 'disabled' : ''} style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? '#2a2a2a' : '#1e1e1e'}; border: 1px solid #333; border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; cursor: ${isLockedStatus ? 'not-allowed' : 'pointer'};">
+                    <select id="deposit-ratio" ${isLockedStatus ? 'disabled' : ''} style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? 'var(--comfy-input-bg)' : 'var(--comfy-menu-bg)'}; border: 1px solid var(--border-color, #333); border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; cursor: ${isLockedStatus ? 'not-allowed' : 'pointer'};">
                         <option value="10" ${editDepositRatio == 10 ? 'selected' : ''}>10%</option>
                         <option value="20" ${editDepositRatio == 20 ? 'selected' : ''}>20%</option>
                         <option value="30" ${editDepositRatio == 30 ? 'selected' : ''}>30%</option>
@@ -172,7 +172,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                     ⏰ ${t('task.deadline')} <span style="color: #F44336;">*</span>
                 </label>
                 <input type="date" id="deadline" min="${minDate}" value="${defaultDate}" ${isLockedStatus ? 'disabled' : ''}
-                       style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? '#2a2a2a' : '#1e1e1e'}; border: 1px solid #333; border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; box-sizing: border-box; cursor: ${isLockedStatus ? 'not-allowed' : 'auto'};">
+                       style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? 'var(--comfy-input-bg)' : 'var(--comfy-menu-bg)'}; border: 1px solid var(--border-color, #333); border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; box-sizing: border-box; cursor: ${isLockedStatus ? 'not-allowed' : 'auto'};">
                 ${isLockedStatus ? '<div style="font-size: 11px; color: #666; margin-top: 4px;">⚠️ 任务进行中，截止日期不可修改</div>' : ''}
             </div>
             
@@ -281,7 +281,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     
     const renderImagePreview = () => {
         imagePreview.innerHTML = selectedImages.map((img, i) => `
-            <div style="position: relative; padding-top: 100%; background: #1e1e1e; border-radius: 8px; overflow: hidden;">
+            <div style="position: relative; padding-top: 100%; background: var(--comfy-menu-bg); border-radius: 8px; overflow: hidden;">
                 <img src="${img.dataUrl}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;">
                 <button class="btn-remove-img" data-index="${i}" style="position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; background: rgba(244,67,54,0.9); border: none; border-radius: 50%; color: #fff; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center;">×</button>
             </div>

@@ -125,7 +125,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
         // 匿名用户处理
         if (entry.is_anon) {
             return `
-                <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: ${idx % 2 === 0 ? '#222' : '#1e1e1e'}; border-radius: 4px; margin-bottom: 4px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: ${idx % 2 === 0 ? '#222' : 'var(--comfy-menu-bg)'}; border-radius: 4px; margin-bottom: 4px;">
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <span style="font-size: 14px; min-width: 24px;">${rankIcon}</span>
                         <span style="color: #888; font-style: italic; font-size: 13px;">${t('creator.anonymous')}</span>
@@ -165,11 +165,11 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
         }, 0);
         
         return `
-            <div id="${containerId}" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: ${idx % 2 === 0 ? '#222' : '#1e1e1e'}; border-radius: 4px; margin-bottom: 4px;">
+            <div id="${containerId}" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: ${idx % 2 === 0 ? '#222' : 'var(--comfy-menu-bg)'}; border-radius: 4px; margin-bottom: 4px;">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <span style="font-size: 14px; min-width: 24px;">${rankIcon}</span>
                     <span class="tip-board-user" data-account="${entry.account}" data-anon="false" style="display: flex; align-items: center; gap: 6px; color: #4CAF50; cursor: pointer; font-size: 13px;">
-                        <img class="tip-board-avatar" src="${avatarUrl}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #333;">
+                        <img class="tip-board-avatar" src="${avatarUrl}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--comfy-input-bg);">
                         <span class="tip-board-name">${userName}</span>
                     </span>
                 </div>
@@ -262,7 +262,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
                         <span data-stat="favorites" style="color: #FFC107;">🔖 ${t('creator.stats.favorites')}: <strong>${creatorData.favorites}</strong></span>
                         <span data-stat="followers" style="color: #4CAF50;">👥 ${t('creator.stats.followers')}: <strong>${creatorData.followers}</strong></span>
                     </div>
-                    <div style="display: flex; gap: 15px; font-size: 12px; color: #ccc; justify-content: center; border-top: 1px solid #333; padding-top: 8px;">
+                    <div style="display: flex; gap: 15px; font-size: 12px; color: #ccc; justify-content: center; border-top: 1px solid var(--border-color, #333); padding-top: 8px;">
                         <span data-stat="toolsCount" style="color: #2196F3;">🛠️ ${t('creator.output.tools')}: <strong>${creatorData.toolsCount}</strong> ${t('creator.output.unit')}</span>
                         <span data-stat="appsCount" style="color: #9C27B0;">📦 ${t('creator.output.apps')}: <strong>${creatorData.appsCount}</strong> ${t('creator.output.unit')}</span>
                     </div>

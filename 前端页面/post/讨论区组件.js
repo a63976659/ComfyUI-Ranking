@@ -83,8 +83,8 @@ export function createPostsView(currentUser, keyword = "") {
         </div>
         
         <!-- 加载更多 -->
-        <div id="load-more-wrapper" style="display: none; padding: 15px; text-align: center; border-top: 1px solid #333;">
-            <button id="btn-load-more" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
+        <div id="load-more-wrapper" style="display: none; padding: 15px; text-align: center; border-top: 1px solid var(--border-color, #333);">
+            <button id="btn-load-more" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='var(--comfy-input-bg)'">
                 ${t('post.load_more')}
             </button>
         </div>
@@ -249,7 +249,7 @@ export function createPostsView(currentUser, keyword = "") {
         // 创建瀑布流式骨架屏
         for (let i = 0; i < 4; i++) {
             const skeletonCard = document.createElement("div");
-            skeletonCard.style.cssText = "background: #2a2a2a; border-radius: 10px; overflow: hidden; animation: pulse 1.5s infinite;";
+            skeletonCard.style.cssText = "background: var(--comfy-input-bg); border-radius: 10px; overflow: hidden; animation: pulse 1.5s infinite;";
             skeletonCard.innerHTML = `
                 <div style="width: 100%; padding-top: 120%; background: linear-gradient(90deg, #2a2a2a 25%, #333 50%, #2a2a2a 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite;"></div>
                 <div style="padding: 10px;">
@@ -522,12 +522,12 @@ export function createPostsView(currentUser, keyword = "") {
 function createPostCard(post) {
     const card = document.createElement("div");
     Object.assign(card.style, {
-        background: "#1e1e1e",
+        background: "var(--comfy-menu-bg)",
         borderRadius: "8px",
         overflow: "hidden",
         cursor: "pointer",
         transition: "transform 0.2s, box-shadow 0.2s",
-        border: "1px solid #333"
+        border: "1px solid var(--border-color, #333)"
     });
     
     // 格式化时间

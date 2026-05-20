@@ -52,6 +52,7 @@ app.registerExtension({
                 icon: "pi pi-trophy",
                 type: "custom",
                 render: async (container) => {
+                    
                     globalSidebarContainer = container;
                     try {
                         if (!globalSidebarDOM) {

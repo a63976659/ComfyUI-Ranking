@@ -3,6 +3,11 @@ import { api } from "../core/网络请求API.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR, isAdmin } from "../core/全局配置.js";
 
+const escapeHtml = (str) => {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+};
+
 export function setupToggleButton(btnElement, initialState, initialCount, activeText, inactiveText, activeColor, apiCallback) {
     let isActive = initialState;
     let count = initialCount;
@@ -43,19 +48,19 @@ export function setupToggleButton(btnElement, initialState, initialCount, active
 export function createCommentSection(itemId, commentsData, currentUser, onCountChange, contentAuthor = null) {
     const container = document.createElement("div");
     Object.assign(container.style, {
-        display: "flex", flexDirection: "column", height: "100%", backgroundColor: "#1e1e1e", borderRadius: "4px"
+        display: "flex", flexDirection: "column", height: "100%", backgroundColor: "var(--comfy-menu-bg)", borderRadius: "4px"
     });
 
     const listArea = document.createElement("div");
     Object.assign(listArea.style, { flex: "1", overflowY: "auto", padding: "10px", fontSize: "12px", color: "#ccc" });
 
     const inputArea = document.createElement("div");
-    Object.assign(inputArea.style, { display: "flex", padding: "8px", borderTop: "1px solid #333", backgroundColor: "#2a2a2a", gap: "8px" });
+    Object.assign(inputArea.style, { display: "flex", padding: "8px", borderTop: "1px solid var(--border-color, #333)", backgroundColor: "var(--comfy-input-bg)", gap: "8px" });
 
     let currentReplyTarget = null; 
 
     const inputField = document.createElement("input");
-    Object.assign(inputField.style, { flex: "1", padding: "6px 10px", borderRadius: "15px", border: "1px solid #555", backgroundColor: "#1e1e1e", color: "#fff", outline: "none" });
+    Object.assign(inputField.style, { flex: "1", padding: "6px 10px", borderRadius: "15px", border: "1px solid #555", backgroundColor: "var(--comfy-menu-bg)", color: "#fff", outline: "none" });
     inputField.placeholder = t('social.say_something');
 
     const submitBtn = document.createElement("button");
@@ -84,12 +89,12 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
         if (comment.isDeleted) {
             if (!comment.replies || comment.replies.length === 0) return null;
             itemDiv.innerHTML = `
-                <div style="width: ${isSubReply ? '24px' : '32px'}; height: ${isSubReply ? '24px' : '32px'}; border-radius: 50%; background: #333; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #555;">✖</div>
-                <div style="flex: 1; background: #2a2a2a; padding: 6px 10px; border-radius: 4px; color: #666; font-style: italic; border: 1px dashed #444;">${t('social.comment_deleted')}</div>
+                <div style="width: ${isSubReply ? '24px' : '32px'}; height: ${isSubReply ? '24px' : '32px'}; border-radius: 50%; background: var(--comfy-input-bg); display: flex; align-items: center; justify-content: center; font-size: 10px; color: #555;">✖</div>
+                <div style="flex: 1; background: var(--comfy-input-bg); padding: 6px 10px; border-radius: 4px; color: #666; font-style: italic; border: 1px dashed #444;">${t('social.comment_deleted')}</div>
             `;
         } else {
             const avatarSize = isSubReply ? "24px" : "32px";
-            const replyLabel = comment.replyToUserName ? `<span style="color: #888;">${t('social.reply_to')} <span style="color: #2196F3;">@${comment.replyToUserName}</span>：</span>` : "";
+            const replyLabel = comment.replyToUserName ? `<span style="color: #888;">${t('social.reply_to')} <span style="color: #2196F3;">@${escapeHtml(comment.replyToUserName)}</span>：</span>` : "";
             
             // 🚀 P0安全修复：权限判断 - 评论作者、内容作者或管理员可删除
             const isCommentAuthor = currentUser && currentUser.account === comment.author;
@@ -105,12 +110,12 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
 
             itemDiv.innerHTML = `
-                <img class="swr-avatar" src="${avatarSrc}" style="width: ${avatarSize}; height: ${avatarSize}; border-radius: 50%; object-fit: cover; background: #333;">
+                <img class="swr-avatar" src="${avatarSrc}" style="width: ${avatarSize}; height: ${avatarSize}; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">
                 <div style="flex: 1;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                        <span class="swr-name" style="color: #aaa; font-weight: bold; font-size: 11px;">${comment.authorName || comment.author}</span>
+                        <span class="swr-name" style="color: #aaa; font-weight: bold; font-size: 11px;">${escapeHtml(comment.authorName || comment.author)}</span>
                     </div>
-                    <div style="line-height: 1.4; word-break: break-all;">${replyLabel}${comment.content}</div>
+                    <div style="line-height: 1.4; word-break: break-all;">${replyLabel}${escapeHtml(comment.content)}</div>
                     <div style="display: flex; gap: 15px; margin-top: 4px; font-size: 10px; color: #777;">
                         <span class="reply-btn" style="cursor: pointer; color: #aaa;">${t('social.reply')}</span>${deleteBtnHtml}
                     </div>

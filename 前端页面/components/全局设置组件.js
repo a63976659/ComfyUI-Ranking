@@ -144,14 +144,14 @@ export function createSettingsView() {
             justify-content: space-between;
             align-items: center;
             padding: 16px;
-            border-bottom: 1px solid #333;
+            border-bottom: 1px solid var(--border-color, #333);
             transition: background 0.2s;
         }
         .setting-item:hover {
             background: rgba(255,255,255,0.03);
         }
         .setting-select {
-            background: #2a2a2a;
+            background: var(--comfy-input-bg);
             border: 1px solid #444;
             color: #fff;
             padding: 8px 12px;
@@ -170,12 +170,12 @@ export function createSettingsView() {
             box-shadow: 0 0 0 2px rgba(76,175,80,0.2);
         }
         .setting-select option {
-            background: #2a2a2a;
+            background: var(--comfy-input-bg);
             color: #fff;
             padding: 8px;
         }
         .setting-number-input {
-            background: #2a2a2a;
+            background: var(--comfy-input-bg);
             border: 1px solid #444;
             color: #fff;
             padding: 8px 12px;
@@ -225,7 +225,7 @@ export function createSettingsView() {
         <div style="display: flex; align-items: center; gap: 10px; padding: 15px; border-bottom: 1px solid #444; background: #1a1a1a;">
             <!-- 🚀 返回按钮位置可调整参数：margin-left 控制右移，margin-top 控制下移 -->
             <button id="btn-back-settings" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-                <span style="font-size: 14px;">⬅</span> ${t('common.back')}
+                ⬅ ${t('common.back')}
             </button>
             <span style="font-size: 16px; font-weight: bold; color: #fff;">⚙️ ${t('settings.title')}</span>
         </div>
@@ -234,7 +234,7 @@ export function createSettingsView() {
         <div style="padding: 0; flex: 1;">
             
             <!-- 分类：通用设置 -->
-            <div style="padding: 16px 16px 10px; color: #2196F3; font-size: 13px; font-weight: bold; border-bottom: 1px solid #333; background: rgba(33,150,243,0.05);">
+            <div style="padding: 16px 16px 10px; color: #2196F3; font-size: 13px; font-weight: bold; border-bottom: 1px solid var(--border-color, #333); background: rgba(33,150,243,0.05);">
                 🌐 ${t('settings.general')}
             </div>
             
@@ -252,7 +252,7 @@ export function createSettingsView() {
             </div>
             
             <!-- 分类：显示偏好 -->
-            <div style="padding: 16px 16px 10px; color: #4CAF50; font-size: 13px; font-weight: bold; border-bottom: 1px solid #333; background: rgba(76,175,80,0.05); margin-top: 20px;">
+            <div style="padding: 16px 16px 10px; color: #4CAF50; font-size: 13px; font-weight: bold; border-bottom: 1px solid var(--border-color, #333); background: rgba(76,175,80,0.05); margin-top: 20px;">
                 📐 ${t('settings.display')}
             </div>
             
@@ -266,7 +266,7 @@ export function createSettingsView() {
             </div>
             
             <!-- 分类：更多功能 -->
-            <div style="padding: 16px 16px 10px; color: #FF9800; font-size: 13px; font-weight: bold; border-bottom: 1px solid #333; background: rgba(255,152,0,0.05); margin-top: 20px;">
+            <div style="padding: 16px 16px 10px; color: #FF9800; font-size: 13px; font-weight: bold; border-bottom: 1px solid var(--border-color, #333); background: rgba(255,152,0,0.05); margin-top: 20px;">
                 ✨ ${t('settings.animation')}
             </div>
             
@@ -289,7 +289,7 @@ export function createSettingsView() {
             </div>
             
             <!-- 分类：数据与缓存 -->
-            <div style="padding: 16px 16px 10px; color: #9C27B0; font-size: 13px; font-weight: bold; border-bottom: 1px solid #333; background: rgba(156,39,176,0.05); margin-top: 20px;">
+            <div style="padding: 16px 16px 10px; color: #9C27B0; font-size: 13px; font-weight: bold; border-bottom: 1px solid var(--border-color, #333); background: rgba(156,39,176,0.05); margin-top: 20px;">
                 ${t('settings.data_cache')}
             </div>
             
@@ -328,7 +328,7 @@ export function createSettingsView() {
             </div>
             
             <!-- 动画预览提示 -->
-            <div style="padding: 16px; background: rgba(33, 150, 243, 0.05); border-radius: 8px; margin: 16px; border: 1px dashed #333;">
+            <div style="padding: 16px; background: rgba(33, 150, 243, 0.05); border-radius: 8px; margin: 16px; border: 1px dashed var(--border-color, #333);">
                 <div style="color: #2196F3; font-size: 12px; font-weight: bold; margin-bottom: 8px;">🎨 ${t('settings.animation_preview')}</div>
                 <div style="color: #888; font-size: 11px; line-height: 1.5;">
                     • ${t('settings.anim_cascade')}<br>
@@ -340,7 +340,7 @@ export function createSettingsView() {
         </div>
         
         <!-- 底部信息 -->
-        <div style="padding: 15px; border-top: 1px solid #333; background: #1a1a1a; text-align: center;">
+        <div style="padding: 15px; border-top: 1px solid var(--border-color, #333); background: #1a1a1a; text-align: center;">
             <div style="color: #666; font-size: 11px;">${t('settings.auto_save')}</div>
         </div>
     `;

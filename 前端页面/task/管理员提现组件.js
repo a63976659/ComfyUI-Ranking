@@ -7,7 +7,7 @@
 
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { t } from "../components/用户体验增强.js";
+import { t, getLanguage } from "../components/用户体验增强.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 
 /**
@@ -34,7 +34,7 @@ async function renderWithdrawList(container, currentUser, statusFilter = "pendin
             .admin-tab.active { background: #4CAF50; color: white; }
             .admin-tab:not(.active) { background: var(--comfy-input-bg); color: var(--input-text); }
             
-            .admin-back-btn { background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s; backdrop-filter: blur(4px); margin-bottom: 16px; width: fit-content; }
+            .admin-back-btn { background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s; backdrop-filter: blur(4px); margin-left: 14px; margin-top: 14px; margin-bottom: 10px; }
             .admin-back-btn:hover { background: #4CAF50; border-color: #4CAF50; }
             
             .withdraw-list { display: flex; flex-direction: column; gap: 12px; }
@@ -77,7 +77,7 @@ async function renderWithdrawList(container, currentUser, statusFilter = "pendin
         </style>
         
         <button class="admin-back-btn" id="btn-back-withdraw">
-            <span style="font-size: 14px;">⬅</span> ${t('common.back')}
+            ⬅ ${t('common.back')}
         </button>
         
         <div class="admin-withdraw-header">
@@ -93,9 +93,16 @@ async function renderWithdrawList(container, currentUser, statusFilter = "pendin
         </div>
     `;
 
-    // 返回按钮事件
+    // 返回按钮事件 — 返回管理后台
     container.querySelector("#btn-back-withdraw").onclick = () => {
-        window.dispatchEvent(new CustomEvent("comfy-route-back"));
+        delete window._handleConfirmWithdrawal;
+        import("../profile/管理后台组件.js").then(module => {
+            const view = module.createAdminPanelView(currentUser);
+            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+        }).catch(err => {
+            console.error('加载失败:', err);
+            window.dispatchEvent(new CustomEvent("comfy-route-back"));
+        });
     };
 
     // Tab切换
@@ -137,7 +144,7 @@ async function renderWithdrawList(container, currentUser, statusFilter = "pendin
                             </span>
                         </div>
                         <div class="withdraw-card-amount">
-                            ${amount} 积分
+                            ${amount} ${t('market.points') || '积分'}
                             <span class="withdraw-card-rmb">(¥${amount})</span>
                         </div>
                     </div>
@@ -247,5 +254,5 @@ function formatTime(timestamp) {
         ? new Date(timestamp * 1000)
         : new Date(timestamp);
     if (isNaN(date.getTime())) return t('common.unknown');
-    return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleString(getLanguage(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }

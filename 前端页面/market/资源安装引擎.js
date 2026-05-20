@@ -228,7 +228,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         </div>
                         <div id="netdisk-pwd-container-${itemData.id}" style="display: flex; align-items: center; gap: 8px;">
                             <span style="color: #FF9800;">🔐 提取码：</span>
-                            <code id="netdisk-pwd-code-${itemData.id}" style="background: #333; padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;"></code>
+                            <code id="netdisk-pwd-code-${itemData.id}" style="background: var(--comfy-input-bg); padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;"></code>
                             <button id="btn-copy-pwd-${itemData.id}" style="padding: 4px 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">📋 复制</button>
                         </div>
                     </div>
@@ -494,7 +494,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         </div>
                         <div id="netdisk-mode-pwd-container-${itemData.id}" style="display: flex; align-items: center; gap: 8px;">
                             <span style="color: #FF9800;">🔐 提取码：</span>
-                            <code id="netdisk-mode-pwd-code-${itemData.id}" style="background: #333; padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;"></code>
+                            <code id="netdisk-mode-pwd-code-${itemData.id}" style="background: var(--comfy-input-bg); padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;"></code>
                             <button id="btn-copy-mode-pwd-${itemData.id}" style="padding: 4px 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">📋 复制</button>
                         </div>
                     </div>

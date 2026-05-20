@@ -3,7 +3,7 @@ import { api } from "../core/网络请求API.js";
 import { createItemCard } from "../market/列表卡片组件.js";
 import { getAcquiredItems, checkItemStatus } from "../market/资源安装引擎.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { t } from "../components/用户体验增强.js";
+import { t, getLanguage } from "../components/用户体验增强.js";
 import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 
 /**
@@ -16,7 +16,7 @@ import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全�
 function renderUserCard(account, currentUser, openOtherUserModalCb) {
     const card = document.createElement("div");
     card.id = `user-card-${account}`;
-    card.style.cssText = "padding: 12px; background: #2a2a2a; border-radius: 8px; border: 1px solid #444; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: all 0.2s;";
+    card.style.cssText = "padding: 12px; background: var(--comfy-input-bg); border-radius: 8px; border: 1px solid #444; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: all 0.2s;";
     card.onmouseover = () => { card.style.borderColor = "#666"; card.style.transform = "translateX(3px)"; };
     card.onmouseout = () => { card.style.borderColor = "#444"; card.style.transform = "translateX(0)"; };
     card.onclick = () => openOtherUserModalCb(account, currentUser);
@@ -92,9 +92,9 @@ function renderPaginatedUserList(userList, containerDiv, currentUser, openOtherU
         if (displayedCount < userList.length) {
             const loadMoreBtn = document.createElement("button");
             loadMoreBtn.textContent = t('profile.load_more') || `加载更多 (${userList.length - displayedCount})`;
-            loadMoreBtn.style.cssText = "width: 100%; padding: 12px; background: #333; border: 1px solid #555; border-radius: 6px; color: #4CAF50; cursor: pointer; font-size: 13px; margin-top: 8px; transition: all 0.2s;";
+            loadMoreBtn.style.cssText = "width: 100%; padding: 12px; background: var(--comfy-input-bg); border: 1px solid #555; border-radius: 6px; color: #4CAF50; cursor: pointer; font-size: 13px; margin-top: 8px; transition: all 0.2s;";
             loadMoreBtn.onmouseover = () => { loadMoreBtn.style.background = "#3a3a3a"; };
-            loadMoreBtn.onmouseout = () => { loadMoreBtn.style.background = "#333"; };
+            loadMoreBtn.onmouseout = () => { loadMoreBtn.style.background = "var(--comfy-input-bg)"; };
             loadMoreBtn.onclick = () => {
                 displayedCount = Math.min(displayedCount + PAGE_SIZE, userList.length);
                 renderPage();
@@ -353,7 +353,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             
             // 💰 销售统计卡片（放在最上方，与打赏统计样式一致）
             const salesStatsCard = document.createElement("div");
-            salesStatsCard.style.cssText = "background: linear-gradient(135deg, #2a2a2a, #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444; margin-bottom: 15px;";
+            salesStatsCard.style.cssText = "background: linear-gradient(135deg, var(--comfy-input-bg), #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444; margin-bottom: 15px;";
             salesStatsCard.innerHTML = `
                 <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 12px;">💰 ${t('profile.sales_stats') || '销售统计'}</div>
                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
@@ -375,7 +375,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             
             // 📊 任务收益统计卡片
             const statsCard = document.createElement("div");
-            statsCard.style.cssText = "background: linear-gradient(135deg, #2a2a2a, #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444;";
+            statsCard.style.cssText = "background: linear-gradient(135deg, var(--comfy-input-bg), #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444;";
             statsCard.innerHTML = `
                 <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 12px;">📊 任务收益统计</div>
                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
@@ -397,7 +397,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             
             // 🎁 打赏统计卡片
             const tipStatsCard = document.createElement("div");
-            tipStatsCard.style.cssText = "background: linear-gradient(135deg, #2a2a2a, #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444; margin-bottom: 15px;";
+            tipStatsCard.style.cssText = "background: linear-gradient(135deg, var(--comfy-input-bg), #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444; margin-bottom: 15px;";
             tipStatsCard.innerHTML = `
                 <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 12px;">🎁 ${t('profile.tip_stats') || '打赏统计'}</div>
                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
@@ -595,7 +595,7 @@ function createTaskItem(task, statusColors, statusLabels, currentUser) {
     const taskDiv = document.createElement("div");
     Object.assign(taskDiv.style, {
         padding: "12px",
-        background: "#2a2a2a",
+        background: "var(--comfy-input-bg)",
         borderRadius: "8px",
         border: "1px solid #444",
         cursor: "pointer",
@@ -665,7 +665,7 @@ function createPostItem(post, currentUser) {
     const postDiv = document.createElement("div");
     Object.assign(postDiv.style, {
         padding: "12px",
-        background: "#2a2a2a",
+        background: "var(--comfy-input-bg)",
         borderRadius: "8px",
         border: "1px solid #444",
         cursor: "pointer",
@@ -758,11 +758,11 @@ function formatPostTime(timestamp) {
  */
 function createTransactionCard(tx) {
     const txDiv = document.createElement("div");
-    txDiv.style.cssText = "padding: 12px; background: #2a2a2a; border-radius: 8px; border: 1px solid #444; display: flex; justify-content: space-between; align-items: flex-start;";
+    txDiv.style.cssText = "padding: 12px; background: var(--comfy-input-bg); border-radius: 8px; border: 1px solid #444; display: flex; justify-content: space-between; align-items: flex-start;";
     
     const isPositive = tx.amount > 0;
     const amountColor = isPositive ? '#4CAF50' : '#F44336';
-    const timeStr = tx.created_at ? new Date(tx.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    const timeStr = tx.created_at ? new Date(tx.created_at).toLocaleString(getLanguage(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
     
     // 获取交易类型配置
     const typeConfig = getTransactionTypeConfig(tx.tx_type);
@@ -801,6 +801,14 @@ function createTransactionCard(tx) {
         case 'PURCHASE':
             // 购买资源
             description = tx.item_title || '';
+            break;
+            
+        case 'SALE':
+            // 出售资源
+            description = tx.item_title || '';
+            if (tx.related_user_name) {
+                detailLine = `👤 ${tx.related_user_name}`;
+            }
             break;
             
         case 'TASK_DEPOSIT':
@@ -923,6 +931,7 @@ function getTransactionTypeConfig(txType) {
         'TASK_FREEZE': { icon: '🔒', title: t('tx.task_freeze') || '任务冻结' },
         'TASK_REFUND': { icon: '↩️', title: t('tx.task_refund') || '任务退款' },
         'TASK_CANCEL_REFUND': { icon: '🔄', title: t('tx.task_cancel_refund') || '任务取消退款' },
+        'SALE': { icon: '💎', title: t('tx.sale') || '销售收入', color: '#28a745' },
         'RECHARGE': { icon: '💰', title: t('tx.recharge') || '充值' },
         'REFUND': { icon: '↩️', title: t('tx.refund') || '退款' },
         'WITHDRAW_FEE': { icon: '💸', title: t('tx.withdraw_fee') || '手续费' }

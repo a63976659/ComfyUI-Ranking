@@ -9,12 +9,12 @@ export function createAuthView(onSuccessCallback) {
     Object.assign(container.style, { 
         display: "flex", flexDirection: "column", gap: "15px", color: "#ccc", 
         fontSize: "14px", padding: "15px", flex: "none", height: "1220px", boxSizing: "border-box", overflowY: "auto", 
-        background: "var(--bg-color, #202020)" 
+        background: "var(--comfy-menu-bg)"
     });
 
     container.innerHTML = `
-        <button id="btn-back-auth" style="background: #333; border: 1px solid #555; color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-bottom: 15px; width: fit-content; transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='#333'; this.style.borderColor='#555'">
-    <span style="font-size: 14px;">⬅</span> ${t('common.back')}
+        <button id="btn-back-auth" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-bottom: 15px; width: fit-content; transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='var(--comfy-input-bg)'; this.style.borderColor='#555'">
+    ⬅ ${t('common.back')}
 </button>
         <div style="text-align:center; font-weight:bold; font-size:16px; margin-bottom:10px; color:#fff;">🔐 ${t('auth.title')}</div>
         <div id="auth-form-container"></div>

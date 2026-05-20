@@ -36,9 +36,9 @@ export function createTaskDetailView(taskId, currentUser) {
     
     container.innerHTML = `
         <!-- 顶部导航 -->
-        <div style="display: flex; align-items: center; padding: 12px 15px; background: #1a1a1a; border-bottom: 1px solid #333;">
-            <button id="btn-back" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px;" onmouseover="this.style.background='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'">
-                <span>⬅</span> ${t('common.back')}
+        <div style="display: flex; align-items: center; padding: 12px 15px; background: #1a1a1a; border-bottom: 1px solid var(--border-color, #333);">
+            <button id="btn-back" style="margin-left: 15px; margin-top: 18px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
+                ⬅ ${t('common.back')}
             </button>
             <span style="flex: 1; text-align: center; font-size: 15px; font-weight: bold; color: #fff;">${t('task.detail_title')}</span>
             <div style="width: 60px;"></div>
@@ -187,9 +187,9 @@ function renderTaskDetail(contentEl, task, currentUser) {
         </h2>
         
         <!-- 发布者信息 -->
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; padding: 10px; background: #1e1e1e; border-radius: 8px;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; padding: 10px; background: var(--comfy-menu-bg); border-radius: 8px;">
             <img src="${task.publisher_avatar || PLACEHOLDERS.AVATAR_SMALL}"
-                 style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #333; cursor: pointer;" id="publisher-avatar">
+                 style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid var(--border-color, #333); cursor: pointer;" id="publisher-avatar">
             <div style="flex: 1;">
                 <div style="color: #fff; font-size: 14px; font-weight: 500;">${escapeHtml(task.publisher_name || task.publisher)}</div>
                 <div style="color: #888; font-size: 11px;">${t('task.published_at')} ${formatTime(task.created_at)}</div>
@@ -203,7 +203,7 @@ function renderTaskDetail(contentEl, task, currentUser) {
             </div>
             ` : ''}
             ${!isPublisher && currentUser ? `
-                <button id="btn-chat-publisher" style="background: #333; border: 1px solid #555; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+                <button id="btn-chat-publisher" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
                     💬 ${t('common.message')}
                 </button>
             ` : ""}
@@ -227,7 +227,7 @@ function renderTaskDetail(contentEl, task, currentUser) {
         <!-- 任务描述 -->
         <div style="margin-bottom: 20px;">
             <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">📄 ${t('task.description')}</div>
-            <div style="color: #ccc; font-size: 13px; line-height: 1.6; white-space: pre-wrap; background: #1e1e1e; padding: 12px; border-radius: 8px;">
+            <div style="color: #ccc; font-size: 13px; line-height: 1.6; white-space: pre-wrap; background: var(--comfy-menu-bg); padding: 12px; border-radius: 8px;">
 ${escapeHtml(task.description)}</div>
         </div>
         
@@ -252,14 +252,14 @@ ${escapeHtml(task.description)}</div>
         ` : ""}
         
         <!-- 👍 互动按钮栏 -->
-        <div id="interaction-bar" style="display: flex; align-items: center; gap: 15px; padding: 15px 0; border-top: 1px solid #333; border-bottom: 1px solid #333; margin-bottom: 15px;">
-            <button id="btn-like" style="background: ${isLiked ? '#FF5722' : '#333'}; border: 1px solid ${isLiked ? '#FF5722' : '#555'}; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+        <div id="interaction-bar" style="display: flex; align-items: center; gap: 15px; padding: 15px 0; border-top: 1px solid var(--border-color, #333); border-bottom: 1px solid var(--border-color, #333); margin-bottom: 15px;">
+            <button id="btn-like" style="background: ${isLiked ? '#FF5722' : 'var(--comfy-input-bg)'}; border: 1px solid ${isLiked ? '#FF5722' : '#555'}; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
                 ❤️ <span id="like-count">${task.likes || 0}</span>
             </button>
-            <button id="btn-favorite" style="background: ${isFavorited ? '#FFC107' : '#333'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+            <button id="btn-favorite" style="background: ${isFavorited ? '#FFC107' : 'var(--comfy-input-bg)'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
                 🔖 <span id="favorite-count">${task.favorites || 0}</span>
             </button>
-            <button id="btn-tip" style="background: #333; border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+            <button id="btn-tip" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
                 💰 ${t('post.tip_author')}
             </button>
         </div>
@@ -277,7 +277,7 @@ ${escapeHtml(task.description)}</div>
             
             <!-- 评论输入框 -->
             <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                <input type="text" id="comment-input" placeholder="${t('post.comment_placeholder')}" style="flex: 1; padding: 10px 12px; background: #2a2a2a; border: 1px solid #444; border-radius: 20px; color: #fff; font-size: 13px; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
+                <input type="text" id="comment-input" placeholder="${t('post.comment_placeholder')}" style="flex: 1; padding: 10px 12px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 20px; color: #fff; font-size: 13px; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
                 <button id="btn-send-comment" style="background: #4CAF50; border: none; color: #fff; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
                     ${t('common.send')}
                 </button>
@@ -320,7 +320,7 @@ ${escapeHtml(task.description)}</div>
                 <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">👥 ${t('task.applicants')}（${task.applicants.length}${t('task.applicants_count')}）</div>
                 <div id="applicants-list" style="display: flex; flex-direction: column; gap: 8px;">
                     ${task.applicants.map(app => `
-                        <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: #1e1e1e; border-radius: 8px;">
+                        <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--comfy-menu-bg); border-radius: 8px;">
                             <img src="${app.avatar || PLACEHOLDERS.AVATAR_SMALL}"
                                  style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">
                             <div style="flex: 1;">
@@ -337,7 +337,7 @@ ${escapeHtml(task.description)}</div>
         ` : ""}
         
         <!-- 操作按钮区域 -->
-        <div id="action-buttons" style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">
+        <div id="action-buttons" style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border-color, #333);
         </div>
     `;
     
@@ -389,7 +389,7 @@ function showAssignConfirmDialog(task, assignee, contentEl, currentUser) {
             <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.confirm_assign', { assignee: assignee })}</div>
             <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.confirm_deposit', { amount: task.deposit_amount })}</div>
             <div style="display: flex; gap: 10px;">
-                <button id="assign-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="assign-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
                 <button id="assign-confirm" style="flex: 1; background: #4CAF50; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm')}</button>
             </div>
         </div>
@@ -426,10 +426,10 @@ function showApplyDialog(task, currentUser) {
     content.innerHTML = `
         <div style="margin-bottom: 15px;">
             <div style="color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.apply_message_prompt')}</div>
-            <textarea id="apply-message" rows="4" placeholder="${t('task.apply_message_placeholder') || ''}" style="width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
+            <textarea id="apply-message" rows="4" placeholder="${t('task.apply_message_placeholder') || ''}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
         </div>
         <div style="display: flex; gap: 10px;">
-            <button id="apply-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button id="apply-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
             <button id="apply-confirm" style="flex: 1; background: #FF9800; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
         </div>
     `;
@@ -473,7 +473,7 @@ function showCancelApplyConfirmDialog(task, currentUser) {
             <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.confirm_cancel_apply')}</div>
             <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.cancel_apply_warning') || ''}</div>
             <div style="display: flex; gap: 10px;">
-                <button id="cancel-apply-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="cancel-apply-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
                 <button id="cancel-apply-confirm" style="flex: 1; background: #FF9800; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm')}</button>
             </div>
         </div>
@@ -517,7 +517,7 @@ function showCancelTaskConfirmDialog(task) {
             <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.confirm_cancel_task')}</div>
             <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.cancel_task_warning') || ''}</div>
             <div style="display: flex; gap: 10px;">
-                <button id="cancel-task-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="cancel-task-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
                 <button id="cancel-task-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('task.cancel_task')}</button>
             </div>
         </div>
@@ -557,7 +557,7 @@ function showAcceptConfirmDialog(task, currentUser) {
             <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.confirm_accept')}</div>
             <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.confirm_pay_remaining', { amount: task.total_price - task.deposit_amount })}</div>
             <div style="display: flex; gap: 10px;">
-                <button id="accept-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="accept-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
                 <button id="accept-confirm" style="flex: 1; background: #4CAF50; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('task.accept_work')}</button>
             </div>
         </div>
@@ -598,10 +598,10 @@ function showRejectDialog(task, currentUser) {
     content.innerHTML = `
         <div style="margin-bottom: 15px;">
             <div style="color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.reject_reason_prompt')}</div>
-            <textarea id="reject-feedback" rows="4" placeholder="${t('task.reject_reason_placeholder') || ''}" style="width: 100%; padding: 10px; background: #2a2a2a; border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
+            <textarea id="reject-feedback" rows="4" placeholder="${t('task.reject_reason_placeholder') || ''}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
         </div>
         <div style="display: flex; gap: 10px;">
-            <button id="reject-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button id="reject-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
             <button id="reject-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('task.reject_work')}</button>
         </div>
     `;
@@ -650,7 +650,7 @@ function showDeleteCommentConfirmDialog(taskId, comment, container, currentUser)
             <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('post.delete_comment_confirm') || '确定删除这条评论吗？'}</div>
             <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('post.delete_comment_warning') || '删除后无法恢复'}</div>
             <div style="display: flex; gap: 10px;">
-                <button id="delete-comment-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="delete-comment-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
                 <button id="delete-comment-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
             </div>
         </div>
@@ -810,17 +810,17 @@ function showSubmitDialog(task, currentUser) {
     content.innerHTML = `
         <div style="margin-bottom: 15px;">
             <label style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.deliverable_images')} *</label>
-            <input type="file" id="deliverable-files" multiple accept="image/*" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; border-radius: 6px; color: #fff;">
+            <input type="file" id="deliverable-files" multiple accept="image/*" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; border-radius: 6px; color: #fff;">
             <div style="font-size: 11px; color: #888; margin-top: 4px;">${t('task.support_multiple_images')}</div>
         </div>
         
         <div style="margin-bottom: 20px;">
             <label style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.note_optional')}</label>
-            <textarea id="submit-note" rows="3" placeholder="${t('task.note_placeholder')}" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box;"></textarea>
+            <textarea id="submit-note" rows="3" placeholder="${t('task.note_placeholder')}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box;"></textarea>
         </div>
         
         <div style="display: flex; gap: 10px;">
-            <button id="btn-cancel-modal" style="flex: 1; padding: 10px; background: #333; border: 1px solid #555; color: #fff; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button id="btn-cancel-modal" style="flex: 1; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
             <button id="btn-confirm-submit" style="flex: 1; padding: 10px; background: #4CAF50; border: none; color: #fff; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
         </div>
     `;
@@ -931,13 +931,13 @@ function showTaskTipDialog(task, currentUser, container) {
     content.style.color = "#ccc";
     content.innerHTML = `
         <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
-            <button class="tip-amount" data-amount="10" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="50" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">50 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="100" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">100 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="500" style="background: #333; border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">500 ${t('task.points')}</button>
+            <button class="tip-amount" data-amount="10" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
+            <button class="tip-amount" data-amount="50" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">50 ${t('task.points')}</button>
+            <button class="tip-amount" data-amount="100" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">100 ${t('task.points')}</button>
+            <button class="tip-amount" data-amount="500" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">500 ${t('task.points')}</button>
         </div>
         <div style="display: flex; gap: 10px;">
-            <button id="tip-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button id="tip-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
         </div>
     `;
 
@@ -998,7 +998,7 @@ async function loadTaskComments(container, taskId, currentUser) {
                 const initial = (name || 'U')[0].toUpperCase();
                 
                 const avatarHtml = avatar 
-                    ? `<img class="swr-avatar" src="${avatar}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: #333;">` 
+                    ? `<img class="swr-avatar" src="${avatar}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">` 
                     : `<div class="swr-avatar" style="width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold;">${initial}</div>`;
                 
                 // 判断是否有删除权限（评论作者/任务发布者/管理员）
@@ -1037,7 +1037,7 @@ async function loadTaskComments(container, taskId, currentUser) {
                         if (avatarEl.tagName === 'IMG') {
                             avatarEl.src = profile.avatar;
                         } else {
-                            avatarEl.outerHTML = `<img class="swr-avatar" src="${profile.avatar}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: #333;">`;
+                            avatarEl.outerHTML = `<img class="swr-avatar" src="${profile.avatar}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">`;
                         }
                     }
                     if (nameEl && profile.name) nameEl.textContent = profile.name;
@@ -1135,7 +1135,7 @@ function showDeleteTaskConfirm(task, contentEl) {
             <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.delete_confirm_title')}</div>
             <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.delete_confirm_desc')}</div>
             <div style="display: flex; gap: 10px;">
-                <button id="delete-cancel" style="flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button id="delete-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
                 <button id="delete-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
             </div>
         </div>
@@ -1174,7 +1174,7 @@ function showDisputeDialog(task, currentUser) {
     content.innerHTML = `
         <div style="margin-bottom: 16px;">
             <label style="display: block; color: #ccc; margin-bottom: 8px; font-size: 14px;">${t('dispute.reason')} <span style="color: #f44;">*</span></label>
-            <textarea id="dispute-reason" placeholder="${t('dispute.reason_placeholder')}" style="width: 100%; height: 120px; background: #2a2a2a; border: 1px solid #444; border-radius: 8px; color: #fff; padding: 12px; resize: none; box-sizing: border-box; font-size: 14px; line-height: 1.5;"></textarea>
+            <textarea id="dispute-reason" placeholder="${t('dispute.reason_placeholder')}" style="width: 100%; height: 120px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 8px; color: #fff; padding: 12px; resize: none; box-sizing: border-box; font-size: 14px; line-height: 1.5;"></textarea>
         </div>
         
         <div style="margin-bottom: 16px;">

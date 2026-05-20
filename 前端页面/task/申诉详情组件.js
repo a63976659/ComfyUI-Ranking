@@ -7,7 +7,7 @@
 
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { t } from "../components/用户体验增强.js";
+import { t, getLanguage } from "../components/用户体验增强.js";
 import { isAdmin } from "../core/全局配置.js";
 
 /**
@@ -99,7 +99,7 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
         </style>
         
         <div class="dispute-header">
-            <button class="dispute-back-btn" id="backBtn">←</button>
+            <button class="dispute-back-btn" id="backBtn">⬅ ${t('common.back')}</button>
             <div class="dispute-title">${t('dispute.title')}</div>
             <span class="dispute-status" style="background: ${statusInfo.bg}; color: ${statusInfo.color};">
                 ${statusInfo.label}
@@ -262,5 +262,5 @@ function getResolutionText(resolution, ratio) {
 function formatTime(timestamp) {
     if (!timestamp) return t('common.unknown');
     const date = new Date(timestamp * 1000);
-    return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleString(getLanguage(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }

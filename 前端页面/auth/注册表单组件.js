@@ -58,7 +58,7 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
             </div>
         </div>
 
-        <div style="margin-bottom: 10px; background: #2a2a2a; padding: 10px; border-radius: 4px; border: 1px dashed #555; display: flex; align-items: center; justify-content: space-between;">
+        <div style="margin-bottom: 10px; background: var(--comfy-input-bg); padding: 10px; border-radius: 4px; border: 1px dashed #555; display: flex; align-items: center; justify-content: space-between;">
             <div>
                 <label style="display: block; margin-bottom: 5px;">${t('auth.avatar')}</label>
                 <div style="display: flex; align-items: center; gap: 10px;"><img id="avatar-preview" src="${DEFAULT_AVATAR_MALE}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #444;"><input type="file" id="reg-avatar" accept="image/*" style="font-size: 12px; color: #aaa; max-width: 150px;"></div>

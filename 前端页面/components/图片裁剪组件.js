@@ -30,7 +30,7 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
         // 创建弹窗容器
         const modal = document.createElement("div");
         Object.assign(modal.style, {
-            background: "#2a2a2a", borderRadius: "12px", padding: "20px",
+            background: "var(--comfy-input-bg)", borderRadius: "12px", padding: "20px",
             maxWidth: "90vw", maxHeight: "90vh", display: "flex", flexDirection: "column",
             boxShadow: "0 8px 32px rgba(0,0,0,0.5)"
         });

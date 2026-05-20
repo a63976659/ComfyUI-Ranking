@@ -15,12 +15,12 @@ export async function openNotificationCenter(currentUser, bellBtn) {
     if (!currentUser) return showToast(t('notif.login_required'), "warning");
     
     const outerBox = document.createElement("div");
-    Object.assign(outerBox.style, { flex: "none", height: "1220px", boxSizing: "border-box", overflowY: "auto", padding: "15px", display: "flex", flexDirection: "column", background: "var(--bg-color, #202020)" });
+    Object.assign(outerBox.style, { flex: "none", height: "1220px", boxSizing: "border-box", overflowY: "auto", padding: "15px", display: "flex", flexDirection: "column", background: "var(--comfy-menu-bg)" });
     
     const header = document.createElement("div");
     header.innerHTML = `
         <button id="btn-back-notif" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); margin-bottom: 15px; width: fit-content; transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-            <span style="font-size: 14px;">⬅</span> ${t('common.back')}
+            ⬅ ${t('common.back')}
         </button>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px;">
             <div style="font-size: 16px; font-weight: bold; color: #fff;">🔔 ${t('notif.title')}</div>
@@ -75,7 +75,7 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             
             // 系统公告使用尊贵的橙色/金色 UI 边框，普通消息使用默认颜色
             // 插件更新通知使用蓝色主题
-            let bg = isUnread ? "rgba(76, 175, 80, 0.1)" : "#2a2a2a";
+            let bg = isUnread ? "rgba(76, 175, 80, 0.1)" : "var(--comfy-input-bg)";
             let border = isUnread ? "1px solid #4CAF50" : "1px solid #444";
             
             if (isSystem) {
@@ -170,12 +170,12 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                         import("../post/帖子详情组件.js").then(module => {
                             const view = module.createPostDetailView(id, currentUser);
                             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                        });
+                        }).catch(err => { console.error('组件加载失败:', err); });
                     } else if (id.startsWith('task_')) {
                         import("../task/任务详情组件.js").then(module => {
                             const view = module.createTaskDetailView(id, currentUser);
                             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                        });
+                        }).catch(err => { console.error('组件加载失败:', err); });
                     } else {
                         // 🔔 资源类通知：切换到对应Tab并展开卡片
                         (async () => {
@@ -232,7 +232,7 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                     import("../task/任务详情组件.js").then(module => {
                         const view = module.createTaskDetailView(itemId, currentUser);
                         window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                    });
+                    }).catch(err => { console.error('组件加载失败:', err); });
                     return;
                 }
                 
@@ -241,7 +241,7 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                     import("../task/任务详情组件.js").then(module => {
                         const view = module.createTaskDetailView(itemId, currentUser);
                         window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                    });
+                    }).catch(err => { console.error('组件加载失败:', err); });
                     return;
                 }
 
@@ -251,12 +251,12 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                         import("../post/帖子详情组件.js").then(module => {
                             const view = module.createPostDetailView(itemId, currentUser);
                             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                        });
+                        }).catch(err => { console.error('组件加载失败:', err); });
                     } else if (itemId.startsWith('task_')) {
                         import("../task/任务详情组件.js").then(module => {
                             const view = module.createTaskDetailView(itemId, currentUser);
                             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                        });
+                        }).catch(err => { console.error('组件加载失败:', err); });
                     } else {
                         // 🔔 资源类互动通知：切换到对应Tab并展开卡片
                         (async () => {

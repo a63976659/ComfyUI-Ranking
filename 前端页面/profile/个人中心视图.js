@@ -12,8 +12,7 @@ import { openRechargeModal } from "../market/资金与钱包_充值组件.js";
 import { openWithdrawModal } from "../market/资金与钱包_提现组件.js"; 
 import { buildProfileHTML } from "./个人中心_UI模板.js";   
 import { openTipModal } from "./个人中心_赞赏组件.js";     
-import { getBannerCacheKey, isAdmin, getCurrentAccount } from "../core/全局配置.js";
-import { getVersionConfig, getStageLabel } from "../components/关于插件组件.js";
+import { getBannerCacheKey, getCurrentAccount } from "../core/全局配置.js";
 import { clearAllCache, clearSensitiveCache } from "../components/性能优化工具.js";
 import { logout } from "../core/状态管理.js";
 
@@ -66,7 +65,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
     Object.assign(container.style, { 
         display: "flex", flexDirection: "column", gap: "15px", color: "#eee", 
         fontSize: "14px", padding: "15px", flex: "none", height: "1220px", boxSizing: "border-box", overflowY: "auto", 
-        background: "var(--bg-color, #202020)"
+        background: "var(--comfy-menu-bg)"
     });
 
     let isSettingsView = false;
@@ -114,17 +113,6 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
 
         // 调用解耦的模板引擎生成 HTML
         container.innerHTML = buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs);
-
-        // 🏷️ 动态更新管理员特权徽章
-        const adminBadge = container.querySelector('#admin-privilege-badge');
-        if (adminBadge && isMe && isAdmin(userData.account)) {
-            getVersionConfig().then(config => {
-                const stageLabel = getStageLabel(config.stage);
-                adminBadge.textContent = `${stageLabel}${t('profile.max_privilege')}`;
-            }).catch(() => {
-                adminBadge.textContent = t('profile.beta_max_privilege');
-            });
-        }
 
         if (isSettingsView && isMe) {
             const settingsContainer = createSettingsForm(
@@ -275,103 +263,15 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
             renderProfileListContent(activeTab, listDOM, userData, currentUser, openOtherUserProfileModal);
 
             // =========================================================
-            // 【新增】：管理员提现管理按钮绑定事件
+            // 【新增】：管理后台入口按钮绑定事件
             // =========================================================
-            const btnAdminWithdraw = container.querySelector("#btn-admin-withdraw");
-            if (btnAdminWithdraw) {
-                btnAdminWithdraw.onclick = () => {
-                    import("../task/管理员提现组件.js").then(module => {
-                        const view = module.createWithdrawManageView(currentUser);
+            const btnAdminPanel = container.querySelector("#btn-admin-panel");
+            if (btnAdminPanel) {
+                btnAdminPanel.onclick = () => {
+                    import("./管理后台组件.js").then(module => {
+                        const view = module.createAdminPanelView(currentUser);
                         window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                    });
-                };
-            }
-
-            // =========================================================
-            // 【新增】：管理员仲裁按钮绑定事件
-            // =========================================================
-            const btnAdminDispute = container.querySelector("#btn-admin-dispute");
-            if (btnAdminDispute) {
-                btnAdminDispute.onclick = () => {
-                    import("../task/管理员仲裁组件.js").then(module => {
-                        const view = module.createAdminDisputeView(currentUser);
-                        window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                    });
-                };
-            }
-
-            // =========================================================
-            // 【新增】：为管理员系统公告发布按钮绑定事件
-            // =========================================================
-            const btnAdminAnnSend = container.querySelector("#btn-admin-ann-send");
-            if (btnAdminAnnSend) {
-                btnAdminAnnSend.onclick = async () => {
-                    const contentArea = container.querySelector("#admin-ann-content");
-                    const content = contentArea.value;
-                    if (!content || !content.trim()) return showToast(`⚠️ ${t('admin.empty_content')}`, "warning");
-
-                    const isConfirm = await showConfirm(t('admin.announce_confirm'));
-                    if (!isConfirm) return;
-
-                    btnAdminAnnSend.innerText = `🚀 ${t('admin.publishing')}...`;
-                    btnAdminAnnSend.style.opacity = "0.7";
-                    btnAdminAnnSend.disabled = true;
-
-                    try {
-                        await api.postSystemAnnouncement(currentUser.account, content);
-                        contentArea.value = "";
-                        showToast(`🎉 ${t('admin.publish_success')}`, "success");
-                    } catch (error) {
-                        console.error("Failed to post announcement:", error);
-                        showToast(`❌ ${t('admin.publish_failed')}: ${error.message}`, "error");
-                    } finally {
-                        btnAdminAnnSend.innerText = `🚀 ${t('admin.confirm_publish')}`;
-                        btnAdminAnnSend.style.opacity = "1";
-                        btnAdminAnnSend.disabled = false;
-                    }
-                };
-            }
-
-            // =========================================================
-            // 【新增】：管理员调试脚本执行按钮绑定事件
-            // =========================================================
-            const btnAdminRunScript = container.querySelector("#btn-admin-run-script");
-            if (btnAdminRunScript) {
-                btnAdminRunScript.onclick = async () => {
-                    const scriptInput = container.querySelector("#admin-script-input");
-                    const resultArea = container.querySelector("#admin-script-result");
-                    const scriptName = scriptInput.value.trim();
-                    
-                    if (!scriptName) {
-                        resultArea.innerHTML = `<span style="color: #f85149;">❌ ${t('admin.enter_script_name')}</span>`;
-                        return;
-                    }
-
-                    btnAdminRunScript.innerText = `⏳ ${t('admin.executing')}...`;
-                    btnAdminRunScript.disabled = true;
-                    resultArea.innerHTML = `<span style="color: #58a6ff;">⚡ ${t('admin.running')} ${scriptName} ...</span>`;
-
-                    try {
-                        const response = await api.runAdminScript(currentUser.account, scriptName);
-                        const output = response.output || response.message || JSON.stringify(response, null, 2);
-                        // 使用安全的DOM操作替代innerHTML，防止XSS
-                        resultArea.innerHTML = `<span style="color: #3fb950;">✅ ${t('admin.exec_success')}：</span>`;
-                        const outputNode = document.createElement('pre');
-                        outputNode.style.cssText = 'margin: 8px 0 0 0; white-space: pre-wrap; word-break: break-all; font-family: monospace;';
-                        outputNode.textContent = '\n' + output;
-                        resultArea.appendChild(outputNode);
-                    } catch (error) {
-                        console.error("Script execution failed:", error);
-                        // 使用安全的DOM操作替代innerHTML，防止XSS
-                        resultArea.innerHTML = `<span style="color: #f85149;">❌ ${t('admin.exec_failed')}：</span>`;
-                        const errorNode = document.createElement('pre');
-                        errorNode.style.cssText = 'margin: 8px 0 0 0; white-space: pre-wrap; word-break: break-all; font-family: monospace;';
-                        errorNode.textContent = '\n' + error.message;
-                        resultArea.appendChild(errorNode);
-                    } finally {
-                        btnAdminRunScript.innerText = `▶️ ${t('admin.execute')}`;
-                        btnAdminRunScript.disabled = false;
-                    }
+                    }).catch(err => { console.error('加载管理后台失败:', err); });
                 };
             }
         }

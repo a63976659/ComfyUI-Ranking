@@ -45,7 +45,7 @@ export function buildSidebarDOM() {
     const savedBg = BackgroundStore.load();
     const bgStyle = savedBg 
         ? `background-image: url(${savedBg}); background-size: cover; background-position: center;`
-        : `background-color: var(--bg-color, #202020);`;
+        : `background-color: var(--comfy-menu-bg);`;
     
     Object.assign(container.style, {
         display: "flex", flexDirection: "column", height: "100%", width: "100%",
@@ -71,7 +71,7 @@ export function buildSidebarDOM() {
     Object.assign(sortContainer.style, { padding: "10px", display: "flex", gap: "8px", alignItems: "center", width: "100%", boxSizing: "border-box" });
     sortContainer.innerHTML = `
         <!-- 通用排序选择框（工具/应用/推荐/创作者） -->
-        <select id="hub-sort-select" style="background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
+        <select id="hub-sort-select" style="background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
             <option value="time">${t('market.latest')}</option>
             <option value="downloads">${t('market.downloads')}</option>
             <option value="likes">${t('market.like')}</option>
@@ -82,7 +82,7 @@ export function buildSidebarDOM() {
             <option value="rating">${t('market.rating')}</option>
         </select>
         <!-- 任务榜筛选控件（状态+排序） -->
-        <select id="task-status-filter" style="display: none; background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
+        <select id="task-status-filter" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
             <option value="">${t('task.filter_all')}</option>
             <option value="open">${t('task.filter_open')}</option>
             <option value="in_progress">${t('task.filter_in_progress')}</option>
@@ -90,7 +90,7 @@ export function buildSidebarDOM() {
             <option value="completed">${t('task.filter_completed')}</option>
             <option value="disputed">${t('task.filter_disputed')}</option>
         </select>
-        <select id="task-sort-select" style="display: none; background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
+        <select id="task-sort-select" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
             <option value="latest">${t('task.sort_latest')}</option>
             <option value="price">${t('task.sort_price')}</option>
             <option value="deadline">${t('task.sort_deadline')}</option>
@@ -100,7 +100,7 @@ export function buildSidebarDOM() {
             <option value="favorites">${t('task.sort_favorites')}</option>
         </select>
         <!-- 🎯 讨论区排序控件（专用） -->
-        <select id="posts-sort-select" style="display: none; background: #333; color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
+        <select id="posts-sort-select" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
             <option value="latest">${t('post.sort_latest')}</option>
             <option value="likes">${t('post.sort_likes')}</option>
             <option value="favorites">${t('post.sort_favorites')}</option>
@@ -172,7 +172,7 @@ export function buildSidebarDOM() {
             container.style.backgroundColor = "transparent";
         } else {
             container.style.backgroundImage = "none";
-            container.style.backgroundColor = "var(--bg-color, #202020)";
+            container.style.backgroundColor = "var(--comfy-menu-bg)";
         }
     });
     // =========================================================================

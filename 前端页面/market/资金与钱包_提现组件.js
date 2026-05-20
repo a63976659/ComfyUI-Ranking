@@ -49,7 +49,7 @@ export async function openWithdrawModal(currentUser, onSuccess) {
 
         <div style="margin-bottom: 15px;">
             <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.amount_label')} <span style="color:#F44336">*</span></label>
-            <input type="number" id="withdraw-amount" placeholder="${t('wallet.withdraw.amount_placeholder')}" max="${maxWithdraw}" min="1" step="1" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+            <input type="number" id="withdraw-amount" placeholder="${t('wallet.withdraw.amount_placeholder')}" max="${maxWithdraw}" min="1" step="1" style="width:100%; padding:10px; background:var(--comfy-input-bg); border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
             
             <div id="fee-calc-box" style="margin-top: 10px; padding: 10px; background: rgba(255,152,0,0.1); border: 1px dashed #FF9800; border-radius: 4px; font-size: 12px; color: #FF9800; display:none; line-height: 1.5;">
                 <div id="fee-text"></div>
@@ -58,18 +58,18 @@ export async function openWithdrawModal(currentUser, onSuccess) {
 
         <div style="margin-bottom: 15px;">
             <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.alipay_account')} <span style="color:#F44336">*</span></label>
-            <input type="text" id="withdraw-account" placeholder="${t('wallet.withdraw.alipay_placeholder')}" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+            <input type="text" id="withdraw-account" placeholder="${t('wallet.withdraw.alipay_placeholder')}" style="width:100%; padding:10px; background:var(--comfy-input-bg); border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
         </div>
 
         <div style="margin-bottom: 15px;">
             <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.real_name')} <span style="color:#F44336">*</span></label>
-            <input type="text" id="withdraw-name" placeholder="${t('wallet.withdraw.real_name_placeholder')}" style="width:100%; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+            <input type="text" id="withdraw-name" placeholder="${t('wallet.withdraw.real_name_placeholder')}" style="width:100%; padding:10px; background:var(--comfy-input-bg); border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
         </div>
 
         <div style="margin-bottom: 20px;">
             <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.security_code')} <span style="color:#F44336">*</span></label>
             <div style="display:flex; gap:10px;">
-                <input type="text" id="withdraw-code" placeholder="${t('wallet.withdraw.code_placeholder')}" maxlength="6" style="flex:1; padding:10px; background:#333; border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+                <input type="text" id="withdraw-code" placeholder="${t('wallet.withdraw.code_placeholder')}" maxlength="6" style="flex:1; padding:10px; background:var(--comfy-input-bg); border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
                 <button id="btn-send-code" style="padding:0 15px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold; white-space:nowrap; transition:0.2s;">${t('wallet.withdraw.get_code')}</button>
             </div>
         </div>
@@ -145,6 +145,9 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         // 验证为正整数
         if (!amount || amount < 1 || !Number.isInteger(amount)) {
             return showToast(t('wallet.withdraw.min_amount'), "warning");
+        }
+        if (amount > 5000) {
+            return showToast(t('wallet.withdraw.max_amount_exceeded') || "单次提现金额不得超过5000元", "warning");
         }
         if (!alipayAccount || !realName) return showToast(t('wallet.withdraw.fill_account'), "warning");
         if (code.length !== 6) return showToast(t('wallet.withdraw.invalid_code'), "warning");

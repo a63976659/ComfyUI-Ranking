@@ -318,7 +318,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px; border-bottom: 1px solid #444; background: #1a1a1a;">
             <div style="display: flex; align-items: center; gap: 10px;">
                 <button id="btn-back-publish" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-                    <span style="font-size: 14px;">⬅</span> ${t('common.back')}
+                    ⬅ ${t('common.back')}
                 </button>
                 <span style="font-size: 16px; font-weight: bold; color: #fff;">✏️ ${isEditMode ? '编辑帖子' : t('post.publish')}</span>
             </div>
@@ -378,7 +378,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                             <button id="btn-remove-video" style="width: 28px; height: 28px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 16px; line-height: 1; flex-shrink: 0;">×</button>
                         </div>
                         <!-- 封面区域 -->
-                        <div id="video-cover-wrap" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #333;">
+                        <div id="video-cover-wrap" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color, #333);">
                             <div style="font-size: 12px; font-weight: bold; color: #fff; margin-bottom: 8px;">${t('post.video_cover') || '视频封面'}</div>
                             <div style="display: flex; align-items: center; gap: 12px;">
                                 <div style="position: relative; width: 80px; height: 80px; flex-shrink: 0;">

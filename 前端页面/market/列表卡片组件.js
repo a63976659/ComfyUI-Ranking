@@ -274,19 +274,19 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
 
     const mediaArea = document.createElement("div");
     const chartContainerId = `chart-${Math.random().toString(36).substr(2, 9)}`;
-    const chartHtml = `<div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #aaa;">📈 ${t('market.usage_trend')}</div><div id="${chartContainerId}" style="width: 100%; height: 160px; background: #1e1e1e; border: 1px solid #333; border-radius: 4px; margin-bottom: 12px;"></div>`;
+    const chartHtml = `<div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #aaa;">📈 ${t('market.usage_trend')}</div><div id="${chartContainerId}" style="width: 100%; height: 160px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 4px; margin-bottom: 12px;"></div>`;
     
     mediaArea.innerHTML = `
         ${chartHtml}
         ${getCoverSandboxHTML(itemData.imageUrls?.length > 0 ? itemData.imageUrls : itemData.coverUrl)}
         <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #aaa;">📝 ${t('market.full_description')}</div>
-        <div style="background: #1e1e1e; padding: 10px; border-radius: 4px; font-size: 12px; color: #bbb; margin-bottom: 12px; max-height: 200px; overflow-y: auto; line-height: 1.6; border: 1px solid #333; word-wrap: break-word; white-space: pre-wrap;">${itemData.fullDesc}</div>
+        <div style="background: var(--comfy-menu-bg); padding: 10px; border-radius: 4px; font-size: 12px; color: #bbb; margin-bottom: 12px; max-height: 200px; overflow-y: auto; line-height: 1.6; border: 1px solid var(--border-color, #333); word-wrap: break-word; white-space: pre-wrap;">${itemData.fullDesc}</div>
     `;
     detailView.appendChild(mediaArea);
 
     // 🚀 新增：赞赏贡献榜单与打赏按钮（带等级显示）
     const tipArea = document.createElement("div");
-    Object.assign(tipArea.style, { marginBottom: "12px", padding: "12px", background: "#1e1e1e", border: "1px solid #333", borderRadius: "6px" });
+    Object.assign(tipArea.style, { marginBottom: "12px", padding: "12px", background: "var(--comfy-menu-bg)", border: "1px solid var(--border-color, #333)", borderRadius: "6px" });
     
     // 使用统一的打赏榜单渲染工具（带星星/月亮/太阳等级）
     const boardData = itemData.tip_board || [];
