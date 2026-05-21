@@ -14,18 +14,18 @@
 import { t } from "./用户体验增强.js";
 import { openImageViewer } from "./图片展示测试.js";
 
+// 🔧 通用SVG占位图生成函数
+function _createSVG(icon, text) {
+    const iconPart = icon
+        ? `%3Ctext x='200' y='125' text-anchor='middle' fill='%23666' font-size='24'%3E${encodeURIComponent(icon)}%3C/text%3E%3C`
+        : `%3Crect x='180' y='110' width='40' height='40' rx='4' fill='%23333'%3E%3Canimate attributeName='opacity' values='0.3;1;0.3' dur='1.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3C`;
+    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260' viewBox='0 0 400 260'%3E%3Crect fill='%231a1a1a' width='400' height='260'/%3E${iconPart}text x='200' y='${icon ? 150 : 180}' text-anchor='middle' fill='%23666' font-size='12'%3E${encodeURIComponent(text)}%3C/text%3E%3C/svg%3E`;
+}
+
 // 🔧 动态生成SVG占位图（支持多语言）
-function createPlaceholderSVG(text) {
-    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260' viewBox='0 0 400 260'%3E%3Crect fill='%231a1a1a' width='400' height='260'/%3E%3Crect x='180' y='110' width='40' height='40' rx='4' fill='%23333'%3E%3Canimate attributeName='opacity' values='0.3;1;0.3' dur='1.5s' repeatCount='indefinite'/%3E%3C/rect%3E%3Ctext x='200' y='180' text-anchor='middle' fill='%23666' font-size='12'%3E${encodeURIComponent(text)}%3C/text%3E%3C/svg%3E`;
-}
-
-function createErrorSVG(text) {
-    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260' viewBox='0 0 400 260'%3E%3Crect fill='%231a1a1a' width='400' height='260'/%3E%3Ctext x='200' y='125' text-anchor='middle' fill='%23666' font-size='24'%3E⚠️%3C/text%3E%3Ctext x='200' y='150' text-anchor='middle' fill='%23666' font-size='12'%3E${encodeURIComponent(text)}%3C/text%3E%3C/svg%3E`;
-}
-
-function createTimeoutSVG(text) {
-    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='260' viewBox='0 0 400 260'%3E%3Crect fill='%231a1a1a' width='400' height='260'/%3E%3Ctext x='200' y='125' text-anchor='middle' fill='%23666' font-size='24'%3E⏱️%3C/text%3E%3Ctext x='200' y='150' text-anchor='middle' fill='%23666' font-size='12'%3E${encodeURIComponent(text)}%3C/text%3E%3C/svg%3E`;
-}
+function createPlaceholderSVG(text) { return _createSVG(null, text); }
+function createErrorSVG(text) { return _createSVG('⚠️', text); }
+function createTimeoutSVG(text) { return _createSVG('⏱️', text); }
 
 // 获取占位图
 function getPlaceholderSVG() { return createPlaceholderSVG(t('image.loading')); }
@@ -84,9 +84,9 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     // 🖼️ 多图模式：显示左右切换按钮和计数器
     const hasMultiple = imageUrls.length > 1;
     const navButtons = hasMultiple ? `
-        <button class="btn-prev" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; border: none; cursor: pointer; font-size: 18px; z-index: 20; display: flex; align-items: center; justify-content: center; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.8)'" onmouseout="this.style.background='rgba(0,0,0,0.6)'">❮</button>
-        <button class="btn-next" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; border: none; cursor: pointer; font-size: 18px; z-index: 20; display: flex; align-items: center; justify-content: center; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.8)'" onmouseout="this.style.background='rgba(0,0,0,0.6)'">❯</button>
-        <div class="img-counter" style="position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); color: #fff; padding: 4px 12px; border-radius: 12px; font-size: 12px; z-index: 20;">1 / ${imageUrls.length}</div>
+        <button class="btn-prev" style="position: absolute; left: 30px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; border: none; cursor: pointer; font-size: 18px; z-index: 20; display: flex; align-items: center; justify-content: center; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.8)'" onmouseout="this.style.background='rgba(0,0,0,0.6)'">❮</button>
+        <button class="btn-next" style="position: absolute; right: 30px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; border: none; cursor: pointer; font-size: 18px; z-index: 20; display: flex; align-items: center; justify-content: center; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.8)'" onmouseout="this.style.background='rgba(0,0,0,0.6)'">❯</button>
+        <div class="img-counter" style="position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); color: #fff; padding: 4px 12px; border-radius: 12px; font-size: 12px; z-index: 20;">1 / ${imageUrls.length}</div>
     ` : '';
     
     // 🔒 图片保护：禁用右键菜单、拖拽
@@ -101,7 +101,7 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     
     return `
         <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #aaa;">🖼️ ${t('image.gallery')}${hasMultiple ? ` (${imageUrls.length})` : ''}</div>
-        <div class="img-viewport" data-images='${JSON.stringify(imageUrls)}' data-current="0" style="position: relative; width: 100%; height: 260px; background: #111; border: 2px dashed #666; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; cursor: grab;" oncontextmenu="return false;">
+        <div class="img-viewport" data-images='${JSON.stringify(imageUrls)}' data-current="0" style="position: relative; width: 100%; height: 260px; background: #111; border: 2px dashed #666; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; cursor: grab; user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;" oncontextmenu="return false;">
             <img class="target-img ${lazyClass}" src="${imgSrc}" ${dataAttr} draggable="false" style="max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center; transition: transform 0.05s linear, opacity 0.3s ease; ${protectionStyles}">
             ${navButtons}
             <div style="position: absolute; top: 10px; right: 10px; display: flex; gap: 5px; opacity: 0.3; transition: 0.3s; z-index: 10;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3">
@@ -111,8 +111,8 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
                 <button class="btn-fullscreen" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold; display: flex; align-items: center; justify-content: center; font-size: 14px; margin-left: 5px;" title="全屏播放">⛶</button>
             </div>
             <div class="sliders-wrapper" style="opacity: 0.2; transition: 0.3s; position: absolute; width: 100%; height: 100%; top:0; left:0; pointer-events: none;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.2">
-                <input type="range" class="slider-x" min="-400" max="400" value="0" style="position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); width: 80%; pointer-events: auto; z-index: 10;">
-                <input type="range" class="slider-y" min="-400" max="400" value="0" style="position: absolute; left: -110px; top: 50%; transform: translateY(-50%) rotate(270deg); width: 280px; pointer-events: auto; z-index: 10;">
+                <input type="range" class="slider-x" min="-400" max="400" value="0" style="position: absolute; bottom: 0px; left: 50%; transform: translateX(-50%); width: 80%; pointer-events: auto; z-index: 10;">
+                <input type="range" class="slider-y" min="-400" max="400" value="0" style="position: absolute; left: -100px; top: 50%; transform: translateY(-50%) rotate(270deg); width: 230px; pointer-events: auto; z-index: 10;">
             </div>
         </div>
     `;
@@ -271,7 +271,12 @@ export function setupImageSandboxEvents(detailView) {
                     import('./UI交互提示组件.js').then(module => {
                         module.showToast('图像播放器加载失败，请刷新页面重试', 'error');
                     }).catch(() => {
-                        alert('图像播放器加载失败，请刷新页面重试');
+                        // 动态import也失败时，创建简单的内联提示
+                        const fallback = document.createElement('div');
+                        fallback.textContent = '图像播放器加载失败，请刷新页面重试';
+                        Object.assign(fallback.style, { position: 'fixed', top: '50px', left: '50%', transform: 'translateX(-50%)', background: '#F44336', color: '#fff', padding: '10px 20px', borderRadius: '8px', zIndex: '10000', fontSize: '14px' });
+                        document.body.appendChild(fallback);
+                        setTimeout(() => fallback.remove(), 3000);
                     });
                 }
             } else {
@@ -298,6 +303,7 @@ export function setupImageSandboxEvents(detailView) {
     
     viewport.addEventListener('mousedown', (e) => {
         if(e.target.tagName.toLowerCase() === 'input' || e.target.tagName.toLowerCase() === 'button') return;
+        e.preventDefault(); // 阻止浏览器默认的文本/图片选中行为
         isDragging = true; viewport.style.cursor = 'grabbing';
         startX = e.clientX; startY = e.clientY; initValX = parseInt(sliderX.value); initValY = parseInt(sliderY.value);
     });

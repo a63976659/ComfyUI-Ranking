@@ -5,6 +5,14 @@ import { t } from "./用户体验增强.js";
 // 🏷️ 版本配置缓存
 let cachedVersionConfig = null;
 
+// 🎨 卡片基础样式常量（authorSection 与 createCardSection 共享）
+const CARD_BASE_STYLE = {
+    background: "rgba(255,255,255,0.03)",
+    border: "1px solid rgba(255,255,255,0.06)",
+    borderRadius: "10px",
+    padding: "16px"
+};
+
 // 获取版本配置
 async function getVersionConfig() {
     if (cachedVersionConfig) return cachedVersionConfig;
@@ -20,7 +28,7 @@ async function getVersionConfig() {
     }
 
     // 默认值
-    return { stage: 'alpha', major: 1, minor: 0, patch: 0 };
+    return { stage: 'beta', major: 2, minor: 0, patch: 0 };
 }
 
 // 生成版本字符串
@@ -198,13 +206,7 @@ export function createAboutView(versionString, stageLabel) {
 
     // ===== 6. 关于作者区 =====
     const authorSection = document.createElement("div");
-    Object.assign(authorSection.style, {
-        background: "rgba(255,255,255,0.03)",
-        border: "1px solid rgba(255,255,255,0.06)",
-        borderRadius: "10px",
-        padding: "16px",
-        textAlign: "center"
-    });
+    Object.assign(authorSection.style, { ...CARD_BASE_STYLE, textAlign: "center" });
     authorSection.innerHTML = `
         <div style="font-size: 15px; font-weight: bold; color: #00d4aa; margin-bottom: 12px;">${t('about.author_title')}</div>
         <a href="https://space.bilibili.com/2114638644" target="_blank" style="text-decoration: none; display: inline-block;">
@@ -264,12 +266,7 @@ export function createAboutView(versionString, stageLabel) {
 // 辅助函数：创建带标题的卡片分区（titleHtml 支持纯文本或 HTML）
 function createCardSection(titleHtml, contentHtml) {
     const section = document.createElement("div");
-    Object.assign(section.style, {
-        background: "rgba(255,255,255,0.03)",
-        border: "1px solid rgba(255,255,255,0.06)",
-        borderRadius: "10px",
-        padding: "16px"
-    });
+    Object.assign(section.style, CARD_BASE_STYLE);
     section.innerHTML = `
         <div style="font-size: 15px; font-weight: bold; color: #00d4aa; margin-bottom: 12px;">${titleHtml}</div>
         ${contentHtml}

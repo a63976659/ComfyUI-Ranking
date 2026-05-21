@@ -19,6 +19,35 @@ import { getSettings } from "./全局设置组件.js";
 // 音效类型定义（使用 Web Audio API 合成科技感音效）
 let audioContext = null;
 
+// 音效参数配置表
+const SOUND_CONFIGS = {
+    whoosh: { type: 'sine', freqStart: 800, freqEnd: 200, duration: 0.15, gain: 0.12 },
+    blip:   { type: 'sine', freqStart: 800, freqEnd: 400, duration: 0.08, gain: 0.15 },
+    charge: { type: 'sine', freqStart: 150, freqEnd: 450, duration: 0.45, gain: 0.03,
+               gainMid: 0.06, gainMidTime: 0.25, stopTime: 0.45 },
+    pop:    { type: 'sine', freqStart: 600, freqEnd: 400, duration: 0.08, gain: 0.1 },
+};
+
+// 通用音效合成播放函数
+function _playSynthSound(ctx, config) {
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    const now = ctx.currentTime;
+    const dur = config.stopTime || config.duration;
+    oscillator.type = config.type;
+    oscillator.frequency.setValueAtTime(config.freqStart, now);
+    oscillator.frequency.exponentialRampToValueAtTime(config.freqEnd, now + config.duration);
+    gainNode.gain.setValueAtTime(config.gain, now);
+    if (config.gainMid !== undefined) {
+        gainNode.gain.linearRampToValueAtTime(config.gainMid, now + config.gainMidTime);
+    }
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    oscillator.start(now);
+    oscillator.stop(now + dur);
+}
+
 // 🔧 懒加载 AudioContext（确保在用户交互后创建）
 function getAudioContext() {
     if (!audioContext && typeof AudioContext !== 'undefined') {
@@ -58,57 +87,12 @@ export async function playSound(type = 'whoosh') {
     if (!ctx) return;
     
     try {
-        const oscillator = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        oscillator.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        
-        const now = ctx.currentTime;
-        
         switch (type) {
             case 'whoosh':
-                // 科技滑动音效
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(800, now);
-                oscillator.frequency.exponentialRampToValueAtTime(200, now + 0.15);
-                gainNode.gain.setValueAtTime(0.12, now);  // 提高音量
-                gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-                oscillator.start(now);
-                oscillator.stop(now + 0.15);
-                break;
-                
             case 'blip':
-                // 数据点音效 - 柔和版
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(800, now);
-                oscillator.frequency.exponentialRampToValueAtTime(400, now + 0.08);
-                gainNode.gain.setValueAtTime(0.15, now);
-                gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-                oscillator.start(now);
-                oscillator.stop(now + 0.08);
-                break;
-                
             case 'charge':
-                // 充能音效（用于深渊汇聚）- 柔和版
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(150, now);
-                oscillator.frequency.exponentialRampToValueAtTime(450, now + 0.4);
-                gainNode.gain.setValueAtTime(0.03, now);
-                gainNode.gain.linearRampToValueAtTime(0.06, now + 0.25);
-                gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-                oscillator.start(now);
-                oscillator.stop(now + 0.45);
-                break;
-                
             case 'pop':
-                // 弹出音效
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(600, now);
-                oscillator.frequency.exponentialRampToValueAtTime(400, now + 0.08);
-                gainNode.gain.setValueAtTime(0.1, now);  // 提高音量
-                gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
-                oscillator.start(now);
-                oscillator.stop(now + 0.08);
+                if (SOUND_CONFIGS[type]) _playSynthSound(ctx, SOUND_CONFIGS[type]);
                 break;
         }
     } catch (e) {
@@ -128,6 +112,21 @@ function injectAnimationStyles() {
     
     const style = document.createElement('style');
     style.id = 'comfy-animation-engine-styles';
+    
+    // 深渊方向动画配置（name: 方向名, tx: x偏移, ty: y偏移）
+    const ABYSS_DIRS = [
+        { name: 'tl', tx: -100, ty: -100 },
+        { name: 'tr', tx:  100, ty: -100 },
+        { name: 'bl', tx: -100, ty:  100 },
+        { name: 'br', tx:  100, ty:  100 },
+    ];
+    const abyssKeyframes = ABYSS_DIRS.map(d =>
+        `@keyframes abyss-in-${d.name} { 0% { transform: perspective(800px) translateZ(-300px) translate(${d.tx}px, ${d.ty}px) scale(0.3); opacity: 0; filter: blur(8px); } 100% { transform: perspective(800px) translateZ(0) translate(0, 0) scale(1); opacity: 1; filter: blur(0); } }`
+    ).join('\n        ');
+    const abyssClasses = ABYSS_DIRS.map(d =>
+        `.anim-abyss-${d.name} { animation: abyss-in-${d.name} 0.6s cubic-bezier(0.23, 1, 0.32, 1) forwards; opacity: 0; }`
+    ).join('\n        ');
+    
     style.textContent = `
         /* ==========================================
          * 🌊 瀑布式动画 (工具/应用/推荐榜)
@@ -203,17 +202,11 @@ function injectAnimationStyles() {
         }
         
         /* 不同方向的起点 */
-        @keyframes abyss-in-tl { 0% { transform: perspective(800px) translateZ(-300px) translate(-100px, -100px) scale(0.3); opacity: 0; filter: blur(8px); } 100% { transform: perspective(800px) translateZ(0) translate(0, 0) scale(1); opacity: 1; filter: blur(0); } }
-        @keyframes abyss-in-tr { 0% { transform: perspective(800px) translateZ(-300px) translate(100px, -100px) scale(0.3); opacity: 0; filter: blur(8px); } 100% { transform: perspective(800px) translateZ(0) translate(0, 0) scale(1); opacity: 1; filter: blur(0); } }
-        @keyframes abyss-in-bl { 0% { transform: perspective(800px) translateZ(-300px) translate(-100px, 100px) scale(0.3); opacity: 0; filter: blur(8px); } 100% { transform: perspective(800px) translateZ(0) translate(0, 0) scale(1); opacity: 1; filter: blur(0); } }
-        @keyframes abyss-in-br { 0% { transform: perspective(800px) translateZ(-300px) translate(100px, 100px) scale(0.3); opacity: 0; filter: blur(8px); } 100% { transform: perspective(800px) translateZ(0) translate(0, 0) scale(1); opacity: 1; filter: blur(0); } }
         @keyframes abyss-in-center { 0% { transform: perspective(800px) translateZ(-400px) scale(0.1); opacity: 0; filter: blur(10px) brightness(3); } 100% { transform: perspective(800px) translateZ(0) scale(1); opacity: 1; filter: blur(0) brightness(1); } }
+        ${abyssKeyframes}
         
         .anim-abyss { animation: abyss-in 0.6s cubic-bezier(0.23, 1, 0.32, 1) forwards; opacity: 0; }
-        .anim-abyss-tl { animation: abyss-in-tl 0.6s cubic-bezier(0.23, 1, 0.32, 1) forwards; opacity: 0; }
-        .anim-abyss-tr { animation: abyss-in-tr 0.6s cubic-bezier(0.23, 1, 0.32, 1) forwards; opacity: 0; }
-        .anim-abyss-bl { animation: abyss-in-bl 0.6s cubic-bezier(0.23, 1, 0.32, 1) forwards; opacity: 0; }
-        .anim-abyss-br { animation: abyss-in-br 0.6s cubic-bezier(0.23, 1, 0.32, 1) forwards; opacity: 0; }
+        ${abyssClasses}
         .anim-abyss-center { animation: abyss-in-center 0.7s cubic-bezier(0.23, 1, 0.32, 1) forwards; opacity: 0; }
         
         /* ==========================================

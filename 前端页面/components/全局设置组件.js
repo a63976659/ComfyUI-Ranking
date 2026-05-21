@@ -181,9 +181,10 @@ export function createSettingsView() {
             padding: 8px 12px;
             border-radius: 6px;
             font-size: 13px;
-            width: 120px;
+            width: 80px;
             outline: none;
             transition: 0.2s;
+            text-align: center;
         }
         .setting-number-input:hover {
             border-color: #4CAF50;
@@ -194,8 +195,40 @@ export function createSettingsView() {
         }
         .setting-number-input::-webkit-inner-spin-button,
         .setting-number-input::-webkit-outer-spin-button {
-            opacity: 1;
+            opacity: 0;
+            width: 0;
+        }
+        .setting-range-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(to right, #4CAF50 0%, #333 0%);
+            outline: none;
             cursor: pointer;
+        }
+        .setting-range-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4CAF50;
+            cursor: pointer;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+            transition: transform 0.15s;
+        }
+        .setting-range-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+        .setting-range-slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4CAF50;
+            cursor: pointer;
+            border: none;
         }
         .cache-clear-btn {
             flex: 1;
@@ -293,16 +326,23 @@ export function createSettingsView() {
                 ${t('settings.data_cache')}
             </div>
             
-            <!-- 设置项：缓存刷新间隔 -->
+            <!-- 设置项：缓存刷新间隔（滑条） -->
             <div class="setting-item" style="flex-direction: column; align-items: flex-start; gap: 12px;">
                 <div style="flex: 1; width: 100%;">
                     <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.cache_expire')}</div>
                     <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.cache_expire_desc')}</div>
                 </div>
-                <div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
-                    <input type="number" id="input-cache-expire" class="setting-number-input" 
-                        value="${settings.cacheExpireSeconds || 7200}" 
-                        min="60" max="86400" step="60">
+                <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
+                    <div style="display: flex; align-items: center; gap: 12px; width: 100%;">
+                        <input type="range" id="slider-cache-expire" class="setting-range-slider"
+                            value="${settings.cacheExpireSeconds || 7200}"
+                            min="60" max="86400" step="60"
+                            style="flex: 1;">
+                        <input type="number" id="input-cache-expire" class="setting-number-input"
+                            value="${settings.cacheExpireSeconds || 7200}"
+                            min="60" max="86400" step="60">
+                        <span id="cache-expire-label" style="color: #4CAF50; font-size: 12px; min-width: 55px; white-space: nowrap;"></span>
+                    </div>
                     <div style="color: #666; font-size: 11px; line-height: 1.5; padding: 8px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 2px solid #9C27B0;">
                         💡 ${t('settings.cache_trigger_desc')}
                     </div>
@@ -352,6 +392,30 @@ export function createSettingsView() {
         window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
     
+    /**
+     * 通用开关绑定辅助函数
+     * @param {string} selector - querySelector 选择器
+     * @param {string} settingKey - settings 对象的字段名
+     * @param {string} labelKey - i18n label key
+     * @param {string} [iconOn] - 开启时的图标前缀，默认 '✅'
+     */
+    function _bindSwitchHandler(selector, settingKey, labelKey, iconOn = '✅') {
+        const switchEl = container.querySelector(selector);
+        switchEl.onclick = () => {
+            const newValue = !switchEl.classList.contains("active");
+            switchEl.classList.toggle("active", newValue);
+            const currentSettings = getSettings();
+            currentSettings[settingKey] = newValue;
+            saveSettings(currentSettings);
+            showToast(
+                newValue
+                    ? `${iconOn} ${t(labelKey)} ${t('settings.enabled')}`
+                    : `${t(labelKey)} ${t('settings.disabled')}`,
+                "success"
+            );
+        };
+    }
+    
     // 🌐 下拉控制：界面语言
     const selectLanguage = container.querySelector("#select-language");
     selectLanguage.onchange = () => {
@@ -379,76 +443,67 @@ export function createSettingsView() {
         }, 100);
     };
     
-    // 🎛️ 开关控制：创作者背景图
-    const switchCreatorBanner = container.querySelector("#switch-creator-banner");
-    switchCreatorBanner.onclick = () => {
-        const newValue = !switchCreatorBanner.classList.contains("active");
-        switchCreatorBanner.classList.toggle("active", newValue);
-        
-        const currentSettings = getSettings();
-        currentSettings.showCreatorBanner = newValue;
-        saveSettings(currentSettings);
-        
-        showToast(newValue ? `✅ ${t('settings.creator_banner')} ${t('settings.enabled')}` : `${t('settings.creator_banner')} ${t('settings.disabled')}`, "success");
-    };
+    // 🎛️ 开关控制：创作者背景图 / 榜单切换动画 / 动画音效
+    _bindSwitchHandler("#switch-creator-banner", "showCreatorBanner", "settings.creator_banner", "✅");
+    _bindSwitchHandler("#switch-animations",     "enableAnimations",  "settings.animations",     "✨");
+    _bindSwitchHandler("#switch-sound-effects",  "enableSoundEffects", "settings.sound",         "🔊");
     
-    // 🎬 开关控制：榜单切换动画
-    const switchAnimations = container.querySelector("#switch-animations");
-    switchAnimations.onclick = () => {
-        const newValue = !switchAnimations.classList.contains("active");
-        switchAnimations.classList.toggle("active", newValue);
-        
-        const currentSettings = getSettings();
-        currentSettings.enableAnimations = newValue;
-        saveSettings(currentSettings);
-        
-        showToast(newValue ? `✨ ${t('settings.animations')} ${t('settings.enabled')}` : `${t('settings.animations')} ${t('settings.disabled')}`, "success");
-    };
-    
-    // 🔊 开关控制：动画音效
-    const switchSoundEffects = container.querySelector("#switch-sound-effects");
-    switchSoundEffects.onclick = () => {
-        const newValue = !switchSoundEffects.classList.contains("active");
-        switchSoundEffects.classList.toggle("active", newValue);
-        
-        const currentSettings = getSettings();
-        currentSettings.enableSoundEffects = newValue;
-        saveSettings(currentSettings);
-        
-        showToast(newValue ? `🔊 ${t('settings.sound')} ${t('settings.enabled')}` : `${t('settings.sound')} ${t('settings.disabled')}`, "success");
-    };
-    
-    // ⏱️ 数字输入：缓存刷新间隔
+    // ⏱️ 滑条+输入框联动：缓存刷新间隔
     const inputCacheExpire = container.querySelector("#input-cache-expire");
-    inputCacheExpire.onchange = () => {
-        let newValue = parseInt(inputCacheExpire.value);
-        
-        // 验证范围
-        if (isNaN(newValue) || newValue < 60) {
-            newValue = 60;
-            inputCacheExpire.value = 60;
-        } else if (newValue > 86400) {
-            newValue = 86400;
-            inputCacheExpire.value = 86400;
+    const sliderCacheExpire = container.querySelector("#slider-cache-expire");
+    const cacheExpireLabel = container.querySelector("#cache-expire-label");
+    
+    // 格式化时间显示
+    function formatCacheTime(seconds) {
+        if (seconds >= 3600) {
+            const hours = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            return mins > 0 ? `${hours}h${mins}m` : `${hours}h`;
         }
-        
+        return `${Math.floor(seconds / 60)}min`;
+    }
+    
+    // 更新滑条渐变背景
+    function updateSliderTrack() {
+        const val = sliderCacheExpire.value;
+        const pct = ((val - 60) / (86400 - 60)) * 100;
+        sliderCacheExpire.style.background = `linear-gradient(to right, #4CAF50 ${pct}%, #333 ${pct}%)`;
+    }
+    
+    // 保存设置
+    function saveCacheExpire(newValue) {
         const currentSettings = getSettings();
         currentSettings.cacheExpireSeconds = newValue;
         saveSettings(currentSettings);
-        
-        // 转换为小时和分钟显示
-        let timeDisplay = '';
-        if (newValue >= 3600) {
-            const hours = Math.floor(newValue / 3600);
-            const mins = Math.floor((newValue % 3600) / 60);
-            timeDisplay = mins > 0 ? `${hours}小时${mins}分钟` : `${hours}小时`;
-        } else if (newValue >= 60) {
-            timeDisplay = `${Math.floor(newValue / 60)}分钟`;
-        } else {
-            timeDisplay = `${newValue}秒`;
-        }
-        
-        showToast(`⏱️ ${t('settings.cache_expire')}: ${timeDisplay}`, "success");
+        cacheExpireLabel.textContent = formatCacheTime(newValue);
+        updateSliderTrack();
+    }
+    
+    // 初始化显示
+    cacheExpireLabel.textContent = formatCacheTime(parseInt(inputCacheExpire.value));
+    updateSliderTrack();
+    
+    // 滑条拖动 → 同步输入框 + 保存
+    sliderCacheExpire.oninput = () => {
+        const val = parseInt(sliderCacheExpire.value);
+        inputCacheExpire.value = val;
+        cacheExpireLabel.textContent = formatCacheTime(val);
+        updateSliderTrack();
+    };
+    sliderCacheExpire.onchange = () => {
+        saveCacheExpire(parseInt(sliderCacheExpire.value));
+        showToast(`⏱️ ${t('settings.cache_expire')}: ${formatCacheTime(parseInt(sliderCacheExpire.value))}`, "success");
+    };
+    
+    // 输入框修改 → 同步滑条 + 保存
+    inputCacheExpire.onchange = () => {
+        let newValue = parseInt(inputCacheExpire.value);
+        if (isNaN(newValue) || newValue < 60) { newValue = 60; }
+        else if (newValue > 86400) { newValue = 86400; }
+        inputCacheExpire.value = newValue;
+        sliderCacheExpire.value = newValue;
+        saveCacheExpire(newValue);
+        showToast(`⏱️ ${t('settings.cache_expire')}: ${formatCacheTime(newValue)}`, "success");
     };
     
     // 📊 缓存统计面板

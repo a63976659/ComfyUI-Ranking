@@ -2,6 +2,7 @@
 import { api } from "../core/网络请求API.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR, isAdmin } from "../core/全局配置.js";
+import { showToast } from "../components/UI交互提示组件.js";
 
 const escapeHtml = (str) => {
     if (!str) return '';
@@ -152,7 +153,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
                             comment.isDeleted = true;
                             renderList(); 
                             triggerCountUpdate();
-                        } catch(e) { alert(t('feedback.delete_failed')); }
+                        } catch(e) { showToast(t('feedback.delete_failed') + t('feedback.retry_suffix', '，请重试'), "error"); }
                     }
                 };
             }
@@ -183,7 +184,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
     }
 
     submitBtn.onclick = async () => {
-        if (!currentUser) return alert(t('feedback.login_required'));
+        if (!currentUser) return showToast(t('feedback.login_required'), "warning");
         const text = inputField.value.trim();
         if (!text) return;
 
@@ -210,7 +211,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             renderList();
             triggerCountUpdate();
         } catch (e) {
-            alert(`${t('feedback.send_failed')}: ${e.message}`);
+            showToast(`${t('feedback.send_failed')}，请重试`, "error");
         } finally {
             submitBtn.disabled = false;
         }
@@ -271,6 +272,33 @@ export function createRatingStars(options) {
     // 交互状态
     let isSubmitting = false;
     let hoverScore = 0;
+
+    // 🚀 P2-3: 提取渐变应用/清除辅助函数
+    const _applyGradient = (el, gradient) => {
+        if (gradient) {
+            el.style.background = gradient;
+            el.style.webkitBackgroundClip = "text";
+            el.style.backgroundClip = "text";
+            el.style.webkitTextFillColor = "transparent";
+        } else {
+            el.style.background = "";
+            el.style.webkitBackgroundClip = "";
+            el.style.backgroundClip = "";
+            el.style.webkitTextFillColor = "";
+        }
+    };
+
+    // 🚀 P2-1: 用户评分行公用样式
+    const USER_RATING_ROW_STYLE = { display: "flex", alignItems: "center", gap: "4px", fontSize: "12px", color: "#888" };
+
+    // 🚀 P2-2: 创建评分星星 span
+    const _createRatingStarsSpan = (rating) => {
+        const span = document.createElement("span");
+        span.textContent = "★".repeat(rating) + "☆".repeat(5 - rating);
+        span.style.color = "#FFD700";
+        span.style.fontSize = "14px";
+        return span;
+    };
 
     // 尺寸配置
     const starSize = compact ? "14px" : "20px";
@@ -335,17 +363,7 @@ export function createRatingStars(options) {
     function applyStarStyle(starEl, config, isHovered = false) {
         starEl.textContent = config.char;
         starEl.style.color = config.color;
-        if (config.bg) {
-            starEl.style.background = config.bg;
-            starEl.style.webkitBackgroundClip = "text";
-            starEl.style.backgroundClip = "text";
-            starEl.style.webkitTextFillColor = "transparent";
-        } else {
-            starEl.style.background = "";
-            starEl.style.webkitBackgroundClip = "";
-            starEl.style.backgroundClip = "";
-            starEl.style.webkitTextFillColor = "";
-        }
+        _applyGradient(starEl, config.bg);
         starEl.style.transform = isHovered ? "scale(1.1)" : "scale(1)";
     }
 
@@ -435,24 +453,12 @@ export function createRatingStars(options) {
     let userRatingRow = null;
     if (!compact && userRating) {
         userRatingRow = document.createElement("div");
-        Object.assign(userRatingRow.style, {
-            display: "flex",
-            alignItems: "center",
-            gap: "4px",
-            fontSize: "12px",
-            color: "#888"
-        });
+        Object.assign(userRatingRow.style, USER_RATING_ROW_STYLE);
 
         const label = document.createElement("span");
         label.textContent = `${t('rating.your_score')}:`;
         userRatingRow.appendChild(label);
-
-        const userStars = document.createElement("span");
-        userStars.textContent = "★".repeat(userRating) + "☆".repeat(5 - userRating);
-        userStars.style.color = "#FFD700";
-        userStars.style.fontSize = "14px";
-        userRatingRow.appendChild(userStars);
-
+        userRatingRow.appendChild(_createRatingStarsSpan(userRating));
         container.appendChild(userRatingRow);
     }
 
@@ -501,7 +507,7 @@ export function createRatingStars(options) {
         }
     }
 
-    // ========== 提交评分 ==========
+    // 提交评分
     async function submitRating(score) {
         if (!onRate) return;
         isSubmitting = true;
@@ -526,12 +532,13 @@ export function createRatingStars(options) {
         updateStars(0);
         updateUserRatingRow();
 
+        // 🚀 P2-4: 提前导入一次，成功/失败分支共用
+        const { showToast } = await import('../components/UI交互提示组件.js');
         try {
             const res = await onRate(score);
             if (!res || res.success === false) {
                 throw new Error('Rating failed');
             }
-            const { showToast } = await import('../components/UI交互提示组件.js');
             showToast(t('rating.submit_success'), 'success');
         } catch (err) {
             console.error('评分失败:', err);
@@ -547,7 +554,6 @@ export function createRatingStars(options) {
             scoreText.textContent = `${displayAvg.toFixed(1)} (${t('rating.count', { count: displayCount })})`;
             updateStars(0);
             updateUserRatingRow();
-            const { showToast } = await import('../components/UI交互提示组件.js');
             showToast(t('rating.submit_failed'), 'error');
         } finally {
             isSubmitting = false;
@@ -564,24 +570,12 @@ export function createRatingStars(options) {
         }
         if (userRating && !compact) {
             userRatingRow = document.createElement("div");
-            Object.assign(userRatingRow.style, {
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-                fontSize: "12px",
-                color: "#888"
-            });
+            Object.assign(userRatingRow.style, USER_RATING_ROW_STYLE);
 
             const label = document.createElement("span");
             label.textContent = `${t('rating.your_score')}:`;
             userRatingRow.appendChild(label);
-
-            const userStars = document.createElement("span");
-            userStars.textContent = "★".repeat(userRating) + "☆".repeat(5 - userRating);
-            userStars.style.color = "#FFD700";
-            userStars.style.fontSize = "14px";
-            userRatingRow.appendChild(userStars);
-
+            userRatingRow.appendChild(_createRatingStarsSpan(userRating));
             container.appendChild(userRatingRow);
         }
     }

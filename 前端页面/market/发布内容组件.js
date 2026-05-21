@@ -5,18 +5,35 @@ import { t } from "../components/用户体验增强.js";
 import { showConfirm } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 
+// ==========================================
+// 📌 模块级常量
+// ==========================================
+
+// 封面标签统一样式
+const _COVER_LABEL_STYLE = 'position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px; pointer-events: none;';
+
+/**
+ * 创建单个图片预览 wrapper 元素
+ * @param {string} imgUrl - 图片URL或Base64
+ * @param {number} idx - 图片索引（0为封面）
+ * @returns {HTMLElement} wrapper DOM元素
+ */
+function _createImagePreviewWrapper(imgUrl, idx) {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
+    wrapper.innerHTML = `
+        <img src="${imgUrl}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
+        ${idx === 0 ? `<span class="cover-label" style="${_COVER_LABEL_STYLE}">${t('post.cover')}</span>` : ''}
+        <button data-action="remove" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+    `;
+    return wrapper;
+}
+
 // 🖼️ 编辑模式下回显已有图片的辅助函数
 function renderImagePreviews(imageUrls, container) {
     container.innerHTML = '';
     imageUrls.forEach((url, idx) => {
-        const wrapper = document.createElement('div');
-        wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
-        wrapper.innerHTML = `
-            <img src="${url}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-            ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px; pointer-events: none;">${t('post.cover')}</span>` : ''}
-            <button data-action="remove" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
-        `;
-        container.appendChild(wrapper);
+        container.appendChild(_createImagePreviewWrapper(url, idx));
     });
 }
 
@@ -33,7 +50,7 @@ function updateCoverMark(previewContainer) {
             if (!coverLabel) {
                 const label = document.createElement('span');
                 label.className = 'cover-label';
-                label.style.cssText = 'position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px; pointer-events: none;';
+                label.style.cssText = _COVER_LABEL_STYLE;
                 label.textContent = t('post.cover');
                 wrapper.appendChild(label);
             }
@@ -291,6 +308,34 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         }
     }
 
+    /**
+     * 根据资源接入类型统一设置各输入框的显示/隐藏
+     * @param {string} resType - 资源接入类型: link/netdisk/json
+     * @param {Object} boxes - DOM元素集合
+     * @param {HTMLElement|null} boxes.boxPrivateRepo - 私有仓库设置区（推荐类型传null）
+     */
+    const _setResourceTypeVisibility = (resType, { boxPrivateRepo: privateRepo } = {}) => {
+        if (resType === "link") {
+            boxLink.style.display = "block";
+            boxJson.style.display = "none";
+            boxNetdisk.style.display = "none";
+            boxNetdiskPassword.style.display = "none";
+            if (privateRepo) privateRepo.style.display = "block";
+        } else if (resType === "netdisk") {
+            boxLink.style.display = "none";
+            boxJson.style.display = "none";
+            boxNetdisk.style.display = "block";
+            boxNetdiskPassword.style.display = "block";
+            if (privateRepo) privateRepo.style.display = "none";
+        } else {
+            boxLink.style.display = "none";
+            boxJson.style.display = "block";
+            boxNetdisk.style.display = "none";
+            boxNetdiskPassword.style.display = "none";
+            if (privateRepo) privateRepo.style.display = "none";
+        }
+    };
+
     // 🔄 推荐形式与资源接入联动函数
     const syncRecommendToResType = () => {
         const recType = recommendTypeSelect.value;
@@ -316,22 +361,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
             boxResourceSelect.style.display = "block";
             boxPrivateRepo.style.display = "none";
 
-            if (resTypeSelect.value === "link") {
-                boxLink.style.display = "block";
-                boxJson.style.display = "none";
-                boxNetdisk.style.display = "none";
-                boxNetdiskPassword.style.display = "none";
-            } else if (resTypeSelect.value === "netdisk") {
-                boxLink.style.display = "none";
-                boxJson.style.display = "none";
-                boxNetdisk.style.display = "block";
-                boxNetdiskPassword.style.display = "block";
-            } else {
-                boxLink.style.display = "none";
-                boxJson.style.display = "block";
-                boxNetdisk.style.display = "none";
-                boxNetdiskPassword.style.display = "none";
-            }
+            _setResourceTypeVisibility(resTypeSelect.value);
         } else {
             boxRecommendType.style.display = "none";
             boxCover.style.display = "block";
@@ -357,26 +387,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
                 resTypeSelect.disabled = false;
             }
 
-            if (resTypeSelect.value === "link") { 
-                boxLink.style.display = "block"; 
-                boxJson.style.display = "none"; 
-                boxNetdisk.style.display = "none";  // ☁️
-                boxNetdiskPassword.style.display = "none";  // 🔐
-                boxPrivateRepo.style.display = "block"; 
-            } else if (resTypeSelect.value === "netdisk") {
-                // ☁️ 网盘链接模式
-                boxLink.style.display = "none"; 
-                boxJson.style.display = "none"; 
-                boxNetdisk.style.display = "block";
-                boxNetdiskPassword.style.display = "block";
-                boxPrivateRepo.style.display = "none"; 
-            } else { 
-                boxLink.style.display = "none"; 
-                boxJson.style.display = "block"; 
-                boxNetdisk.style.display = "none";  // ☁️
-                boxNetdiskPassword.style.display = "none";  // 🔐
-                boxPrivateRepo.style.display = "none"; 
-            }
+            _setResourceTypeVisibility(resTypeSelect.value, { boxPrivateRepo });
         }
     };
 
@@ -435,14 +446,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         files.forEach((file, idx) => {
             const reader = new FileReader();
             reader.onload = (ev) => {
-                const wrapper = document.createElement('div');
-                wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
-                wrapper.innerHTML = `
-                    <img src="${ev.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-                    ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px; pointer-events: none;">${t('post.cover')}</span>` : ''}
-                    <button data-action="remove" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
-                `;
-                imagesPreview.appendChild(wrapper);
+                imagesPreview.appendChild(_createImagePreviewWrapper(ev.target.result, idx));
 
                 loadedCount++;
                 if (loadedCount === files.length) {

@@ -416,6 +416,13 @@ const PROFILE_CACHE_PREFIX = "ComfyCommunity_ProfileCache_";
 const _pendingProfileRequests = new Map();  // 防止 N+1 并发请求
 const PENDING_TIMEOUT = 30000;  // 挂起请求超时清理时间（毫秒）
 
+/** 统一字段映射：将后端 avatarDataUrl 映射为前端 avatar */
+function _mapAvatarField(profile) {
+    if (profile && profile.avatarDataUrl && !profile.avatar) {
+        profile.avatar = profile.avatarDataUrl;
+    }
+}
+
 /**
  * 🚀 获取缓存的用户资料（同步）
  * @param {string} account - 用户账号
@@ -427,10 +434,7 @@ export function getCachedProfile(account) {
         const cached = localStorage.getItem(PROFILE_CACHE_PREFIX + account);
         if (!cached) return null;
         const profile = JSON.parse(cached);
-        // 🚀 统一字段映射：将 avatarDataUrl 映射为 avatar
-        if (profile && profile.avatarDataUrl && !profile.avatar) {
-            profile.avatar = profile.avatarDataUrl;
-        }
+        _mapAvatarField(profile);
         return profile;
     } catch {
         return null;
@@ -466,10 +470,7 @@ export function getProfileWithSWR(account, apiFn, onUpdate) {
     if (!_pendingProfileRequests.has(account)) {
         const promise = apiFn(account).then(res => {
             const profile = res.data || res;
-            // 🚀 统一字段映射：将 avatarDataUrl 映射为 avatar
-            if (profile && profile.avatarDataUrl && !profile.avatar) {
-                profile.avatar = profile.avatarDataUrl;
-            }
+            _mapAvatarField(profile);
             setCachedProfile(account, profile);
             if (onUpdate && typeof onUpdate === 'function') {
                 onUpdate(profile);

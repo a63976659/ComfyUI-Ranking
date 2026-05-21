@@ -16,6 +16,37 @@ const escapeHtml = (str) => {
     return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 };
 
+// 一次性注入组件样式（CSS类替代内联hover事件+减少重复样式）
+if (!document.getElementById('profile-template-styles')) {
+    const style = document.createElement('style');
+    style.id = 'profile-template-styles';
+    style.textContent = `
+        .profile-nav-btn{background:rgba(51,51,51,0.8);border:1px solid rgba(85,85,85,0.8);color:#fff;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;display:flex;align-items:center;gap:6px;box-shadow:0 2px 4px rgba(0,0,0,0.3);transition:0.2s}
+        .profile-nav-btn:hover{background:#4CAF50;border-color:#4CAF50}
+        .profile-nav-btn--admin:hover{background:#FF6B35;border-color:#FF6B35}
+        .profile-header-btn{padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;transition:0.2s;backdrop-filter:blur(4px)}
+        .profile-header-btn--settings{background:rgba(51,51,51,0.8);border:1px solid rgba(85,85,85,0.8);color:#ccc}
+        .profile-header-btn--settings:hover{color:#fff;border-color:#888}
+        .profile-header-btn--logout{background:rgba(244,67,54,0.2);border:1px solid #F44336;color:#F44336}
+        .profile-header-btn--logout:hover{background:#F44336;color:#fff}
+        .profile-action-btn{border-radius:4px;cursor:pointer;font-weight:bold}
+        .profile-action-btn--primary{background:#FF9800;border:none;color:white;box-shadow:0 2px 4px rgba(0,0,0,0.2);transition:0.2s}
+        .profile-action-btn--primary:hover{opacity:0.8}
+        .profile-action-btn--withdraw{background:rgba(76,175,80,0.2);border:1px solid #4CAF50;color:#4CAF50;transition:0.2s}
+        .profile-action-btn--withdraw:hover{background:rgba(76,175,80,0.3)}
+        .profile-action-btn--send{background:#2196F3;border:none;color:white;box-shadow:0 2px 4px rgba(0,0,0,0.2)}
+        .profile-action-btn--follow{background:#4CAF50;border:none;color:white;box-shadow:0 2px 4px rgba(0,0,0,0.2)}
+        .profile-action-btn--me{padding:8px 12px;font-size:13px}
+        .profile-action-btn--other{padding:6px 12px;font-size:12px;width:100%}
+    `;
+    document.head.appendChild(style);
+}
+
+/** 生成返回按钮HTML */
+function _backButtonHtml(extraStyle = '') {
+    return `<button id="btn-back-profile" class="profile-nav-btn" style="${extraStyle}">⬅ ${t('common.back')}</button>`;
+}
+
 export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs) {
     // 个人资料卡背景图：
     // - 自己查看自己：优先使用本地缓存（账号区分键），否则使用云端 URL
@@ -34,21 +65,17 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
 
     // 设置视图时返回简化的返回按钮（与个人资料页按钮样式一致，但不显示背景图）
     if (isSettingsView && isMe) {
-        return `
-            <button id="btn-back-profile" style="align-self: flex-start; margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-                ⬅ ${t('common.back')}
-            </button>
-        `;
+        return _backButtonHtml('align-self:flex-start;margin-left:15px;margin-top:15px');
     }
 
     const actionButtons = isMe 
         ? `<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
-               <button id="btn-wallet" style="background: #FF9800; border: none; color: white; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 ${t('profile.recharge')}</button>
-               <button id="btn-withdraw" style="background: rgba(76,175,80,0.2); border: 1px solid #4CAF50; color: #4CAF50; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.3)'" onmouseout="this.style.background='rgba(76,175,80,0.2)'">💸 ${t('profile.withdraw')}</button>
+               <button id="btn-wallet" class="profile-action-btn profile-action-btn--primary profile-action-btn--me">💰 ${t('profile.recharge')}</button>
+               <button id="btn-withdraw" class="profile-action-btn profile-action-btn--withdraw profile-action-btn--me">💸 ${t('profile.withdraw')}</button>
            </div>`
-        : `<button id="btn-tip-user" style="width: 100%; background: #FF9800; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: 0.2s; margin-bottom: 8px;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🎁 ${t('profile.tip_support')}</button>
-           <button id="btn-send-msg" style="width: 100%; background: #2196F3; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">✉️ ${t('profile.send_message')}</button>
-           <button id="btn-follow-user" style="width: 100%; background: ${isFollowing ? '#4CAF50' : '#4CAF50'}; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-top: 8px;">${isFollowing ? `✔️ ${t('profile.followed')}` : `➕ ${t('profile.follow_author')}`}</button>`;
+        : `<button id="btn-tip-user" class="profile-action-btn profile-action-btn--primary profile-action-btn--other" style="margin-bottom: 8px">🎁 ${t('profile.tip_support')}</button>
+           <button id="btn-send-msg" class="profile-action-btn profile-action-btn--send profile-action-btn--other">✉️ ${t('profile.send_message')}</button>
+           <button id="btn-follow-user" class="profile-action-btn profile-action-btn--follow profile-action-btn--other" style="margin-top: 8px">${isFollowing ? `✔️ ${t('profile.followed')}` : `➕ ${t('profile.follow_author')}`}</button>`;
 
     // 统计数据区域（现在在背景图内）
     const statsHtml = `
@@ -81,18 +108,16 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                 <!-- 顶部导航栏 -->
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <div style="display: flex; gap: 8px; align-items: center;">
-                        <button id="btn-back-profile" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-                            ⬅ ${t('common.back')}
-                        </button>
+                        ${_backButtonHtml('backdrop-filter:blur(4px)')}
                         ${isMe && isAdmin(userData.account) ? `
-                        <button id="btn-admin-panel" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.background='#FF6B35'; this.style.borderColor='#FF6B35'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
+                        <button id="btn-admin-panel" class="profile-nav-btn profile-nav-btn--admin" style="backdrop-filter:blur(4px)">
                             <span style="font-size: 14px;">⚙️</span> ${t('admin.panel_title') || '管理后台'}
                         </button>` : ''}
                     </div>
                     ${isMe ? `
                     <div style="display: flex; gap: 10px;">
-                        <button id="btn-open-settings" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #ccc; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.color='#fff'; this.style.borderColor='#888'" onmouseout="this.style.color='#ccc'; this.style.borderColor='rgba(85,85,85,0.8)'">⚙️ ${t('profile.settings')}</button>
-                        <button id="btn-logout" style="background: rgba(244,67,54,0.2); border: 1px solid #F44336; color: #F44336; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: 0.2s; backdrop-filter: blur(4px);" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='rgba(244,67,54,0.2)'; this.style.color='#F44336'">🚪 ${t('profile.logout')}</button>
+                        <button id="btn-open-settings" class="profile-header-btn profile-header-btn--settings">⚙️ ${t('profile.settings')}</button>
+                        <button id="btn-logout" class="profile-header-btn profile-header-btn--logout">🚪 ${t('profile.logout')}</button>
                     </div>` : ''}
                 </div>
                 

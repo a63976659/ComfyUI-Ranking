@@ -19,9 +19,28 @@ import { showToast } from "../components/UI交互提示组件.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 
 // ==========================================
+// 📌 模块级常量
+// ==========================================
+
+// 打赏按钮统一样式（通过 CSS 类控制 hover，避免内联事件）
+const _TIP_BUTTON_STYLE = 'padding: 4px 10px; background: linear-gradient(135deg, #FF9800, #F57C00); color: #fff; border: none; border-radius: 4px; font-size: 11px; cursor: pointer; transition: 0.2s;';
+
+// section 标签统一样式
+const _SECTION_LABEL_STYLE = 'font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #aaa;';
+
+// ==========================================
 // 📌 模块级状态：当前展开的卡片
 // ==========================================
 let currentExpandedCard = null;
+
+// 注入打赏按钮 hover 样式（模块加载时执行一次）
+(function _injectTipBtnStyle() {
+    if (document.getElementById('creator-tip-btn-style')) return;
+    const style = document.createElement('style');
+    style.id = 'creator-tip-btn-style';
+    style.textContent = '.creator-tip-btn:hover { opacity: 0.8; }';
+    document.head.appendChild(style);
+})();
 
 /**
  * 处理打赏创作者按钮点击
@@ -64,6 +83,16 @@ function loadECharts() {
 }
 
 /**
+ * 渲染打赏榜单条目HTML（匿名/非匿名共用外层结构）
+ */
+function _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml, containerId = '') {
+    const idAttr = containerId ? ` id="${containerId}"` : '';
+    return `<div${idAttr} style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:${idx % 2 === 0 ? '#222' : 'var(--comfy-menu-bg)'};border-radius:4px;margin-bottom:4px;">` +
+        `<div style="display:flex;align-items:center;gap:8px;"><span style="font-size:14px;min-width:24px;">${rankIcon}</span>${userHtml}</div>` +
+        `<div style="display:flex;align-items:center;gap:6px;">${levelHtml}<span style="color:#4CAF50;font-weight:bold;font-size:11px;">${entry.amount}</span></div></div>`;
+}
+
+/**
  * 🎁 通用赞赏贡献榜单渲染函数（带星星/月亮/太阳等级）
  * @param {Array} tipBoard - 榜单数据 [{account, amount, is_anon}, ...]
  * @param {string} title - 榜单标题
@@ -93,7 +122,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
                     ${title}
                     <span style="font-size: 10px; color: #888; font-weight: normal;">(${t('creator.tip_board.count', {count: 0})})</span>
                 </div>
-                ${creatorData ? `<button id="btn-tip-creator-empty" style="padding: 4px 10px; background: linear-gradient(135deg, #FF9800, #F57C00); color: #fff; border: none; border-radius: 4px; font-size: 11px; cursor: pointer; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">${t('creator.tip_this_creator')}</button>` : ''}
+                ${creatorData ? `<button id="btn-tip-creator-empty" class="creator-tip-btn" style="${_TIP_BUTTON_STYLE}">${t('creator.tip_this_creator')}</button>` : ''}
             </div>
             ${levelRuleHtml}
             <div style="color: #666; font-size: 12px; text-align: center; padding: 15px 0;">${t('creator.no_tips')}</div>
@@ -122,20 +151,9 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
         // 使用统一等级工具获取等级图标
         const levelHtml = renderTipLevelHTML(entry.amount, true);
         
-        // 匿名用户处理
         if (entry.is_anon) {
-            return `
-                <div style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: ${idx % 2 === 0 ? '#222' : 'var(--comfy-menu-bg)'}; border-radius: 4px; margin-bottom: 4px;">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <span style="font-size: 14px; min-width: 24px;">${rankIcon}</span>
-                        <span style="color: #888; font-style: italic; font-size: 13px;">${t('creator.anonymous')}</span>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 6px;">
-                        ${levelHtml}
-                        <span style="color: #4CAF50; font-weight: bold; font-size: 11px;">${entry.amount}</span>
-                    </div>
-                </div>
-            `;
+            const userHtml = `<span style="color: #888; font-style: italic; font-size: 13px;">${t('creator.anonymous')}</span>`;
+            return _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml);
         }
         
         // 🚀 SWR 模式：非匿名用户显示头像+用户名
@@ -164,21 +182,8 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
             });
         }, 0);
         
-        return `
-            <div id="${containerId}" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: ${idx % 2 === 0 ? '#222' : 'var(--comfy-menu-bg)'}; border-radius: 4px; margin-bottom: 4px;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="font-size: 14px; min-width: 24px;">${rankIcon}</span>
-                    <span class="tip-board-user" data-account="${entry.account}" data-anon="false" style="display: flex; align-items: center; gap: 6px; color: #4CAF50; cursor: pointer; font-size: 13px;">
-                        <img class="tip-board-avatar" src="${avatarUrl}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--comfy-input-bg);">
-                        <span class="tip-board-name">${userName}</span>
-                    </span>
-                </div>
-                <div style="display: flex; align-items: center; gap: 6px;">
-                    ${levelHtml}
-                    <span style="color: #4CAF50; font-weight: bold; font-size: 11px;">${entry.amount}</span>
-                </div>
-            </div>
-        `;
+        const userHtml = `<span class="tip-board-user" data-account="${entry.account}" data-anon="false" style="display: flex; align-items: center; gap: 6px; color: #4CAF50; cursor: pointer; font-size: 13px;"><img class="tip-board-avatar" src="${avatarUrl}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--comfy-input-bg);"><span class="tip-board-name">${userName}</span></span>`;
+        return _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml, containerId);
     }).join("");
 
     container.innerHTML = `
@@ -187,7 +192,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
                 ${title}
                 <span style="font-size: 10px; color: #888; font-weight: normal;">(${t('creator.tip_board.count', {count: tipBoard.length})})</span>
             </div>
-            ${creatorData ? `<button id="btn-tip-creator" style="padding: 4px 10px; background: linear-gradient(135deg, #FF9800, #F57C00); color: #fff; border: none; border-radius: 4px; font-size: 11px; cursor: pointer; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">${t('creator.tip_this_creator')}</button>` : ''}
+            ${creatorData ? `<button id="btn-tip-creator" class="creator-tip-btn" style="${_TIP_BUTTON_STYLE}">${t('creator.tip_this_creator')}</button>` : ''}
         </div>
         ${levelRuleHtml}
         <div style="max-height: 200px; overflow-y: auto;">${listHtml}</div>
@@ -284,10 +289,10 @@ export function createCreatorCard(creatorData, currentUser = null) {
     // 🔄 延迟渲染：初始只显示 loading 状态
     detailView.innerHTML = `
         <div id="detail-content-${chartContainerId}" style="display: none;">
-            <div style="font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #aaa;">${t('creator.chart.download_trend')}</div>
+            <div style="${_SECTION_LABEL_STYLE}">${t('creator.chart.download_trend')}</div>
             <div id="${chartContainerId}" style="width: 100%; height: 180px; background: #222; border-radius: 4px; margin-bottom: 15px;"></div>
             <div id="tipboard-${chartContainerId}"></div>
-            <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; margin-top: 15px; color: #aaa;">${t('creator.message_board')}</div>
+            <div style="${_SECTION_LABEL_STYLE} margin-bottom: 6px; margin-top: 15px;">${t('creator.message_board')}</div>
             <div id="board-${chartContainerId}" style="height: 250px; border: 1px solid #444; border-radius: 4px; overflow: hidden;"></div>
         </div>
         <div id="detail-loading-${chartContainerId}" style="text-align: center; padding: 40px 20px; color: #888;">

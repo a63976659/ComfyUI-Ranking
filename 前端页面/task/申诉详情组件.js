@@ -137,11 +137,7 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
             <div class="dispute-section-title"><span class="icon">📝</span> ${t('dispute.initiator_statement')}</div>
             <div class="dispute-content initiator">
                 <div style="color: var(--input-text);">${dispute.reason || t('common.none')}</div>
-                ${dispute.evidence && dispute.evidence.length > 0 ? `
-                    <div class="dispute-evidence">
-                        ${dispute.evidence.map(img => `<img src="${img}" onclick="window.open('${img}')">`).join("")}
-                    </div>
-                ` : ""}
+                ${_renderEvidenceGallery(dispute.evidence)}
                 <div class="dispute-time">${t('dispute.submitted_at')} ${formatTime(dispute.created_at)}</div>
             </div>
         </div>
@@ -152,11 +148,7 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
             ${dispute.response ? `
                 <div class="dispute-content respondent">
                     <div style="color: var(--input-text);">${dispute.response}</div>
-                    ${dispute.response_evidence && dispute.response_evidence.length > 0 ? `
-                        <div class="dispute-evidence">
-                            ${dispute.response_evidence.map(img => `<img src="${img}" onclick="window.open('${img}')">`).join("")}
-                        </div>
-                    ` : ""}
+                    ${_renderEvidenceGallery(dispute.response_evidence)}
                     <div class="dispute-time">${t('dispute.responded_at')} ${formatTime(dispute.responded_at)}</div>
                 </div>
             ` : `
@@ -263,4 +255,16 @@ function formatTime(timestamp) {
     if (!timestamp) return t('common.unknown');
     const date = new Date(timestamp * 1000);
     return date.toLocaleString(getLanguage(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * 渲染证据图片画廊
+ * @param {string[]} images - 证据图片URL数组
+ * @returns {string} HTML字符串
+ */
+function _renderEvidenceGallery(images) {
+    if (!images || images.length === 0) return "";
+    return `<div class="dispute-evidence">
+        ${images.map(img => `<img src="${img}" onclick="window.open('${img}')">`).join("")}
+    </div>`;
 }

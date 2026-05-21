@@ -25,6 +25,28 @@ function clearTaskListCache() {
 }
 
 /**
+ * 🖼️ 处理任务图片上传
+ */
+async function _processTaskImages(selectedImages, publishBtn) {
+    const referenceImages = [];
+    for (let i = 0; i < selectedImages.length; i++) {
+        if (selectedImages[i].isExisting) {
+            referenceImages.push(selectedImages[i].dataUrl);
+        } else {
+            publishBtn.textContent = `⏳ ${t('task.upload_progress', { current: i + 1, total: selectedImages.length })}...`;
+            try {
+                const processedFile = await compressImageForUpload(selectedImages[i].file);
+                const res = await api.uploadFile(processedFile, "task");
+                referenceImages.push(res.url);
+            } catch (uploadErr) {
+                console.error("图片上传失败:", uploadErr);
+            }
+        }
+    }
+    return referenceImages;
+}
+
+/**
  * 📝 创建发布任务视图
  * @param {Object|string} currentUser - 当前用户
  * @param {Object} editTaskData - 编辑模式时的任务数据（可选）
@@ -320,22 +342,14 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
         const deadline = container.querySelector("#deadline").value;
         
         // 验证
-        if (!title) {
-            showToast(t('task.please_enter_title'), "warning");
-            return;
-        }
-        if (!description) {
-            showToast(t('task.please_enter_description'), "warning");
-            return;
-        }
-        if (!isEditMode && totalPrice < 0) {
-            showToast(t('task.price_min_10'), "warning");
-            return;
-        }
-        if (!deadline) {
-            showToast(t('task.please_select_deadline'), "warning");
-            return;
-        }
+        const validations = [
+            [!title, t('task.please_enter_title')],
+            [!description, t('task.please_enter_description')],
+            [!isEditMode && totalPrice < 0, t('task.price_min_10')],
+            [!deadline, t('task.please_select_deadline')]
+        ];
+        const failed = validations.find(([cond]) => cond);
+        if (failed) { showToast(failed[1], "warning"); return; }
         
         try {
             const publishBtn = container.querySelector("#btn-publish");
@@ -343,23 +357,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             publishBtn.textContent = `⏳ ${t('task.uploading_images')}...`;
             
             // 上传参考图片（只上传新选择的图片）
-            const referenceImages = [];
-            for (let i = 0; i < selectedImages.length; i++) {
-                if (selectedImages[i].isExisting) {
-                    // 已有图片直接使用URL
-                    referenceImages.push(selectedImages[i].dataUrl);
-                } else {
-                    // 新图片需要上传 - 添加压缩
-                    publishBtn.textContent = `⏳ ${t('task.upload_progress', { current: i + 1, total: selectedImages.length })}...`;
-                    try {
-                        const processedFile = await compressImageForUpload(selectedImages[i].file);
-                        const res = await api.uploadFile(processedFile, "task");
-                        referenceImages.push(res.url);
-                    } catch (uploadErr) {
-                        console.error("图片上传失败:", uploadErr);
-                    }
-                }
-            }
+            const referenceImages = await _processTaskImages(selectedImages, publishBtn);
             
             if (isEditMode) {
                 // 编辑模式：更新任务

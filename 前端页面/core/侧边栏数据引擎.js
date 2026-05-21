@@ -185,6 +185,26 @@ function saveCreatorsToSessionStorage(data) {
  * @param {Array} data - 创作者数据数组
  * @returns {Array} 匹配的数据
  */
+/**
+ * 按关键词过滤列表数据（工具/应用/推荐Tab本地搜索）
+ * @param {Array} items - 数据数组
+ * @param {string} keyword - 搜索关键词
+ * @returns {Array} 过滤后的数据
+ */
+function _filterBySearch(items, keyword) {
+    const lowerKeyword = keyword.toLowerCase();
+    return items.filter(item => {
+        const textStr = `${item.title||''} ${item.shortDesc||''} ${item.name||''} ${item.account||''}`.toLowerCase();
+        return textStr.includes(lowerKeyword);
+    });
+}
+
+/**
+ * 本地搜索创作者数据
+ * @param {string} keyword - 搜索关键词
+ * @param {Array} data - 创作者数据数组
+ * @returns {Array} 匹配的数据
+ */
 function searchCreatorsLocally(keyword, data) {
     const lowerKeyword = keyword.toLowerCase();
     return data.filter(item => {
@@ -310,10 +330,7 @@ export async function loadSidebarContent({
         // 搜索过滤（创作者Tab有keyword时不进行本地过滤，因为后端已过滤）
         let displayData = dataArray;
         if (keyword && tab !== "creators") {
-            displayData = dataArray.filter(item => {
-                const textStr = `${item.title||''} ${item.shortDesc||''} ${item.name||''} ${item.account||''}`.toLowerCase();
-                return textStr.includes(keyword);
-            });
+            displayData = _filterBySearch(dataArray, keyword);
         }
         
         // 首次渲染清空容器
@@ -409,10 +426,7 @@ export async function loadSidebarContent({
         // 从全量数据中截取（创作者Tab有keyword时不进行本地过滤，因为后端已过滤）
         let dataSlice = state.allData;
         if (keyword && tab !== "creators") {
-            dataSlice = state.allData.filter(item => {
-                const textStr = `${item.title||''} ${item.shortDesc||''} ${item.name||''} ${item.account||''}`.toLowerCase();
-                return textStr.includes(keyword);
-            });
+            dataSlice = _filterBySearch(state.allData, keyword);
         }
         
         const batch = dataSlice.slice(start, end);
@@ -754,10 +768,7 @@ function _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyw
         if (!keyword) return state.allData.length;
         // 创作者Tab后端搜索已过滤，直接返回全部数据
         if (tab === "creators") return state.allData.length;
-        return state.allData.filter(item => {
-            const textStr = `${item.title||''} ${item.shortDesc||''} ${item.name||''} ${item.account||''}`.toLowerCase();
-            return textStr.includes(keyword);
-        }).length;
+        return _filterBySearch(state.allData, keyword).length;
     };
     
     // 创建分页加载器
@@ -807,29 +818,6 @@ function _showEndIndicator(contentArea) {
 }
 
 
-// ==========================================
-// 🔄 刷新数据（强制从网络加载）
-// ==========================================
-export async function refreshSidebarContent(params) {
-    const { tab, sort } = params;
-    const cacheKey = `ListCache_${tab}_${sort}`;
-    
-    // 清除缓存
-    const state = getPaginationState(tab, sort);
-    state.allData = [];
-    state.displayedCount = 0;
-    state.isFullyLoaded = false;
-    
-    // 清除 localStorage 缓存
-    try {
-        localStorage.removeItem(`ComfyRanking_${cacheKey}`);
-    } catch {}
-    
-    // 重新加载
-    await loadSidebarContent(params);
-}
-
-
 /** 判断是否需要更新数据 —— 对比ID顺序和关键字段 */
 function _shouldUpdateData(oldData, newData) {
     if (!oldData || !newData) return true;
@@ -852,49 +840,3 @@ function _shouldUpdateData(oldData, newData) {
 }
 
 
-
-// ==========================================
-// 📊 预加载相邻标签页数据
-// ==========================================
-export async function preloadAdjacentTabs(currentTab, sort) {
-    const tabs = ["tools", "apps", "recommends", "creators", "tasks", "posts"];
-    const currentIndex = tabs.indexOf(currentTab);
-    
-    // 预加载前后各一个标签页
-    const adjacentTabs = [
-        tabs[currentIndex - 1],
-        tabs[currentIndex + 1]
-    ].filter(Boolean);
-    
-    for (const tab of adjacentTabs) {
-        const cacheKey = `ListCache_${tab}_${sort}`;
-        const cached = getCache(cacheKey);
-        
-        // 如果没有缓存，后台静默加载
-        if (!cached) {
-            try {
-                let response;
-                let data;
-                if (tab === "creators") {
-                    response = await api.getCreators(sort, 500);
-                    data = proxyImages(response.data || []);  // 确保图片走本地缓存代理
-                    // 创作者数据不持久化到 localStorage，避免空间不足
-                    setCache(cacheKey, data, getCacheExpireTime(), false);
-                    // 同时存入 sessionStorage 用于离线降级
-                    saveCreatorsToSessionStorage(data);
-                    continue;
-                } else if (tab === "posts" || tab === "tasks") {
-                    // 讨论区/任务榜使用独立组件，不需要预加载
-                    continue;
-                } else {
-                    const itemType = tab === "tools" ? "tool" : (tab === "apps" ? "app" : "recommend");
-                    response = await api.getItems(itemType, sort, 200);
-                    data = proxyImages(response.data || []);  // 确保图片走本地缓存代理
-                }
-                setCache(cacheKey, data, getCacheExpireTime(), true);
-            } catch {
-                // 静默失败，不影响用户体验
-            }
-        }
-    }
-}

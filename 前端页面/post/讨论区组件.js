@@ -25,7 +25,13 @@ import { createRatingStars } from "../social/评论与互动组件.js";
 
 // 缓存配置
 const CACHE_KEY_PREFIX = "PostsCache";
-const CACHE_TTL = 1000 * 60 * 30;  // 30分钟缓存
+function getCacheTTL() {
+    try {
+        const s = localStorage.getItem('ComfyCommunity_Settings');
+        if (s) { const v = parseInt(JSON.parse(s).cacheExpireSeconds); if (v >= 60 && v <= 86400) return v * 1000; }
+    } catch(e) {}
+    return 1000 * 60 * 30;  // 默认30分钟
+}
 const PAGE_SIZE = 20;
 
 // 缓存当前用户
@@ -45,6 +51,43 @@ let currentFilterHandler = null;
 
 // 🔧 自动分页器引用（用于组件切换时清理）
 let currentPaginator = null;
+
+/**
+ * 🔍 判断帖子是否匹配搜索关键词
+ */
+function _matchesSearch(post, keyword) {
+    if (!keyword) return true;
+    const text = `${post.title||''} ${post.content||''} ${post.author_name||''} ${post.author||''}`.toLowerCase();
+    return text.includes(keyword);
+}
+
+/**
+ * 📭 渲染空状态 HTML（无帖子时的占位内容）
+ */
+function _renderEmptyState(t) {
+    return `
+        <div style="grid-column: span 2; text-align: center; padding: 60px 20px; color: #666;">
+            <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
+            <div style="font-size: 14px; margin-bottom: 8px;">${t('post.no_posts')}</div>
+            <div style="font-size: 12px; color: #888;">${t('post.be_first')}</div>
+        </div>
+    `;
+}
+
+/**
+ * 🖼️ 生成头像 HTML 字符串
+ * @param {string} avatar - 头像 URL
+ * @param {string} name - 用户名（用于首字母回退）
+ * @param {number} size - 头像尺寸（px）
+ */
+function _generateAvatarHtml(avatar, name, size) {
+    const initial = (name || 'U')[0].toUpperCase();
+    if (avatar) {
+        return `<img class="swr-avatar" src="${avatar}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
+    }
+    const fontSize = Math.max(9, Math.round(size * 0.5));
+    return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${initial}</div>`;
+}
 
 /**
  * 💬 创建讨论区视图
@@ -114,13 +157,7 @@ export function createPostsView(currentUser, keyword = "") {
             allPostsData = [...allPostsData, ...proxyImages(posts)];
             
             // 搜索过滤
-            let displayPosts = posts;
-            if (searchKeyword) {
-                displayPosts = posts.filter(post => {
-                    const text = `${post.title||''} ${post.content||''} ${post.author_name||''} ${post.author||''}`.toLowerCase();
-                    return text.includes(searchKeyword);
-                });
-            }
+            let displayPosts = posts.filter(post => _matchesSearch(post, searchKeyword));
             
             // 渲染帖子卡片
             displayPosts.forEach(post => {
@@ -163,22 +200,20 @@ export function createPostsView(currentUser, keyword = "") {
     // 获取缓存Key（包含排序参数）
     const getCacheKey = () => `${CACHE_KEY_PREFIX}_${currentSort}`;
     
+    // 排序字段映射（简单字段排序，特殊逻辑单独处理）
+    const SORT_FIELDS = {
+        likes: 'likes', favorites: 'favorites', views: 'views', daily_views: 'daily_views'
+    };
+
     // 🔄 本地排序函数
     const sortPostsLocally = (posts, sortBy) => {
         const sorted = [...posts]; // 不修改原数组
+        const field = SORT_FIELDS[sortBy];
+        if (field) {
+            sorted.sort((a, b) => (b[field] || 0) - (a[field] || 0));
+            return sorted;
+        }
         switch (sortBy) {
-            case "likes":
-                sorted.sort((a, b) => (b.likes || 0) - (a.likes || 0));
-                break;
-            case "favorites":
-                sorted.sort((a, b) => (b.favorites || 0) - (a.favorites || 0));
-                break;
-            case "views":
-                sorted.sort((a, b) => (b.views || 0) - (a.views || 0));
-                break;
-            case "daily_views":
-                sorted.sort((a, b) => (b.daily_views || 0) - (a.daily_views || 0));
-                break;
             case "tips":
                 sorted.sort((a, b) => {
                     const sumA = (a.tip_board || []).reduce((s, t) => s + (t.amount || 0), 0);
@@ -301,7 +336,7 @@ export function createPostsView(currentUser, keyword = "") {
             // 缓存第一页数据
             if (page === 1) {
                 allPostsData = proxyImages(posts);
-                setCache(cacheKey, posts, CACHE_TTL, true);
+                setCache(cacheKey, posts, getCacheTTL(), true);
             } else {
                 allPostsData = [...allPostsData, ...proxyImages(posts)];
             }
@@ -311,22 +346,10 @@ export function createPostsView(currentUser, keyword = "") {
             }
             
             // 🔍 搜索过滤
-            let displayPosts = posts;
-            if (searchKeyword) {
-                displayPosts = posts.filter(post => {
-                    const text = `${post.title||''} ${post.content||''} ${post.author_name||''} ${post.author||''}`.toLowerCase();
-                    return text.includes(searchKeyword);
-                });
-            }
+            let displayPosts = posts.filter(post => _matchesSearch(post, searchKeyword));
             
             if (displayPosts.length === 0 && page === 1) {
-                postsGrid.innerHTML = `
-                    <div style="grid-column: span 2; text-align: center; padding: 60px 20px; color: #666;">
-                        <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
-                        <div style="font-size: 14px; margin-bottom: 8px;">${t('post.no_posts')}</div>
-                        <div style="font-size: 12px; color: #888;">${t('post.be_first')}</div>
-                    </div>
-                `;
+                postsGrid.innerHTML = _renderEmptyState(t);
                 loadMoreWrapper.style.display = "none";
                 return;
             }
@@ -392,22 +415,10 @@ export function createPostsView(currentUser, keyword = "") {
         postsGrid.innerHTML = "";
         
         // 🔍 搜索过滤
-        let filteredPosts = posts;
-        if (searchKeyword) {
-            filteredPosts = posts.filter(post => {
-                const text = `${post.title||''} ${post.content||''} ${post.author_name||''} ${post.author||''}`.toLowerCase();
-                return text.includes(searchKeyword);
-            });
-        }
+        const filteredPosts = posts.filter(post => _matchesSearch(post, searchKeyword));
         
         if (filteredPosts.length === 0) {
-            postsGrid.innerHTML = `
-                <div style="grid-column: span 2; text-align: center; padding: 60px 20px; color: #666;">
-                    <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
-                    <div style="font-size: 14px; margin-bottom: 8px;">${t('post.no_posts')}</div>
-                    <div style="font-size: 12px; color: #888;">${t('post.be_first')}</div>
-                </div>
-            `;
+            postsGrid.innerHTML = _renderEmptyState(t);
             loadMoreWrapper.style.display = "none";
             return;
         }
@@ -453,7 +464,7 @@ export function createPostsView(currentUser, keyword = "") {
             
             // 更新缓存
             const cacheKey = getCacheKey();
-            setCache(cacheKey, posts, CACHE_TTL, true);
+            setCache(cacheKey, posts, getCacheTTL(), true);
             
             // 对比新旧数据，有变化时重新渲染
             if (_postsDataChanged(allPostsData, posts)) {
@@ -474,13 +485,12 @@ export function createPostsView(currentUser, keyword = "") {
         if (!oldData || !newData) return true;
         if (oldData.length !== newData.length) return true;
         const checkCount = Math.min(10, oldData.length);
+        const COMPARE_FIELDS = ['likes', 'favorites', 'views', 'daily_views', 'comments_count'];
         for (let i = 0; i < checkCount; i++) {
             if ((oldData[i].id) !== (newData[i].id)) return true;
-            if ((oldData[i].likes || 0) !== (newData[i].likes || 0)) return true;
-            if ((oldData[i].favorites || 0) !== (newData[i].favorites || 0)) return true;
-            if ((oldData[i].views || 0) !== (newData[i].views || 0)) return true;
-            if ((oldData[i].daily_views || 0) !== (newData[i].daily_views || 0)) return true;
-            if ((oldData[i].comments_count || 0) !== (newData[i].comments_count || 0)) return true;
+            for (const f of COMPARE_FIELDS) {
+                if ((oldData[i][f] || 0) !== (newData[i][f] || 0)) return true;
+            }
             if (Math.abs((oldData[i].rating_avg || 0) - (newData[i].rating_avg || 0)) > 0.01) return true;
         }
         return false;
@@ -587,9 +597,7 @@ function createPostCard(post) {
         const initial = (name || 'U')[0].toUpperCase();
         
         // 渲染初始头像
-        const avatarHtml = avatar 
-            ? `<img class="swr-avatar" src="${avatar}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">` 
-            : `<div class="swr-avatar" style="width: 18px; height: 18px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 9px; font-weight: bold;">${initial}</div>`;
+        const avatarHtml = _generateAvatarHtml(avatar, name, 18);
         
         authorContainer.innerHTML = `${avatarHtml}<span class="swr-name" style="font-size: 11px; color: #999; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(name)}</span>`;
         
@@ -601,7 +609,7 @@ function createPostCard(post) {
                 if (avatarEl.tagName === 'IMG') {
                     avatarEl.src = profile.avatar;
                 } else {
-                    avatarEl.outerHTML = `<img class="swr-avatar" src="${profile.avatar}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
+                    avatarEl.outerHTML = _generateAvatarHtml(profile.avatar, profile.name || name, 18);
                 }
             }
             if (nameEl && profile.name) {

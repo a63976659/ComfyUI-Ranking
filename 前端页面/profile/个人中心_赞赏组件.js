@@ -18,6 +18,21 @@ import { isMaxTipLevel, renderTipLevelHTML, getTipLevelDescription, calculateTip
 // 最高等级积分上限（9个太阳 = 22500积分）
 const MAX_TIP_POINTS = 22500;
 
+/** 校验打赏金额，返回错误消息或null */
+function _validateTipAmount(amount) {
+    if (!amount || amount <= 0) return "打赏金额必须大于 0";
+    if (amount > MAX_TIP_POINTS) return `单次打赏上限为 ${MAX_TIP_POINTS} 积分`;
+    return null;
+}
+
+/** 余额不足时引导充值 */
+async function _promptRechargeIfNeeded(currentUser) {
+    if (await showConfirm("您的积分余额不足，是否立刻前往个人中心充值？")) {
+        globalModal.closeTopModal();
+        openUserProfileModal(currentUser);
+    }
+}
+
 /**
  * 打开打赏弹窗
  * @param {object} currentUser - 当前登录用户
@@ -44,7 +59,7 @@ export async function openTipModal(currentUser, targetUser, onSuccess, itemId = 
     // ==========================================
     // 如果是打赏具体内容，从内容的 tip_board 检查
     // 如果是打赏用户，从用户的 tip_board 检查
-    // TODO: 需要后端支持查询当前用户对目标的累计打赏金额
+    // 后续版本实现：查询当前用户对目标的累计打赏金额（tip_board 已包含累计数据，待新增专用查询接口）
     
     const container = document.createElement("div");
     container.style.color = "#eee";
@@ -102,14 +117,11 @@ export async function openTipModal(currentUser, targetUser, onSuccess, itemId = 
     
     const updatePreview = () => {
         const amount = parseInt(amountInput.value) || 0;
-        if (amount <= 0) {
-            previewLevel.innerHTML = `<span style="color:#666;">请输入有效金额</span>`;
-            return;
-        }
-        
-        // 检查是否超过上限
-        if (amount > MAX_TIP_POINTS) {
-            previewLevel.innerHTML = `<span style="color:#F44336;">⚠️ 超过单次上限 ${MAX_TIP_POINTS} 积分</span>`;
+        const validationError = _validateTipAmount(amount);
+        if (validationError) {
+            previewLevel.innerHTML = amount > MAX_TIP_POINTS
+                ? `<span style="color:#F44336;">⚠️ 超过单次上限 ${MAX_TIP_POINTS} 积分</span>`
+                : `<span style="color:#666;">请输入有效金额</span>`;
             return;
         }
         
@@ -135,15 +147,12 @@ export async function openTipModal(currentUser, targetUser, onSuccess, itemId = 
         const isAnon = container.querySelector("#tip-anonymous").checked;
 
         // 基本校验
-        if (!amount || amount <= 0) return showToast("打赏金额必须大于 0", "warning");
-        if (amount > MAX_TIP_POINTS) return showToast(`单次打赏上限为 ${MAX_TIP_POINTS} 积分`, "warning");
+        const validationError = _validateTipAmount(amount);
+        if (validationError) return showToast(validationError, "warning");
         
         // 本地前置余额校验
         if (userBalance < amount) {
-            if (await showConfirm("您的积分余额不足，是否立刻前往个人中心充值？")) {
-                globalModal.closeTopModal();
-                openUserProfileModal(currentUser);
-            }
+            await _promptRechargeIfNeeded(currentUser);
             return;
         }
 
@@ -153,23 +162,15 @@ export async function openTipModal(currentUser, targetUser, onSuccess, itemId = 
         try {
             const res = await api.tipUser(currentUser.account, targetUser.account, amount, isAnon, itemId);
             
-            // 检查是否达到满级
             const level = calculateTipLevel(amount);
-            if (level.isMaxLevel) {
-                showToast("🎉 恭喜您成为至尊赞助者！已达最高等级。", "success");
-            } else {
-                showToast("🎉 打赏成功！感谢您的慷慨支持。", "success");
-            }
+            showToast(level.isMaxLevel ? "🎉 恭喜您成为至尊赞助者！已达最高等级。" : "🎉 打赏成功！感谢您的慷慨支持。", "success");
             
             globalModal.closeTopModal();
             if (onSuccess) onSuccess(res.balance);
         } catch (err) {
             // 余额不足引导充值
             if (err.message && err.message.includes("余额不足")) {
-                if (await showConfirm("您的积分余额不足，是否立刻前往个人中心充值？")) {
-                    globalModal.closeTopModal();
-                    openUserProfileModal(currentUser);
-                }
+                await _promptRechargeIfNeeded(currentUser);
             } else {
                 showToast(err.message, "error");
             }

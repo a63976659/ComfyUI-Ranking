@@ -180,6 +180,23 @@ export const EVENTS = {
 // ==========================================
 
 /**
+ * 构建已登录用户状态对象
+ * @param {Object} userData - 用户数据
+ * @param {string} token - 认证令牌
+ * @returns {Object} 用户状态对象
+ */
+function _createUserState(userData, token) {
+    return {
+        isLoggedIn: true,
+        account: userData.account,
+        name: userData.name,
+        avatar: userData.avatar || userData.avatarDataUrl,
+        token: token,
+        wallet: null
+    };
+}
+
+/**
  * 初始化用户状态（从本地存储恢复）
  */
 export function initUserState() {
@@ -190,14 +207,7 @@ export function initUserState() {
         
         if (userStr && token) {
             const userData = JSON.parse(userStr);
-            state.user = {
-                isLoggedIn: true,
-                account: userData.account,
-                name: userData.name,
-                avatar: userData.avatar || userData.avatarDataUrl,
-                token: token,
-                wallet: null
-            };
+            state.user = _createUserState(userData, token);
         } else {
             // 尝试从 sessionStorage 恢复
             const sessionUserStr = sessionStorage.getItem(CACHE.LEGACY_KEYS.USER);
@@ -205,14 +215,7 @@ export function initUserState() {
             
             if (sessionUserStr && sessionToken) {
                 const userData = JSON.parse(sessionUserStr);
-                state.user = {
-                    isLoggedIn: true,
-                    account: userData.account,
-                    name: userData.name,
-                    avatar: userData.avatar || userData.avatarDataUrl,
-                    token: sessionToken,
-                    wallet: null
-                };
+                state.user = _createUserState(userData, sessionToken);
             }
         }
     } catch (error) {
@@ -227,14 +230,7 @@ export function initUserState() {
  * @param {boolean} remember - 是否记住登录
  */
 export function setUser(userData, token, remember = true) {
-    state.user = {
-        isLoggedIn: true,
-        account: userData.account,
-        name: userData.name,
-        avatar: userData.avatar || userData.avatarDataUrl,
-        token: token,
-        wallet: null
-    };
+    state.user = _createUserState(userData, token);
     
     // 持久化存储
     const storage = remember ? localStorage : sessionStorage;

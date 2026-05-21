@@ -59,6 +59,40 @@ export async function openNotificationCenter(currentUser, bellBtn) {
         return div.innerHTML;
     }
 
+    // 跳转到任务详情页
+    function _navigateToTaskDetail(taskId, currentUser) {
+        import("../task/任务详情组件.js").then(module => {
+            const view = module.createTaskDetailView(taskId, currentUser);
+            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+        }).catch(err => { console.error('组件加载失败:', err); });
+    }
+
+    // 跳转到帖子详情页
+    function _navigateToPostDetail(postId, currentUser) {
+        import("../post/帖子详情组件.js").then(module => {
+            const view = module.createPostDetailView(postId, currentUser);
+            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+        }).catch(err => { console.error('组件加载失败:', err); });
+    }
+
+    // 跳转到资源详情（异步获取类型后派发路由事件）
+    async function _navigateToItemView(itemId) {
+        try {
+            const res = await api.getItemById(itemId);
+            if (res.status === "success" && res.data) {
+                const itemType = res.data.type || 'tool';
+                window.dispatchEvent(new CustomEvent("comfy-route-to-item", {
+                    detail: { itemId: itemId, itemType: itemType }
+                }));
+            } else {
+                showToast(t('notif.item_not_found'), "error");
+            }
+        } catch (e) {
+            console.error("获取资源详情失败:", e);
+            showToast(t('notif.load_item_failed'), "error");
+        }
+    }
+
     const renderMsgList = (msgs) => {
         listArea.innerHTML = "";
         if (msgs.length === 0) {
@@ -167,33 +201,12 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                     // 点击资源/帖子/任务标题 -> 根据 ID 前缀跳转
                     const id = itemLink.dataset.itemId;
                     if (id.startsWith('post_')) {
-                        import("../post/帖子详情组件.js").then(module => {
-                            const view = module.createPostDetailView(id, currentUser);
-                            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                        }).catch(err => { console.error('组件加载失败:', err); });
+                        _navigateToPostDetail(id, currentUser);
                     } else if (id.startsWith('task_')) {
-                        import("../task/任务详情组件.js").then(module => {
-                            const view = module.createTaskDetailView(id, currentUser);
-                            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                        }).catch(err => { console.error('组件加载失败:', err); });
+                        _navigateToTaskDetail(id, currentUser);
                     } else {
                         // 🔔 资源类通知：切换到对应Tab并展开卡片
-                        (async () => {
-                            try {
-                                const res = await api.getItemById(id);
-                                if (res.status === "success" && res.data) {
-                                    const itemType = res.data.type || 'tool';
-                                    window.dispatchEvent(new CustomEvent("comfy-route-to-item", {
-                                        detail: { itemId: id, itemType: itemType }
-                                    }));
-                                } else {
-                                    showToast(t('notif.item_not_found'), "error");
-                                }
-                            } catch (e) {
-                                console.error("获取资源详情失败:", e);
-                                showToast(t('notif.load_item_failed'), "error");
-                            }
-                        })();
+                        _navigateToItemView(id);
                     }
                     return;
                 }
@@ -208,73 +221,31 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                 
                 // 📦 插件更新通知：切换到对应Tab并展开卡片
                 if (type === "plugin_update" && itemId) {
-                    (async () => {
-                        try {
-                            const res = await api.getItemById(itemId);
-                            if (res.status === "success" && res.data) {
-                                const itemType = res.data.type || 'tool';
-                                window.dispatchEvent(new CustomEvent("comfy-route-to-item", {
-                                    detail: { itemId: itemId, itemType: itemType }
-                                }));
-                            } else {
-                                showToast(t('notif.item_not_found'), "error");
-                            }
-                        } catch (e) {
-                            console.error("获取资源详情失败:", e);
-                            showToast(t('notif.load_item_failed'), "error");
-                        }
-                    })();
+                    _navigateToItemView(itemId);
                     return;
                 }
                 
                 // 📝 任务榜通知：跳转到任务详情
                 if (type.startsWith("task_") && itemId) {
-                    import("../task/任务详情组件.js").then(module => {
-                        const view = module.createTaskDetailView(itemId, currentUser);
-                        window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                    }).catch(err => { console.error('组件加载失败:', err); });
+                    _navigateToTaskDetail(itemId, currentUser);
                     return;
                 }
                 
                 // ⚖️ 申诉通知：跳转到任务详情（包含申诉入口）
                 if ((type === "dispute_responded" || type === "dispute_resolved") && itemId) {
-                    import("../task/任务详情组件.js").then(module => {
-                        const view = module.createTaskDetailView(itemId, currentUser);
-                        window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                    }).catch(err => { console.error('组件加载失败:', err); });
+                    _navigateToTaskDetail(itemId, currentUser);
                     return;
                 }
 
                 // 互动类通知（点赞/收藏/评论/回复/购买/打赏/退款）：优先跳转内容详情
                 if (["like", "favorite", "comment", "reply", "purchase", "tip", "refund"].includes(type) && itemId) {
                     if (itemId.startsWith('post_')) {
-                        import("../post/帖子详情组件.js").then(module => {
-                            const view = module.createPostDetailView(itemId, currentUser);
-                            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                        }).catch(err => { console.error('组件加载失败:', err); });
+                        _navigateToPostDetail(itemId, currentUser);
                     } else if (itemId.startsWith('task_')) {
-                        import("../task/任务详情组件.js").then(module => {
-                            const view = module.createTaskDetailView(itemId, currentUser);
-                            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                        }).catch(err => { console.error('组件加载失败:', err); });
+                        _navigateToTaskDetail(itemId, currentUser);
                     } else {
                         // 🔔 资源类互动通知：切换到对应Tab并展开卡片
-                        (async () => {
-                            try {
-                                const res = await api.getItemById(itemId);
-                                if (res.status === "success" && res.data) {
-                                    const itemType = res.data.type || 'tool';
-                                    window.dispatchEvent(new CustomEvent("comfy-route-to-item", {
-                                        detail: { itemId: itemId, itemType: itemType }
-                                    }));
-                                } else {
-                                    showToast(t('notif.item_not_found'), "error");
-                                }
-                            } catch (e) {
-                                console.error("获取资源详情失败:", e);
-                                showToast(t('notif.load_item_failed'), "error");
-                            }
-                        })();
+                        _navigateToItemView(itemId);
                     }
                     return;
                 }

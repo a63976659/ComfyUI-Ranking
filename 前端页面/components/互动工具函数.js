@@ -9,6 +9,9 @@
 import { showToast } from "./UI交互提示组件.js";
 import { t } from "./用户体验增强.js";
 
+// 开发模式检测，仅在本地环境输出调试日志
+const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+
 // ==========================================
 // 👀 访问量记录防抖（通用版）
 // ==========================================
@@ -35,20 +38,20 @@ export async function recordView(apiMethod, contentId, cachePrefix, onSuccess = 
         return null;
     }
 
-    console.log(`[浏览量调试] recordView 被调用 - prefix: ${cachePrefix}, id: ${contentId}`);
+    DEBUG && console.warn(`[浏览量调试] recordView 被调用 - prefix: ${cachePrefix}, id: ${contentId}`);
     const now = Date.now();
     const cacheKey = `${cachePrefix}_${contentId}`;
     const cached = _viewRecordCache[cacheKey];
 
     // 检查是否在防抖/冷却时间内（成功5分钟，失败30秒）
     if (cached && now - cached.time < (cached.success ? VIEW_DEBOUNCE_MS : VIEW_ERROR_COOLDOWN_MS)) {
-        console.log(`[浏览量调试] 防抖拦截 - ${cacheKey}, 距上次: ${now - cached.time}ms, 上次状态: ${cached.success ? 'success' : 'error'}`);
+        DEBUG && console.warn(`[浏览量调试] 防抖拦截 - ${cacheKey}, 距上次: ${now - cached.time}ms, 上次状态: ${cached.success ? 'success' : 'error'}`);
         return null; // 防抖中，跳过
     }
 
     try {
         const res = await apiMethod(contentId);
-        console.log(`[浏览量调试] API响应:`, res?.status, res);
+        DEBUG && console.warn(`[浏览量调试] API响应:`, res?.status, res);
         if (res.status === "success") {
             // 成功后记录时间戳和成功状态
             _viewRecordCache[cacheKey] = { time: now, success: true };
@@ -59,9 +62,9 @@ export async function recordView(apiMethod, contentId, cachePrefix, onSuccess = 
         // 失败时记录较短冷却时间，网络恢复后可快速重试
         _viewRecordCache[cacheKey] = { time: now, success: false };
         // 浏览记录失败不影响页面显示，但输出详细错误便于调试
-        console.error(`[浏览量调试] 记录${cachePrefix}浏览量失败:`, err.message || err);
-        console.error(`[浏览量调试] 请求参数 - contentId: ${contentId}, cachePrefix: ${cachePrefix}`);
-        console.error(`[浏览量调试] 错误详情:`, err);
+        DEBUG && console.warn(`[浏览量调试] 记录${cachePrefix}浏览量失败:`, err.message || err);
+        DEBUG && console.warn(`[浏览量调试] 请求参数 - contentId: ${contentId}, cachePrefix: ${cachePrefix}`);
+        DEBUG && console.warn(`[浏览量调试] 错误详情:`, err);
     }
     return null;
 }
@@ -111,6 +114,79 @@ export function renderInteractionButtonsHTML(data, currentAccount, options = {})
 // ==========================================
 
 /**
+ * 通用 toggle 事件处理核心逻辑
+ * @param {Function} apiMethod - API方法
+ * @param {string} contentId - 内容ID
+ * @param {HTMLElement} buttonEl - 按钮元素
+ * @param {HTMLElement} countEl - 计数元素
+ * @param {Object} currentUser - 当前用户
+ * @param {Object} options - 配置
+ * @param {string} options.actionPrefix - 防重复key前缀，如 'like' / 'favorite'
+ * @param {string} options.countField - 响应中的计数字段名，如 'likes' / 'favorites'
+ * @param {string} options.activeAction - 激活时的 res.action 值，如 'liked' / 'favorited'
+ * @param {string} options.activeColor - 激活时的按钮背景色
+ * @param {string} options.activeToastKey - 激活时 toast 的 i18n key
+ * @param {string} [options.activeTextColor] - 激活时的按钮文字色（可选）
+ * @param {string} [options.inactiveTextColor] - 取消激活时的按钮文字色（可选）
+ * @param {string} [options.warnLabel] - 日志警告用标签
+ * @returns {Promise<Object|null>}
+ */
+async function _handleToggleAction(apiMethod, contentId, buttonEl, countEl, currentUser, options) {
+    const {
+        actionPrefix,
+        countField,
+        activeAction,
+        activeColor,
+        activeToastKey,
+        activeTextColor = null,
+        inactiveTextColor = null,
+        warnLabel = 'toggle'
+    } = options;
+
+    if (!currentUser) {
+        showToast(t('auth.login_required'), "warning");
+        return null;
+    }
+
+    const actionKey = `${actionPrefix}_${contentId}`;
+    if (_pendingActions.has(actionKey)) return null;
+    _pendingActions.add(actionKey);
+
+    if (buttonEl) buttonEl.disabled = true;
+
+    try {
+        const res = await apiMethod(contentId);
+
+        if (!res || res.status !== "success") {
+            console.warn(`${warnLabel}响应异常:`, res);
+            return null;
+        }
+
+        const count = typeof res[countField] === 'number' ? res[countField] : 0;
+        if (countEl) countEl.textContent = count;
+
+        if (res.action === activeAction) {
+            if (buttonEl) buttonEl.style.background = activeColor;
+            if (buttonEl) buttonEl.style.borderColor = activeColor;
+            if (buttonEl && activeTextColor) buttonEl.style.color = activeTextColor;
+            showToast(t(activeToastKey), "success");
+        } else {
+            if (buttonEl) buttonEl.style.background = "#333";
+            if (buttonEl) buttonEl.style.borderColor = "#555";
+            if (buttonEl && inactiveTextColor) buttonEl.style.color = inactiveTextColor;
+        }
+        return res;
+    } catch (err) {
+        console.error(`${warnLabel}操作失败:`, err);
+        showToast(t('task.operation_failed'), "error");
+        return null;
+    } finally {
+        _pendingActions.delete(actionKey);
+        if (buttonEl) buttonEl.disabled = false;
+    }
+}
+
+/**
  * 处理点赞按钮点击
  * @param {Function} apiMethod - API方法，如 api.toggleTaskLike
  * @param {string} contentId - 内容ID
@@ -120,46 +196,14 @@ export function renderInteractionButtonsHTML(data, currentAccount, options = {})
  * @returns {Promise<Object|null>}
  */
 export async function handleToggleLike(apiMethod, contentId, buttonEl, countEl, currentUser) {
-    if (!currentUser) {
-        showToast(t('auth.login_required'), "warning");
-        return null;
-    }
-
-    const actionKey = `like_${contentId}`;
-    if (_pendingActions.has(actionKey)) return null; // 防重复
-    _pendingActions.add(actionKey);
-
-    if (buttonEl) buttonEl.disabled = true; // 立即禁用
-
-    try {
-        const res = await apiMethod(contentId);
-
-        // 🔥 防御性增强：检查响应数据有效性
-        if (!res || res.status !== "success") {
-            console.warn('点赞响应异常:', res);
-            return null;
-        }
-
-        const likeCount = typeof res.likes === 'number' ? res.likes : 0;
-        if (countEl) countEl.textContent = likeCount;
-
-        if (res.action === "liked") {
-            if (buttonEl) buttonEl.style.background = "#FF5722";
-            if (buttonEl) buttonEl.style.borderColor = "#FF5722";
-            showToast(t('post.liked'), "success");
-        } else {
-            if (buttonEl) buttonEl.style.background = "#333";
-            if (buttonEl) buttonEl.style.borderColor = "#555";
-        }
-        return res;
-    } catch (err) {
-        console.error('点赞操作失败:', err);
-        showToast(t('task.operation_failed'), "error");
-        return null;
-    } finally {
-        _pendingActions.delete(actionKey);
-        if (buttonEl) buttonEl.disabled = false; // 恢复
-    }
+    return _handleToggleAction(apiMethod, contentId, buttonEl, countEl, currentUser, {
+        actionPrefix: 'like',
+        countField: 'likes',
+        activeAction: 'liked',
+        activeColor: '#FF5722',
+        activeToastKey: 'post.liked',
+        warnLabel: '点赞'
+    });
 }
 
 /**
@@ -172,48 +216,16 @@ export async function handleToggleLike(apiMethod, contentId, buttonEl, countEl, 
  * @returns {Promise<Object|null>}
  */
 export async function handleToggleFavorite(apiMethod, contentId, buttonEl, countEl, currentUser) {
-    if (!currentUser) {
-        showToast(t('auth.login_required'), "warning");
-        return null;
-    }
-
-    const actionKey = `favorite_${contentId}`;
-    if (_pendingActions.has(actionKey)) return null; // 防重复
-    _pendingActions.add(actionKey);
-
-    if (buttonEl) buttonEl.disabled = true; // 立即禁用
-
-    try {
-        const res = await apiMethod(contentId);
-
-        // 🔥 防御性增强：检查响应数据有效性
-        if (!res || res.status !== "success") {
-            console.warn('收藏响应异常:', res);
-            return null;
-        }
-
-        const favoriteCount = typeof res.favorites === 'number' ? res.favorites : 0;
-        if (countEl) countEl.textContent = favoriteCount;
-
-        if (res.action === "favorited") {
-            if (buttonEl) buttonEl.style.background = "#FFC107";
-            if (buttonEl) buttonEl.style.borderColor = "#FFC107";
-            if (buttonEl) buttonEl.style.color = "#000";
-            showToast(t('post.favorited'), "success");
-        } else {
-            if (buttonEl) buttonEl.style.background = "#333";
-            if (buttonEl) buttonEl.style.borderColor = "#555";
-            if (buttonEl) buttonEl.style.color = "#fff";
-        }
-        return res;
-    } catch (err) {
-        console.error('收藏操作失败:', err);
-        showToast(t('task.operation_failed'), "error");
-        return null;
-    } finally {
-        _pendingActions.delete(actionKey);
-        if (buttonEl) buttonEl.disabled = false; // 恢复
-    }
+    return _handleToggleAction(apiMethod, contentId, buttonEl, countEl, currentUser, {
+        actionPrefix: 'favorite',
+        countField: 'favorites',
+        activeAction: 'favorited',
+        activeColor: '#FFC107',
+        activeToastKey: 'post.favorited',
+        activeTextColor: '#000',
+        inactiveTextColor: '#fff',
+        warnLabel: '收藏'
+    });
 }
 
 // ==========================================
@@ -259,44 +271,9 @@ export function canTip(currentUser, targetAccount) {
 }
 
 // ==========================================
-// 🎁 渲染打赏榜单（通用版）
+// 🎁 渲染打赏榜单（重导出完整版，向后兼容）
 // ==========================================
-
-/**
- * 渲染打赏榜单 HTML
- * @param {Array} tipBoard - 打赏榜单数据
- * @param {number} maxItems - 最大显示条数，默认5
- * @param {string} emptyText - 空榜单提示文字
- * @returns {string} HTML字符串
- */
-export function renderTipBoardHTML(tipBoard, maxItems = 5, emptyText = null) {
-    if (!tipBoard || tipBoard.length === 0) {
-        return `
-            <div style="background: #1a1a1a; padding: 15px; border-radius: 8px; text-align: center; color: #666; font-size: 12px;">
-                ${emptyText || t('post.no_tips')}
-            </div>
-        `;
-    }
-    
-    const items = tipBoard.slice(0, maxItems).map((t_item, i) => {
-        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-        const name = t_item.is_anon ? t('creator.anonymous') : (t_item.account || t('common.unknown_user'));
-        return `
-            <div style="display: flex; align-items: center; gap: 8px; padding: 6px 0;">
-                <span style="width: 24px; text-align: center;">${medal}</span>
-                <span style="flex: 1; color: #ddd; font-size: 13px;">${escapeHtml(name)}</span>
-                <span style="color: #FFC107; font-size: 12px;">${t_item.amount} ${t('task.points')}</span>
-            </div>
-        `;
-    }).join("");
-    
-    return `
-        <div style="background: #1a1a1a; padding: 12px; border-radius: 8px;">
-            <div style="font-size: 13px; font-weight: bold; color: #FFC107; margin-bottom: 8px;">${t('post.tip_board_title')}</div>
-            ${items}
-        </div>
-    `;
-}
+export { renderTipBoardHTML } from './打赏等级工具.js';
 
 // ==========================================
 // 🔒 HTML转义（通用工具）

@@ -18,11 +18,14 @@ const getLastChatKey = (account) => `ComfyRanking_LastChat_${account}`;
 // 🚀 P1-4: 草稿 localStorage 键
 const getDraftKey = (userAccount, targetAccount) => `ComfyRanking_Draft_${userAccount}_${targetAccount}`;
 
+// 🚀 P2-3: 时间戳统一转为毫秒
+const _normalizeTs = (ts) => (!ts ? 0 : (ts < 1e12 ? ts * 1000 : ts));
+
 // 🚀 P1-5: 相对时间格式化
 const formatRelativeTime = (timestamp) => {
     if (!timestamp) return '';
     const now = Date.now();
-    const msgTime = timestamp < 1e12 ? timestamp * 1000 : timestamp;
+    const msgTime = _normalizeTs(timestamp);
     const diff = now - msgTime;
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
@@ -38,12 +41,19 @@ const formatRelativeTime = (timestamp) => {
 const TIME_GAP_THRESHOLD = 5 * 60; // 秒
 const shouldShowTimeSeparator = (prevMsg, currMsg) => {
     if (!prevMsg || !prevMsg.created_at || !currMsg.created_at) return false;
-    const prev = prevMsg.created_at < 1e12 ? prevMsg.created_at : prevMsg.created_at / 1000;
-    const curr = currMsg.created_at < 1e12 ? currMsg.created_at : currMsg.created_at / 1000;
+    const prev = _normalizeTs(prevMsg.created_at) / 1000;
+    const curr = _normalizeTs(currMsg.created_at) / 1000;
     return (curr - prev) > TIME_GAP_THRESHOLD;
 };
 
 export function openChatModal(currentUser, targetAccount = null) {
+    // 🚀 P2-1: 头像交互统一处理（点击打开个人资料 + hover 缩放）
+    const _attachAvatarInteraction = (avatarEl, account, currentUser) => {
+        avatarEl.style.cursor = "pointer";
+        avatarEl.onclick = (e) => { e.stopPropagation(); openOtherUserProfileModal(account, currentUser); };
+        avatarEl.onmouseover = () => avatarEl.style.transform = "scale(1.1)";
+        avatarEl.onmouseout = () => avatarEl.style.transform = "scale(1)";
+    };
     const container = document.createElement("div");
     Object.assign(container.style, { display: "flex", flexDirection: "column", flex: "none", height: "1000px", boxSizing: "border-box", color: "#fff", background: "var(--comfy-menu-bg)", overflow: "hidden" });
     
@@ -291,14 +301,9 @@ export function openChatModal(currentUser, targetAccount = null) {
             avatarEl.src = isMe ? myAvatar : otherAvatar;
             avatarEl.title = isMe ? t('chat.me') : `${t('chat.view_profile')} ${currentTargetInfo?.name || currentChatTarget}`;
             
-            // 🚀 新增：点击对方头像跳转个人资料
+            // 🚀 P2-1: 点击对方头像跳转个人资料
             if (!isMe) {
-                avatarEl.onclick = (e) => {
-                    e.stopPropagation();
-                    openOtherUserProfileModal(currentChatTarget, currentUser);
-                };
-                avatarEl.onmouseover = () => avatarEl.style.transform = "scale(1.1)";
-                avatarEl.onmouseout = () => avatarEl.style.transform = "scale(1)";
+                _attachAvatarInteraction(avatarEl, currentChatTarget, currentUser);
             }
             
             // 🚀 P1-5: 气泡+时间戳外层容器
@@ -386,11 +391,9 @@ export function openChatModal(currentUser, targetAccount = null) {
         // 🚀 显示顶部的清空消息按钮
         clearBtnTop.style.display = "block";
         
-        // 🚀 新增：点击头像跳转个人资料
+        // 🚀 P2-1: 点击头像跳转个人资料
         const avatarEl = chatHeader.querySelector("#chat-target-avatar");
-        avatarEl.onclick = () => openOtherUserProfileModal(targetAccount, currentUser);
-        avatarEl.onmouseover = () => avatarEl.style.transform = "scale(1.1)";
-        avatarEl.onmouseout = () => avatarEl.style.transform = "scale(1)";
+        _attachAvatarInteraction(avatarEl, targetAccount, currentUser);
 
         const cacheKey = getChatHistoryKey(currentUser.account, targetAccount);
         const clearKey = getChatClearKey(currentUser.account, targetAccount);
@@ -426,15 +429,15 @@ export function openChatModal(currentUser, targetAccount = null) {
             const map = new Map();
             // 🚀 P0-4：统一时间戳格式为毫秒，本地和云端消息均过滤清空时间之前的消息
             // P2-5: 先放本地消息，再由云端消息覆盖（云端为真值源）
-            localMsgs.forEach(m => {
-                if (!m.id) m.id = generateMsgId(m);
-                const mTime = m.created_at ? (m.created_at < 1e12 ? m.created_at * 1000 : m.created_at) : 0;
-                if (mTime > clearTime) { map.set(m.id, m); }
-            });
-            cloudMsgs.forEach(m => {
-                const mTime = m.created_at ? (m.created_at < 1e12 ? m.created_at * 1000 : m.created_at) : 0;
-                if (mTime > clearTime) { map.set(m.id, m); }
-            });
+            // 🚀 P2-2: 统一合并去重函数
+            const _mergeMessagesToMap = (msgs, map, clearTime, generateId) => {
+                msgs.forEach(m => {
+                    if (generateId && !m.id) m.id = generateId(m);
+                    if (_normalizeTs(m.created_at) > clearTime) { map.set(m.id, m); }
+                });
+            };
+            _mergeMessagesToMap(localMsgs, map, clearTime, generateMsgId);
+            _mergeMessagesToMap(cloudMsgs, map, clearTime, null);
             
             const merged = Array.from(map.values()).sort((a, b) => a.created_at - b.created_at);
             localStorage.setItem(cacheKey, JSON.stringify(merged));

@@ -559,36 +559,33 @@ function generateFullHTML() {
                 return points;
             }
 
-            // 生成翅膀点（弧线向下，浅粉白色）
-            generateWingPoints(wingAngle) {
-                this.wingLeftPoints = [];
-                this.wingRightPoints = [];
-                
+            // 生成单侧翅膀点（side=1左翅，side=-1右翅）
+            _generateWingPoints(side, wingAngle) {
                 const wingLight = { r: 255, g: 235, b: 245 };
                 const wingDark = { r: 255, g: 200, b: 220 };
+                const baseAngle = side === 1 ? Math.PI - 0.3 : 0.3;
+                const points = [];
                 
-                // 左翅膀（弧线向左下）
                 for (let layer = 0; layer < 3; layer++) {
-                    const layerAngle = wingAngle * 0.4 - layer * 0.08;
+                    const layerAngle = side * wingAngle * 0.4 - side * layer * 0.08;
                     const layerLen = 60 - layer * 12;
                     
                     for (let i = 0; i < 8; i++) {
                         const t = i / 8;
-                        // 从左侧开始弧线向下弯曲
-                        const spreadAngle = Math.PI - 0.3 + layerAngle - t * 0.7;
+                        const spreadAngle = baseAngle + layerAngle - side * t * 0.7;
                         const r = 25 + t * layerLen;
-                        const x = -25 + Math.cos(spreadAngle) * r;
+                        const x = -side * 25 + Math.cos(spreadAngle) * r;
                         const y = -15 + Math.sin(spreadAngle) * r;
                         
                         const depth = 0.5 + (1 - t) * 0.3 - layer * 0.1;
                         const color = this.calculatePinkLighting(
                             wingLight, wingDark,
-                            Math.max(0.3, depth), 
-                            Math.cos(spreadAngle), 
+                            Math.max(0.3, depth),
+                            Math.cos(spreadAngle),
                             Math.sin(spreadAngle)
                         );
                         
-                        this.wingLeftPoints.push({
+                        points.push({
                             x, y,
                             digit: randomInt(0, 9),
                             color,
@@ -598,38 +595,13 @@ function generateFullHTML() {
                         });
                     }
                 }
-                
-                // 右翅膀（弧线向右下）
-                for (let layer = 0; layer < 3; layer++) {
-                    const layerAngle = -wingAngle * 0.4 + layer * 0.08;
-                    const layerLen = 60 - layer * 12;
-                    
-                    for (let i = 0; i < 8; i++) {
-                        const t = i / 8;
-                        // 从右侧开始弧线向下弯曲
-                        const spreadAngle = 0.3 + layerAngle + t * 0.7;
-                        const r = 25 + t * layerLen;
-                        const x = 25 + Math.cos(spreadAngle) * r;
-                        const y = -15 + Math.sin(spreadAngle) * r;
-                        
-                        const depth = 0.5 + (1 - t) * 0.3 - layer * 0.1;
-                        const color = this.calculatePinkLighting(
-                            wingLight, wingDark,
-                            Math.max(0.3, depth), 
-                            Math.cos(spreadAngle), 
-                            Math.sin(spreadAngle)
-                        );
-                        
-                        this.wingRightPoints.push({
-                            x, y,
-                            digit: randomInt(0, 9),
-                            color,
-                            size: 0.5 + (1 - t) * 0.35 - layer * 0.08,
-                            depth: 0.3 - layer * 0.1,
-                            alpha: 0.85 - layer * 0.15
-                        });
-                    }
-                }
+                return points;
+            }
+
+            // 生成翅膀点（弧线向下，浅粉白色）
+            generateWingPoints(wingAngle) {
+                this.wingLeftPoints = this._generateWingPoints(1, wingAngle);
+                this.wingRightPoints = this._generateWingPoints(-1, wingAngle);
             }
 
             // 生成卷曲尾巴点（粉色）

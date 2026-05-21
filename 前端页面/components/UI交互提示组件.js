@@ -110,6 +110,77 @@ function closeToast(toast) {
 
 
 // ==========================================
+// ⚠️ 对话框辅助函数（内部复用）
+// ==========================================
+
+/**
+ * 创建对话框遮罩层
+ * @param {number} bgOpacity - 背景透明度
+ * @param {number} blurPx - 模糊值（px）
+ * @returns {HTMLElement}
+ */
+function _createDialogOverlay(bgOpacity = 0.6, blurPx = 3) {
+    const overlay = document.createElement("div");
+    Object.assign(overlay.style, {
+        position: "fixed", top: "0", left: "0", width: "100vw", height: "100vh",
+        background: `rgba(0,0,0,${bgOpacity})`, zIndex: "10001", display: "flex",
+        alignItems: "center", justifyContent: "center", backdropFilter: `blur(${blurPx}px)`,
+        opacity: "0", transition: "opacity 0.2s"
+    });
+    return overlay;
+}
+
+/**
+ * 创建对话框主体容器
+ * @param {string} width - 宽度，如 "360px"
+ * @param {string} [background] - 背景色
+ * @param {string} [borderRadius] - 圆角
+ * @param {string} [padding] - 内边距
+ * @param {string} [boxShadow] - 阴影
+ * @param {string} [gap] - flex gap
+ * @param {string} [transformOrigin] - 变换基点（影响初始 transform）
+ * @returns {HTMLElement}
+ */
+function _createDialogBox({ width = "360px", background = "#222", borderRadius = "12px", padding = "24px", boxShadow = "0 10px 40px rgba(0,0,0,0.5)", gap = "16px", hasYTranslate = true } = {}) {
+    const box = document.createElement("div");
+    const initTransform = hasYTranslate ? "scale(0.9) translateY(-20px)" : "scale(0.9)";
+    Object.assign(box.style, {
+        background, border: "1px solid #444", borderRadius,
+        padding, width, maxWidth: "90vw", color: "#fff",
+        boxShadow,
+        display: "flex", flexDirection: "column", gap,
+        transform: initTransform, transition: "transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)"
+    });
+    return box;
+}
+
+/**
+ * 播放对话框入场动画
+ * @param {HTMLElement} overlay
+ * @param {HTMLElement} box
+ * @param {boolean} hasYTranslate - 是否包含 Y 轴位移
+ */
+function _showDialogAnimation(overlay, box, hasYTranslate = true) {
+    requestAnimationFrame(() => {
+        overlay.style.opacity = "1";
+        box.style.transform = hasYTranslate ? "scale(1) translateY(0)" : "scale(1)";
+    });
+}
+
+/**
+ * 关闭对话框并移除 DOM
+ * @param {HTMLElement} overlay
+ * @param {HTMLElement} box
+ * @param {boolean} hasYTranslate
+ * @param {Function} [callback] - 关闭完成后的回调
+ */
+function _closeDialog(overlay, box, hasYTranslate = true, callback) {
+    overlay.style.opacity = "0";
+    box.style.transform = hasYTranslate ? "scale(0.9) translateY(-20px)" : "scale(0.9)";
+    setTimeout(() => { overlay.remove(); if (callback) callback(); }, 200);
+}
+
+// ==========================================
 // ⚠️ 确认对话框
 // ==========================================
 
@@ -139,22 +210,8 @@ export function showConfirm(message, options = {}) {
     const config = typeConfig[type] || typeConfig.warning;
     
     return new Promise((resolve) => {
-        const overlay = document.createElement("div");
-        Object.assign(overlay.style, {
-            position: "fixed", top: "0", left: "0", width: "100vw", height: "100vh",
-            background: "rgba(0,0,0,0.6)", zIndex: "10001", display: "flex",
-            alignItems: "center", justifyContent: "center", backdropFilter: "blur(3px)",
-            opacity: "0", transition: "opacity 0.2s"
-        });
-
-        const box = document.createElement("div");
-        Object.assign(box.style, {
-            background: "#222", border: "1px solid #444", borderRadius: "12px",
-            padding: "24px", width: "360px", maxWidth: "90vw", color: "#fff", 
-            boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
-            display: "flex", flexDirection: "column", gap: "16px", 
-            transform: "scale(0.9) translateY(-20px)", transition: "transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)"
-        });
+        const overlay = _createDialogOverlay(0.6, 3);
+        const box = _createDialogBox({ width: "360px", hasYTranslate: true });
 
         box.innerHTML = `
             <div style="font-size: 18px; font-weight: bold; color: ${config.color}; display: flex; align-items: center; gap: 10px;">
@@ -172,15 +229,10 @@ export function showConfirm(message, options = {}) {
         document.body.appendChild(overlay);
 
         // 入场动画
-        requestAnimationFrame(() => {
-            overlay.style.opacity = "1";
-            box.style.transform = "scale(1) translateY(0)";
-        });
+        _showDialogAnimation(overlay, box, true);
 
         const close = (result) => {
-            overlay.style.opacity = "0";
-            box.style.transform = "scale(0.9) translateY(-20px)";
-            setTimeout(() => { overlay.remove(); resolve(result); }, 200);
+            _closeDialog(overlay, box, true, () => resolve(result));
         };
 
         // ESC 键关闭
@@ -223,30 +275,18 @@ export function showRetryDialog(message, retryFn, options = {}) {
     } = options;
     
     return new Promise((resolve) => {
-        const overlay = document.createElement("div");
-        Object.assign(overlay.style, {
-            position: "fixed", top: "0", left: "0", width: "100vw", height: "100vh",
-            background: "rgba(0,0,0,0.7)", zIndex: "10001", display: "flex",
-            alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)",
-            opacity: "0", transition: "opacity 0.2s"
-        });
-
-        const box = document.createElement("div");
-        Object.assign(box.style, {
-            background: "linear-gradient(145deg, #2a2a2a, #1f1f1f)", 
-            border: "1px solid #444", 
+        const overlay = _createDialogOverlay(0.7, 4);
+        const box = _createDialogBox({
+            width: "400px",
+            background: "linear-gradient(145deg, #2a2a2a, #1f1f1f)",
             borderRadius: "16px",
-            padding: "28px", 
-            width: "400px", 
-            maxWidth: "90vw", 
-            color: "#fff",
+            padding: "28px",
             boxShadow: "0 15px 50px rgba(0,0,0,0.5)",
-            display: "flex", 
-            flexDirection: "column", 
             gap: "20px",
-            transform: "scale(0.9)", 
-            transition: "transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)"
+            hasYTranslate: false
         });
+        // RetryDialog 的过渡时间略长
+        box.style.transition = "transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)";
 
         box.innerHTML = `
             <div style="text-align: center;">
@@ -265,15 +305,11 @@ export function showRetryDialog(message, retryFn, options = {}) {
         overlay.appendChild(box);
         document.body.appendChild(overlay);
 
-        requestAnimationFrame(() => {
-            overlay.style.opacity = "1";
-            box.style.transform = "scale(1)";
-        });
+        // 入场动画
+        _showDialogAnimation(overlay, box, false);
 
         const close = () => {
-            overlay.style.opacity = "0";
-            box.style.transform = "scale(0.9)";
-            setTimeout(() => overlay.remove(), 200);
+            _closeDialog(overlay, box, false);
         };
 
         box.querySelector("#ui-btn-cancel").onclick = () => {

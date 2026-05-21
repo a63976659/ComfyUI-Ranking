@@ -33,62 +33,124 @@ function clearItemCacheByType(type) {
 }
 
 /**
- * 🟢 新增核心逻辑：利用 HTML5 Canvas 纯前端裁剪并压缩头像
- * 功能：强制 1:1 比例中心裁剪，超过 512x512 自动缩放，转换为 JPG 格式。
+ * 通用图片处理核心函数：加载图片 → Canvas绘制 → 转换为JPG文件
+ * @param {File} file - 原始图片文件
+ * @param {Object} options - 配置选项
+ * @param {boolean} options.cropToSquare - 是否中心裁剪为正方形
+ * @param {number|null} options.targetSize - 目标尺寸（正方形边长），null则保持原始尺寸
+ * @param {number} options.quality - 初始JPG质量 (0-1)
+ * @param {string|null} options.fillBackground - 背景填充颜色，null则不填充
+ * @param {number|null} options.maxFileSize - 最大文件大小（字节），超限则迭代降低质量
+ * @param {boolean} options.skipIfSmallJpeg - 是否跳过已是小体积JPEG的文件
+ * @param {string} options.suffix - 输出文件名后缀
+ * @returns {Promise<File>} 处理后的文件
+ */
+function _processImageCore(file, options = {}) {
+    const {
+        cropToSquare = false,
+        targetSize = null,
+        quality = 0.85,
+        fillBackground = null,
+        maxFileSize = null,
+        skipIfSmallJpeg = false,
+        suffix = '.jpg'
+    } = options;
+
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            let sourceX = 0, sourceY = 0;
+            let sourceW = img.naturalWidth, sourceH = img.naturalHeight;
+            let destW = img.naturalWidth, destH = img.naturalHeight;
+
+            // 中心裁剪为正方形
+            if (cropToSquare) {
+                const sourceMin = Math.min(sourceW, sourceH);
+                sourceX = (sourceW - sourceMin) / 2;
+                sourceY = (sourceH - sourceMin) / 2;
+                sourceW = sourceMin;
+                sourceH = sourceMin;
+                destW = sourceMin;
+                destH = sourceMin;
+            }
+
+            // 指定目标尺寸时缩放
+            if (targetSize) {
+                destW = targetSize;
+                destH = targetSize;
+            }
+
+            canvas.width = destW;
+            canvas.height = destH;
+
+            // 填充背景色
+            if (fillBackground) {
+                ctx.fillStyle = fillBackground;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, 0, 0, destW, destH);
+
+            // 跳过已是小体积JPEG的文件
+            if (skipIfSmallJpeg && maxFileSize &&
+                (file.type === 'image/jpeg' || file.type === 'image/jpg') &&
+                file.size <= maxFileSize) {
+                resolve(file);
+                return;
+            }
+
+            // 转换为JPG Blob，超限时迭代降低质量
+            let currentQuality = quality;
+            const tryCompress = () => {
+                canvas.toBlob((blob) => {
+                    if (!blob) {
+                        reject(new Error('Canvas 转换 Blob 失败'));
+                        return;
+                    }
+
+                    if (maxFileSize && blob.size > maxFileSize && currentQuality > 0.3) {
+                        currentQuality -= 0.1;
+                        tryCompress();
+                        return;
+                    }
+
+                    const newFileName = file.name.replace(/\.[^/.]+$/, '') + suffix;
+                    resolve(new File([blob], newFileName, { type: 'image/jpeg' }));
+                }, 'image/jpeg', currentQuality);
+            };
+
+            tryCompress();
+        };
+
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error('图片加载失败'));
+        };
+
+        img.src = url;
+    });
+}
+
+/**
+ * 🟢 利用 HTML5 Canvas 纯前端裁剪并压缩头像
+ * 功能：强制 1:1 比例中心裁剪，缩放到 512x512，转换为 JPG 格式。
  */
 function processAvatar(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file); // 读取文件为 Base64，用于绘制到 Image 对象
-        reader.onload = (e) => {
-            const img = new Image();
-            img.src = e.target.result;
-            img.onload = () => {
-                // 1. 创建内存 Canvas
-                const canvas = document.createElement("canvas");
-                const ctx = canvas.getContext("2d");
-
-                const targetSize = 512; // 目标尺寸 512x512
-                canvas.width = targetSize;
-                canvas.height = targetSize;
-
-                // 2. 计算 1:1 中心裁剪区域 (强制正方形)
-                const sourceWidth = img.width;
-                const sourceHeight = img.height;
-                const sourceMin = Math.min(sourceWidth, sourceHeight);
-
-                let sourceX, sourceY;
-                if (sourceWidth > sourceHeight) {
-                    sourceX = (sourceWidth - sourceHeight) / 2;
-                    sourceY = 0;
-                } else {
-                    sourceX = 0;
-                    sourceY = (sourceHeight - sourceWidth) / 2;
-                }
-
-                // 3. 将原图中心裁剪区绘制并缩放到 512x512 的 Canvas 上
-                ctx.drawImage(
-                    img,
-                    sourceX, sourceY, sourceMin, sourceMin, // 原图裁剪区 [X, Y, W, H]
-                    0, 0, targetSize, targetSize             // 目标 Canvas 区 [X, Y, W, H]
-                );
-
-                // 4. 关键：将 Canvas 转换为 Blob (JPG 格式，85% 质量压缩)
-                canvas.toBlob((blob) => {
-                    if (blob) {
-                        // 将 Blob 重新封装为 File 对象，保持原本文件名，修改 mime 为 image/jpeg
-                        const newFileName = file.name.replace(/\.[^/.]+$/, "") + "_cropped.jpg";
-                        const processedFile = new File([blob], newFileName, { type: "image/jpeg" });
-                        console.log(`✅ 头像处理完成：原始 ${(file.size/1024).toFixed(1)}KB -> 压缩后 ${(processedFile.size/1024).toFixed(1)}KB`);
-                        resolve(processedFile);
-                    } else {
-                        reject(new Error("Canvas 转换 Blob 失败"));
-                    }
-                }, "image/jpeg", 0.85); // 0.85 是 JPG 质量，兼顾清晰度与体积
-            };
-            img.onerror = () => reject(new Error("图片加载失败"));
-        };
-        reader.onerror = (e) => reject(new Error("文件读取失败"));
+    return _processImageCore(file, {
+        cropToSquare: true,
+        targetSize: 512,
+        quality: 0.85,
+        suffix: '_cropped.jpg'
+    }).then(processedFile => {
+        console.log(`✅ 头像处理完成：原始 ${(file.size/1024).toFixed(1)}KB -> 压缩后 ${(processedFile.size/1024).toFixed(1)}KB`);
+        return processedFile;
     });
 }
 
@@ -104,70 +166,21 @@ export async function compressImageForUpload(file) {
     if (!file.type || !file.type.startsWith('image/')) {
         return file;
     }
-    
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        const url = URL.createObjectURL(file);
-        
-        img.onload = () => {
-            URL.revokeObjectURL(url);
-            
-            const canvas = document.createElement('canvas');
-            // 保持原始宽高，不改变比例
-            canvas.width = img.naturalWidth;
-            canvas.height = img.naturalHeight;
-            
-            const ctx = canvas.getContext('2d');
-            // 白色背景（JPG不支持透明）
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0);
-            
-            const maxSize = 5 * 1024 * 1024; // 5MB
-            
-            // 如果原文件已经是JPG且小于5MB，直接返回
-            if ((file.type === 'image/jpeg' || file.type === 'image/jpg') && file.size <= maxSize) {
-                resolve(file);
-                return;
-            }
-            
-            // 先尝试高质量JPG
-            let quality = 0.92;
-            
-            const tryCompress = () => {
-                canvas.toBlob((blob) => {
-                    if (!blob) {
-                        reject(new Error('图片压缩失败'));
-                        return;
-                    }
-                    
-                    if (blob.size <= maxSize || quality <= 0.3) {
-                        // 压缩到5MB以下或已达最低质量
-                        const compressedFile = new File([blob], 
-                            file.name.replace(/\.[^.]+$/, '.jpg'), 
-                            { type: 'image/jpeg' }
-                        );
-                        console.log(`📦 图片压缩: ${(file.size/1024/1024).toFixed(2)}MB → ${(compressedFile.size/1024/1024).toFixed(2)}MB (quality: ${quality.toFixed(2)})`);
-                        resolve(compressedFile);
-                    } else {
-                        // 还是太大，降低质量继续压缩
-                        quality -= 0.1;
-                        tryCompress();
-                    }
-                }, 'image/jpeg', quality);
-            };
-            
-            tryCompress();
-        };
-        
-        img.onerror = () => {
-            URL.revokeObjectURL(url);
-            // 加载失败，返回原文件
-            resolve(file);
-        };
-        
-        img.src = url;
-    });
+
+    try {
+        const processedFile = await _processImageCore(file, {
+            quality: 0.92,
+            fillBackground: '#FFFFFF',
+            maxFileSize: 5 * 1024 * 1024,
+            skipIfSmallJpeg: true,
+            suffix: '.jpg'
+        });
+        console.log(`📦 图片压缩: ${(file.size/1024/1024).toFixed(2)}MB → ${(processedFile.size/1024/1024).toFixed(2)}MB`);
+        return processedFile;
+    } catch (e) {
+        // 加载失败，返回原文件
+        return file;
+    }
 }
 
 /**

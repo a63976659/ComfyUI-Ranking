@@ -1,14 +1,29 @@
 // 前端页面/market/资金与钱包_充值组件.js
-import { showToast } from "../components/UI交互提示组件.js";
+import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { api } from "../core/网络请求_业务API.js";
 import { t } from "../components/用户体验增强.js";
+import { API } from "../core/全局配置.js";
 
 /**
  * 充值弹窗组件 (真实拉起支付宝网关)
  * @param {Object} currentUser 当前登录用户
  * @param {Function} onBalanceChange 充值成功后的回调刷新函数
  */
+/**
+ * 统一管理充值按钮的加载/恢复状态
+ * @param {HTMLButtonElement} btn
+ * @param {boolean} isLoading
+ * @param {string} loadingText
+ * @param {string} normalText
+ */
+function _setButtonLoading(btn, isLoading, loadingText, normalText) {
+    btn.disabled = isLoading;
+    btn.innerText = isLoading ? loadingText : normalText;
+    btn.style.background = isLoading ? "#888" : "#4CAF50";
+    btn.style.cursor = isLoading ? "not-allowed" : "pointer";
+}
+
 export function openRechargeModal(currentUser, onBalanceChange) {
     const container = document.createElement("div");
     container.style.color = "#ccc";
@@ -23,20 +38,18 @@ export function openRechargeModal(currentUser, onBalanceChange) {
     let selectedOption = rechargeOptions[0];
     let paymentMethod = "alipay"; 
 
+    function _rechargeOptionWrapper(isSelected, index, innerHtml) {
+        return `<div class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : 'var(--comfy-input-bg)'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">${innerHtml}</div>`;
+    }
+
     const renderOptions = () => rechargeOptions.map((opt, index) => {
         const isSelected = selectedOption === opt;
         if (opt.isCustom) {
-            return `
-            <div class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : 'var(--comfy-input-bg)'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">
-                <div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px; line-height: 22px;">${opt.label}</div>
-                <div style="font-size: 12px; color: #888;">${t('wallet.recharge.any_amount')}</div>
-            </div>`;
+            const inner = `<div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px; line-height: 22px;">${opt.label}</div><div style="font-size: 12px; color: #888;">${t('wallet.recharge.any_amount')}</div>`;
+            return _rechargeOptionWrapper(isSelected, index, inner);
         } else {
-            return `
-            <div class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : 'var(--comfy-input-bg)'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">
-                <div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px;">${opt.points} ${t('wallet.recharge.points_suffix')}</div>
-                <div style="font-size: 12px; color: #888;">${t('wallet.recharge.price_prefix')}${opt.price.toFixed(2)}</div>
-            </div>`;
+            const inner = `<div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px;">${opt.points} ${t('wallet.recharge.points_suffix')}</div><div style="font-size: 12px; color: #888;">${t('wallet.recharge.price_prefix')}${opt.price.toFixed(2)}</div>`;
+            return _rechargeOptionWrapper(isSelected, index, inner);
         }
     }).join("");
 
@@ -132,10 +145,16 @@ export function openRechargeModal(currentUser, onBalanceChange) {
             finalPrice = selectedOption.price;
         }
 
-        btnCreateOrder.disabled = true;
-        btnCreateOrder.innerText = t('wallet.recharge.processing') || "处理中...";
-        btnCreateOrder.style.background = "#888";
-        btnCreateOrder.style.cursor = "not-allowed";
+        // 💳 充值二次确认
+        const confirmMsg = `确认充值 ${finalPoints} 积分（¥${finalPrice.toFixed(2)}）？`;
+        const confirmed = await showConfirm(confirmMsg, {
+            title: t('wallet.recharge.title'),
+            confirmText: t('wallet.recharge.get_qr'),
+            type: 'warning'
+        });
+        if (!confirmed) return;
+
+        _setButtonLoading(btnCreateOrder, true, t('wallet.recharge.processing') || "处理中...", t('wallet.recharge.get_qr'));
         qrContainer.style.display = "block";
         qrLoading.style.display = "block";
         qrImage.style.display = "none";
@@ -147,7 +166,7 @@ export function openRechargeModal(currentUser, onBalanceChange) {
             if (token) headers["Authorization"] = `Bearer ${token}`;
 
             // 1. 发起真实创建订单请求
-            const res = await fetch("https://zhiwei666-comfyui-ranking-api.hf.space/api/wallet/create_recharge_order", {
+            const res = await fetch(`${API.BASE_URL}/api/wallet/create_recharge_order`, {
                 method: "POST", headers: headers,
                 body: JSON.stringify({ account: currentUser.account, amount: finalPoints })
             }).then(async r => {
@@ -166,7 +185,7 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
             // 3. 开启真实轮询查单，监听回调
             pollingInterval = setInterval(async () => {
                 try {
-                    const checkRes = await fetch(`https://zhiwei666-comfyui-ranking-api.hf.space/api/wallet/check_order/${res.order_id}?account=${currentUser.account}`, { headers })
+                    const checkRes = await fetch(`${API.BASE_URL}/api/wallet/check_order/${res.order_id}?account=${currentUser.account}`, { headers })
                       .then(r => r.json());
                                           
                     if (checkRes.status === "SUCCESS") {
@@ -200,10 +219,7 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
             qrLoading.innerText = t('wallet.recharge.order_failed') + error.message;
             qrLoading.style.color = "#F44336";
         } finally {
-            btnCreateOrder.disabled = false;
-            btnCreateOrder.innerText = t('wallet.recharge.get_qr');
-            btnCreateOrder.style.background = "#4CAF50";
-            btnCreateOrder.style.cursor = "pointer";
+            _setButtonLoading(btnCreateOrder, false, t('wallet.recharge.processing') || "处理中...", t('wallet.recharge.get_qr'));
         }
     };
 

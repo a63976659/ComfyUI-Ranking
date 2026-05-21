@@ -17,7 +17,16 @@ import { t } from "../components/用户体验增强.js";
 import { removeCache } from "../components/性能优化工具.js";
 import { invalidateRelatedCache } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { renderTipBoardHTML as renderCommonTipBoardHTML } from "../components/互动工具函数.js";
+
+/**
+ * 转义HTML特殊字符，防止XSS注入
+ */
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
 // 🔄 P7后悔模式：渲染退款按钮
 async function renderRefundButton(container, itemData, currentUser) {
@@ -70,91 +79,135 @@ async function renderRefundButton(container, itemData, currentUser) {
     }
 }
 
-// 🔄 P7后悔模式：退款确认弹窗
-function showRefundConfirm(itemData, currentUser, pricePaid) {
+/**
+ * 通用确认弹窗
+ * @param {Object} config - 弹窗配置
+ * @param {string} config.title - 弹窗标题
+ * @param {string} config.titleColor - 标题颜色
+ * @param {string} config.infoHtml - 商品信息区域HTML
+ * @param {string} config.warningHtml - 警告区域HTML
+ * @param {string} config.warningBgColor - 警告区域背景色
+ * @param {string} config.warningBorderColor - 警告区域边框色
+ * @param {string} config.confirmText - 确认按钮文本
+ * @param {string} config.confirmColor - 确认按钮颜色
+ * @param {string} config.confirmHoverColor - 确认按钮悬停颜色
+ * @param {string} config.processingText - 处理中文本
+ * @param {Function} config.onConfirm - 确认回调 (overlay: HTMLElement) => Promise<void>
+ */
+function _showConfirmOverlay({ title, titleColor, infoHtml, warningHtml, warningBgColor, warningBorderColor, confirmText, confirmColor, confirmHoverColor, processingText, onConfirm }) {
+    // 两个按钮的公共基础样式
+    const _btnBaseStyle = "color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: 0.2s;";
+
     const overlay = document.createElement("div");
     Object.assign(overlay.style, {
         position: "fixed", top: "0", left: "0", right: "0", bottom: "0",
         background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center",
         zIndex: "10000"
     });
-    
+
     overlay.innerHTML = `
         <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 420px; width: 90%; color: #fff; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
-            <div style="font-size: 18px; font-weight: bold; margin-bottom: 20px; color: #FF5722; display: flex; align-items: center; gap: 10px;">
-                ⚠️ 确认退款
+            <div style="font-size: 18px; font-weight: bold; margin-bottom: 20px; color: ${titleColor}; display: flex; align-items: center; gap: 10px;">
+                ⚠️ ${title}
             </div>
-            
+
             <div style="background: #2a2d3e; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-                <div style="font-size: 14px; margin-bottom: 10px;">商品：<strong>${itemData.title || '未命名资源'}</strong></div>
-                <div style="font-size: 14px; color: #4CAF50;">退款金额：<strong>${pricePaid}</strong> 积分</div>
+                ${infoHtml}
             </div>
-            
-            <div style="background: rgba(255,87,34,0.1); border: 1px solid rgba(255,87,34,0.3); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+
+            <div style="background: ${warningBgColor}; border: 1px solid ${warningBorderColor}; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
                 <div style="font-size: 13px; color: #FF9800; line-height: 1.8;">
-                    <div>🚨 <strong>退款后果：</strong></div>
-                    <div style="margin-left: 20px; margin-top: 5px;">
-                        • 您将失去此资源的访问权限<br>
-                        • 已下载的文件将被自动删除<br>
-                        • <strong style="color: #F44336;">30天内禁止再次购买此商品</strong>
-                    </div>
+                    ${warningHtml}
                 </div>
             </div>
-            
+
             <div style="display: flex; gap: 12px; justify-content: flex-end;">
-                <button id="btn-cancel-refund" style="background: #555; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: 0.2s;" onmouseover="this.style.background='#666'" onmouseout="this.style.background='#555'">
+                <button id="btn-cancel-confirm" style="background: #555; ${_btnBaseStyle}">
                     取消
                 </button>
-                <button id="btn-confirm-refund" style="background: #FF5722; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#E64A19'" onmouseout="this.style.background='#FF5722'">
-                    确认退款
+                <button id="btn-confirm-action" style="background: ${confirmColor}; font-weight: bold; ${_btnBaseStyle}">
+                    ${confirmText}
                 </button>
             </div>
         </div>
     `;
-    
+
     document.body.appendChild(overlay);
-    
-    overlay.querySelector("#btn-cancel-refund").onclick = () => overlay.remove();
-    
-    overlay.querySelector("#btn-confirm-refund").onclick = async () => {
-        const confirmBtn = overlay.querySelector("#btn-confirm-refund");
+
+    const cancelBtn = overlay.querySelector("#btn-cancel-confirm");
+    cancelBtn.onmouseover = () => { cancelBtn.style.background = "#666"; };
+    cancelBtn.onmouseout  = () => { cancelBtn.style.background = "#555"; };
+    cancelBtn.onclick = () => overlay.remove();
+
+    const confirmBtn = overlay.querySelector("#btn-confirm-action");
+    confirmBtn.onmouseover = () => { confirmBtn.style.background = confirmHoverColor; };
+    confirmBtn.onmouseout  = () => { confirmBtn.style.background = confirmColor; };
+    confirmBtn.onclick = async () => {
         confirmBtn.disabled = true;
-        confirmBtn.innerText = "处理中...";
-        
-        try {
-            const res = await api.requestRefund(currentUser.account, itemData.id);
-            if (res.status === "success") {
-                // 🔄 P7后悔模式：清除本地缓存和文件
-                burnLocalFiles(itemData.id);
-                
-                overlay.innerHTML = `
-                    <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 380px; width: 90%; color: #fff; text-align: center;">
-                        <div style="font-size: 48px; margin-bottom: 15px;">✅</div>
-                        <div style="font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #4CAF50;">退款成功</div>
-                        <div style="font-size: 14px; color: #aaa; margin-bottom: 20px;">
-                            ${res.refund_amount} 积分已退还到您的账户<br>
-                            <span style="color: #FF9800;">${res.ban_days}天内禁止再次购买此商品</span>
+        confirmBtn.innerText = processingText;
+        await onConfirm(overlay);
+    };
+
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+}
+
+// 🔄 P7后悔模式：退款确认弹窗
+function showRefundConfirm(itemData, currentUser, pricePaid) {
+    _showConfirmOverlay({
+        title: "确认退款",
+        titleColor: "#FF5722",
+        infoHtml: `
+            <div style="font-size: 14px; margin-bottom: 10px;">商品：<strong>${escapeHtml(itemData.title || '未命名资源')}</strong></div>
+            <div style="font-size: 14px; color: #4CAF50;">退款金额：<strong>${pricePaid}</strong> 积分</div>
+        `,
+        warningHtml: `
+            <div>🚨 <strong>退款后果：</strong></div>
+            <div style="margin-left: 20px; margin-top: 5px;">
+                • 您将失去此资源的访问权限<br>
+                • 已下载的文件将被自动删除<br>
+                • <strong style="color: #F44336;">30天内禁止再次购买此商品</strong>
+            </div>
+        `,
+        warningBgColor: "rgba(255,87,34,0.1)",
+        warningBorderColor: "rgba(255,87,34,0.3)",
+        confirmText: "确认退款",
+        confirmColor: "#FF5722",
+        confirmHoverColor: "#E64A19",
+        processingText: "处理中...",
+        onConfirm: async (overlay) => {
+            try {
+                const res = await api.requestRefund(currentUser.account, itemData.id);
+                if (res.status === "success") {
+                    // 🔄 P7后悔模式：清除本地缓存和文件
+                    burnLocalFiles(itemData.id);
+
+                    overlay.innerHTML = `
+                        <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 380px; width: 90%; color: #fff; text-align: center;">
+                            <div style="font-size: 48px; margin-bottom: 15px;">✅</div>
+                            <div style="font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #4CAF50;">退款成功</div>
+                            <div style="font-size: 14px; color: #aaa; margin-bottom: 20px;">
+                                ${res.refund_amount} 积分已退还到您的账户<br>
+                                <span style="color: #FF9800;">${res.ban_days}天内禁止再次购买此商品</span>
+                            </div>
+                            <button id="btn-close-refund" style="background: #4CAF50; color: #fff; border: none; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                                知道了
+                            </button>
                         </div>
-                        <button id="btn-close-refund" style="background: #4CAF50; color: #fff; border: none; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 14px;">
-                            知道了
-                        </button>
-                    </div>
-                `;
-                overlay.querySelector("#btn-close-refund").onclick = () => {
+                    `;
+                    overlay.querySelector("#btn-close-refund").onclick = () => {
+                        overlay.remove();
+                        window.dispatchEvent(new CustomEvent("comfy-route-back"));
+                    };
+                } else {
+                    showToast("退款失败，请重试", "error");
                     overlay.remove();
-                    window.dispatchEvent(new CustomEvent("comfy-route-back"));
-                };
-            } else {
-                alert("退款失败：" + (res.detail || "未知错误"));
+                }
+            } catch (e) {
+                showToast("退款请求失败，请检查网络", "error");
                 overlay.remove();
             }
-        } catch (e) {
-            alert("退款请求失败：" + (e.message || "网络错误"));
-            overlay.remove();
         }
-    };
-    
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    });
 }
 
 // 🔄 P7后悔模式：焚毁本地文件和缓存
@@ -203,81 +256,53 @@ function canDeleteItem(itemData, currentUser) {
  * 显示删除确认弹窗
  */
 function showDeleteConfirm(itemData, currentUser, onSuccess) {
-    const overlay = document.createElement("div");
-    Object.assign(overlay.style, {
-        position: "fixed", top: "0", left: "0", right: "0", bottom: "0",
-        background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: "10000"
-    });
-    
-    overlay.innerHTML = `
-        <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 420px; width: 90%; color: #fff; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
-            <div style="font-size: 18px; font-weight: bold; margin-bottom: 20px; color: #F44336; display: flex; align-items: center; gap: 10px;">
-                ⚠️ 确认删除
+    _showConfirmOverlay({
+        title: "确认删除",
+        titleColor: "#F44336",
+        infoHtml: `
+            <div style="font-size: 14px; margin-bottom: 10px;">内容：<strong>${escapeHtml(itemData.title || '未命名资源')}</strong></div>
+            <div style="font-size: 13px; color: #888;">类型：${escapeHtml(itemData.type || '未知')}</div>
+        `,
+        warningHtml: `
+            <div>🚨 <strong>删除后果（不可恢复）：</strong></div>
+            <div style="margin-left: 20px; margin-top: 5px;">
+                • 该内容将从市场永久移除<br>
+                • 所有相关评论将被删除<br>
+                • 已购买用户将无法再下载
             </div>
-            
-            <div style="background: #2a2d3e; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-                <div style="font-size: 14px; margin-bottom: 10px;">内容：<strong>${itemData.title || '未命名资源'}</strong></div>
-                <div style="font-size: 13px; color: #888;">类型：${itemData.type || '未知'}</div>
-            </div>
-            
-            <div style="background: rgba(244,67,54,0.1); border: 1px solid rgba(244,67,54,0.3); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-                <div style="font-size: 13px; color: #FF9800; line-height: 1.8;">
-                    <div>🚨 <strong>删除后果（不可恢复）：</strong></div>
-                    <div style="margin-left: 20px; margin-top: 5px;">
-                        • 该内容将从市场永久移除<br>
-                        • 所有相关评论将被删除<br>
-                        • 已购买用户将无法再下载
-                    </div>
-                </div>
-            </div>
-            
-            <div style="display: flex; gap: 12px; justify-content: flex-end;">
-                <button id="btn-cancel-delete" style="background: #555; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: 0.2s;" onmouseover="this.style.background='#666'" onmouseout="this.style.background='#555'">
-                    取消
-                </button>
-                <button id="btn-confirm-delete" style="background: #F44336; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#D32F2F'" onmouseout="this.style.background='#F44336'">
-                    确认删除
-                </button>
-            </div>
-        </div>
-    `;
-    
-    document.body.appendChild(overlay);
-    
-    overlay.querySelector("#btn-cancel-delete").onclick = () => overlay.remove();
-    
-    overlay.querySelector("#btn-confirm-delete").onclick = async () => {
-        const confirmBtn = overlay.querySelector("#btn-confirm-delete");
-        confirmBtn.disabled = true;
-        confirmBtn.innerText = "删除中...";
-        
-        try {
-            const res = await api.deleteItem(itemData.id);
-            if (res.status === "success") {
-                // 清除相关缓存
-                invalidateRelatedCache(`/api/items/${itemData.id}`, "DELETE");
-                
-                overlay.remove();
-                showToast("内容已删除", "success");
-                
-                // 返回列表页
-                window.dispatchEvent(new CustomEvent("comfy-route-view", { 
-                    detail: { view: "market", type: itemData.type || "tool" } 
-                }));
-                
-                if (onSuccess) onSuccess();
-            } else {
-                alert("删除失败：" + (res.detail || "未知错误"));
+        `,
+        warningBgColor: "rgba(244,67,54,0.1)",
+        warningBorderColor: "rgba(244,67,54,0.3)",
+        confirmText: "确认删除",
+        confirmColor: "#F44336",
+        confirmHoverColor: "#D32F2F",
+        processingText: "删除中...",
+        onConfirm: async (overlay) => {
+            try {
+                const res = await api.deleteItem(itemData.id);
+                if (res.status === "success") {
+                    // 清除相关缓存
+                    invalidateRelatedCache(`/api/items/${itemData.id}`, "DELETE");
+
+                    overlay.remove();
+                    showToast("内容已删除", "success");
+
+                    // 返回列表页
+                    window.dispatchEvent(new CustomEvent("comfy-route-view", {
+                        detail: { view: "market", type: itemData.type || "tool" }
+                    }));
+
+                    if (onSuccess) onSuccess();
+                } else {
+                    showToast("删除失败，请重试", "error");
+                    overlay.remove();
+                }
+            } catch (e) {
+                showToast("删除请求失败，请检查网络", "error");
                 overlay.remove();
             }
-        } catch (e) {
-            alert("删除请求失败：" + (e.message || "网络错误"));
-            overlay.remove();
         }
-    };
-    
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    });
 }
 
 export function createItemDetailView(itemData, currentUser) {
@@ -364,7 +389,7 @@ export function createItemDetailView(itemData, currentUser) {
             <div style="font-size: 16px; font-weight: bold; color: #00bcd4; margin-bottom: 15px; display: flex; align-items: center; gap: 8px;">
                 ⚙️ 内容详情与介绍
             </div>
-            <div style="color: #ddd; line-height: 1.8; font-size: 13px; white-space: pre-wrap; word-wrap: break-word;">${itemData.fullDesc || itemData.shortDesc}</div>
+            <div style="color: #ddd; line-height: 1.8; font-size: 13px; white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(itemData.fullDesc || itemData.shortDesc)}</div>
         </div>
 
         <div style="background: #181b28; border: 1px solid #2d334a; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
@@ -393,18 +418,18 @@ export function createItemDetailView(itemData, currentUser) {
     
     // 🚀 绑定作品打赏按钮事件
     container.querySelector("#btn-tip-item").onclick = async () => {
-        if (!currentUser) return alert("请先登录您的账号！");
+        if (!currentUser) return showToast("请先登录您的账号！", "warning");
         await openTipModal(currentUser, { account: itemData.author }, (newBalance) => {
             currentUser.balance = newBalance;
             // 打赏成功后刷新局部或整体详情 (由框架重新渲染)
-        }, itemData.id); 
+        }, itemData.id);
     };
 
     // 🗑️ 绑定删除按钮事件
     const btnDeleteItem = container.querySelector("#btn-delete-item");
     if (btnDeleteItem) {
         btnDeleteItem.onclick = () => {
-            if (!currentUser) return alert("请先登录您的账号！");
+            if (!currentUser) return showToast("请先登录您的账号！", "warning");
             showDeleteConfirm(itemData, currentUser);
         };
     }

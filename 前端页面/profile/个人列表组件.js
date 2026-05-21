@@ -57,6 +57,24 @@ function renderUserCard(account, currentUser, openOtherUserModalCb) {
 }
 
 /**
+ * 🗂️ 渲染用户列表标签页（关注/粉丝通用：清空容器 → flex包装 → 分页渲染）
+ * @param {Array} listData - 用户账号列表
+ * @param {HTMLElement} domElement - 挂载点
+ * @param {Object} currentUser - 当前登录用户
+ * @param {Function} openOtherUserModalCb - 打开用户详情回调
+ * @param {string} emptyMsg - 空列表提示文案
+ */
+function _renderUserListTab(listData, domElement, currentUser, openOtherUserModalCb, emptyMsg) {
+    domElement.innerHTML = "";
+    const containerDiv = document.createElement("div");
+    containerDiv.style.display = "flex";
+    containerDiv.style.flexDirection = "column";
+    containerDiv.style.gap = "8px";
+    domElement.appendChild(containerDiv);
+    renderPaginatedUserList(listData, containerDiv, currentUser, openOtherUserModalCb, emptyMsg);
+}
+
+/**
  * 📄 渲染分页用户列表（复用于粉丝列表和关注列表）
  * @param {Array} userList - 用户账号列表
  * {HTMLElement} containerDiv - 容器元素
@@ -114,8 +132,8 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
     if (!isMe) {
         if ((tabId === "following" && privacy.follows) ||
             (tabId === "liked" && privacy.likes) ||
-            (tabId === "followers" && privacy.followers) ||
-            (tabId === "collected")) {
+            (tabId === "followers" && privacy.follows) ||
+            (tabId === "collected" && privacy.favorites)) {
             domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#888;'>🔒 ${t('profile.privacy_hidden')}</div>`;
             return;
         }
@@ -123,45 +141,13 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
 
     // 👥 关注列表（使用 SWR 缓存技术）
     if (tabId === "following") {
-        const followingList = userData.following || [];
-        domElement.innerHTML = "";
-        
-        // 创建容器
-        const containerDiv = document.createElement("div");
-        containerDiv.style.display = "flex"; 
-        containerDiv.style.flexDirection = "column"; 
-        containerDiv.style.gap = "8px";
-        domElement.appendChild(containerDiv);
-
-        renderPaginatedUserList(
-            followingList, 
-            containerDiv, 
-            currentUser, 
-            openOtherUserModalCb, 
-            t('profile.no_following') || '还没有关注任何人'
-        );
+        _renderUserListTab(userData.following || [], domElement, currentUser, openOtherUserModalCb, t('profile.no_following') || '还没有关注任何人');
         return;
     }
 
     // 👥 粉丝列表（使用 SWR 缓存技术）
     if (tabId === "followers") {
-        const followersList = userData.followers || [];
-        domElement.innerHTML = "";
-        
-        // 创建容器
-        const containerDiv = document.createElement("div");
-        containerDiv.style.display = "flex"; 
-        containerDiv.style.flexDirection = "column"; 
-        containerDiv.style.gap = "8px";
-        domElement.appendChild(containerDiv);
-
-        renderPaginatedUserList(
-            followersList, 
-            containerDiv, 
-            currentUser, 
-            openOtherUserModalCb, 
-            t('profile.no_followers') || '还没有粉丝'
-        );
+        _renderUserListTab(userData.followers || [], domElement, currentUser, openOtherUserModalCb, t('profile.no_followers') || '还没有粉丝');
         return;
     }
 
@@ -190,11 +176,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
         }
 
         if (acquiredItemIds.length === 0) {
-            domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#666;'>
-                <div style="font-size: 40px; margin-bottom: 10px;">📦</div>
-                <div>还没有购买任何资源</div>
-                <div style="font-size: 12px; color: #888; margin-top: 5px;">去榜单页面发现优秀工具吧！</div>
-            </div>`;
+            domElement.innerHTML = _renderEmptyState('📦', '还没有购买任何资源', '去榜单页面发现优秀工具吧！');
             return;
         }
 
@@ -272,11 +254,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             const assignedTasks = assignedRes.data || [];
             
             if (publishedTasks.length === 0 && assignedTasks.length === 0) {
-                domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#666;'>
-                    <div style="font-size: 40px; margin-bottom: 10px;">📝</div>
-                    <div>还没有任何任务记录</div>
-                    <div style="font-size: 12px; color: #888; margin-top: 5px;">去任务榜发布或接受任务吧！</div>
-                </div>`;
+                domElement.innerHTML = _renderEmptyState('📝', '还没有任何任务记录', '去任务榜发布或接受任务吧！');
                 return;
             }
             
@@ -352,80 +330,43 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             containerDiv.style.cssText = "display: flex; flex-direction: column; gap: 15px;";
             
             // 💰 销售统计卡片（放在最上方，与打赏统计样式一致）
-            const salesStatsCard = document.createElement("div");
-            salesStatsCard.style.cssText = "background: linear-gradient(135deg, var(--comfy-input-bg), #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444; margin-bottom: 15px;";
-            salesStatsCard.innerHTML = `
-                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 12px;">💰 ${t('profile.sales_stats') || '销售统计'}</div>
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
-                    <div style="text-align: center; padding: 10px; background: rgba(76,175,80,0.1); border-radius: 8px;">
-                        <div style="font-size: 20px; font-weight: bold; color: #4CAF50;">+${salesStats.total_sales || 0}</div>
-                        <div style="font-size: 11px; color: #888;">${t('profile.sales_income') || '销售收入'}</div>
-                    </div>
-                    <div style="text-align: center; padding: 10px; background: rgba(244,67,54,0.1); border-radius: 8px;">
-                        <div style="font-size: 20px; font-weight: bold; color: #F44336;">-${salesStats.total_purchase || 0}</div>
-                        <div style="font-size: 11px; color: #888;">${t('profile.purchase_expense') || '购买支出'} (${salesStats.purchase_count || 0}${t('profile.transactions_unit') || '笔'})</div>
-                    </div>
-                    <div style="text-align: center; padding: 10px; background: rgba(33,150,243,0.1); border-radius: 8px;">
-                        <div style="font-size: 20px; font-weight: bold; color: #2196F3;">${(salesStats.net_sales || 0) > 0 ? '+' : ''}${salesStats.net_sales || 0}</div>
-                        <div style="font-size: 11px; color: #888;">${t('profile.net_sales') || '净销售'}</div>
-                    </div>
-                </div>
-            `;
-            containerDiv.appendChild(salesStatsCard);
-            
+            containerDiv.appendChild(_createStatsCard(
+                `💰 ${t('profile.sales_stats') || '销售统计'}`,
+                [
+                    { value: `+${salesStats.total_sales || 0}`,    color: '#4CAF50', bgRgb: '76,175,80',  label: t('profile.sales_income') || '销售收入' },
+                    { value: `-${salesStats.total_purchase || 0}`,  color: '#F44336', bgRgb: '244,67,54', label: `${t('profile.purchase_expense') || '购买支出'} (${salesStats.purchase_count || 0}${t('profile.transactions_unit') || '笔'})` },
+                    { value: `${(salesStats.net_sales || 0) > 0 ? '+' : ''}${salesStats.net_sales || 0}`, color: '#2196F3', bgRgb: '33,150,243', label: t('profile.net_sales') || '净销售' }
+                ],
+                ' margin-bottom: 15px;'
+            ));
+
             // 📊 任务收益统计卡片
-            const statsCard = document.createElement("div");
-            statsCard.style.cssText = "background: linear-gradient(135deg, var(--comfy-input-bg), #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444;";
-            statsCard.innerHTML = `
-                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 12px;">📊 任务收益统计</div>
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
-                    <div style="text-align: center; padding: 10px; background: rgba(76,175,80,0.1); border-radius: 8px;">
-                        <div style="font-size: 20px; font-weight: bold; color: #4CAF50;">+${stats.total_income || 0}</div>
-                        <div style="font-size: 11px; color: #888;">任务收入 (${stats.income_count || 0}笔)</div>
-                    </div>
-                    <div style="text-align: center; padding: 10px; background: rgba(244,67,54,0.1); border-radius: 8px;">
-                        <div style="font-size: 20px; font-weight: bold; color: #F44336;">-${stats.total_payment || 0}</div>
-                        <div style="font-size: 11px; color: #888;">任务支出 (${stats.payment_count || 0}笔)</div>
-                    </div>
-                    <div style="text-align: center; padding: 10px; background: rgba(33,150,243,0.1); border-radius: 8px;">
-                        <div style="font-size: 20px; font-weight: bold; color: #2196F3;">${stats.net_earnings > 0 ? '+' : ''}${stats.net_earnings || 0}</div>
-                        <div style="font-size: 11px; color: #888;">净收益</div>
-                    </div>
-                </div>
-            `;
-            containerDiv.appendChild(statsCard);
-            
+            containerDiv.appendChild(_createStatsCard(
+                '📊 任务收益统计',
+                [
+                    { value: `+${stats.total_income || 0}`,   color: '#4CAF50', bgRgb: '76,175,80',  label: `任务收入 (${stats.income_count || 0}笔)` },
+                    { value: `-${stats.total_payment || 0}`,  color: '#F44336', bgRgb: '244,67,54', label: `任务支出 (${stats.payment_count || 0}笔)` },
+                    { value: `${stats.net_earnings > 0 ? '+' : ''}${stats.net_earnings || 0}`, color: '#2196F3', bgRgb: '33,150,243', label: '净收益' }
+                ]
+            ));
+
             // 🎁 打赏统计卡片
-            const tipStatsCard = document.createElement("div");
-            tipStatsCard.style.cssText = "background: linear-gradient(135deg, var(--comfy-input-bg), #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444; margin-bottom: 15px;";
-            tipStatsCard.innerHTML = `
-                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 12px;">🎁 ${t('profile.tip_stats') || '打赏统计'}</div>
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
-                    <div style="text-align: center; padding: 10px; background: rgba(76,175,80,0.1); border-radius: 8px;">
-                        <div style="font-size: 20px; font-weight: bold; color: #4CAF50;">+${tipStats.total_tip_in || 0}</div>
-                        <div style="font-size: 11px; color: #888;">${t('profile.tip_received') || '收到打赏'} (${tipStats.tip_in_count || 0}${t('profile.transactions_unit') || '笔'})</div>
-                    </div>
-                    <div style="text-align: center; padding: 10px; background: rgba(244,67,54,0.1); border-radius: 8px;">
-                        <div style="font-size: 20px; font-weight: bold; color: #F44336;">-${tipStats.total_tip_out || 0}</div>
-                        <div style="font-size: 11px; color: #888;">${t('profile.tip_sent') || '打赏支出'} (${tipStats.tip_out_count || 0}${t('profile.transactions_unit') || '笔'})</div>
-                    </div>
-                    <div style="text-align: center; padding: 10px; background: rgba(33,150,243,0.1); border-radius: 8px;">
-                        <div style="font-size: 20px; font-weight: bold; color: #2196F3;">${(tipStats.net_tips || 0) > 0 ? '+' : ''}${tipStats.net_tips || 0}</div>
-                        <div style="font-size: 11px; color: #888;">${t('profile.net_tips') || '净打赏'}</div>
-                    </div>
-                </div>
-            `;
-            containerDiv.appendChild(tipStatsCard);
+            containerDiv.appendChild(_createStatsCard(
+                `🎁 ${t('profile.tip_stats') || '打赏统计'}`,
+                [
+                    { value: `+${tipStats.total_tip_in || 0}`,  color: '#4CAF50', bgRgb: '76,175,80',  label: `${t('profile.tip_received') || '收到打赏'} (${tipStats.tip_in_count || 0}${t('profile.transactions_unit') || '笔'})` },
+                    { value: `-${tipStats.total_tip_out || 0}`, color: '#F44336', bgRgb: '244,67,54', label: `${t('profile.tip_sent') || '打赏支出'} (${tipStats.tip_out_count || 0}${t('profile.transactions_unit') || '笔'})` },
+                    { value: `${(tipStats.net_tips || 0) > 0 ? '+' : ''}${tipStats.net_tips || 0}`, color: '#2196F3', bgRgb: '33,150,243', label: t('profile.net_tips') || '净打赏' }
+                ],
+                ' margin-bottom: 15px;'
+            ));
             
             // 📝 交易明细列表
             const txListDiv = document.createElement("div");
             txListDiv.style.cssText = "display: flex; flex-direction: column; gap: 8px;";
             
             if (transactions.length === 0) {
-                txListDiv.innerHTML = `<div style='text-align:center; padding: 30px; color:#666;'>
-                    <div style="font-size: 32px; margin-bottom: 10px;">💰</div>
-                    <div>暂无交易记录</div>
-                </div>`;
+                txListDiv.innerHTML = _renderEmptyState('💰', '暂无交易记录');
             } else {
                 transactions.forEach(tx => {
                     try {
@@ -457,11 +398,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             const posts = res.data || [];
 
             if (posts.length === 0) {
-                domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#666;'>
-                    <div style="font-size: 40px; margin-bottom: 10px;">💬</div>
-                    <div>还没有发布任何帖子</div>
-                    <div style="font-size: 12px; color: #888; margin-top: 5px;">去讨论区分享你的想法吧！</div>
-                </div>`;
+                domElement.innerHTML = _renderEmptyState('💬', '还没有发布任何帖子', '去讨论区分享你的想法吧！');
                 return;
             }
 
@@ -493,11 +430,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
         const applyDOM = (items, posts) => {
             domElement.innerHTML = "";
             if ((!items || items.length === 0) && (!posts || posts.length === 0)) {
-                domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#666;'>
-                    <div style="font-size: 40px; margin-bottom: 10px;">🔖</div>
-                    <div>${t('profile.no_collected') || '还没有收藏任何内容'}</div>
-                    <div style="font-size: 12px; color: #888; margin-top: 5px;">${t('profile.go_discover') || '去榜单页面或讨论区发现精彩内容吧！'}</div>
-                </div>`;
+                domElement.innerHTML = _renderEmptyState('🔖', t('profile.no_collected') || '还没有收藏任何内容', t('profile.go_discover') || '去榜单页面或讨论区发现精彩内容吧！');
                 return;
             }
             const listDiv = document.createElement("div");
@@ -559,8 +492,8 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
     const cachedStr = localStorage.getItem(cacheKey);
     
     const applyDOM = (items) => {
-        domElement.innerHTML = ""; 
-        if (items.length === 0) { domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#666;'>暂无记录</div>`; return; }
+        domElement.innerHTML = "";
+        if (items.length === 0) { domElement.innerHTML = _renderEmptyState('📋', '暂无记录'); return; }
         items.forEach(item => { domElement.appendChild(createItemCard(item, currentUser)); });
     };
 
@@ -586,6 +519,46 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
     } catch (error) { 
         if (!cachedStr) domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#F44336;'>数据加载失败</div>"; 
     }
+}
+
+/**
+ * 🎨 渲染空列表占位提示HTML
+ * @param {string} icon - 图标emoji
+ * @param {string} title - 主文案
+ * @param {string} [subtitle] - 次要文案（可选）
+ * @returns {string} HTML字符串
+ */
+function _renderEmptyState(icon, title, subtitle = '') {
+    const subtitleHtml = subtitle
+        ? `<div style="font-size: 12px; color: #888; margin-top: 5px;">${subtitle}</div>`
+        : '';
+    return `<div style='text-align:center; padding: 30px; color:#666;'>
+        <div style="font-size: 40px; margin-bottom: 10px;">${icon}</div>
+        <div>${title}</div>
+        ${subtitleHtml}
+    </div>`;
+}
+
+/**
+ * 💳 创建统计卡片（销售统计、任务收益、打赏统计等通用结构）
+ * @param {string} title - 卡片标题（含图标emoji）
+ * @param {Array<{value: string, label: string}>} stats - 3列统计项
+ * @param {string} [extraStyle] - 额外的卡片外层样式
+ * @returns {HTMLElement}
+ */
+function _createStatsCard(title, stats, extraStyle = '') {
+    const card = document.createElement('div');
+    card.style.cssText = `background: linear-gradient(135deg, var(--comfy-input-bg), #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444;${extraStyle}`;
+    const colsHtml = stats.map(s => `
+        <div style="text-align: center; padding: 10px; background: rgba(${s.bgRgb || '76,175,80'},0.1); border-radius: 8px;">
+            <div style="font-size: 20px; font-weight: bold; color: ${s.color};">${s.value}</div>
+            <div style="font-size: 11px; color: #888;">${s.label}</div>
+        </div>`).join('');
+    card.innerHTML = `
+        <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 12px;">${title}</div>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">${colsHtml}</div>
+    `;
+    return card;
 }
 
 /**

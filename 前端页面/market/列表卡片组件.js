@@ -13,6 +13,63 @@ import { lazyLoadImages } from "../components/性能优化工具.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR, CACHE } from "../core/全局配置.js";
 
+/**
+ * 转义HTML特殊字符，防止XSS注入
+ */
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
+ * 生成价格显示HTML（含待生效价格提示）
+ */
+function _generatePriceHTML(itemData, t) {
+    const formatPrice = (price) => price > 0 ? `${price} ${t('market.points')}` : t('market.free');
+
+    if (itemData.pending_price !== null && itemData.pending_price !== undefined && itemData.pending_price_effective_at) {
+        const effectiveTime = new Date(itemData.pending_price_effective_at);
+        const now = new Date();
+        if (effectiveTime > now) {
+            const hoursLeft = Math.ceil((effectiveTime - now) / (1000 * 60 * 60));
+            return `
+                <span style="float: right;">
+                    <span style="color: #FF9800;">💰 ${formatPrice(itemData.price)}</span>
+                    <span style="margin-left: 5px; font-size: 10px; color: #F44336; background: rgba(244,67,54,0.15); padding: 1px 4px; border-radius: 3px;" title="${hoursLeft}${t('time.hours_later')}">
+                        → ${itemData.pending_price}${t('market.points')}
+                    </span>
+                </span>
+            `;
+        } else {
+            return `<span style="float: right; color: #FF9800;">💰 ${formatPrice(itemData.pending_price)}</span>`;
+        }
+    } else {
+        return `<span style="float: right; color: #FF9800;">💰 ${formatPrice(itemData.price)}</span>`;
+    }
+}
+
+/**
+ * 使用SWR缓存机制加载作者资料并更新DOM
+ * @param {string} account - 作者账号
+ * @param {Object} callbacks - 回调集合 { onName, onAvatar, fallbackName }
+ */
+function _loadAuthorProfile(account, { onName, onAvatar, fallbackName } = {}) {
+    const cached = getCachedProfile(account);
+    if (cached) {
+        if (cached.name && onName) onName(cached.name);
+        if (cached.avatar && onAvatar) onAvatar(cached.avatar);
+    } else if (fallbackName && onName) {
+        onName(fallbackName);
+    }
+
+    getProfileWithSWR(account, api.getUserProfile, (profile) => {
+        if (profile.name && onName) onName(profile.name);
+        if (profile.avatar && onAvatar) onAvatar(profile.avatar);
+    });
+}
+
 export function createItemCard(itemData, currentUser = null, contextType = null) {
     const card = document.createElement("div");
     card.setAttribute("data-item-id", itemData.id);
@@ -47,20 +104,20 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
     summaryView.innerHTML = `
         <!-- 第1行: 标题 + 使用次数 -->
         <div style="display: flex; align-items: center; margin-bottom: 4px;">
-            <div style="font-weight: bold; font-size: 14px; color: #4CAF50; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${itemData.title}${updateBadgeHtml}</div>
+            <div style="font-weight: bold; font-size: 14px; color: #4CAF50; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(itemData.title)}${updateBadgeHtml}</div>
             <span style="margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px;">
                 <span data-stat="uses" style="display: flex; align-items: center; gap: 2px;">📥 ${itemData.uses || 0}</span>
                 <span data-stat="views" style="display: flex; align-items: center; gap: 2px;">🔥 ${itemData.views || 0}</span>
             </span>
         </div>
         <!-- 第2行: 描述 -->
-        <div style="font-size: 12px; color: #aaa; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 8px;">${itemData.shortDesc}</div>
+        <div style="font-size: 12px; color: #aaa; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 8px;">${escapeHtml(itemData.shortDesc)}</div>
         <!-- 第3行: 互动数据 + 发布者信息 -->
         <div style="display: flex; align-items: center; gap: 10px; font-size: 11px; color: #888;">
             <span data-stat="likes">👍 ${itemData.likes || 0}</span> <span data-stat="favorites">🔖 ${itemData.favorites || 0}</span> <span class="card-comment-count">💬 ${initialCommentCount}</span>
             <span style="margin-left: auto; display: flex; align-items: center; gap: 4px; cursor: pointer;" class="card-author-info">
                 <img class="card-author-avatar" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect fill='%23333' width='40' height='40' rx='20'/%3E%3Ctext x='20' y='25' text-anchor='middle' fill='%23666' font-size='16'%3E%3F%3C/text%3E%3C/svg%3E" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover;">
-                <span class="card-author-name" style="font-size: 12px; color: #aaa; transition: color 0.2s;">${itemData.author || '未知'}</span>
+                <span class="card-author-name" style="font-size: 12px; color: #aaa; transition: color 0.2s;">${escapeHtml(itemData.author || '未知')}</span>
             </span>
         </div>
     `;
@@ -101,19 +158,11 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
             if (authorNameEl) authorNameEl.style.color = '#aaa';
         };
         
-        // 同步读取缓存，0延迟渲染
-        const cached = getCachedProfile(itemData.author);
-        if (cached) {
-            if (cached.name) authorNameEl.textContent = cached.name;
-            if (cached.avatar) authorAvatarEl.src = cached.avatar;
-        } else {
-            authorNameEl.textContent = itemData.author;
-        }
-        
-        // SWR后台校对，自动更新DOM和缓存
-        getProfileWithSWR(itemData.author, api.getUserProfile, (profile) => {
-            if (profile.name) authorNameEl.textContent = profile.name;
-            if (profile.avatar) authorAvatarEl.src = profile.avatar;
+        // 使用统一辅助函数加载作者资料
+        _loadAuthorProfile(itemData.author, {
+            onName: (name) => { authorNameEl.textContent = name; },
+            onAvatar: (avatar) => { authorAvatarEl.src = avatar; },
+            fallbackName: itemData.author
         });
     }
 
@@ -124,40 +173,16 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
     Object.assign(authorInfo.style, { fontSize: "12px", color: "#ccc", marginBottom: "10px" });
     
     // 🔄 P7后悔模式：检查是否有待生效价格
-    let priceHtml = '';
-    if (itemData.pending_price !== null && itemData.pending_price !== undefined && itemData.pending_price_effective_at) {
-        const effectiveTime = new Date(itemData.pending_price_effective_at);
-        const now = new Date();
-        if (effectiveTime > now) {
-            const hoursLeft = Math.ceil((effectiveTime - now) / (1000 * 60 * 60));
-            priceHtml = `
-                <span style="float: right;">
-                    <span style="color: #FF9800;">💰 ${itemData.price > 0 ? itemData.price + ` ${t('market.points')}` : t('market.free')}</span>
-                    <span style="margin-left: 5px; font-size: 10px; color: #F44336; background: rgba(244,67,54,0.15); padding: 1px 4px; border-radius: 3px;" title="${hoursLeft}${t('time.hours_later')}">
-                        → ${itemData.pending_price}${t('market.points')}
-                    </span>
-                </span>
-            `;
-        } else {
-            priceHtml = `<span style="float: right; color: #FF9800;">💰 ${itemData.pending_price > 0 ? itemData.pending_price + ` ${t('market.points')}` : t('market.free')}</span>`;
-        }
-    } else {
-        priceHtml = `<span style="float: right; color: #FF9800;">💰 ${itemData.price > 0 ? itemData.price + ` ${t('market.points')}` : t('market.free')}</span>`;
-    }
+    const priceHtml = _generatePriceHTML(itemData, t);
     
     authorInfo.innerHTML = `${t('market.author')}: <span class="author-name-link" style="color: #2196F3; cursor: pointer; text-decoration: underline;">${t('common.loading')}...</span> ${priceHtml}`;
     detailView.appendChild(authorInfo);
 
     const nameDOM = authorInfo.querySelector('.author-name-link');
     
-    // 使用SWR缓存机制加载作者名称
-    const cached = getCachedProfile(itemData.author);
-    if (cached && cached.name) {
-        nameDOM.textContent = cached.name;
-    }
-    
-    getProfileWithSWR(itemData.author, api.getUserProfile, (profile) => {
-        if (profile.name) nameDOM.textContent = profile.name;
+    // 使用统一辅助函数加载作者名称
+    _loadAuthorProfile(itemData.author, {
+        onName: (name) => { nameDOM.textContent = name; }
     });
     
     nameDOM.onclick = (e) => { e.stopPropagation(); openOtherUserProfileModal(itemData.author, currentUser); };
@@ -280,7 +305,7 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
         ${chartHtml}
         ${getCoverSandboxHTML(itemData.imageUrls?.length > 0 ? itemData.imageUrls : itemData.coverUrl)}
         <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #aaa;">📝 ${t('market.full_description')}</div>
-        <div style="background: var(--comfy-menu-bg); padding: 10px; border-radius: 4px; font-size: 12px; color: #bbb; margin-bottom: 12px; max-height: 200px; overflow-y: auto; line-height: 1.6; border: 1px solid var(--border-color, #333); word-wrap: break-word; white-space: pre-wrap;">${itemData.fullDesc}</div>
+        <div style="background: var(--comfy-menu-bg); padding: 10px; border-radius: 4px; font-size: 12px; color: #bbb; margin-bottom: 12px; max-height: 200px; overflow-y: auto; line-height: 1.6; border: 1px solid var(--border-color, #333); word-wrap: break-word; white-space: pre-wrap;">${escapeHtml(itemData.fullDesc)}</div>
     `;
     detailView.appendChild(mediaArea);
 
@@ -480,7 +505,7 @@ function showRefundConfirm(itemData, currentUser, pricePaid, card) {
             </div>
             
             <div style="background: #2a2d3e; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-                <div style="font-size: 14px; margin-bottom: 10px;">商品：<strong>${itemData.title || '未命名资源'}</strong></div>
+                <div style="font-size: 14px; margin-bottom: 10px;">商品：<strong>${escapeHtml(itemData.title || '未命名资源')}</strong></div>
                 <div style="font-size: 14px; color: #4CAF50;">退款金额：<strong>${pricePaid}</strong> 积分</div>
             </div>
             

@@ -16,8 +16,33 @@ from aiohttp import web
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_NODES_DIR = os.path.dirname(THIS_DIR)
 
+MAX_ZIP_SIZE = 2 * 1024 * 1024 * 1024  # 2GB ZIP 包上限
+
+
+def _is_local_request(request):
+    """检查请求是否来自本机，保护敏感安装接口"""
+    remote = request.remote or ""
+    if remote in ("127.0.0.1", "localhost", "::1"):
+        return True
+    return False
+
+
+def _prepare_git_env():
+    """准备 Git 环境变量，防止 git 弹窗要求输入密码导致后台卡死"""
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"           # 禁止 Git Credential Manager 交互
+    env["GIT_CONFIG_NOSYSTEM"] = "1"           # 禁用系统级 gitconfig（可能配置了 credential.helper）
+    env["GCM_PROVIDER"] = ""                    # 清空 GCM provider，阻止任何凭证提供者
+    env["GIT_ASKPASS"] = ""                     # 禁用 Git ASKPASS 外部程序
+    env["SSH_ASKPASS"] = ""                     # 禁用 SSH ASKPASS 外部程序
+    return env
+
+
 async def install_tool_handler(request):
-    """本地 API：通过 Git Clone 下载插件，使用浅克隆（--depth 1）加速大仓库安装，保留 .git 文件夹以便后续无缝更新"""
+    # NOTE: 与 install_tool_stream_handler 共享核心安装逻辑（URL校验、双链路容灾、Git克隆），如需修改请同步
+    if not _is_local_request(request):
+        return web.json_response({"error": "Forbidden: local access only"}, status=403)
     data = await request.json()
     item_url = data.get("url")
     item_id = data.get("id")
@@ -46,14 +71,7 @@ async def install_tool_handler(request):
         # 链路 A：使用目前最稳定的域名级直接替换镜像
         mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
         
-        # 复制当前系统环境变量，防止 git 弹窗要求输入密码导致后台卡死
-        env = os.environ.copy()
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        env["GCM_INTERACTIVE"] = "never"           # 禁止 Git Credential Manager 交互
-        env["GIT_CONFIG_NOSYSTEM"] = "1"           # 禁用系统级 gitconfig（可能配置了 credential.helper）
-        env["GCM_PROVIDER"] = ""                    # 清空 GCM provider，阻止任何凭证提供者
-        env["GIT_ASKPASS"] = ""                     # 禁用 Git ASKPASS 外部程序
-        env["SSH_ASKPASS"] = ""                     # 禁用 SSH ASKPASS 外部程序
+        env = _prepare_git_env()
 
         try:
             print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
@@ -107,7 +125,12 @@ async def install_tool_handler(request):
         return web.json_response({"error": f"安装过程发生未知失败: {str(e)}"}, status=500)
 
 async def install_private_tool_handler(request):
-    """本地 API：针对付费/私有库，通过云端鉴权代理下载 ZIP 包，流式写入临时文件并磁盘解压覆盖"""
+    """本地 API：针对付费/私有库，通过云端鉴权代理下载 ZIP 包，流式写入临时文件并磁盘解压覆盖
+    
+    NOTE: 与 install_private_tool_stream_handler 共享核心安装逻辑（ZIP下载、重试、解压），如需修改请同步
+    """
+    if not _is_local_request(request):
+        return web.json_response({"error": "Forbidden: local access only"}, status=403)
     data = await request.json()
     item_url = data.get("url")
     item_id = data.get("id")
@@ -171,6 +194,10 @@ async def install_private_tool_handler(request):
                             
                             tmp_file.write(chunk)
                             downloaded += len(chunk)
+                            if downloaded > MAX_ZIP_SIZE:
+                                await asyncio.to_thread(os.unlink, tmp_path)
+                                tmp_path = None
+                                return web.json_response({"error": f"ZIP 文件体积超过安全上限 ({MAX_ZIP_SIZE // (1024*1024*1024)}GB)"}, status=413)
                 finally:
                     response.close()
                 
@@ -263,7 +290,12 @@ async def install_private_tool_handler(request):
                 print(f"[ComfyUI-Ranking] ⚠️ 临时文件清理失败（已重试5次，不影响安装结果）: {tmp_path}")
 
 async def install_tool_stream_handler(request):
-    """SSE 流式接口：通过 Git Clone 下载插件，实时推送进度"""
+    """SSE 流式接口：通过 Git Clone 下载插件，实时推送进度
+    
+    NOTE: 与 install_tool_handler 共享核心安装逻辑（URL校验、双链路容灾、Git克隆），如需修改请同步
+    """
+    if not _is_local_request(request):
+        return web.json_response({"error": "Forbidden: local access only"}, status=403)
     data = await request.json()
     item_url = data.get("url")
     item_id = data.get("id")
@@ -313,14 +345,7 @@ async def install_tool_stream_handler(request):
                 await resp.write_eof()
                 return resp
 
-        # 复制当前系统环境变量，防止 git 弹窗要求输入密码导致后台卡死
-        env = os.environ.copy()
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        env["GCM_INTERACTIVE"] = "never"           # 禁止 Git Credential Manager 交互
-        env["GIT_CONFIG_NOSYSTEM"] = "1"           # 禁用系统级 gitconfig（可能配置了 credential.helper）
-        env["GCM_PROVIDER"] = ""                    # 清空 GCM provider，阻止任何凭证提供者
-        env["GIT_ASKPASS"] = ""                     # 禁用 Git ASKPASS 外部程序
-        env["SSH_ASKPASS"] = ""                     # 禁用 SSH ASKPASS 外部程序
+        env = _prepare_git_env()
 
         mirror_url = item_url.replace("https://kkgithub.com", "https://github.com")
 
@@ -421,7 +446,12 @@ async def install_tool_stream_handler(request):
     return resp
 
 async def install_private_tool_stream_handler(request):
-    """SSE 流式接口：针对付费/私有库，通过云端鉴权代理下载 ZIP 包，流式写入临时文件并磁盘解压覆盖"""
+    """SSE 流式接口：针对付费/私有库，通过云端鉴权代理下载 ZIP 包，流式写入临时文件并磁盘解压覆盖
+    
+    NOTE: 与 install_private_tool_handler 共享核心安装逻辑（ZIP下载、重试、解压），如需修改请同步
+    """
+    if not _is_local_request(request):
+        return web.json_response({"error": "Forbidden: local access only"}, status=403)
     data = await request.json()
     item_url = data.get("url")
     item_id = data.get("id")
@@ -533,6 +563,12 @@ async def install_private_tool_stream_handler(request):
                             
                             tmp_file.write(chunk)
                             downloaded += len(chunk)
+                            if downloaded > MAX_ZIP_SIZE:
+                                await asyncio.to_thread(os.unlink, tmp_path)
+                                tmp_path = None
+                                await send_progress("error", -1, f"ZIP 文件体积超过安全上限 ({MAX_ZIP_SIZE // (1024*1024*1024)}GB)", "error")
+                                await resp.write_eof()
+                                return resp
                             
                             # 每5MB或每10秒更新一次下载进度
                             current_time = time.time()

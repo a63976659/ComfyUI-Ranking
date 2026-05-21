@@ -20,6 +20,43 @@ function calculateAge(birthDate) {
     return age >= 0 && age <= 150 ? age : null;
 }
 
+// 图像上传处理通用函数：绑定触发按钮 → 文件选择 → 裁剪 → 回调
+function _createImageUploadHandler(inputEl, triggerEl, cropRatio, cropTitle, qualityLevel, onCropped) {
+    triggerEl.onclick = () => inputEl.click();
+    inputEl.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        inputEl.value = "";
+        const croppedFile = await openImageCropper(file, cropRatio, cropTitle, qualityLevel);
+        if (!croppedFile) return;
+        await onCropped(croppedFile);
+    };
+}
+
+// FileReader读取图片并预览到目标元素，可选保存到localStorage
+function _readAndPreviewImage(file, previewElement, cacheKey) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const base64 = ev.target.result;
+            if (cacheKey) {
+                try {
+                    localStorage.setItem(cacheKey, base64);
+                } catch (err) {
+                    showToast("❌ 图片过大，无法保存到本地", "error");
+                    resolve(null);
+                    return;
+                }
+            }
+            previewElement.style.backgroundImage = `url(${base64})`;
+            previewElement.style.backgroundSize = "cover";
+            previewElement.style.backgroundPosition = "center";
+            resolve(base64);
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
 export function createSettingsForm(initialUserData, onCancelCallback, onSaveSuccessCallback) {
     const container = document.createElement("div");
     let userData = { ...initialUserData };
@@ -199,6 +236,17 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     let avatarDataUrl = userData.avatarDataUrl;
     let bannerUrl = userData.bannerUrl || null;
     
+    // 🔧 初始化地区下拉列表：根据当前国家加载所有地区选项
+    const currentCountry = userData.country;
+    if (currentCountry && regionData[currentCountry]) {
+        const regions = regionData[currentCountry];
+        regionSelect.innerHTML = regions
+            .map(r => `<option value="${r}" ${r === userData.region ? 'selected' : ''}>${r}</option>`)
+            .join("");
+    } else {
+        regionSelect.innerHTML = `<option value="">${t('settings_form.select_country_first')}</option>`;
+    }
+
     // 🚀 优化：延迟上传模式 - 裁剪后不立即上传，保存时才上传
     let pendingBannerFile = null;  // 待上传的背景图文件
     let pendingBannerDataUrl = null;  // 用于预览和本地缓存
@@ -380,42 +428,45 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         regionSelect.innerHTML = regions.map(r => `<option value="${r}">${r}</option>`).join("");
     };
 
-    container.querySelector("#btn-trigger-avatar").onclick = () => settingAvatarInput.click();
-    
     // 头像上传逻辑（1:1 裁剪）
-    settingAvatarInput.onchange = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        settingAvatarInput.value = "";
-
-        // 打开裁剪弹窗（1:1 比例）
-        const croppedFile = await openImageCropper(file, 1, "裁剪头像", 1);
-        if (!croppedFile) return;
-
-        const btnTrigger = container.querySelector("#btn-trigger-avatar");
-        const originalText = btnTrigger.innerText;
-        btnTrigger.innerText = "上传中...";
-        btnTrigger.disabled = true;
-
-        try {
-            const cloudImageUrl = await uploadFile(croppedFile, "avatar");
-            
-            if (cloudImageUrl) {
-                avatarDataUrl = cloudImageUrl;
-                container.querySelector("#setting-avatar-preview").src = cloudImageUrl;
-                showToast(`✅ ${t('settings_form.avatar_upload_success')}`, "success");
+    _createImageUploadHandler(
+        settingAvatarInput, container.querySelector("#btn-trigger-avatar"),
+        1, "裁剪头像", 1,
+        async (croppedFile) => {
+            const btnTrigger = container.querySelector("#btn-trigger-avatar");
+            const originalText = btnTrigger.innerText;
+            btnTrigger.innerText = "上传中...";
+            btnTrigger.disabled = true;
+            try {
+                const cloudImageUrl = await uploadFile(croppedFile, "avatar");
+                if (cloudImageUrl) {
+                    avatarDataUrl = cloudImageUrl;
+                    container.querySelector("#setting-avatar-preview").src = cloudImageUrl;
+                    showToast(`✅ ${t('settings_form.avatar_upload_success')}`, "success");
+                }
+            } catch (err) {
+                showToast("❌ 头像处理失败: " + err.message, "error");
+            } finally {
+                btnTrigger.innerText = originalText;
+                btnTrigger.disabled = false;
             }
-        } catch (err) {
-            showToast("❌ 头像处理失败: " + err.message, "error");
-        } finally {
-            btnTrigger.innerText = originalText;
-            btnTrigger.disabled = false;
         }
-    };
+    );
 
     // 个人资料卡背景图上传逻辑（16:9 裁剪）
     // 🚀 优化：裁剪后只预览，点击保存时才上传到云端
-    container.querySelector("#btn-trigger-banner").onclick = () => settingBannerInput.click();
+    _createImageUploadHandler(
+        settingBannerInput, container.querySelector("#btn-trigger-banner"),
+        16/9, "裁剪个人资料卡背景", 3,
+        async (croppedFile) => {
+            pendingBannerFile = croppedFile;
+            const dataUrl = await _readAndPreviewImage(croppedFile, bannerPreview, null);
+            if (dataUrl) {
+                pendingBannerDataUrl = dataUrl;
+                showToast("✅ 背景图已选择，点击底部保存设置后才会上传。", "info");
+            }
+        }
+    );
     container.querySelector("#btn-clear-banner").onclick = () => {
         bannerUrl = null;
         pendingBannerFile = null;
@@ -426,33 +477,19 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         localStorage.removeItem(getBannerCacheKey(userData.account));
         showToast(`✅ ${t('settings_form.banner_cleared')}`, "success");
     };
-    
-    settingBannerInput.onchange = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        settingBannerInput.value = "";
-
-        // 打开裁剪弹窗（16:9 比例）
-        const croppedFile = await openImageCropper(file, 16/9, "裁剪个人资料卡背景", 3);
-        if (!croppedFile) return;
-
-        // 🚀 优化：不立即上传，只保存到待上传变量
-        pendingBannerFile = croppedFile;
-        
-        // 转换为 DataURL 用于预览
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            pendingBannerDataUrl = ev.target.result;
-            bannerPreview.style.backgroundImage = `url(${pendingBannerDataUrl})`;
-            bannerPreview.style.backgroundSize = "cover";
-            bannerPreview.style.backgroundPosition = "center";
-            showToast("✅ 背景图已选择，点击底部保存设置后才会上传。", "info");
-        };
-        reader.readAsDataURL(croppedFile);
-    };
 
     // 界面背景上传逻辑（9:16 裁剪，仅本地）
-    container.querySelector("#btn-trigger-ui-bg").onclick = () => settingUiBgInput.click();
+    _createImageUploadHandler(
+        settingUiBgInput, container.querySelector("#btn-trigger-ui-bg"),
+        9/16, "裁剪界面背景", 3,
+        async (croppedFile) => {
+            const dataUrl = await _readAndPreviewImage(croppedFile, uiBgPreview, getBackgroundKey(userData.account));
+            if (dataUrl) {
+                window.dispatchEvent(new CustomEvent("comfy-sidebar-bg-update"));
+                showToast("✅ 界面背景设置成功，已立即生效！", "success");
+            }
+        }
+    );
     container.querySelector("#btn-clear-ui-bg").onclick = () => {
         // 使用账号区分键清除
         localStorage.removeItem(getBackgroundKey(userData.account));
@@ -461,34 +498,6 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         // 立即应用到侧边栏
         window.dispatchEvent(new CustomEvent("comfy-sidebar-bg-update"));
         showToast("✅ 已清除界面背景，已立即生效。", "success");
-    };
-    
-    settingUiBgInput.onchange = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        settingUiBgInput.value = "";
-
-        // 打开裁剪弹窗（9:16 比例）
-        const croppedFile = await openImageCropper(file, 9/16, "裁剪界面背景", 3);
-        if (!croppedFile) return;
-
-        // 读取为 Base64 并保存到本地（使用账号区分键）
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            const base64 = ev.target.result;
-            try {
-                localStorage.setItem(getBackgroundKey(userData.account), base64);
-                uiBgPreview.style.backgroundImage = `url(${base64})`;
-                uiBgPreview.style.backgroundSize = "cover";
-                uiBgPreview.style.backgroundPosition = "center";
-                // 立即应用到侧边栏
-                window.dispatchEvent(new CustomEvent("comfy-sidebar-bg-update"));
-                showToast("✅ 界面背景设置成功，已立即生效！", "success");
-            } catch (err) {
-                showToast("❌ 图片过大，无法保存到本地", "error");
-            }
-        };
-        reader.readAsDataURL(croppedFile);
     };
 
     container.querySelector("#btn-cancel-settings").onclick = () => { if (onCancelCallback) onCancelCallback(); };

@@ -41,7 +41,7 @@ const api = {
         // 4. 🚨 终极拦截门：如果到了这一步数据还是没找齐，直接弹窗指认"内鬼"！
         if (!payload.account || !payload.new_password || !payload.verifyContact || !payload.code) {
             const errorStr = JSON.stringify(payload, null, 2);
-            alert(`🚨 发现前端传参严重丢失！\n\n系统拼命搜刮后只拿到了这些数据:\n${errorStr}\n\n👉 请立即检查【顶部导航组件.js】的第 82 行！\n\n必须把完整的表单数据传给 API，例如: api.resetPassword({account, password, email, code})`);
+            console.warn(`🚨 发现前端传参严重丢失！系统拼命搜刮后只拿到了这些数据: ${errorStr} 请立即检查【顶部导航组件.js】的第 82 行！必须把完整的表单数据传给 API，例如: api.resetPassword({account, password, email, code})`);
             throw new Error("被前端参数拦截装甲阻断：数据不完整");
         }
 
@@ -62,6 +62,8 @@ const api = {
         return request("/api/upload", { method: "POST", body: formData, timeout, retries: 2 });
     },
     async publishItem(data) { return request("/api/items", { method: "POST", body: data }); },
+    // NOTE: author 未 encodeURIComponent，与 assignee/account 等编码不一致；
+    // 但 account 通常为纯字母数字，不影响功能，暂不改动以避免破坏线上缓存匹配
     async updateItem(itemId, author, data) { return request(`/api/items/${itemId}?author=${author}`, { method: "PUT", body: data }); },
     async getItems(type, sort, limit) { return request(`/api/items?type=${type}&sort=${sort}&limit=${limit}`); },
     async getItemById(itemId) { return request(`/api/items/${itemId}`); },
@@ -73,13 +75,13 @@ const api = {
     async rateItem(itemId, score) {
         return request(`/api/items/${itemId}/rating`, {
             method: "POST",
-            body: JSON.stringify({ score })
+            body: { score }
         });
     },
     async ratePost(postId, score) {
         return request(`/api/posts/${postId}/rating`, {
             method: "POST",
-            body: JSON.stringify({ score })
+            body: { score }
         });
     },
     async recordTaskView(taskId) { return request(`/api/tasks/${taskId}/view`, { method: "POST" }); },

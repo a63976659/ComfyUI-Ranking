@@ -60,6 +60,31 @@ async function syncBannerCache(account, bannerUrl) {
     }
 }
 
+// ==========================================
+// 🔗 公共辅助：拉取用户资料+钱包数据
+// ==========================================
+async function _fetchProfileAndWallet(account, { logErrors = false } = {}) {
+    const [profileRes, walletRes] = await Promise.all([
+        api.getUserProfile(account).catch(err => {
+            if (logErrors) console.warn(`⚠️ getUserProfile(${account}) 失败:`, err.message || err);
+            return { data: {} };
+        }),
+        api.getWallet(account).catch(err => {
+            if (logErrors) console.warn(`⚠️ getWallet(${account}) 失败:`, err.message || err);
+            return {};
+        })
+    ]);
+    const freshData = { ...profileRes.data, ...walletRes };
+    Object.keys(freshData).forEach(key => freshData[key] == null && delete freshData[key]);
+    return freshData;
+}
+
+/** 统一设置 Tab 按钮点击事件 */
+function _setupTabButton(container, selector, tabId, onSwitch) {
+    const btn = container.querySelector(selector);
+    if (btn) btn.onclick = () => onSwitch(tabId);
+}
+
 export function showUserProfile(initialUserData, currentUser = null, isMe = true) {
     const container = document.createElement("div");
     Object.assign(container.style, { 
@@ -239,25 +264,10 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                 };
             });
 
-            // 粉丝数点击跳转到粉丝列表
-            const btnFollowers = container.querySelector("#btn-followers");
-            if (btnFollowers) {
-                btnFollowers.onclick = () => {
-                    activeTab = "followers";
-                    localStorage.setItem(`Profile_ActiveTab_${isMe}`, activeTab);
-                    render();
-                };
-            }
-
-            // 关注数点击跳转到关注列表
-            const btnFollowing = container.querySelector("#btn-following");
-            if (btnFollowing) {
-                btnFollowing.onclick = () => {
-                    activeTab = "following";
-                    localStorage.setItem(`Profile_ActiveTab_${isMe}`, activeTab);
-                    render();
-                };
-            }
+            // 粉丝/关注数点击跳转对应列表
+            const _switchTab = (tabId) => { activeTab = tabId; localStorage.setItem(`Profile_ActiveTab_${isMe}`, tabId); render(); };
+            _setupTabButton(container, "#btn-followers", "followers", _switchTab);
+            _setupTabButton(container, "#btn-following", "following", _switchTab);
 
             const listDOM = container.querySelector("#profile-list-container");
             renderProfileListContent(activeTab, listDOM, userData, currentUser, openOtherUserProfileModal);
@@ -296,20 +306,13 @@ export function openUserProfileModal(userData) {
     window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
 
     // 同步拉取云端 JSON 资料表与 SQL 金融账本
-    Promise.all([
-        api.getUserProfile(userData.account).catch(() => ({ data: {} })),
-        api.getWallet(userData.account).catch(() => ({}))
-    ]).then(([profileRes, walletRes]) => {
-        const freshData = { ...profileRes.data, ...walletRes };
-        const safeFreshData = { ...freshData };
-        Object.keys(safeFreshData).forEach(key => safeFreshData[key] == null && delete safeFreshData[key]);
-
+    _fetchProfileAndWallet(userData.account).then(freshData => {
         const storage = localStorage.getItem("ComfyCommunity_User") ? localStorage : sessionStorage;
         try {
             const savedStr = storage.getItem("ComfyCommunity_User");
             if (savedStr) {
                 const savedObj = JSON.parse(savedStr);
-                savedObj.user = { ...savedObj.user, ...safeFreshData };
+                savedObj.user = { ...savedObj.user, ...freshData };
                 storage.setItem("ComfyCommunity_User", JSON.stringify(savedObj));
             }
         } catch(e){}
@@ -340,11 +343,7 @@ export async function openOtherUserProfileModal(targetAccount, currentUser) {
     }
 
     try {
-        const [profileRes, walletRes] = await Promise.all([
-            api.getUserProfile(targetAccount).catch(err => { console.warn(`⚠️ getUserProfile(${targetAccount}) 失败:`, err.message || err); return { data: {} }; }),
-            api.getWallet(targetAccount).catch(err => { console.warn(`⚠️ getWallet(${targetAccount}) 失败:`, err.message || err); return {}; })
-        ]);
-        const freshData = { ...profileRes.data, ...walletRes };
+        const freshData = await _fetchProfileAndWallet(targetAccount, { logErrors: true });
         
         // 如果 getUserProfile 失败（data 为空），用 targetAccount 兜底确保能渲染
         if (!freshData.account) freshData.account = targetAccount;

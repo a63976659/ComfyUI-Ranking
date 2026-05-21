@@ -15,6 +15,7 @@ import { createItemDetailView } from "../market/资源详情页面组件.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { api } from "./网络请求API.js";  // 🔴 编辑模式需调用详情API获取完整数据
 import { CACHE, getBackgroundKey } from "./全局配置.js";
+import { debounce } from "../components/性能优化工具.js";
 import { cleanupImageSandbox } from "../components/图片沙盒组件.js";  // 🔧 P3优化：导入清理函数
 // 🎯 P2 用户体验增强
 import { initUXEnhancements, t } from "../components/用户体验增强.js";
@@ -109,7 +110,7 @@ export function buildSidebarDOM() {
             <option value="daily_views">${t('post.sort_daily_views')}</option>
             <option value="rating">${t('post.sort_rating') || t('market.rating')}</option>
         </select>
-        <input type="text" id="hub-search-input" placeholder="🔍 ${t('common.search')}..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
+        <input type="text" id="hub-search-input" autocomplete="off" placeholder="🔍 ${t('common.search')}..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
         <button id="btn-open-publish" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">➕ ${t('market.publish')}</button>
     `;
 
@@ -149,7 +150,7 @@ export function buildSidebarDOM() {
         <div style="display: flex; justify-content: center; align-items: center; gap: 10px; color: #555;">
             <span>MIT License Copyright (c) 2026 <a href="#" id="easter-egg-trigger" style="color: #888; text-decoration: none; cursor: pointer; transition: color 0.2s;" onmouseover="this.style.color='#ffb0c0'" onmouseout="this.style.color='#888'">猪的飞行梦</a></span>
             <span style="color: #444;">|</span>
-            <span>v1.2.0-Alpha</span>
+            <span>v1.2.0-Beta</span>
         </div>
     `;
     
@@ -504,13 +505,9 @@ export function buildSidebarDOM() {
     sortContainer.querySelector("#hub-sort-select").onchange = (e) => { currentSort = e.target.value; Store.save("activeSort", currentSort); triggerLoad(); };
     
     // 🔍 搜索防抖：300ms 延迟，避免每次按键都发起网络请求
-    let searchDebounceTimer = null;
-    sortContainer.querySelector("#hub-search-input").oninput = () => {
-        if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
-        searchDebounceTimer = setTimeout(() => {
-            triggerLoad();
-        }, 300);
-    };
+    sortContainer.querySelector("#hub-search-input").oninput = debounce(() => {
+        triggerLoad();
+    }, 300);
     
     // 🎯 任务榜筛选控件事件绑定
     sortContainer.querySelector("#task-status-filter").onchange = () => {

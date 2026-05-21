@@ -25,7 +25,13 @@ import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 
 // 缓存配置
 const CACHE_KEY_PREFIX = "TasksCache";
-const CACHE_TTL = 1000 * 60 * 30;  // 30分钟缓存
+function getCacheTTL() {
+    try {
+        const s = localStorage.getItem('ComfyCommunity_Settings');
+        if (s) { const v = parseInt(JSON.parse(s).cacheExpireSeconds); if (v >= 60 && v <= 86400) return v * 1000; }
+    } catch(e) {}
+    return 1000 * 60 * 30;  // 默认30分钟
+}
 const PAGE_SIZE = 20;
 
 // 缓存当前用户
@@ -54,6 +60,43 @@ const SORT_OPTIONS = [
     { value: "likes", label: "❤️ 最多点赞" },
     { value: "favorites", label: "🔖 最多收藏" }
 ];
+
+// 数据对比字段配置（带默认值0的数值字段）
+const COMPARE_FIELDS = ['likes', 'favorites', 'views', 'daily_views'];
+
+/**
+ * 🔍 按关键词过滤任务列表
+ */
+function _filterTasksByKeyword(tasks, keyword) {
+    if (!keyword) return tasks;
+    return tasks.filter(task => {
+        const text = `${task.title||''} ${task.description||''} ${task.publisher_name||''} ${task.publisher||''}`.toLowerCase();
+        return text.includes(keyword);
+    });
+}
+
+/**
+ * 📭 渲染空任务列表视图
+ */
+function _renderNoTasksView() {
+    return `
+        <div style="text-align: center; padding: 60px 20px; color: #666;">
+            <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
+            <div style="font-size: 14px; margin-bottom: 8px;">${t('task.no_tasks')}</div>
+            <div style="font-size: 12px; color: #888;">${t('task.be_first')}</div>
+        </div>
+    `;
+}
+
+/**
+ * ✨ 批量应用卡片动画
+ */
+function _applyCardsAnimation(cards) {
+    const visibleCount = Math.min(cards.length, 8);
+    cards.forEach((card, index) => {
+        applyCardAnimation(card, 'dataflow', index, visibleCount);
+    });
+}
 
 /**
  * 📝 创建任务榜视图
@@ -220,7 +263,7 @@ export function createTasksView(currentUser, keyword = "") {
             // 缓存第一页数据
             if (page === 1) {
                 allTasksData = tasks;
-                setCache(cacheKey, tasks, CACHE_TTL, true);  // 持久化到localStorage
+                setCache(cacheKey, tasks, getCacheTTL(), true);  // 持久化到localStorage
             } else {
                 allTasksData = [...allTasksData, ...tasks];
             }
@@ -230,22 +273,10 @@ export function createTasksView(currentUser, keyword = "") {
             }
             
             // 🔍 搜索过滤
-            let displayTasks = tasks;
-            if (searchKeyword) {
-                displayTasks = tasks.filter(task => {
-                    const text = `${task.title||''} ${task.description||''} ${task.publisher_name||''} ${task.publisher||''}`.toLowerCase();
-                    return text.includes(searchKeyword);
-                });
-            }
+            const displayTasks = _filterTasksByKeyword(tasks, searchKeyword);
             
             if (displayTasks.length === 0 && page === 1) {
-                tasksList.innerHTML = `
-                    <div style="text-align: center; padding: 60px 20px; color: #666;">
-                        <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
-                        <div style="font-size: 14px; margin-bottom: 8px;">${t('task.no_tasks')}</div>
-                        <div style="font-size: 12px; color: #888;">${t('task.be_first')}</div>
-                    </div>
-                `;
+                tasksList.innerHTML = _renderNoTasksView();
                 loadMoreWrapper.style.display = "none";
                 return;
             }
@@ -263,10 +294,7 @@ export function createTasksView(currentUser, keyword = "") {
             
             // ✨ 应用数据流动画（仅首次加载）
             if (!append && page === 1) {
-                const visibleCount = Math.min(cards.length, 8);
-                cards.forEach((card, index) => {
-                    applyCardAnimation(card, 'dataflow', index, visibleCount);
-                });
+                _applyCardsAnimation(cards);
             }
             
             // 显示/隐藏加载更多（基于过滤后的数据）
@@ -306,22 +334,10 @@ export function createTasksView(currentUser, keyword = "") {
         tasksList.innerHTML = "";
         
         // 🔍 搜索过滤
-        let filteredTasks = tasks;
-        if (searchKeyword) {
-            filteredTasks = tasks.filter(task => {
-                const text = `${task.title||''} ${task.description||''} ${task.publisher_name||''} ${task.publisher||''}`.toLowerCase();
-                return text.includes(searchKeyword);
-            });
-        }
+        const filteredTasks = _filterTasksByKeyword(tasks, searchKeyword);
         
         if (filteredTasks.length === 0) {
-            tasksList.innerHTML = `
-                <div style="text-align: center; padding: 60px 20px; color: #666;">
-                    <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
-                    <div style="font-size: 14px; margin-bottom: 8px;">${t('task.no_tasks')}</div>
-                    <div style="font-size: 12px; color: #888;">${t('task.be_first')}</div>
-                </div>
-            `;
+            tasksList.innerHTML = _renderNoTasksView();
             loadMoreWrapper.style.display = "none";
             return;
         }
@@ -339,10 +355,7 @@ export function createTasksView(currentUser, keyword = "") {
         lazyLoadImages(tasksList);
         
         // ✨ 应用数据流动画
-        const visibleCount = Math.min(cards.length, 8);
-        cards.forEach((card, index) => {
-            applyCardAnimation(card, 'dataflow', index, visibleCount);
-        });
+        _applyCardsAnimation(cards);
         
         // 显示加载更多
         if (filteredTasks.length > PAGE_SIZE) {
@@ -364,7 +377,7 @@ export function createTasksView(currentUser, keyword = "") {
             
             // 更新缓存
             const cacheKey = getCacheKey();
-            setCache(cacheKey, tasks, CACHE_TTL, true);
+            setCache(cacheKey, tasks, getCacheTTL(), true);
             
             // 对比新旧数据，有变化时重新渲染
             if (_tasksDataChanged(allTasksData, tasks)) {
@@ -386,12 +399,11 @@ export function createTasksView(currentUser, keyword = "") {
         if (oldData.length !== newData.length) return true;
         const checkCount = Math.min(10, oldData.length);
         for (let i = 0; i < checkCount; i++) {
-            if ((oldData[i].id) !== (newData[i].id)) return true;
-            if ((oldData[i].status) !== (newData[i].status)) return true;
-            if ((oldData[i].likes || 0) !== (newData[i].likes || 0)) return true;
-            if ((oldData[i].favorites || 0) !== (newData[i].favorites || 0)) return true;
-            if ((oldData[i].views || 0) !== (newData[i].views || 0)) return true;
-            if ((oldData[i].daily_views || 0) !== (newData[i].daily_views || 0)) return true;
+            if (oldData[i].id !== newData[i].id) return true;
+            if (oldData[i].status !== newData[i].status) return true;
+            for (const field of COMPARE_FIELDS) {
+                if ((oldData[i][field] || 0) !== (newData[i][field] || 0)) return true;
+            }
             if (((oldData[i].applicants || []).length) !== ((newData[i].applicants || []).length)) return true;
         }
         return false;
@@ -422,13 +434,7 @@ export function createTasksView(currentUser, keyword = "") {
                         if (tasks.length > 0) {
                             allTasksData = [...allTasksData, ...tasks];
                             
-                            let displayTasks = tasks;
-                            if (searchKeyword) {
-                                displayTasks = tasks.filter(task => {
-                                    const text = `${task.title||''} ${task.description||''} ${task.publisher_name||''} ${task.publisher||''}`.toLowerCase();
-                                    return text.includes(searchKeyword);
-                                });
-                            }
+                            const displayTasks = _filterTasksByKeyword(tasks, searchKeyword);
                             
                             displayTasks.forEach(task => {
                                 const card = createTaskCard(task);

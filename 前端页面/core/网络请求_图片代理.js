@@ -30,6 +30,17 @@ const VIDEO_PROXY_FIELDS = [
 // 🚀 新增：需要对数组元素进行代理的图片字段
 const IMAGE_PROXY_ARRAY_FIELDS = ['images', 'imageUrls', 'reference_images', 'deliverables'];
 
+/** 剥离已被污染的多重代理前缀，还原为原始 URL */
+function _unwrapProxy(url, prefix) {
+    let result = url;
+    let guard = 0;
+    while (result.startsWith(prefix) && guard++ < 10) {
+        try { result = decodeURIComponent(result.replace(prefix, '')); }
+        catch (e) { break; }
+    }
+    return result;
+}
+
 // 🚀 导出图片代理函数，供其他组件在缓存读取后调用
 export function proxyImages(obj) {
     if (!obj) return obj;
@@ -39,13 +50,7 @@ export function proxyImages(obj) {
         for (let key in obj) {
             if (IMAGE_PROXY_FIELDS.includes(key) && typeof obj[key] === 'string') {
                 
-                let originalUrl = obj[key];
-                // 自动修复：一层一层剥开已经被污染的多重代理前缀
-                let _unwrap = 0;
-                while (originalUrl.startsWith('/community_hub/image?url=') && _unwrap++ < 10) {
-                    try { originalUrl = decodeURIComponent(originalUrl.replace('/community_hub/image?url=', '')); }
-                    catch(e) { break; }
-                }
+                let originalUrl = _unwrapProxy(obj[key], '/community_hub/image?url=');
 
                 // 只有最终剥离出来的确实是外部网络链接（包括云端代理URL），才挂上本地缓存代理
                 if (originalUrl.startsWith('http')) {
@@ -55,13 +60,7 @@ export function proxyImages(obj) {
                 }
             } else if (VIDEO_PROXY_FIELDS.includes(key) && typeof obj[key] === 'string') {
                 // 🎬 视频字段走独立的视频代理接口
-                let originalUrl = obj[key];
-                // 自动修复：一层一层剥开已经被污染的多重代理前缀（视频）
-                let _unwrap = 0;
-                while (originalUrl.startsWith('/community_hub/video?url=') && _unwrap++ < 10) {
-                    try { originalUrl = decodeURIComponent(originalUrl.replace('/community_hub/video?url=', '')); }
-                    catch(e) { break; }
-                }
+                let originalUrl = _unwrapProxy(obj[key], '/community_hub/video?url=');
                 // 只有外部网络链接才挂上本地视频缓存代理
                 if (originalUrl.startsWith('http')) {
                     obj[key] = `/community_hub/video?url=${encodeURIComponent(originalUrl)}`;
@@ -81,13 +80,7 @@ export function proxyImages(obj) {
                 // 🚀 新增：处理图片URL数组字段（如帖子的images数组）
                 obj[key] = obj[key].map(url => {
                     if (typeof url === 'string') {
-                        let originalUrl = url;
-                        // 复用相同的URL清洗逻辑
-                        let _unwrap = 0;
-                        while (originalUrl.startsWith('/community_hub/image?url=') && _unwrap++ < 10) {
-                            try { originalUrl = decodeURIComponent(originalUrl.replace('/community_hub/image?url=', '')); }
-                            catch(e) { break; }
-                        }
+                        let originalUrl = _unwrapProxy(url, '/community_hub/image?url=');
                         // 只有外部网络链接（包括云端代理URL）才挂上本地缓存代理
                         if (originalUrl.startsWith('http')) {
                             return `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
@@ -108,18 +101,9 @@ export function proxyImages(obj) {
 export function unproxyImages(obj) {
     if (!obj) return obj;
     if (typeof obj === 'string') {
-        let str = obj;
-        let _unwrap = 0;
-        while (str.startsWith('/community_hub/image?url=') && _unwrap++ < 10) {
-            try { str = decodeURIComponent(str.replace('/community_hub/image?url=', '')); }
-            catch(e) { break; }
-        }
+        let str = _unwrapProxy(obj, '/community_hub/image?url=');
         // 🎬 同时剥离视频代理前缀
-        _unwrap = 0;
-        while (str.startsWith('/community_hub/video?url=') && _unwrap++ < 10) {
-            try { str = decodeURIComponent(str.replace('/community_hub/video?url=', '')); }
-            catch(e) { break; }
-        }
+        str = _unwrapProxy(str, '/community_hub/video?url=');
         return str;
     }
     if (Array.isArray(obj)) return obj.map(unproxyImages);

@@ -9,6 +9,11 @@
 // 🔧 P3优化：事件监听器生命周期管理，防止内存泄漏
 // ==========================================
 
+// 辅助函数：将 value 限制在 [min, max] 范围内
+function _clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
 /**
  * 创建图片裁剪弹窗
  * @param {File} file - 要裁剪的图片文件
@@ -117,8 +122,8 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
             const maxOffsetX = Math.max(0, (scaledWidth - containerWidth) / 2);
             const maxOffsetY = Math.max(0, (scaledHeight - containerHeight) / 2);
             
-            offsetX = Math.max(-maxOffsetX, Math.min(maxOffsetX, offsetX));
-            offsetY = Math.max(-maxOffsetY, Math.min(maxOffsetY, offsetY));
+            offsetX = _clamp(offsetX, -maxOffsetX, maxOffsetX);
+            offsetY = _clamp(offsetY, -maxOffsetY, maxOffsetY);
 
             // 居中 + 偏移
             const left = (containerWidth - scaledWidth) / 2 + offsetX;
@@ -174,7 +179,7 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
             const minScale = Math.max(minScaleX, minScaleY);
             const maxScale = minScale * 5;
 
-            scale = Math.max(minScale, Math.min(maxScale, newScale));
+            scale = _clamp(newScale, minScale, maxScale);
             updateImagePosition();
         };
 

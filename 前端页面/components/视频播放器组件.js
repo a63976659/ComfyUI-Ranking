@@ -305,6 +305,63 @@ function getPlayIcon(isPlaying) {
 }
 
 // ==========================================
+// 🔧 模块级共享辅助函数（内嵌+全屏播放器共用）
+// ==========================================
+
+/**
+ * 更新播放按钮标志与 tooltip
+ * @param {HTMLElement} btnPlay
+ * @param {HTMLVideoElement} video
+ */
+function _updatePlayButton(btnPlay, video) {
+    if (!btnPlay) return;
+    const playing = !video.paused && !video.ended;
+    btnPlay.textContent = getPlayIcon(playing);
+    btnPlay.title = playing ? (t('video.pause') || '暂停') : (t('video.play') || '播放');
+}
+
+/**
+ * 更新进度条 UI
+ * @param {HTMLElement} progressPlayed
+ * @param {HTMLElement} progressHandle
+ * @param {HTMLElement} timeDisplay
+ * @param {HTMLVideoElement} video
+ */
+function _updateProgressUI(progressPlayed, progressHandle, timeDisplay, video) {
+    if (!video.duration || !isFinite(video.duration)) return;
+    const pct = (video.currentTime / video.duration) * 100;
+    if (progressPlayed) progressPlayed.style.width = pct + '%';
+    if (progressHandle) progressHandle.style.left = pct + '%';
+    if (timeDisplay) timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+}
+
+/**
+ * 更新缓冲进度
+ * @param {HTMLElement} progressBuffered
+ * @param {HTMLVideoElement} video
+ */
+function _updateBuffered(progressBuffered, video) {
+    if (!video.buffered || !video.duration || !progressBuffered) return;
+    let end = 0;
+    for (let i = 0; i < video.buffered.length; i++) {
+        if (video.buffered.start(i) <= video.currentTime && video.buffered.end(i) >= video.currentTime) {
+            end = Math.max(end, video.buffered.end(i));
+        }
+    }
+    progressBuffered.style.width = ((end / video.duration) * 100) + '%';
+}
+
+/**
+ * 更新音量图标
+ * @param {HTMLElement} btnVolume
+ * @param {HTMLVideoElement} video
+ */
+function _updateVolumeIcon(btnVolume, video) {
+    if (!btnVolume) return;
+    btnVolume.textContent = getVolumeIcon(video.volume, video.muted);
+}
+
+// ==========================================
 // 📺 Part 1: 内嵌播放器
 // ==========================================
 
@@ -397,41 +454,11 @@ export function setupVideoPlayerEvents(container) {
     let hideControlsTimer = null;
     let isFullscreenMode = false;
 
-    // 更新播放按钮
-    function updatePlayButton() {
-        if (!btnPlay) return;
-        const playing = !video.paused && !video.ended;
-        btnPlay.textContent = getPlayIcon(playing);
-        btnPlay.title = playing ? (t('video.pause') || '暂停') : (t('video.play') || '播放');
-    }
-
-    // 更新进度条 UI
-    function updateProgressUI() {
-        if (!video.duration || !isFinite(video.duration)) return;
-        const pct = (video.currentTime / video.duration) * 100;
-        if (progressPlayed) progressPlayed.style.width = pct + '%';
-        if (progressHandle) progressHandle.style.left = pct + '%';
-        if (timeDisplay) timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
-    }
-
-    // 更新缓冲进度
-    function updateBuffered() {
-        if (!video.buffered || !video.duration || !progressBuffered) return;
-        let end = 0;
-        for (let i = 0; i < video.buffered.length; i++) {
-            if (video.buffered.start(i) <= video.currentTime && video.buffered.end(i) >= video.currentTime) {
-                end = Math.max(end, video.buffered.end(i));
-            }
-        }
-        const pct = (end / video.duration) * 100;
-        progressBuffered.style.width = pct + '%';
-    }
-
-    // 更新音量图标
-    function updateVolumeIcon() {
-        if (!btnVolume) return;
-        btnVolume.textContent = getVolumeIcon(video.volume, video.muted);
-    }
+    // 共享辅助函数（闭包适配）
+    const updatePlayButton = () => _updatePlayButton(btnPlay, video);
+    const updateProgressUI = () => _updateProgressUI(progressPlayed, progressHandle, timeDisplay, video);
+    const updateBuffered   = () => _updateBuffered(progressBuffered, video);
+    const updateVolumeIcon = () => _updateVolumeIcon(btnVolume, video);
 
     // 控制栏自动隐藏
     function showControls() {
@@ -892,34 +919,19 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
     }
 
     function updatePlayButton() {
-        if (!btnPlay) return;
-        const playing = !video.paused && !video.ended;
-        btnPlay.textContent = getPlayIcon(playing);
-        btnPlay.title = playing ? (t('video.pause') || '暂停') : (t('video.play') || '播放');
+        _updatePlayButton(btnPlay, video);
     }
 
     function updateProgressUI() {
-        if (!video.duration || !isFinite(video.duration)) return;
-        const pct = (video.currentTime / video.duration) * 100;
-        if (progressPlayed) progressPlayed.style.width = pct + '%';
-        if (progressHandle) progressHandle.style.left = pct + '%';
-        if (timeDisplay) timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+        _updateProgressUI(progressPlayed, progressHandle, timeDisplay, video);
     }
 
     function updateBuffered() {
-        if (!video.buffered || !video.duration || !progressBuffered) return;
-        let end = 0;
-        for (let i = 0; i < video.buffered.length; i++) {
-            if (video.buffered.start(i) <= video.currentTime && video.buffered.end(i) >= video.currentTime) {
-                end = Math.max(end, video.buffered.end(i));
-            }
-        }
-        progressBuffered.style.width = ((end / video.duration) * 100) + '%';
+        _updateBuffered(progressBuffered, video);
     }
 
     function updateVolumeIcon() {
-        if (!btnVolume) return;
-        btnVolume.textContent = getVolumeIcon(video.volume, video.muted);
+        _updateVolumeIcon(btnVolume, video);
     }
 
     function showControls() {

@@ -357,6 +357,22 @@ const VIEWER_STYLES = `
 // ==========================================
 
 /**
+ * 计算动画网格布局（方块和粒子动画共用）
+ * @param {number} displayWidth  - 显示区域宽度
+ * @param {number} displayHeight - 显示区域高度
+ * @param {number} maxGridSize   - 较长边最多分格数
+ * @returns {{ rows: number, cols: number, cellSize: number }}
+ */
+function _calcGridLayout(displayWidth, displayHeight, maxGridSize) {
+    const initialCellSize = Math.max(displayWidth, displayHeight) / maxGridSize;
+    const cols = Math.min(Math.ceil(displayWidth / initialCellSize), maxGridSize);
+    const rows = Math.min(Math.ceil(displayHeight / initialCellSize), maxGridSize);
+    // 反算实际单元尺寸：取两个方向中较大的值，确保 1:1 并完全覆盖
+    const cellSize = Math.max(displayWidth / cols, displayHeight / rows);
+    return { rows, cols, cellSize };
+}
+
+/**
  * 图片查看器状态管理
  */
 class CyberImageViewer {
@@ -924,15 +940,8 @@ class CyberImageViewer {
 
         // 网格配置 - 最多 9x9 = 81 个正方形方块
         const maxGridSize = 9;
-        // 先用较长边计算初始方块大小
-        const initialBlockSize = Math.max(displayWidth, displayHeight) / maxGridSize;
-        // 计算行列数
-        const cols = Math.min(Math.ceil(displayWidth / initialBlockSize), maxGridSize);
-        const rows = Math.min(Math.ceil(displayHeight / initialBlockSize), maxGridSize);
+        const { rows, cols, cellSize: blockSide } = _calcGridLayout(displayWidth, displayHeight, maxGridSize);
         const totalBlocks = cols * rows;
-        // 关键：反算实际需要的方块大小，取两个方向中较大的值，确保1:1且完全覆盖
-        // 这样 cols * blockSide >= displayWidth 且 rows * blockSide >= displayHeight
-        const blockSide = Math.max(displayWidth / cols, displayHeight / rows);
         const blockWidth = blockSide;
         const blockHeight = blockSide; // 1:1 正方形
 
@@ -1125,13 +1134,7 @@ class CyberImageViewer {
 
         // 粒子网格配置 - 使用与载入动画相同的正方形逻辑
         const maxParticleGrid = 30; // 较长边最多分30份
-        // 先用较长边计算初始粒子大小
-        const initialParticleSize = Math.max(displayWidth, displayHeight) / maxParticleGrid;
-        // 计算行列数
-        const cols = Math.min(Math.ceil(displayWidth / initialParticleSize), maxParticleGrid);
-        const rows = Math.min(Math.ceil(displayHeight / initialParticleSize), maxParticleGrid);
-        // 关键：反算实际需要的粒子大小，取两个方向中较大的值，确保1:1且完全覆盖
-        const particleSide = Math.max(displayWidth / cols, displayHeight / rows);
+        const { rows, cols, cellSize: particleSide } = _calcGridLayout(displayWidth, displayHeight, maxParticleGrid);
         const particleWidth = particleSide;
         const particleHeight = particleSide; // 强制1:1
         const COLS = cols;

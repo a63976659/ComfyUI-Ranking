@@ -23,6 +23,38 @@ import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML 
 import { createRatingStars } from "../social/评论与互动组件.js";
 
 /**
+ * 🖼️ 生成头像 HTML 字符串
+ * @param {string} avatar - 头像 URL
+ * @param {string} name - 用户名（用于首字母回退）
+ * @param {number} size - 头像尺寸（px）
+ * @param {string} [extraStyle] - 额外内联样式（img 时追加）
+ */
+function _generateAvatarHtml(avatar, name, size, extraStyle = '') {
+    const initial = (name || 'U')[0].toUpperCase();
+    if (avatar) {
+        return `<img class="swr-avatar" src="${avatar}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; ${extraStyle}">`;
+    }
+    const fontSize = Math.max(9, Math.round(size * 0.4));
+    return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${initial}</div>`;
+}
+
+/**
+ * 🔄 用 SWR 回调更新已渲染的头像元素
+ * @param {Element} avatarEl - .swr-avatar 元素
+ * @param {object} profile - 新的用户 profile
+ * @param {number} size - 头像尺寸（px）
+ * @param {string} [extraStyle] - img 额外内联样式
+ */
+function _updateAvatarElement(avatarEl, profile, size, extraStyle = '') {
+    if (!avatarEl || !profile.avatar) return;
+    if (avatarEl.tagName === 'IMG') {
+        avatarEl.src = profile.avatar;
+    } else {
+        avatarEl.outerHTML = `<img class="swr-avatar" src="${profile.avatar}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; ${extraStyle}">`;
+    }
+}
+
+/**
  * 📄 创建帖子详情视图
  */
 export function createPostDetailView(postId, currentUser) {
@@ -252,22 +284,14 @@ async function loadPostDetail(container, postId, currentUser) {
             
             // 渲染初始头像
             if (avatarContainer) {
-                avatarContainer.innerHTML = avatar 
-                    ? `<img class="swr-avatar" src="${avatar}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #444;">` 
-                    : `<div class="swr-avatar" style="width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 16px; font-weight: bold;">${initial}</div>`;
+                avatarContainer.innerHTML = _generateAvatarHtml(avatar, name, 40, 'border: 2px solid #444;');
             }
             if (nameEl) nameEl.textContent = name;
             
             // 后台静默校对
             getProfileWithSWR(account, api.getUserProfile, (profile) => {
                 const avatarEl = avatarContainer?.querySelector('.swr-avatar');
-                if (avatarEl && profile.avatar) {
-                    if (avatarEl.tagName === 'IMG') {
-                        avatarEl.src = profile.avatar;
-                    } else {
-                        avatarEl.outerHTML = `<img class="swr-avatar" src="${profile.avatar}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #444;">`;
-                    }
-                }
+                _updateAvatarElement(avatarEl, profile, 40, 'border: 2px solid #444;');
                 if (nameEl && profile.name) nameEl.textContent = profile.name;
             });
         }
@@ -490,9 +514,7 @@ async function loadComments(container, postId, currentUser) {
                 const name = cached?.name || c.author_name || c.author || '';
                 const initial = (name || 'U')[0].toUpperCase();
                 
-                const avatarHtml = avatar 
-                    ? `<img class="swr-avatar" src="${avatar}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">` 
-                    : `<div class="swr-avatar" style="width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold;">${initial}</div>`;
+                const avatarHtml = _generateAvatarHtml(avatar, name, 24, 'background: var(--comfy-input-bg);');
                 
                 return `
                     <div id="comment-${idx}" data-account="${escapeHtml(c.author)}" style="background: #1a1a1a; padding: 12px; border-radius: 8px;">
@@ -516,14 +538,7 @@ async function loadComments(container, postId, currentUser) {
                     const avatarContainer = commentEl.querySelector('.swr-avatar-container');
                     const nameEl = commentEl.querySelector('.swr-name');
                     const avatarEl = avatarContainer?.querySelector('.swr-avatar');
-                    
-                    if (avatarEl && profile.avatar) {
-                        if (avatarEl.tagName === 'IMG') {
-                            avatarEl.src = profile.avatar;
-                        } else {
-                            avatarEl.outerHTML = `<img class="swr-avatar" src="${profile.avatar}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">`;
-                        }
-                    }
+                    _updateAvatarElement(avatarEl, profile, 24, 'background: var(--comfy-input-bg);');
                     if (nameEl && profile.name) nameEl.textContent = profile.name;
                 });
             });

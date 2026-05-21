@@ -8,6 +8,37 @@ import { t } from "../components/用户体验增强.js";
 let isSubmitting = false;
 
 /**
+ * 统一管理提现相关按钮的禁用/恢复状态
+ * @param {HTMLButtonElement} btn
+ * @param {boolean} disabled
+ * @param {string} bgColor
+ * @param {string} text
+ */
+function _setButtonState(btn, disabled, bgColor, text) {
+    btn.disabled = disabled;
+    btn.style.background = bgColor;
+    btn.innerText = text;
+}
+
+/** 提现表单验证规则 */
+const _WITHDRAW_RULES = [
+    { check: (f) => !f.amount || f.amount < 1 || !Number.isInteger(f.amount), msgKey: 'wallet.withdraw.min_amount', level: 'warning' },
+    { check: (f) => f.amount > 5000, msgKey: 'wallet.withdraw.max_amount_exceeded', fallback: '单次提现金额不得超过5000元', level: 'warning' },
+    { check: (f) => !f.alipayAccount || !f.realName, msgKey: 'wallet.withdraw.fill_account', level: 'warning' },
+    { check: (f) => f.code.length !== 6, msgKey: 'wallet.withdraw.invalid_code', level: 'warning' },
+];
+
+function _validateWithdrawForm(fields) {
+    for (const rule of _WITHDRAW_RULES) {
+        if (rule.check(fields)) {
+            showToast(t(rule.msgKey) || rule.fallback || '', rule.level);
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
  * 提现弹窗组件 (带邮箱验证码安全风控与手续费计算)
  * @param {Object} currentUser 当前登录用户
  * @param {Function} onSuccess 提现成功后的回调函数
@@ -107,9 +138,7 @@ export async function openWithdrawModal(currentUser, onSuccess) {
 
     const btnSendCode = container.querySelector("#btn-send-code");
     btnSendCode.onclick = async () => {
-        btnSendCode.disabled = true;
-        btnSendCode.style.background = "#555";
-        btnSendCode.innerText = t('wallet.withdraw.sending');
+        _setButtonState(btnSendCode, true, "#555", t('wallet.withdraw.sending'));
         try {
             await api.sendVerifyCode(currentUser.email, "email", "withdraw", currentUser.account);
             showToast(t('wallet.withdraw.code_sent'), "success");
@@ -119,16 +148,12 @@ export async function openWithdrawModal(currentUser, onSuccess) {
                 btnSendCode.innerText = t('wallet.withdraw.resend_in', { seconds: count });
                 if (count <= 0) {
                     clearInterval(timer);
-                    btnSendCode.disabled = false;
-                    btnSendCode.style.background = "#2196F3";
-                    btnSendCode.innerText = t('wallet.withdraw.get_code');
+                    _setButtonState(btnSendCode, false, "#2196F3", t('wallet.withdraw.get_code'));
                 }
             }, 1000);
         } catch (error) {
             showToast(t('wallet.withdraw.code_failed') + error.message, "error");
-            btnSendCode.disabled = false;
-            btnSendCode.style.background = "#2196F3";
-            btnSendCode.innerText = t('wallet.withdraw.get_code');
+            _setButtonState(btnSendCode, false, "#2196F3", t('wallet.withdraw.get_code'));
         }
     };
 
@@ -142,20 +167,12 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         const realName = container.querySelector("#withdraw-name").value.trim();
         const code = container.querySelector("#withdraw-code").value.trim();
 
-        // 验证为正整数
-        if (!amount || amount < 1 || !Number.isInteger(amount)) {
-            return showToast(t('wallet.withdraw.min_amount'), "warning");
-        }
-        if (amount > 5000) {
-            return showToast(t('wallet.withdraw.max_amount_exceeded') || "单次提现金额不得超过5000元", "warning");
-        }
-        if (!alipayAccount || !realName) return showToast(t('wallet.withdraw.fill_account'), "warning");
-        if (code.length !== 6) return showToast(t('wallet.withdraw.invalid_code'), "warning");
+        // 统一表单校验
+        if (!_validateWithdrawForm({ amount, alipayAccount, realName, code })) return;
 
         // 设置提交标志
         isSubmitting = true;
-        btnSubmit.innerHTML = t('wallet.withdraw.submitting');
-        btnSubmit.disabled = true;
+        _setButtonState(btnSubmit, true, "#888", t('wallet.withdraw.submitting'));
 
         try {
             await api.submitWithdraw({ amount, alipayAccount, real_name: realName, code, account: currentUser.account });
@@ -166,8 +183,7 @@ export async function openWithdrawModal(currentUser, onSuccess) {
             if (onSuccess) onSuccess(); 
         } catch (error) {
             showToast(t('wallet.withdraw.submit_failed') + error.message, "error");
-            btnSubmit.innerHTML = t('wallet.withdraw.confirm');
-            btnSubmit.disabled = false;
+            _setButtonState(btnSubmit, false, "#4CAF50", t('wallet.withdraw.confirm'));
         } finally {
             // 无论成功失败，重置提交标志
             isSubmitting = false;

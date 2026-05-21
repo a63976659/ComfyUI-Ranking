@@ -1,10 +1,12 @@
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 
+const INPUT_STYLE = 'width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;';
+
 export function renderLoginForm(container, switchView, onSuccessCallback) {
     container.innerHTML = `
-        <div style="margin-bottom: 10px;"><label style="display: block; margin-bottom: 5px;">${t('auth.account')} <span style="color: #F44336;">*</span></label><input type="text" id="login-account" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
-        <div style="margin-bottom: 15px;"><label style="display: block; margin-bottom: 5px;">${t('auth.password')} <span style="color: #F44336;">*</span></label><input type="password" id="login-password" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
+        <div style="margin-bottom: 10px;"><label style="display: block; margin-bottom: 5px;">${t('auth.account')} <span style="color: #F44336;">*</span></label><input type="text" id="login-account" style="${INPUT_STYLE}"></div>
+        <div style="margin-bottom: 15px;"><label style="display: block; margin-bottom: 5px;">${t('auth.password')} <span style="color: #F44336;">*</span></label><input type="password" id="login-password" style="${INPUT_STYLE}"></div>
         <div style="margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <input type="checkbox" id="login-remember" checked style="cursor: pointer;">

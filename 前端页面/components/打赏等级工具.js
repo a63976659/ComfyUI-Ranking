@@ -173,12 +173,15 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
     // 等级图标
     const levelHtml = renderTipLevelHTML(amount, true);
     
+    // 排名弽章 HTML（两个分支共用）
+    const badgeHtml = `<span style="display:inline-flex; justify-content:center; align-items:center; width:${cfg.badge}px; height:${cfg.badge}px; border-radius:50%; background:${badgeBg}; color:${badgeColor}; font-weight:bold; font-size:${cfg.font - 2}px;">${rank + 1}</span>`;
+    
     // 匿名用户处理
     if (is_anon) {
         return `
             <div style="display:flex; justify-content:space-between; padding:${cfg.padding}px 0; font-size:${cfg.font}px; align-items:center; border-bottom:1px dashed #333;">
                 <span style="display:flex; align-items:center; gap:6px;">
-                    <span style="display:inline-flex; justify-content:center; align-items:center; width:${cfg.badge}px; height:${cfg.badge}px; border-radius:50%; background:${badgeBg}; color:${badgeColor}; font-weight:bold; font-size:${cfg.font - 2}px;">${rank + 1}</span>
+                    ${badgeHtml}
                     <span style="color:#888;">🔒 匿名</span>
                 </span>
                 <span style="display:flex; align-items:center; gap:6px;">
@@ -218,7 +221,7 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
     return `
         <div id="${containerId}" style="display:flex; justify-content:space-between; padding:${cfg.padding}px 0; font-size:${cfg.font}px; align-items:center; border-bottom:1px dashed #333;">
             <span style="display:flex; align-items:center; gap:6px;">
-                <span style="display:inline-flex; justify-content:center; align-items:center; width:${cfg.badge}px; height:${cfg.badge}px; border-radius:50%; background:${badgeBg}; color:${badgeColor}; font-weight:bold; font-size:${cfg.font - 2}px;">${rank + 1}</span>
+                ${badgeHtml}
                 <span style="display:flex; align-items:center; gap:6px;">
                     <img class="tip-board-avatar" src="${avatarUrl}" style="width:${cfg.avatar}px; height:${cfg.avatar}px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#333;">
                     <span class="tip-board-name" style="color:#ddd;">${userName}</span>

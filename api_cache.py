@@ -1,12 +1,14 @@
 # api_cache.py
 import os
 import re
+import ipaddress
 import hashlib
 import asyncio
 import uuid
 import aiohttp
 import mimetypes
 import urllib.parse
+from urllib.parse import urlparse
 from aiohttp import web
 
 # 视频下载锁字典（按 URL hash 粒度加锁）
@@ -34,6 +36,39 @@ def _scan_dir_stats(dir_path):
     return count, total_size
 
 
+def _clean_nested_url(url, endpoint):
+    """清除被污染的嵌套 URL，如 /community_hub/image?url=http://... 反复嵌套的情况"""
+    prefix = f'/community_hub/{endpoint}?url='
+    while url.startswith(prefix):
+        url = urllib.parse.unquote(url.replace(prefix, ''))
+    return url
+
+
+async def _stream_file_chunks(resp, file_path, start=0, end=None):
+    """流式读取文件并写入响应，支持 Range 请求（指定 start/end）和完整文件传输（end=None）"""
+    with open(file_path, 'rb') as f:
+        if start > 0:
+            f.seek(start)
+        remaining = (end - start + 1) if end is not None else None
+        chunk_size = 256 * 1024
+        while True:
+            if remaining is not None:
+                if remaining <= 0:
+                    break
+                to_read = min(chunk_size, remaining)
+            else:
+                to_read = chunk_size
+            data = f.read(to_read)
+            if not data:
+                break
+            try:
+                await resp.write(data)
+            except (ConnectionResetError, RuntimeError, BrokenPipeError):
+                break
+            if remaining is not None:
+                remaining -= len(data)
+
+
 async def _get_video_lock(url_hash):
     async with _video_locks_lock:
         if url_hash not in _video_download_locks:
@@ -51,6 +86,25 @@ def _is_local_request(request):
     if remote.startswith("10."):
         return True
     return False
+
+
+def _is_forbidden_target(url):
+    """检查 URL 是否指向内网/本地地址，防止 SSRF"""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        if not host:
+            return True
+        # 尝试直接解析为 IP
+        try:
+            ip = ipaddress.ip_address(host)
+            return ip.is_private or ip.is_loopback or ip.is_link_local
+        except ValueError:
+            # 不是IP地址（是域名），检查常见危险域名
+            dangerous_hosts = ('localhost', 'metadata.google.internal')
+            return host.lower() in dangerous_hosts
+    except Exception:
+        return True
 
 
 def _cleanup_empty_cache(local_path, url_hash, ext):
@@ -88,9 +142,7 @@ async def cache_image_handler(request):
     if not url:
         return web.Response(status=400, text="Missing url")
 
-    # 🟢 终极防污染保险：解套被污染的嵌套 URL
-    while url.startswith('/community_hub/image?url='):
-        url = urllib.parse.unquote(url.replace('/community_hub/image?url=', ''))
+    url = _clean_nested_url(url, 'image')
 
     # 🚀 核心配合：拦截旧版因 Private 导致 401 的 HF 直链，强行重写为云端代理！
     if url.startswith("https://huggingface.co/datasets/ZHIWEI666/ComfyUI-Ranking/resolve/main/"):
@@ -98,6 +150,9 @@ async def cache_image_handler(request):
 
     if not url.startswith('http'):
         raise web.HTTPFound(location=url)
+
+    if _is_forbidden_target(url):
+        return web.Response(status=403, text="Forbidden target address")
 
     # 生成缓存路径
     url_hash = hashlib.md5(url.encode('utf-8')).hexdigest()
@@ -186,20 +241,7 @@ async def _serve_video_file(request, file_path):
         })
         await resp.prepare(request)
         try:
-            with open(file_path, 'rb') as f:
-                f.seek(start)
-                remaining = end - start + 1
-                chunk_size = 256 * 1024
-                while remaining > 0:
-                    to_read = min(chunk_size, remaining)
-                    data = f.read(to_read)
-                    if not data:
-                        break
-                    try:
-                        await resp.write(data)
-                    except (ConnectionResetError, RuntimeError, BrokenPipeError):
-                        break
-                    remaining -= len(data)
+            await _stream_file_chunks(resp, file_path, start, end)
         finally:
             try:
                 await resp.write_eof()
@@ -214,15 +256,7 @@ async def _serve_video_file(request, file_path):
         })
         await resp.prepare(request)
         try:
-            with open(file_path, 'rb') as f:
-                while True:
-                    data = f.read(256 * 1024)
-                    if not data:
-                        break
-                    try:
-                        await resp.write(data)
-                    except (ConnectionResetError, RuntimeError, BrokenPipeError):
-                        break
+            await _stream_file_chunks(resp, file_path)
         finally:
             try:
                 await resp.write_eof()
@@ -245,12 +279,13 @@ async def cache_video_handler(request):
     if not url:
         return web.Response(status=400, text="Missing url")
 
-    # 🟢 终极防污染保险：解套被污染的嵌套 URL
-    while url.startswith('/community_hub/video?url='):
-        url = urllib.parse.unquote(url.replace('/community_hub/video?url=', ''))
+    url = _clean_nested_url(url, 'video')
 
     if not url.startswith('http'):
         raise web.HTTPFound(location=url)
+
+    if _is_forbidden_target(url):
+        return web.Response(status=403, text="Forbidden target address")
 
     # 生成缓存路径
     url_hash = hashlib.md5(url.encode('utf-8')).hexdigest()

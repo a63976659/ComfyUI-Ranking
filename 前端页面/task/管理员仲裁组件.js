@@ -18,11 +18,38 @@ const escapeHtml = (str) => {
 
 // 缓存配置
 const CACHE_KEY = "AdminDisputesCache";
-const CACHE_TTL = 1000 * 60 * 30;  // 30分钟缓存
+function getCacheTTL() {
+    try {
+        const s = localStorage.getItem('ComfyCommunity_Settings');
+        if (s) { const v = parseInt(JSON.parse(s).cacheExpireSeconds); if (v >= 60 && v <= 86400) return v * 1000; }
+    } catch(e) {}
+    return 1000 * 60 * 30;  // 默认30分钟
+}
 
 // 全局状态：缓存所有争议数据
 let allDisputesCache = [];
 let isLoadingFromNetwork = false;
+
+// 状态配置常量（labelKey用于延迟翻译，保证i18n正确性）
+const STATUS_CONFIG = {
+    pending: { labelKey: 'arbitrate.pending_response', color: "#FF9800", bg: "rgba(255, 152, 0, 0.15)" },
+    responded: { labelKey: 'arbitrate.pending_ruling', color: "#2196F3", bg: "rgba(33, 150, 243, 0.15)" },
+    resolved: { labelKey: 'arbitrate.ruled', color: "#4CAF50", bg: "rgba(76, 175, 80, 0.15)" }
+};
+
+// 裁决选项配置
+const RESOLUTION_OPTIONS = [
+    { value: "favor_initiator", icon: "\u2705", labelKey: 'dispute.favor_initiator' },
+    { value: "favor_respondent", icon: "\u274C", labelKey: 'dispute.favor_respondent' },
+    { value: "split", icon: "\u2696\uFE0F", labelKey: 'arbitrate.negotiate_split', descKey: 'arbitrate.split_desc' }
+];
+
+function _renderEvidenceRow(images) {
+    if (!images || images.length === 0) return "";
+    return `<div class="evidence-row">
+        ${images.map(img => `<img src="${escapeHtml(img)}" onclick="window.open('${escapeHtml(img)}')">`).join("")}
+    </div>`;
+}
 
 /**
  * 创建管理员仲裁视图
@@ -159,19 +186,13 @@ function renderDisputeCards(listEl, disputes, currentUser, statusFilter) {
         return;
     }
 
-    const statusConfig = {
-        pending: { label: t('arbitrate.pending_response'), color: "#FF9800", bg: "rgba(255, 152, 0, 0.15)" },
-        responded: { label: t('arbitrate.pending_ruling'), color: "#2196F3", bg: "rgba(33, 150, 243, 0.15)" },
-        resolved: { label: t('arbitrate.ruled'), color: "#4CAF50", bg: "rgba(76, 175, 80, 0.15)" }
-    };
-
     listEl.innerHTML = disputes.map(d => {
-        const status = statusConfig[d.status] || statusConfig.pending;
+        const status = STATUS_CONFIG[d.status] || STATUS_CONFIG.pending;
         return `
             <div class="dispute-card" data-id="${d.id}">
                 <div class="dispute-card-header">
                     <div class="dispute-card-title">${escapeHtml(d.task_title) || t('common.unknown_task')}</div>
-                    <span class="dispute-card-status" style="background: ${status.bg}; color: ${status.color};">${status.label}</span>
+                    <span class="dispute-card-status" style="background: ${status.bg}; color: ${status.color};">${t(status.labelKey)}</span>
                 </div>
                 <div class="dispute-card-parties">
                     <span>${escapeHtml(d.publisher_name || d.publisher)}</span>
@@ -213,7 +234,7 @@ async function loadDisputesFromNetwork(listEl, currentUser, statusFilter, cacheI
         allDisputesCache = disputes;
         
         // 保存到本地缓存
-        setCache(CACHE_KEY, disputes, CACHE_TTL, true);
+        setCache(CACHE_KEY, disputes, getCacheTTL(), true);
         
         // 更新缓存指示器
         if (cacheIndicator) cacheIndicator.textContent = "";
@@ -251,7 +272,7 @@ async function silentRefreshDisputes(listEl, currentUser, statusFilter, cacheInd
             
             // 更新缓存
             allDisputesCache = freshDisputes;
-            setCache(CACHE_KEY, freshDisputes, CACHE_TTL, true);
+            setCache(CACHE_KEY, freshDisputes, getCacheTTL(), true);
             
             // 重新渲染当前筛选状态的数据
             const filteredDisputes = filterDisputesByStatus(freshDisputes, statusFilter);
@@ -311,13 +332,6 @@ async function loadDisputeModalContent(content, disputeId, currentUser, onClose)
         const res = await api.getDisputeDetail(disputeId);
         const dispute = res.data;
 
-        const statusConfig = {
-            pending: { label: t('arbitrate.pending_response'), color: "#FF9800" },
-            responded: { label: t('arbitrate.pending_ruling'), color: "#2196F3" },
-            resolved: { label: t('arbitrate.ruled'), color: "#4CAF50" }
-        };
-        const status = statusConfig[dispute.status] || statusConfig.pending;
-
         const canResolve = dispute.status !== "resolved";
 
         content.innerHTML = `
@@ -363,11 +377,7 @@ async function loadDisputeModalContent(content, disputeId, currentUser, onClose)
                     <div class="modal-section-title">📝 ${t('dispute.initiator_statement')} (${dispute.initiator_role === "publisher" ? t('dispute.publisher') : t('task.assignee')})</div>
                     <div class="modal-section-content">
                         ${escapeHtml(dispute.reason) || t('common.none')}
-                        ${dispute.evidence && dispute.evidence.length > 0 ? `
-                            <div class="evidence-row">
-                                ${dispute.evidence.map(img => `<img src="${escapeHtml(img)}" onclick="window.open('${escapeHtml(img)}')">`).join("")}
-                            </div>
-                        ` : ""}
+                        ${_renderEvidenceRow(dispute.evidence)}
                     </div>
                 </div>
                 
@@ -375,11 +385,7 @@ async function loadDisputeModalContent(content, disputeId, currentUser, onClose)
                     <div class="modal-section-title">💬 ${t('dispute.respondent_response')} (${dispute.initiator_role === "publisher" ? t('task.assignee') : t('dispute.publisher')})</div>
                     <div class="modal-section-content">
                         ${escapeHtml(dispute.response) || `（${t('dispute.no_response')}）`}
-                        ${dispute.response_evidence && dispute.response_evidence.length > 0 ? `
-                            <div class="evidence-row">
-                                ${dispute.response_evidence.map(img => `<img src="${escapeHtml(img)}" onclick="window.open('${escapeHtml(img)}')">`).join("")}
-                            </div>
-                        ` : ""}
+                        ${_renderEvidenceRow(dispute.response_evidence)}
                     </div>
                 </div>
                 
@@ -388,30 +394,21 @@ async function loadDisputeModalContent(content, disputeId, currentUser, onClose)
                         <div class="resolve-title">🔨 ${t('arbitrate.ruling_operation')}</div>
                         
                         <div class="resolve-options">
-                            <label class="resolve-option" data-value="favor_initiator">
-                                <input type="radio" name="resolution" value="favor_initiator">
-                                <span class="resolve-option-icon">✅</span>
-                                <span class="resolve-option-text">
-                                    <div class="resolve-option-label">${t('dispute.favor_initiator')}</div>
-                                    <div class="resolve-option-desc">${dispute.initiator_role === "publisher" ? t('arbitrate.refund_publisher') : t('arbitrate.assignee_full_pay')}</div>
-                                </span>
-                            </label>
-                            <label class="resolve-option" data-value="favor_respondent">
-                                <input type="radio" name="resolution" value="favor_respondent">
-                                <span class="resolve-option-icon">❌</span>
-                                <span class="resolve-option-text">
-                                    <div class="resolve-option-label">${t('dispute.favor_respondent')}</div>
-                                    <div class="resolve-option-desc">${dispute.initiator_role === "publisher" ? t('arbitrate.assignee_full_pay') : t('arbitrate.refund_publisher')}</div>
-                                </span>
-                            </label>
-                            <label class="resolve-option" data-value="split">
-                                <input type="radio" name="resolution" value="split">
-                                <span class="resolve-option-icon">⚖️</span>
-                                <span class="resolve-option-text">
-                                    <div class="resolve-option-label">${t('arbitrate.negotiate_split')}</div>
-                                    <div class="resolve-option-desc">${t('arbitrate.split_desc')}</div>
-                                </span>
-                            </label>
+                            ${RESOLUTION_OPTIONS.map(opt => {
+                                const desc = opt.descKey
+                                    ? t(opt.descKey)
+                                    : (opt.value === "favor_initiator"
+                                        ? (dispute.initiator_role === "publisher" ? t('arbitrate.refund_publisher') : t('arbitrate.assignee_full_pay'))
+                                        : (dispute.initiator_role === "publisher" ? t('arbitrate.assignee_full_pay') : t('arbitrate.refund_publisher')));
+                                return `<label class="resolve-option" data-value="${opt.value}">
+                                    <input type="radio" name="resolution" value="${opt.value}">
+                                    <span class="resolve-option-icon">${opt.icon}</span>
+                                    <span class="resolve-option-text">
+                                        <div class="resolve-option-label">${t(opt.labelKey)}</div>
+                                        <div class="resolve-option-desc">${desc}</div>
+                                    </span>
+                                </label>`;
+                            }).join("")}
                         </div>
                         
                         <div class="split-ratio" id="splitRatio" style="display: none;">

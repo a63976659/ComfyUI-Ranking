@@ -79,8 +79,7 @@ function setupImageDragSort(previewContainer, fileArray, options = {}) {
         // 绑定删除按钮（如果尚未绑定）
         const removeBtn = wrapper.querySelector('button[data-action="remove"]');
         if (removeBtn && !removeBtn.onclick) {
-            removeBtn.onclick = (e) => {
-                e.stopPropagation();
+            removeBtn.onclick = _createRemoveButtonHandler(() => {
                 if (onRemove) {
                     onRemove(wrapper);
                 } else if (fileArray) {
@@ -93,7 +92,7 @@ function setupImageDragSort(previewContainer, fileArray, options = {}) {
                     updateCoverMark(previewContainer);
                     setupImageDragSort(previewContainer, fileArray, options);
                 }
-            };
+            });
         }
 
         wrapper.ondragstart = (e) => {
@@ -113,18 +112,12 @@ function setupImageDragSort(previewContainer, fileArray, options = {}) {
             const currentWrappers = getWrappers();
             const targetIndex = currentWrappers.indexOf(wrapper);
             if (targetIndex === dragSrcIndex) {
-                currentWrappers.forEach(w => {
-                    w.style.borderLeft = '';
-                    w.style.paddingLeft = '';
-                });
+                _clearDragIndicators(currentWrappers);
                 return;
             }
 
             // 清除所有插入指示
-            currentWrappers.forEach(w => {
-                w.style.borderLeft = '';
-                w.style.paddingLeft = '';
-            });
+            _clearDragIndicators(currentWrappers);
 
             // 在当前目标左侧显示绿色竖线指示插入位置
             wrapper.style.borderLeft = '3px solid #4CAF50';
@@ -165,11 +158,9 @@ function setupImageDragSort(previewContainer, fileArray, options = {}) {
         wrapper.ondragend = () => {
             dragSrcEl = null;
             dragSrcIndex = -1;
-            getWrappers().forEach(w => {
-                w.style.opacity = '';
-                w.style.borderLeft = '';
-                w.style.paddingLeft = '';
-            });
+            const endWrappers = getWrappers();
+            endWrappers.forEach(w => { w.style.opacity = ''; });
+            _clearDragIndicators(endWrappers);
         };
     });
 }
@@ -235,6 +226,57 @@ function formatFileSize(bytes) {
     if (bytes < 1024) return bytes + " B";
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
     return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+}
+
+// ===== 共用样式常量 =====
+// P3-1: 图片预览包装器通用尺寸样式
+const PREVIEW_WRAPPER_STYLE = { position: "relative", width: "80px", height: "80px" };
+
+// ===== 共用辅助函数 =====
+
+// P2-2: 清除所有拖拽插入指示线
+function _clearDragIndicators(wrappers) {
+    wrappers.forEach(w => {
+        w.style.borderLeft = '';
+        w.style.paddingLeft = '';
+    });
+}
+
+// P2-1: 创建图片区域「+」添加按钮
+function _createAddButton(imagesInput) {
+    const addBtn = document.createElement("div");
+    Object.assign(addBtn.style, {
+        width: "80px",
+        height: "80px",
+        border: "2px dashed #444",
+        borderRadius: "6px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        color: "#666",
+        fontSize: "24px"
+    });
+    addBtn.textContent = "+";
+    addBtn.onclick = (e) => {
+        e.stopPropagation();
+        imagesInput.click();
+    };
+    return addBtn;
+}
+
+// P3-2: 显示视频错误提示并重置 input
+function _showVideoErrorAndReset(msg, videoInput) {
+    showToast(msg, "warning");
+    videoInput.value = '';
+}
+
+// P1-1: 创建删除按钮点击处理器（停止冒泡 + 执行回调）
+function _createRemoveButtonHandler(removeCallback) {
+    return (e) => {
+        e.stopPropagation();
+        removeCallback();
+    };
 }
 
 /**
@@ -638,11 +680,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         
         existingImageUrls.forEach((url, idx) => {
             const wrapper = document.createElement("div");
-            Object.assign(wrapper.style, {
-                position: "relative",
-                width: "80px",
-                height: "80px"
-            });
+            Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
             
             wrapper.innerHTML = `
                 <img src="${url}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
@@ -653,11 +691,10 @@ export function createPublishPostView(currentUser, editPostData = null) {
             wrapper._imageType = 'existing';
             wrapper._imageData = url;
 
-            wrapper.querySelector("button").onclick = (e) => {
-                e.stopPropagation();
+            wrapper.querySelector("button").onclick = _createRemoveButtonHandler(() => {
                 existingImageUrls = existingImageUrls.filter(u => u !== url);
                 renderExistingImagePreviews();
-            };
+            });
             
             imagesPreview.appendChild(wrapper);
         });
@@ -668,13 +705,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
             const reader = new FileReader();
             reader.onload = (e) => {
                 const wrapper = document.createElement("div");
-                Object.assign(wrapper.style, {
-                    position: "relative",
-                    width: "80px",
-                    height: "80px"
-                });
-                
-                const totalIdx = existingImageUrls.length + idx;
+                Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
                 wrapper.innerHTML = `
                     <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${totalIdx === 0 ? '#4CAF50' : '#444'};">
                     ${totalIdx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
@@ -684,11 +715,10 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 wrapper._imageType = 'file';
                 wrapper._imageData = file;
 
-                wrapper.querySelector("button").onclick = (e) => {
-                    e.stopPropagation();
+                wrapper.querySelector("button").onclick = _createRemoveButtonHandler(() => {
                     imageFiles = imageFiles.filter(f => f !== file);
                     renderExistingImagePreviews();
-                };
+                });
                 
                 imagesPreview.appendChild(wrapper);
                 setupImageDragSort(imagesPreview, null, { onDrop: onDropReorder });
@@ -697,25 +727,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         });
         
         if (totalImages < 9) {
-            const addBtn = document.createElement("div");
-            Object.assign(addBtn.style, {
-                width: "80px",
-                height: "80px",
-                border: "2px dashed #444",
-                borderRadius: "6px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                color: "#666",
-                fontSize: "24px"
-            });
-            addBtn.textContent = "+";
-            addBtn.onclick = (e) => {
-                e.stopPropagation();
-                imagesInput.click();
-            };
-            imagesPreview.appendChild(addBtn);
+            imagesPreview.appendChild(_createAddButton(imagesInput));
         }
     }
     
@@ -739,11 +751,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
             const reader = new FileReader();
             reader.onload = (e) => {
                 const wrapper = document.createElement("div");
-                Object.assign(wrapper.style, {
-                    position: "relative",
-                    width: "80px",
-                    height: "80px"
-                });
+                Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
                 
                 wrapper.innerHTML = `
                     <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
@@ -767,25 +775,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         });
         
         if (imageFiles.length < 9) {
-            const addBtn = document.createElement("div");
-            Object.assign(addBtn.style, {
-                width: "80px",
-                height: "80px",
-                border: "2px dashed #444",
-                borderRadius: "6px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                color: "#666",
-                fontSize: "24px"
-            });
-            addBtn.textContent = "+";
-            addBtn.onclick = (e) => {
-                e.stopPropagation();
-                imagesInput.click();
-            };
-            imagesPreview.appendChild(addBtn);
+            imagesPreview.appendChild(_createAddButton(imagesInput));
         }
     }
     
@@ -801,16 +791,14 @@ export function createPublishPostView(currentUser, editPostData = null) {
         const validExts = ['.mp4', '.webm', '.mov'];
         const isValidType = validTypes.includes(file.type) || validExts.some(ext => file.name.toLowerCase().endsWith(ext));
         if (!isValidType) {
-            showToast(t('post.error_video_format') || '仅支持 mp4、webm、mov 格式的视频', "warning");
-            videoInput.value = '';
+            _showVideoErrorAndReset(t('post.error_video_format') || '仅支持 mp4、webm、mov 格式的视频', videoInput);
             return;
         }
         
         // 大小检查
         const MAX_SIZE = 100 * 1024 * 1024;
         if (file.size > MAX_SIZE) {
-            showToast(t('post.error_video_size') || '视频大小不能超过 100MB', "warning");
-            videoInput.value = '';
+            _showVideoErrorAndReset(t('post.error_video_size') || '视频大小不能超过 100MB', videoInput);
             return;
         }
         
@@ -823,14 +811,13 @@ export function createPublishPostView(currentUser, editPostData = null) {
         tempVideo.onloadedmetadata = () => {
             URL.revokeObjectURL(tempUrl);
             if (tempVideo.duration > 180) {
-                showToast(t('post.error_video_duration') || '视频时长不能超过 3 分钟', "warning");
-                videoInput.value = '';
+                _showVideoErrorAndReset(t('post.error_video_duration') || '视频时长不能超过 3 分钟', videoInput);
                 return;
             }
             
             videoDuration = tempVideo.duration;
             videoFile = file;
-            if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
+            if (videoObjectUrl) { URL.revokeObjectURL(videoObjectUrl); videoObjectUrl = null; }
             videoObjectUrl = URL.createObjectURL(file);
             currentVideoUrl = '';
             renderVideoPreview();
@@ -838,8 +825,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         
         tempVideo.onerror = () => {
             URL.revokeObjectURL(tempUrl);
-            showToast(t('post.error_video_load') || '无法读取视频信息', "warning");
-            videoInput.value = '';
+            _showVideoErrorAndReset(t('post.error_video_load') || '无法读取视频信息', videoInput);
         };
     };
     
@@ -967,8 +953,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         const file = e.target.files?.[0];
         if (!file) return;
         if (!file.type.startsWith('image/')) {
-            showToast(t('post.error_cover_format') || '请选择图片文件作为封面', "warning");
-            coverInput.value = '';
+            _showVideoErrorAndReset(t('post.error_cover_format') || '请选择图片文件作为封面', coverInput);
             return;
         }
         videoCoverFile = file;
