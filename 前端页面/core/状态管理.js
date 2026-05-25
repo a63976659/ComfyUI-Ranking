@@ -312,6 +312,21 @@ export function logout() {
     sessionStorage.removeItem(CACHE.LEGACY_KEYS.USER);
     sessionStorage.removeItem(CACHE.LEGACY_KEYS.TOKEN);
 
+    // 清除资源安装版本戳（ComfyCommunity_LocalVer_*）
+    // 避免切换账号后残留的版本戳导致详情页按钮状态错误
+    try {
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('ComfyCommunity_LocalVer_')) {
+                keysToRemove.push(key);
+            }
+        }
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+    } catch (e) {
+        console.warn('清除版本戳缓存失败:', e);
+    }
+
     eventBus.emit(EVENTS.USER_LOGOUT);
 }
 
