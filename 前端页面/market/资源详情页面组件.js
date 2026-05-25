@@ -447,5 +447,24 @@ export function createItemDetailView(itemData, currentUser) {
     // 🔄 P7后悔模式：异步加载退款按钮状态
     renderRefundButton(container, itemData, currentUser);
 
+    // 🔄 云端购买状态兜底：本地无版本戳时，查询云端是否已购买
+    if (!localVersionHash && !isFree && currentUser) {
+        api.getPurchaseStatus(currentUser.account, itemData.id).then(res => {
+            const btnUseItem = container.querySelector("#btn-use-item");
+            if (!btnUseItem) return;
+            if (res.owned) {
+                btnUseItem.innerHTML = `✅ 已拥有 (点击重新覆盖安装)`;
+                Object.assign(btnUseItem.style, {
+                    background: "#4CAF50",
+                    color: "#fff",
+                    border: "none"
+                });
+            }
+            // 未购买时保持默认的「立即获取使用」按钮
+        }).catch(err => {
+            console.warn("云端购买状态查询失败，fallback到本地逻辑:", err);
+        });
+    }
+
     return container;
 }
