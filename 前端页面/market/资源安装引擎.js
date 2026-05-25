@@ -237,10 +237,13 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 // 验证接口网络波动不阻断主流程
             }
 
-            const confirmPay = await showConfirm(`该资源标价为 <strong style="color:#FF9800;">${itemData.price} 积分</strong>。<br><br>确认获取吗？<br><span style="font-size:12px;color:#aaa;">(注：一次购买永久免费，如果已购买过系统将直接放行，不会重复扣款)</span>`);
-            if (!confirmPay) {
-                inlineStatusBox.style.display = "none";
-                return;
+            // 已购买用户跳过购买确认弹窗，直接进入后续流程
+            if (!alreadyOwned) {
+                const confirmPay = await showConfirm(`该资源标价为 <strong style="color:#FF9800;">${itemData.price} 积分</strong>。<br><br>确认获取吗？<br><span style="font-size:12px;color:#aaa;">(注：一次购买永久免费，如果已购买过系统将直接放行，不会重复扣款)</span>`);
+                if (!confirmPay) {
+                    inlineStatusBox.style.display = "none";
+                    return;
+                }
             }
         } else {
             inlineStatusBox.style.display = "block";
