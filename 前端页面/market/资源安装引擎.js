@@ -177,8 +177,23 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
         const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool';
         const isApp = itemData.type === 'app' || itemData.type === 'recommend_app';
 
+        // 记录是否已经拥有，决定是否涨销量
+        let alreadyOwned = false;
+
+        // 已购买用户跳过余额检查
+        if (!isFree && currentUser && currentUser.account) {
+            try {
+                const purchaseStatus = await api.getPurchaseStatus(currentUser.account, itemData.id);
+                if (purchaseStatus && purchaseStatus.owned) {
+                    alreadyOwned = true;
+                }
+            } catch (e) {
+                console.warn('购买状态查询失败，继续正常流程', e);
+            }
+        }
+
         // 【新增】：本地前置余额校验（购买前动态获取最新余额）
-        if (!isFree) {
+        if (!isFree && !alreadyOwned) {
             try {
                 const walletRes = await api.getWallet(currentUser.account);
                 if (walletRes && walletRes.status === "success") {
@@ -231,10 +246,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             inlineStatusBox.style.display = "block";
         }
 
-        inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在校验购买状态与扣款安全...</span>`;
-
-        // 记录是否已经拥有，决定是否涨销量
-        let alreadyOwned = false; 
+        inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在校验购买状态与扣款安全...</span>`; 
 
         // 防线 2：事务级扣费 (天然解决问题 3，意外中断不重扣)
         let purchaseRes = null;  // ☁️ 保存购买响应（包含网盘密码）
