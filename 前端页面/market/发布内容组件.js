@@ -456,20 +456,12 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         imageFiles = files;
         imagesPreview.innerHTML = '';
 
-        let loadedCount = 0;
         files.forEach((file, idx) => {
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-                imagesPreview.appendChild(_createImagePreviewWrapper(ev.target.result, idx));
-
-                loadedCount++;
-                if (loadedCount === files.length) {
-                    updateCoverMark(imagesPreview);
-                    setupImageDragSort(imagesPreview, imageFiles);
-                }
-            };
-            reader.readAsDataURL(file);
+            const objectUrl = URL.createObjectURL(file);
+            imagesPreview.appendChild(_createImagePreviewWrapper(objectUrl, idx));
         });
+        updateCoverMark(imagesPreview);
+        setupImageDragSort(imagesPreview, imageFiles);
     };
     
     inputJson.onchange = (e) => { jsonFile = e.target.files[0]; };
