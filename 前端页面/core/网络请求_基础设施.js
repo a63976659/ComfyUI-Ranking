@@ -156,11 +156,15 @@ async function request(endpoint, options = {}) {
     if (!(options.body instanceof FormData)) { headers["Content-Type"] = "application/json"; }
     const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
     if (token) {
-        // 验证 Token 是否为有效的三段式 JWT 格式
         const tokenParts = token.split(".");
         if (tokenParts.length === 3) {
+            // 标准 JWT 格式
+            headers["Authorization"] = `Bearer ${token}`;
+        } else if (token.startsWith("mock_token_")) {
+            // 兼容旧版 mock_token 格式（后端 verify_token_with_fallback 支持）
             headers["Authorization"] = `Bearer ${token}`;
         } else {
+            // 完全无法识别的格式才清除
             console.warn("⚠️ 检测到无效 Token 格式，已自动清除，请重新登录");
             localStorage.removeItem("ComfyCommunity_Token");
             localStorage.removeItem("ComfyCommunity_User");

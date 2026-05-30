@@ -34,7 +34,7 @@ const _pendingActions = new Set();
 export async function recordView(apiMethod, contentId, cachePrefix, onSuccess = null) {
     // 🚀 登录检查：未登录时跳过浏览量记录，避免 401 错误
     const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
-    if (!token || token.split(".").length !== 3) {
+    if (!token || (token.split(".").length !== 3 && !token.startsWith("mock_token_"))) {
         return null;
     }
 

@@ -436,7 +436,21 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
 
     // 🖼️ 多图上传处理
     imagesInput.onchange = (e) => {
-        const files = Array.from(e.target.files).slice(0, 6);  // 最多6张
+        const rawFiles = Array.from(e.target.files).slice(0, 6);  // 最多6张
+        if (rawFiles.length === 0) return;
+
+        // GIF 文件大小校验：超过 50MB 的 GIF 立即排除
+        const GIF_MAX_SIZE = 50 * 1024 * 1024;
+        const files = rawFiles.filter(file => {
+            if (file.type === 'image/gif' && file.size > GIF_MAX_SIZE) {
+                const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+                const msg = `"${file.name}" 文件过大（${sizeMB}MB），GIF最大允许50MB，已自动跳过`;
+                console.warn('[发布内容组件]', msg);
+                alert(msg);
+                return false;
+            }
+            return true;
+        });
         if (files.length === 0) return;
 
         imageFiles = files;
