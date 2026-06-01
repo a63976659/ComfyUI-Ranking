@@ -313,6 +313,19 @@ const api = {
     },
 
     // ==========================================
+    // 📢 广告管理 API
+    // ==========================================
+    async getBannerConfig() {
+        return request("/api/admin/config/banner_config");
+    },
+    async setBannerConfig(config) {
+        return request("/api/admin/config/banner_config", {
+            method: "PUT",
+            body: config
+        });
+    },
+
+    // ==========================================
     // 💰 管理员：提现管理 API
     // ==========================================
     async getAdminWithdrawals(status = null) {

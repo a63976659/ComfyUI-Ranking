@@ -3,6 +3,7 @@ import { api } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { getVersionConfig, getStageLabel } from "../components/关于插件组件.js";
+import { refreshBanner } from "../components/顶部广告组件.js";
 
 /**
  * 创建管理后台视图
@@ -226,9 +227,230 @@ export function createAdminPanelView(currentUser) {
     scriptCard.append(scriptHeader, scriptInputRow, resultArea);
 
     // ==========================================
+    // 📢 广告横幅管理卡片
+    // ==========================================
+    const bannerCard = document.createElement("div");
+    bannerCard.style.cssText = "background: rgba(30,30,30,0.95); border: 1px solid rgba(85,85,85,0.6); border-radius: 12px; padding: 20px; margin-bottom: 16px;";
+
+    const bannerHeader = document.createElement("div");
+    bannerHeader.style.cssText = "display: flex; align-items: center; gap: 8px; margin-bottom: 14px;";
+
+    const bannerTitle = document.createElement("span");
+    bannerTitle.style.cssText = "font-size: 14px; font-weight: 600; color: #e6edf3;";
+    bannerTitle.innerHTML = "📰 广告横幅管理";
+
+    const bannerBadge = document.createElement("span");
+    bannerBadge.style.cssText = "font-size: 10px; padding: 2px 8px; border-radius: 6px; background: rgba(76,175,80,0.15); color: #4CAF50; border: 1px solid rgba(76,175,80,0.3);";
+    bannerBadge.textContent = "广告配置";
+
+    bannerHeader.append(bannerTitle, bannerBadge);
+
+    // 启用/禁用开关
+    const enableRow = document.createElement("div");
+    enableRow.style.cssText = "display: flex; align-items: center; gap: 10px; margin-bottom: 14px;";
+
+    const enableLabel = document.createElement("span");
+    enableLabel.style.cssText = "font-size: 13px; color: #aaa;";
+    enableLabel.textContent = "启用广告显示：";
+
+    const enableSwitch = document.createElement("input");
+    enableSwitch.type = "checkbox";
+    enableSwitch.id = "banner-enabled-switch";
+    enableSwitch.style.cssText = "width: 18px; height: 18px; cursor: pointer; accent-color: #4CAF50;";
+
+    enableRow.append(enableLabel, enableSwitch);
+
+    // 横幅图片上传
+    const bannerImgLabel = document.createElement("div");
+    bannerImgLabel.style.cssText = "font-size: 13px; color: #aaa; margin-bottom: 6px;";
+    bannerImgLabel.textContent = "横幅图片（显示在顶部导航）：";
+
+    const bannerImgPreview = document.createElement("img");
+    bannerImgPreview.id = "banner-img-preview";
+    bannerImgPreview.style.cssText = "display: none; max-width: 100%; max-height: 80px; border-radius: 6px; margin-bottom: 8px; object-fit: contain; background: #2a2a2a;";
+
+    const bannerImgBtn = document.createElement("button");
+    bannerImgBtn.textContent = "🖼️ 选择横幅图片";
+    bannerImgBtn.style.cssText = "padding: 8px 16px; border: 1px dashed rgba(85,85,85,0.6); border-radius: 8px; background: #2a2a2a; color: #ccc; cursor: pointer; font-size: 13px; margin-bottom: 14px; transition: border-color 0.2s;";
+    bannerImgBtn.onmouseenter = () => { bannerImgBtn.style.borderColor = "#4CAF50"; };
+    bannerImgBtn.onmouseleave = () => { bannerImgBtn.style.borderColor = "rgba(85,85,85,0.6)"; };
+
+    let bannerImageUrl = "";
+    const bannerImgInput = document.createElement("input");
+    bannerImgInput.type = "file";
+    bannerImgInput.accept = "image/*";
+    bannerImgInput.style.display = "none";
+    bannerImgBtn.onclick = () => bannerImgInput.click();
+    bannerImgInput.onchange = async () => {
+        const file = bannerImgInput.files[0];
+        if (!file) return;
+        bannerImgBtn.textContent = "⬆️ 上传中...";
+        bannerImgBtn.disabled = true;
+        try {
+            const res = await api.uploadFile(file, "banner");
+            if (res && res.url) {
+                bannerImageUrl = res.url;
+                bannerImgPreview.src = res.url;
+                bannerImgPreview.style.display = "block";
+                showToast("✅ 横幅图片上传成功", "success");
+            }
+        } catch (e) {
+            showToast("❌ 横幅图片上传失败: " + e.message, "error");
+        } finally {
+            bannerImgBtn.textContent = "🖼️ 选择横幅图片";
+            bannerImgBtn.disabled = false;
+        }
+    };
+
+    // 详情页大图上传
+    const detailImgLabel = document.createElement("div");
+    detailImgLabel.style.cssText = "font-size: 13px; color: #aaa; margin-bottom: 6px;";
+    detailImgLabel.textContent = "详情页大图（点击横幅后展开）：";
+
+    const detailImgPreview = document.createElement("img");
+    detailImgPreview.id = "banner-detail-img-preview";
+    detailImgPreview.style.cssText = "display: none; max-width: 100%; max-height: 120px; border-radius: 6px; margin-bottom: 8px; object-fit: contain; background: #2a2a2a;";
+
+    const detailImgBtn = document.createElement("button");
+    detailImgBtn.textContent = "🖼️ 选择详情页大图";
+    detailImgBtn.style.cssText = "padding: 8px 16px; border: 1px dashed rgba(85,85,85,0.6); border-radius: 8px; background: #2a2a2a; color: #ccc; cursor: pointer; font-size: 13px; margin-bottom: 14px; transition: border-color 0.2s;";
+    detailImgBtn.onmouseenter = () => { detailImgBtn.style.borderColor = "#4CAF50"; };
+    detailImgBtn.onmouseleave = () => { detailImgBtn.style.borderColor = "rgba(85,85,85,0.6)"; };
+
+    let detailImageUrl = "";
+    const detailImgInput = document.createElement("input");
+    detailImgInput.type = "file";
+    detailImgInput.accept = "image/*";
+    detailImgInput.style.display = "none";
+    detailImgBtn.onclick = () => detailImgInput.click();
+    detailImgInput.onchange = async () => {
+        const file = detailImgInput.files[0];
+        if (!file) return;
+        detailImgBtn.textContent = "⬆️ 上传中...";
+        detailImgBtn.disabled = true;
+        try {
+            const res = await api.uploadFile(file, "banner");
+            if (res && res.url) {
+                detailImageUrl = res.url;
+                detailImgPreview.src = res.url;
+                detailImgPreview.style.display = "block";
+                showToast("✅ 详情页大图上传成功", "success");
+            }
+        } catch (e) {
+            showToast("❌ 详情页大图上传失败: " + e.message, "error");
+        } finally {
+            detailImgBtn.textContent = "🖼️ 选择详情页大图";
+            detailImgBtn.disabled = false;
+        }
+    };
+
+    // 标题输入框
+    const titleLabel = document.createElement("div");
+    titleLabel.style.cssText = "font-size: 13px; color: #aaa; margin-bottom: 6px;";
+    titleLabel.textContent = "广告标题：";
+
+    const titleInput = document.createElement("input");
+    titleInput.id = "banner-title-input";
+    titleInput.placeholder = "输入广告标题";
+    titleInput.style.cssText = "width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(85,85,85,0.6); background: #2a2a2a; color: #e6edf3; font-size: 13px; outline: none; box-sizing: border-box; margin-bottom: 14px; transition: border-color 0.2s;";
+    titleInput.onfocus = () => { titleInput.style.borderColor = "#4CAF50"; };
+    titleInput.onblur = () => { titleInput.style.borderColor = "rgba(85,85,85,0.6)"; };
+
+    // 描述输入框
+    const descLabel = document.createElement("div");
+    descLabel.style.cssText = "font-size: 13px; color: #aaa; margin-bottom: 6px;";
+    descLabel.textContent = "广告描述：";
+
+    const descInput = document.createElement("input");
+    descInput.id = "banner-desc-input";
+    descInput.placeholder = "输入广告简短描述";
+    descInput.style.cssText = "width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(85,85,85,0.6); background: #2a2a2a; color: #e6edf3; font-size: 13px; outline: none; box-sizing: border-box; margin-bottom: 14px; transition: border-color 0.2s;";
+    descInput.onfocus = () => { descInput.style.borderColor = "#4CAF50"; };
+    descInput.onblur = () => { descInput.style.borderColor = "rgba(85,85,85,0.6)"; };
+
+    // 详情内容输入框
+    const detailLabel = document.createElement("div");
+    detailLabel.style.cssText = "font-size: 13px; color: #aaa; margin-bottom: 6px;";
+    detailLabel.textContent = "详情内容（支持多行文本）：";
+
+    const detailTextarea = document.createElement("textarea");
+    detailTextarea.id = "banner-detail-textarea";
+    detailTextarea.placeholder = "输入广告详情页的详细文本内容";
+    detailTextarea.style.cssText = "width: 100%; min-height: 80px; padding: 12px; border-radius: 8px; border: 1px solid rgba(85,85,85,0.6); background: #2a2a2a; color: #e6edf3; font-size: 13px; resize: vertical; box-sizing: border-box; outline: none; margin-bottom: 14px; transition: border-color 0.2s;";
+    detailTextarea.onfocus = () => { detailTextarea.style.borderColor = "#4CAF50"; };
+    detailTextarea.onblur = () => { detailTextarea.style.borderColor = "rgba(85,85,85,0.6)"; };
+
+    // 保存按钮
+    const btnSaveBanner = document.createElement("button");
+    btnSaveBanner.innerHTML = "💾 保存广告配置";
+    btnSaveBanner.style.cssText = "width: 100%; padding: 10px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; color: #fff; background: #4CAF50; transition: all 0.2s;";
+    btnSaveBanner.onmouseenter = () => { btnSaveBanner.style.transform = "translateY(-1px)"; btnSaveBanner.style.boxShadow = "0 4px 12px rgba(76,175,80,0.4)"; };
+    btnSaveBanner.onmouseleave = () => { btnSaveBanner.style.transform = "none"; btnSaveBanner.style.boxShadow = "none"; };
+    btnSaveBanner.onclick = async () => {
+        const config = {
+            enabled: enableSwitch.checked,
+            bannerImage: bannerImageUrl,
+            detailImage: detailImageUrl,
+            title: titleInput.value.trim(),
+            description: descInput.value.trim(),
+            detailContent: detailTextarea.value.trim()
+        };
+        btnSaveBanner.textContent = "💾 保存中...";
+        btnSaveBanner.disabled = true;
+        try {
+            await api.setBannerConfig(config);
+            showToast("✅ 广告配置已保存", "success");
+            // 保存成功后立即刷新顶部广告横幅
+            refreshBanner();
+        } catch (e) {
+            showToast("❌ 保存失败: " + e.message, "error");
+        } finally {
+            btnSaveBanner.innerHTML = "💾 保存广告配置";
+            btnSaveBanner.disabled = false;
+        }
+    };
+
+    bannerCard.append(
+        bannerHeader, enableRow,
+        bannerImgLabel, bannerImgPreview, bannerImgBtn, bannerImgInput,
+        detailImgLabel, detailImgPreview, detailImgBtn, detailImgInput,
+        titleLabel, titleInput,
+        descLabel, descInput,
+        detailLabel, detailTextarea,
+        btnSaveBanner
+    );
+
+    // 页面加载时读取当前广告配置
+    (async () => {
+        try {
+            const res = await api.getBannerConfig();
+            const data = res && res.data;
+            if (data) {
+                enableSwitch.checked = !!data.enabled;
+                if (data.bannerImage) {
+                    bannerImageUrl = data.bannerImage;
+                    bannerImgPreview.src = data.bannerImage;
+                    bannerImgPreview.style.display = "block";
+                }
+                if (data.detailImage) {
+                    detailImageUrl = data.detailImage;
+                    detailImgPreview.src = data.detailImage;
+                    detailImgPreview.style.display = "block";
+                }
+                if (data.title) titleInput.value = data.title;
+                if (data.description) descInput.value = data.description;
+                if (data.detailContent) detailTextarea.value = data.detailContent;
+            }
+        } catch (e) {
+            // 静默失败，保留空表单
+            console.warn("加载广告配置失败:", e);
+        }
+    })();
+
+    // ==========================================
     // 组装
     // ==========================================
-    container.append(navBar, actionsCard, announceCard, scriptCard);
+    container.append(navBar, actionsCard, announceCard, scriptCard, bannerCard);
 
     return container;
 }
