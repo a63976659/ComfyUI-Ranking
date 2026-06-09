@@ -167,16 +167,6 @@ export async function compressImageForUpload(file) {
         return file;
     }
 
-    // GIF 动图保留原始格式，不转换为 JPG
-    if (file.type === 'image/gif') {
-        const GIF_MAX_SIZE = 50 * 1024 * 1024; // 50MB
-        if (file.size > GIF_MAX_SIZE) {
-            throw new Error(`GIF文件过大（${(file.size/1024/1024).toFixed(1)}MB），最大允许50MB`);
-        }
-        console.log(`🎞️ GIF动图保留原始格式: ${(file.size/1024/1024).toFixed(2)}MB`);
-        return file;
-    }
-
     try {
         const processedFile = await _processImageCore(file, {
             quality: 0.92,

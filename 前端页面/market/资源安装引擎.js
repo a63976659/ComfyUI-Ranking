@@ -2,7 +2,7 @@
 import { app } from "../../../scripts/app.js"; 
 import { showToast, showConfirm, createInstallProgress } from "../components/UI交互提示组件.js";
 import { api } from "../core/网络请求API.js";
-import { requestSSE } from "../core/网络请求_基础设施.js";
+import { requestSSE, request } from "../core/网络请求_基础设施.js";
 import { openUserProfileModal } from "../profile/个人中心视图.js";
 import { API, CACHE } from "../core/全局配置.js";
 import { removeCache } from "../components/性能优化工具.js";
@@ -322,10 +322,11 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             inlineStatusBox.querySelector('#btn-cancel-install').onclick = () => inlineStatusBox.style.display = "none";
             inlineStatusBox.querySelector('#btn-confirm-install').onclick = async () => {
                 // 获取最新的 item 数据以确保路由决策准确
+                // noCache: true 绕过前端 GET 请求缓存（5min TTL），确保读取服务器最新 has_private_token 值
                 let freshHasPrivateToken = !!itemData.has_private_token;
                 let apiFetchFailed = false;
                 try {
-                    const freshRes = await api.getItemById(itemData.id);
+                    const freshRes = await request(`/api/items/${itemData.id}`, { noCache: true });
                     if (freshRes.status === "success" && freshRes.data) {
                         freshHasPrivateToken = !!freshRes.data.has_private_token;
                     }
