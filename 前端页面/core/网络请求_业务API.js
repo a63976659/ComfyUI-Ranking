@@ -318,6 +318,9 @@ const api = {
     async getBannerConfig() {
         return request("/api/admin/config/banner_config");
     },
+    async getPublicBannerConfig(options = {}) {
+        return request("/api/public/banner_config", options);
+    },
     async setBannerConfig(config) {
         return request("/api/admin/config/banner_config", {
             method: "PUT",

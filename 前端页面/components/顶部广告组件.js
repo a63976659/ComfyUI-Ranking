@@ -24,19 +24,53 @@ let activeConfig = { ...BANNER_CONFIG };
 // 模块级 banner 容器引用，供 refreshBanner() 使用
 let bannerContainer = null;
 
+// 本地缓存配置
+const BANNER_CACHE_KEY = "ComfyRanking_BannerConfig";
+const BANNER_CACHE_TTL = 60 * 60 * 1000; // 1小时缓存
+
 /**
  * 从后端加载广告配置
  * @returns {Promise<Object|null>} 配置对象，失败返回 null
  */
 async function loadBannerConfig() {
     try {
-        const res = await api.getBannerConfig();
-        if (res && res.data) {
+        // 1. 优先使用本地缓存
+        const cached = localStorage.getItem(BANNER_CACHE_KEY);
+        if (cached) {
+            const { data, timestamp } = JSON.parse(cached);
+            if (Date.now() - timestamp < BANNER_CACHE_TTL) {
+                return data;
+            }
+        }
+
+        // 2. 调用公开接口获取
+        const res = await api.getPublicBannerConfig();
+        if (res && res.status === "success") {
+            if (res.data) {
+                // 只缓存有效配置，不缓存 null（禁用后再启用可立即生效）
+                localStorage.setItem(BANNER_CACHE_KEY, JSON.stringify({
+                    data: res.data,
+                    timestamp: Date.now()
+                }));
+            } else {
+                // 广告已禁用，清除旧缓存避免显示过期内容
+                localStorage.removeItem(BANNER_CACHE_KEY);
+            }
             return res.data;
         }
     } catch (e) {
-        // 加载失败时静默降级
-        console.warn("广告配置加载失败，使用默认配置", e);
+        console.warn("广告配置加载失败，尝试使用缓存", e);
+        // 网络失败时使用过期缓存降级
+        try {
+            const cached = localStorage.getItem(BANNER_CACHE_KEY);
+            if (cached) {
+                const { data } = JSON.parse(cached);
+                return data;
+            }
+        } catch (parseErr) {
+            // 缓存数据损坏，清除后返回 null
+            localStorage.removeItem(BANNER_CACHE_KEY);
+        }
     }
     return null;
 }
@@ -118,9 +152,23 @@ function updateBannerDOM() {
  * 刷新顶部广告横幅（重新加载配置并更新DOM）
  */
 export async function refreshBanner() {
-    const remoteConfig = await loadBannerConfig();
-    if (remoteConfig) {
-        activeConfig = { ...BANNER_CONFIG, ...remoteConfig };
+    // 清除自定义缓存
+    localStorage.removeItem(BANNER_CACHE_KEY);
+    try {
+        // 绕过请求级缓存，强制从服务器获取最新配置
+        const res = await api.getPublicBannerConfig({ noCache: true });
+        if (res && res.status === "success" && res.data) {
+            activeConfig = { ...BANNER_CONFIG, ...res.data };
+            // 更新本地缓存
+            localStorage.setItem(BANNER_CACHE_KEY, JSON.stringify({
+                data: res.data,
+                timestamp: Date.now()
+            }));
+        } else {
+            activeConfig = { ...BANNER_CONFIG };
+        }
+    } catch (e) {
+        console.warn("刷新广告配置失败", e);
     }
     updateBannerDOM();
 }

@@ -400,7 +400,7 @@ export function createAdminPanelView(currentUser) {
         try {
             await api.setBannerConfig(config);
             showToast("✅ 广告配置已保存", "success");
-            // 保存成功后立即刷新顶部广告横幅
+            // 保存成功后强制刷新广告横幅（内部已处理缓存清除）
             refreshBanner();
         } catch (e) {
             showToast("❌ 保存失败: " + e.message, "error");
