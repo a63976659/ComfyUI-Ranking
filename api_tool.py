@@ -7,6 +7,7 @@ import urllib.error
 import http.client
 import subprocess
 import shutil
+import stat
 import asyncio
 import tempfile
 import time
@@ -39,6 +40,12 @@ def _prepare_git_env():
     return env
 
 
+def _force_remove_readonly(func, path, exc_info):
+    """Windows 下强制删除只读文件（如 .git/objects/pack/*.idx）"""
+    os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    func(path)
+
+
 async def install_tool_handler(request):
     # NOTE: 与 install_tool_stream_handler 共享核心安装逻辑（URL校验、双链路容灾、Git克隆），如需修改请同步
     if not _is_local_request(request):
@@ -62,7 +69,7 @@ async def install_tool_handler(request):
     # 清理残留机制。如果文件夹已存在，说明可能是旧的无 .git 残缺安装，直接移除
     if os.path.exists(clone_target_path):
         try:
-            shutil.rmtree(clone_target_path)
+            shutil.rmtree(clone_target_path, onerror=_force_remove_readonly)
         except Exception as e:
             return web.json_response({"error": f"目录 {target_dir_name} 已存在且被占用，无法自动清理，请先手动删除。错误: {str(e)}"}, status=400)
         
@@ -94,7 +101,7 @@ async def install_tool_handler(request):
             
             # 清理刚才克隆到一半可能留下的残缺空文件夹
             if os.path.exists(clone_target_path):
-                shutil.rmtree(clone_target_path)
+                shutil.rmtree(clone_target_path, onerror=_force_remove_readonly)
                 
             # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
             subprocess.run(
@@ -234,7 +241,7 @@ async def install_private_tool_handler(request):
             # 🚀 核心修复 1：执行纯净更新！在确认 ZIP 完好无损后，先彻底抹除旧版本文件夹，防止残留的废弃 .py 文件引发报错
             if os.path.exists(extract_target_path):
                 try:
-                    shutil.rmtree(extract_target_path)
+                    shutil.rmtree(extract_target_path, onerror=_force_remove_readonly)
                 except Exception as e:
                     # 🚀 核心修复 2：拦截 Windows 下 Python 文件被 ComfyUI 进程死锁的情况
                     return web.json_response({"error": "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。"}, status=500)
@@ -339,7 +346,7 @@ async def install_tool_stream_handler(request):
         await send_progress("cleanup", 15, "清理残留目录...")
         if os.path.exists(clone_target_path):
             try:
-                shutil.rmtree(clone_target_path)
+                shutil.rmtree(clone_target_path, onerror=_force_remove_readonly)
             except Exception as e:
                 await send_progress("error", -1, f"目录 {target_dir_name} 已存在且被占用，无法自动清理，请先手动删除。错误: {str(e)}", "error")
                 await resp.write_eof()
@@ -394,7 +401,7 @@ async def install_tool_stream_handler(request):
             await send_progress("git_fallback", 55, "镜像失败，切换直连源...")
 
             if os.path.exists(clone_target_path):
-                shutil.rmtree(clone_target_path)
+                shutil.rmtree(clone_target_path, onerror=_force_remove_readonly)
 
             await send_progress("git_direct", 70, "正在直连克隆（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
@@ -620,7 +627,7 @@ async def install_private_tool_stream_handler(request):
 
             if os.path.exists(extract_target_path):
                 try:
-                    shutil.rmtree(extract_target_path)
+                    shutil.rmtree(extract_target_path, onerror=_force_remove_readonly)
                 except Exception as e:
                     await send_progress("error", -1, "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。", "error")
                     await resp.write_eof()
