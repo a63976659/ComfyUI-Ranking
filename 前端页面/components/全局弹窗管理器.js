@@ -27,7 +27,7 @@ export class ModalManager {
 
         // 点击遮罩层时，关闭最顶层的一个弹窗
         this.overlay.onclick = () => {
-            this.closeTopModal();
+            try { this.closeTopModal(); } catch(e) { console.warn('[ModalManager] closeTopModal error:', e); }
         };
 
         document.body.appendChild(this.overlay);

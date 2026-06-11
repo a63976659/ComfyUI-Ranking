@@ -468,10 +468,10 @@ export function createPublishPostView(currentUser, editPostData = null) {
             <div style="margin-bottom: 15px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px;">
                 <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                     <input type="checkbox" id="is-original-checkbox" ${editIsOriginal ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #4CAF50;" />
-                    <span style="font-size: 13px; color: #ccc;">🎨 标记为原创作品</span>
+                    <span style="font-size: 13px; color: #ccc;">🎨 ${t('publish.mark_as_original')}</span>
                 </label>
                 <div style="font-size: 11px; color: #888; margin-top: 6px; padding-left: 24px;">
-                    原创内容将获得特殊标识展示，请勿标记非原创内容
+                    ${t('publish.original_default_hint')}
                 </div>
             </div>
             
@@ -707,8 +707,8 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 const wrapper = document.createElement("div");
                 Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
                 wrapper.innerHTML = `
-                    <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${totalIdx === 0 ? '#4CAF50' : '#444'};">
-                    ${totalIdx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
+                    <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${existingImageUrls.length === 0 && idx === 0 ? '#4CAF50' : '#444'};">
+                    ${existingImageUrls.length === 0 && idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
                     <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
                 `;
 

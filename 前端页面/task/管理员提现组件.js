@@ -6,9 +6,8 @@
 // ==========================================
 
 import { api } from "../core/网络请求API.js";
-import { showToast } from "../components/UI交互提示组件.js";
+import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { t, getLanguage } from "../components/用户体验增强.js";
-import { globalModal } from "../components/全局弹窗管理器.js";
 
 /**
  * 创建管理员提现管理视图
@@ -195,46 +194,54 @@ async function renderWithdrawList(container, currentUser, statusFilter = "pendin
                 return;
             }
 
-            // 使用全局弹窗管理器进行二次确认
-            const confirmContent = document.createElement("div");
-            confirmContent.innerHTML = `
-                <div style="padding: 20px; text-align: center;">
-                    <div style="font-size: 48px; margin-bottom: 16px;">💰</div>
-                    <div style="font-size: 16px; color: var(--input-text); margin-bottom: 8px;">
-                        ${t('withdraw.confirm_title')}
-                    </div>
-                    <div style="font-size: 13px; color: #888; margin-bottom: 20px;">
+            // 二次确认弹窗
+            const confirmMessage = `
+                <div style="text-align: center;">
+                    <div style="font-size: 48px; margin-bottom: 12px;">💰</div>
+                    <div style="font-size: 14px; color: #ccc; margin-bottom: 16px;">
                         ${t('withdraw.confirm_desc')}
                     </div>
-                    <div style="background: rgba(76, 175, 80, 0.1); border: 1px solid rgba(76, 175, 80, 0.3); border-radius: 8px; padding: 12px; margin-bottom: 20px;">
+                    <div style="background: rgba(76, 175, 80, 0.1); border: 1px solid rgba(76, 175, 80, 0.3); border-radius: 8px; padding: 12px;">
                         <div style="font-size: 12px; color: #888; margin-bottom: 4px;">${t('withdraw.order_id')}</div>
-                        <div style="font-size: 14px; color: #4CAF50; font-weight: bold; word-break: break-all;">${paymentOrderId}</div>
+                        <div style="font-size: 14px; color: #4CAF50; font-weight: bold; word-break: break-all;">${escapeHtml(paymentOrderId)}</div>
                     </div>
                 </div>
             `;
 
-            const confirmed = await globalModal.confirm(
-                t('withdraw.confirm_payment'),
-                confirmContent,
-                {
-                    confirmText: t('common.confirm'),
-                    cancelText: t('common.cancel'),
-                    confirmClass: 'success'
-                }
-            );
+            // 在 showConfirm 调用前禁用按钮防止连点
+            btnEl.disabled = true;
 
-            if (!confirmed) return;
+            const confirmed = await showConfirm(confirmMessage, {
+                title: t('withdraw.confirm_title'),
+                confirmText: t('common.confirm'),
+                cancelText: t('common.cancel'),
+                type: 'info'
+            });
+
+            if (!confirmed) {
+                btnEl.disabled = false;  // 取消时恢复按钮
+                return;
+            }
 
             // 执行确认打款
             btnEl.disabled = true;
             btnEl.textContent = `${t('common.processing')}...`;
 
+            // 超时保护（30秒）
+            const timeoutTimer = setTimeout(() => {
+                btnEl.disabled = false;
+                btnEl.textContent = t('withdraw.confirm_payment');
+                showToast(t('common.timeout') || '操作超时，请重试', "warning");
+            }, 30000);
+
             try {
                 await api.completeWithdrawal(txId, paymentOrderId);
+                clearTimeout(timeoutTimer);
                 showToast(t('withdraw.payment_success'), "success");
                 // 刷新列表
                 renderWithdrawList(container, currentUser, statusFilter);
             } catch (err) {
+                clearTimeout(timeoutTimer);
                 showToast(t('withdraw.payment_failed') + ": " + err.message, "error");
                 btnEl.disabled = false;
                 btnEl.textContent = t('withdraw.confirm_payment');
@@ -255,4 +262,10 @@ function formatTime(timestamp) {
         : new Date(timestamp);
     if (isNaN(date.getTime())) return t('common.unknown');
     return date.toLocaleString(getLanguage(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
 }

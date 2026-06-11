@@ -2,7 +2,7 @@
 import { generatePublishHTML } from "./发布内容_UI模板.js";
 import { handlePublishSubmit } from "./发布内容_提交引擎.js";
 import { t } from "../components/用户体验增强.js";
-import { showConfirm } from "../components/UI交互提示组件.js";
+import { showConfirm, showToast } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 
 // ==========================================
@@ -446,7 +446,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
                 const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
                 const msg = `"${file.name}" 文件过大（${sizeMB}MB），GIF最大允许50MB，已自动跳过`;
                 console.warn('[发布内容组件]', msg);
-                alert(msg);
+                showToast(msg, "warning");
                 return false;
             }
             return true;

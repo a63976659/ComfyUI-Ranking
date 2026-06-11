@@ -196,7 +196,7 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
             borderRadius: "12px", fontSize: "11px", color: "#fff", fontWeight: "500",
             marginBottom: "10px"
         });
-        originalBadge.textContent = "🎨 原创内容";
+        originalBadge.textContent = "🎨 " + t('publish.mark_original');
         detailView.appendChild(originalBadge);
     }
 
@@ -333,10 +333,21 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
         // 🐛 Bug修复：防御性校验，防止 itemId 为空
         if (!itemData.id) {
             console.warn('⚠️ 列表卡片: itemData.id 为空，已拦截无效打赏请求');
-            return showToast("资源ID无效，无法打赏", "error");
+            return showToast(t('item.invalid_id_tip'), "error");
         }
-        openTipModal(currentUser, { account: itemData.author }, (newBalance) => {
-            currentUser.balance = newBalance;
+        openTipModal(currentUser, { account: itemData.author }, async (newBalance) => {
+            // 🐛 Bug修复：确保打赏后余额即时同步
+            if (newBalance !== undefined && newBalance !== null) {
+                currentUser.balance = newBalance;
+            } else {
+                // 后备：如果回调未传余额，主动调用getWallet刷新
+                try {
+                    const walletRes = await api.getWallet(currentUser.account, { noCache: true });
+                    if (walletRes && walletRes.status === "success") {
+                        currentUser.balance = walletRes.balance;
+                    }
+                } catch (e) { /* 静默失败 */ }
+            }
         }, itemData.id);
     };
 

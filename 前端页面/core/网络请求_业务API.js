@@ -96,7 +96,7 @@ const api = {
     async sendPrivateMessage(sender, receiver, content) { return request("/api/messages/private", { method: "POST", body: { sender, receiver, content } }); },
     async getChatList(account) { return request(`/api/chats/${account}`); },
     async getChatHistory(account, targetAccount) { return request(`/api/chats/${account}/${targetAccount}`); },
-    async getWallet(account) { return request(`/api/wallet/${account}`); },
+    async getWallet(account, options = {}) { return request(`/api/wallet/${account}`, options); },
 
     // 🛒 获取用户购买记录（从云端 ownerships 表）
     async getUserPurchases(account) {

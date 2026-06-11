@@ -17,6 +17,7 @@ import { api } from "./网络请求API.js";  // 🔴 编辑模式需调用详情
 import { CACHE, getBackgroundKey } from "./全局配置.js";
 import { debounce } from "../components/性能优化工具.js";
 import { cleanupImageSandbox } from "../components/图片沙盒组件.js";  // 🔧 P3优化：导入清理函数
+import { getVersionConfig, formatVersionString } from "../components/关于插件组件.js";  // 🏷️ 动态版本号
 // 🎯 P2 用户体验增强
 import { initUXEnhancements, t } from "../components/用户体验增强.js";
 
@@ -150,7 +151,7 @@ export function buildSidebarDOM() {
         <div style="display: flex; justify-content: center; align-items: center; gap: 10px; color: #555;">
             <span>MIT License Copyright (c) 2026 <a href="#" id="easter-egg-trigger" style="color: #888; text-decoration: none; cursor: pointer; transition: color 0.2s;" onmouseover="this.style.color='#ffb0c0'" onmouseout="this.style.color='#888'">猪的飞行梦</a></span>
             <span style="color: #444;">|</span>
-            <span>v1.2.0-Beta</span>
+            <span class="footer-version-label">加载中...</span>
         </div>
     `;
     
@@ -162,6 +163,17 @@ export function buildSidebarDOM() {
             import('../components/彩蛋动画引擎.js').then(mod => mod.openEasterEggPage());
         });
     }
+
+    // 🏷️ 动态加载版本号（与关于页面保持一致）
+    getVersionConfig().then(config => {
+        const versionLabel = footerContainer.querySelector('.footer-version-label');
+        if (versionLabel) {
+            versionLabel.textContent = formatVersionString(config);
+        }
+    }).catch(() => {
+        const versionLabel = footerContainer.querySelector('.footer-version-label');
+        if (versionLabel) versionLabel.textContent = 'V2.0.0 Beta';
+    });
     
     // 监听从设置页面触发的背景更新事件
     window.addEventListener("comfy-sidebar-bg-update", () => {

@@ -2,7 +2,7 @@
 import { api } from "../core/网络请求API.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR, isAdmin } from "../core/全局配置.js";
-import { showToast } from "../components/UI交互提示组件.js";
+import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 
 const escapeHtml = (str) => {
     if (!str) return '';
@@ -146,15 +146,20 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
 
             if (canDelete) {
                 itemDiv.querySelector(".delete-btn").onclick = async () => {
-                    if (confirm(t('social.delete_comment_confirm'))) {
-                        try {
-                            // 🚀 P0安全修复：删除评论不再传递author，后端从JWT中获取
-                            await api.deleteComment(itemId, comment.id);
-                            comment.isDeleted = true;
-                            renderList(); 
-                            triggerCountUpdate();
-                        } catch(e) { showToast(t('feedback.delete_failed') + t('feedback.retry_suffix', '，请重试'), "error"); }
-                    }
+                    const confirmed = await showConfirm(t('social.delete_comment_confirm'), {
+                        title: t('social.delete_comment_title') || t('common.confirm'),
+                        confirmText: t('common.confirm'),
+                        cancelText: t('common.cancel'),
+                        type: 'danger'
+                    });
+                    if (!confirmed) return;
+                    try {
+                        // 🚀 P0安全修复：删除评论不再传递author，后端从JWT中获取
+                        await api.deleteComment(itemId, comment.id);
+                        comment.isDeleted = true;
+                        renderList(); 
+                        triggerCountUpdate();
+                    } catch(e) { showToast(t('feedback.delete_failed') + t('feedback.retry_suffix', '，请重试'), "error"); }
                 };
             }
         }

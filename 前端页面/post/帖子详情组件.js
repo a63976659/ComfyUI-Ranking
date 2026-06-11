@@ -185,7 +185,7 @@ async function loadPostDetail(container, postId, currentUser) {
             <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; 
                         background: linear-gradient(135deg, #FF6B35, #FF8F00); border-radius: 12px; 
                         font-size: 11px; color: #fff; font-weight: 500; margin-bottom: 12px;">
-                🎨 原创内容，请勿商用
+                🎨 ${t('publish.original_no_commercial')}
             </div>
             ` : ''}
             
@@ -445,7 +445,7 @@ async function showTipDialog(post, currentUser, container) {
     content.style.color = "#ccc";
     content.innerHTML = `
         <div style="margin-bottom: 12px; background: rgba(255,152,0,0.1); padding: 10px; border-radius: 4px; border: 1px solid #FF9800; text-align: center;">
-            当前余额: <strong style="color:#FF9800;">${currentUser.balance || 0}</strong> 积分
+            ${t('wallet.current_balance')}: <strong style="color:#FF9800;">${currentUser.balance || 0}</strong> ${t('wallet.credits')}
         </div>
         <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
             <button class="tip-amount" data-amount="10" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>

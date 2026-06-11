@@ -24,7 +24,17 @@ function _setButtonLoading(btn, isLoading, loadingText, normalText) {
     btn.style.cursor = isLoading ? "not-allowed" : "pointer";
 }
 
-export function openRechargeModal(currentUser, onBalanceChange) {
+export async function openRechargeModal(currentUser, onBalanceChange) {
+    // 🔄 打开充值弹窗时主动拉取最新余额，避免显示过期数据
+    try {
+        const freshWallet = await api.getWallet(currentUser.account, { noCache: true });
+        if (freshWallet && freshWallet.balance !== undefined) {
+            currentUser.balance = freshWallet.balance;
+        }
+    } catch (e) {
+        // 获取失败则使用本地值，不阻塞弹窗打开
+    }
+
     const container = document.createElement("div");
     container.style.color = "#ccc";
 
@@ -124,6 +134,9 @@ export function openRechargeModal(currentUser, onBalanceChange) {
     const qrImage = container.querySelector("#qr-image");
     const qrLoading = container.querySelector("#qr-loading");
     let pollingInterval = null;
+    let pollCount = 0;
+    let paymentConfirmed = false; // 🔒 源头防重：确保成功逻辑只执行一次
+    const MAX_POLL_COUNT = 100; // 最多轮询 100 次（约 5 分钟）
 
     btnCreateOrder.onclick = async () => {
         if (btnCreateOrder.disabled) return;
@@ -184,30 +197,42 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
 
             // 3. 开启真实轮询查单，监听回调
             pollingInterval = setInterval(async () => {
+                pollCount++;
+                if (pollCount >= MAX_POLL_COUNT) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                    showToast(t('wallet.recharge.timeout') || '支付查询超时，如已支付请稍后刷新查看余额', "warning");
+                    return;
+                }
                 try {
                     const checkRes = await fetch(`${API.BASE_URL}/api/wallet/check_order/${res.order_id}?account=${currentUser.account}`, { headers })
                       .then(r => r.json());
                                           
                     if (checkRes.status === "SUCCESS") {
+                        if (paymentConfirmed) return; // 🔒 已确认过，跳过（防止多个在途请求重复触发）
+                        paymentConfirmed = true;
                         clearInterval(pollingInterval);
-                        globalModal.closeTopModal();
-                        showToast(t('wallet.recharge.success', { points: finalPoints }), "success");
 
-                        // 不做乐观更新，从服务器获取真实余额
+                        // 先获取真实余额
                         try {
                             const walletRes = await api.getWallet(currentUser.account);
                             if (walletRes && walletRes.balance !== undefined) {
                                 currentUser.balance = walletRes.balance;
                             } else {
-                                currentUser.balance = (currentUser.balance || 0) + finalPoints;  // fallback
+                                currentUser.balance = (currentUser.balance || 0) + finalPoints;
                             }
                         } catch(e) {
-                            currentUser.balance = (currentUser.balance || 0) + finalPoints;  // fallback
+                            currentUser.balance = (currentUser.balance || 0) + finalPoints;
                         }
 
+                        // 再触发余额变更回调
                         if (onBalanceChange) {
                             onBalanceChange(currentUser.balance);
                         }
+
+                        // 最后关闭弹窗和提示
+                        showToast(t('wallet.recharge.success', { points: finalPoints }), "success");
+                        globalModal.closeTopModal();
                     }
                 } catch (e) {
                     // 查单接口网络波动不中断主流程
@@ -223,11 +248,13 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
         }
     };
 
-    const modalWrapper = document.createElement("div");
-    modalWrapper.appendChild(container);
-    modalWrapper.addEventListener("DOMNodeRemovedFromDocument", () => {
-        if (pollingInterval) clearInterval(pollingInterval);
-    });
+    // 5分钟兆底清理轮询
+    setTimeout(() => {
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+            pollingInterval = null;
+        }
+    }, 300000);
 
     globalModal.openModal(t('wallet.recharge.title'), container, { width: "400px" });
 }

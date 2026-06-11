@@ -5,6 +5,11 @@ import { t } from "./用户体验增强.js";
 // 🏷️ 版本配置缓存
 let cachedVersionConfig = null;
 
+// 清除版本配置缓存（管理员修改版本后调用）
+export function clearVersionCache() {
+    cachedVersionConfig = null;
+}
+
 // 🎨 卡片基础样式常量（authorSection 与 createCardSection 共享）
 const CARD_BASE_STYLE = {
     background: "rgba(255,255,255,0.03)",

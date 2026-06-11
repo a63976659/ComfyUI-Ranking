@@ -54,14 +54,14 @@ async function renderRefundButton(container, itemData, currentUser) {
                 <div style="margin-top: 12px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px dashed #FF9800; border-radius: 6px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
                         <div style="font-size: 12px; color: #FF9800;">
-                            🔄 后悔模式：还剩 <strong>${hoursLeft.toFixed(1)}</strong> 小时可申请退款
+                            🔄 ${t('item.regret_mode')}${t('item.hours_left', { hours: hoursLeft.toFixed(1) })}
                         </div>
                         <button id="btn-refund" style="background: #FF5722; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">
-                            💸 申请退款
+                            💸 ${t('item.apply_refund')}
                         </button>
                     </div>
                     <div style="font-size: 11px; color: #888; margin-top: 8px;">
-                        ⚠️ 退款后权限将被收回，已下载的文件将被删除，且 <strong>30天内禁止再次购买</strong> 此商品
+                        ⚠️ ${t('item.refund_warning')}
                     </div>
                 </div>
             `;
@@ -70,7 +70,7 @@ async function renderRefundButton(container, itemData, currentUser) {
         } else {
             refundArea.innerHTML = `
                 <div style="margin-top: 12px; padding: 10px; background: rgba(76,175,80,0.1); border: 1px solid rgba(76,175,80,0.3); border-radius: 6px; font-size: 12px; color: #4CAF50;">
-                    ✅ 已购买此资源，退款窗口已过期
+                    ✅ ${t('item.refund_expired')}
                 </div>
             `;
         }
@@ -123,7 +123,7 @@ function _showConfirmOverlay({ title, titleColor, infoHtml, warningHtml, warning
 
             <div style="display: flex; gap: 12px; justify-content: flex-end;">
                 <button id="btn-cancel-confirm" style="background: #555; ${_btnBaseStyle}">
-                    取消
+                    ${t('common.cancel')}
                 </button>
                 <button id="btn-confirm-action" style="background: ${confirmColor}; font-weight: bold; ${_btnBaseStyle}">
                     ${confirmText}
@@ -154,26 +154,26 @@ function _showConfirmOverlay({ title, titleColor, infoHtml, warningHtml, warning
 // 🔄 P7后悔模式：退款确认弹窗
 function showRefundConfirm(itemData, currentUser, pricePaid) {
     _showConfirmOverlay({
-        title: "确认退款",
+        title: t('item.confirm_refund_title'),
         titleColor: "#FF5722",
         infoHtml: `
-            <div style="font-size: 14px; margin-bottom: 10px;">商品：<strong>${escapeHtml(itemData.title || '未命名资源')}</strong></div>
-            <div style="font-size: 14px; color: #4CAF50;">退款金额：<strong>${pricePaid}</strong> 积分</div>
+            <div style="font-size: 14px; margin-bottom: 10px;">${t('item.product')}${escapeHtml(itemData.title || t('item.untitled'))}</div>
+            <div style="font-size: 14px; color: #4CAF50;">${t('item.refund_amount')}<strong>${pricePaid}</strong> ${t('common.credits')}</div>
         `,
         warningHtml: `
-            <div>🚨 <strong>退款后果：</strong></div>
+            <div>🚨 <strong>${t('item.refund_consequence')}：</strong></div>
             <div style="margin-left: 20px; margin-top: 5px;">
-                • 您将失去此资源的访问权限<br>
-                • 已下载的文件将被自动删除<br>
-                • <strong style="color: #F44336;">30天内禁止再次购买此商品</strong>
+                • ${t('item.refund_consequence_1')}<br>
+                • ${t('item.refund_consequence_2')}<br>
+                • <strong style="color: #F44336;">${t('item.refund_consequence_3')}</strong>
             </div>
         `,
         warningBgColor: "rgba(255,87,34,0.1)",
         warningBorderColor: "rgba(255,87,34,0.3)",
-        confirmText: "确认退款",
+        confirmText: t('item.confirm_refund'),
         confirmColor: "#FF5722",
         confirmHoverColor: "#E64A19",
-        processingText: "处理中...",
+        processingText: t('common.processing'),
         onConfirm: async (overlay) => {
             try {
                 const res = await api.requestRefund(currentUser.account, itemData.id);
@@ -184,13 +184,13 @@ function showRefundConfirm(itemData, currentUser, pricePaid) {
                     overlay.innerHTML = `
                         <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 380px; width: 90%; color: #fff; text-align: center;">
                             <div style="font-size: 48px; margin-bottom: 15px;">✅</div>
-                            <div style="font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #4CAF50;">退款成功</div>
+                            <div style="font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #4CAF50;">${t('item.refund_success')}</div>
                             <div style="font-size: 14px; color: #aaa; margin-bottom: 20px;">
-                                ${res.refund_amount} 积分已退还到您的账户<br>
-                                <span style="color: #FF9800;">${res.ban_days}天内禁止再次购买此商品</span>
+                                ${res.refund_amount} ${t('item.credits_refunded')}<br>
+                                <span style="color: #FF9800;">${t('item.ban_days_notice', { days: res.ban_days })}</span>
                             </div>
                             <button id="btn-close-refund" style="background: #4CAF50; color: #fff; border: none; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 14px;">
-                                知道了
+                                ${t('common.got_it')}
                             </button>
                         </div>
                     `;
@@ -199,11 +199,11 @@ function showRefundConfirm(itemData, currentUser, pricePaid) {
                         window.dispatchEvent(new CustomEvent("comfy-route-back"));
                     };
                 } else {
-                    showToast("退款失败，请重试", "error");
+                    showToast(t('item.refund_failed_retry'), "error");
                     overlay.remove();
                 }
             } catch (e) {
-                showToast("退款请求失败，请检查网络", "error");
+                showToast(t('item.refund_request_failed'), "error");
                 overlay.remove();
             }
         }
@@ -257,26 +257,26 @@ function canDeleteItem(itemData, currentUser) {
  */
 function showDeleteConfirm(itemData, currentUser, onSuccess) {
     _showConfirmOverlay({
-        title: "确认删除",
+        title: t('item.confirm_delete_title'),
         titleColor: "#F44336",
         infoHtml: `
-            <div style="font-size: 14px; margin-bottom: 10px;">内容：<strong>${escapeHtml(itemData.title || '未命名资源')}</strong></div>
-            <div style="font-size: 13px; color: #888;">类型：${escapeHtml(itemData.type || '未知')}</div>
+            <div style="font-size: 14px; margin-bottom: 10px;">${t('item.content_label')}${escapeHtml(itemData.title || t('item.untitled'))}</div>
+            <div style="font-size: 13px; color: #888;">${t('item.type_label')}${escapeHtml(itemData.type || t('item.type_unknown'))}</div>
         `,
         warningHtml: `
-            <div>🚨 <strong>删除后果（不可恢复）：</strong></div>
+            <div>🚨 <strong>${t('item.delete_consequence')}：</strong></div>
             <div style="margin-left: 20px; margin-top: 5px;">
-                • 该内容将从市场永久移除<br>
-                • 所有相关评论将被删除<br>
-                • 已购买用户将无法再下载
+                • ${t('item.delete_consequence_1')}<br>
+                • ${t('item.delete_consequence_2')}<br>
+                • ${t('item.delete_consequence_3')}
             </div>
         `,
         warningBgColor: "rgba(244,67,54,0.1)",
         warningBorderColor: "rgba(244,67,54,0.3)",
-        confirmText: "确认删除",
+        confirmText: t('item.confirm_delete'),
         confirmColor: "#F44336",
         confirmHoverColor: "#D32F2F",
-        processingText: "删除中...",
+        processingText: t('item.deleting'),
         onConfirm: async (overlay) => {
             try {
                 const res = await api.deleteItem(itemData.id);
@@ -285,7 +285,7 @@ function showDeleteConfirm(itemData, currentUser, onSuccess) {
                     invalidateRelatedCache(`/api/items/${itemData.id}`, "DELETE");
 
                     overlay.remove();
-                    showToast("内容已删除", "success");
+                    showToast(t('item.delete_success'), "success");
 
                     // 返回列表页
                     window.dispatchEvent(new CustomEvent("comfy-route-view", {
@@ -294,11 +294,11 @@ function showDeleteConfirm(itemData, currentUser, onSuccess) {
 
                     if (onSuccess) onSuccess();
                 } else {
-                    showToast("删除失败，请重试", "error");
+                    showToast(t('item.delete_failed_retry'), "error");
                     overlay.remove();
                 }
             } catch (e) {
-                showToast("删除请求失败，请检查网络", "error");
+                showToast(t('item.delete_request_failed'), "error");
                 overlay.remove();
             }
         }
@@ -323,29 +323,29 @@ export function createItemDetailView(itemData, currentUser) {
 
     // 🚀 使用统一工具渲染单品赞赏榜单（带星星/月亮/太阳等级）
     const boardData = itemData.tip_board || [];
-    const boardHtml = renderTipBoardHTML(boardData, 10, "该资源暂无专属打赏，快来成为首个赞赏人吧！", "normal");
+    const boardHtml = renderTipBoardHTML(boardData, 10, t('item.no_tips_yet'), "normal");
 
     // 🗑️ 判断是否有权限删除
     const showDeleteBtn = canDeleteItem(itemData, currentUser);
     const deleteBtnHtml = showDeleteBtn ? `
-        <button id="btn-delete-item" style="background: #F44336; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(244,67,54,0.3); transition: 0.2s; margin-left: 10px;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🗑️ 删除</button>
+        <button id="btn-delete-item" style="background: #F44336; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(244,67,54,0.3); transition: 0.2s; margin-left: 10px;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🗑️ ${t('common.delete')}</button>
     ` : '';
 
     let authorInfoHtml = `
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             <div>
-                <strong>作者：</strong> <span id="detail-author-name">${authorName}</span>
+                <strong>${t('item.author')}：</strong> <span id="detail-author-name">${authorName}</span>
                 <!-- 原创标识 -->
                 ${itemData.is_original ? `
                 <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; 
                             background: linear-gradient(135deg, #FF6B35, #FF8F00); border-radius: 12px; 
                             font-size: 11px; color: #fff; font-weight: 500; margin-left: 8px;">
-                    🎨 原创内容，请勿商用
+                    🎨 ${t('item.original_notice')}
                 </div>
                 ` : ''}
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
-                <button id="btn-tip-item" style="background: #E91E63; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(233,30,99,0.3); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 赞赏鼓励该作品</button>
+                <button id="btn-tip-item" style="background: #E91E63; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(233,30,99,0.3); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 ${t('item.tip_encourage')}</button>
                 ${deleteBtnHtml}
             </div>
         </div>
@@ -355,7 +355,7 @@ export function createItemDetailView(itemData, currentUser) {
         <div id="refund-area"></div>
             
         <div style="margin-top: 15px; border-top: 1px dashed #333; padding-top: 15px;">
-            <div style="font-size: 13px; font-weight: bold; color: #E91E63; margin-bottom: 10px;">💖 该作品赞赏贡献榜 (TOP 10)</div>
+            <div style="font-size: 13px; font-weight: bold; color: #E91E63; margin-bottom: 10px;">💖 ${t('item.tip_board_title')}</div>
             ${boardHtml}
         </div>
     `;
@@ -372,11 +372,11 @@ export function createItemDetailView(itemData, currentUser) {
 
     let actionBtnHtml = '';
     if (!isUpdateAvailable && localVersionHash) {
-        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: none; background: #4CAF50; color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">✅ 已拥有 (点击重新覆盖安装)</button>`;
+        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: none; background: #4CAF50; color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">✅ ${t('item.owned_reinstall')}</button>`;
     } else if (isUpdateAvailable) {
-        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: 1px solid #FF9800; background: rgba(255, 152, 0, 0.2); color: #FF9800; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);" onmouseover="this.style.background='#FF9800'; this.style.color='#fff'" onmouseout="this.style.background='rgba(255, 152, 0, 0.2)'; this.style.color='#FF9800'">♻️ 发现新版本 (点击静默热更新)</button>`;
+        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: 1px solid #FF9800; background: rgba(255, 152, 0, 0.2); color: #FF9800; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);" onmouseover="this.style.background='#FF9800'; this.style.color='#fff'" onmouseout="this.style.background='rgba(255, 152, 0, 0.2)'; this.style.color='#FF9800'">♻️ ${t('item.update_available')}</button>`;
     } else {
-        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: none; background: #2196F3; color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">⬇️ 立即获取使用 <span style="font-size: 12px; font-weight: normal; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px;">${isFree ? '完全免费' : itemData.price + ' 积分'}</span></button>`;
+        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: none; background: #2196F3; color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">⬇️ ${t('item.get_now')} <span style="font-size: 12px; font-weight: normal; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px;">${isFree ? t('item.free') : itemData.price + ' ' + t('common.credits')}</span></button>`;
     }
 
     // 🚀 返回按钮位置可调整参数：margin-left 控制右移，margin-top 控制下移
@@ -387,14 +387,14 @@ export function createItemDetailView(itemData, currentUser) {
 
         <div style="background: #181b28; border: 1px solid #2d334a; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); margin-bottom: 15px;">
             <div style="font-size: 16px; font-weight: bold; color: #00bcd4; margin-bottom: 15px; display: flex; align-items: center; gap: 8px;">
-                ⚙️ 内容详情与介绍
+                ⚙️ ${t('item.detail_info')}
             </div>
             <div style="color: #ddd; line-height: 1.8; font-size: 13px; white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(itemData.fullDesc || itemData.shortDesc)}</div>
         </div>
 
         <div style="background: #181b28; border: 1px solid #2d334a; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
             <div style="font-size: 16px; font-weight: bold; color: #4CAF50; margin-bottom: 15px; display: flex; align-items: center; gap: 8px;">
-                🎉 其它信息
+                🎉 ${t('item.other_info')}
             </div>
             <div style="color: #eee; line-height: 1.6; font-size: 14px;">
                 ${authorInfoHtml}
@@ -418,7 +418,7 @@ export function createItemDetailView(itemData, currentUser) {
     
     // 🚀 绑定作品打赏按钮事件
     container.querySelector("#btn-tip-item").onclick = async () => {
-        if (!currentUser) return showToast("请先登录您的账号！", "warning");
+        if (!currentUser) return showToast(t('feedback.login_required'), "warning");
         await openTipModal(currentUser, { account: itemData.author }, (newBalance) => {
             currentUser.balance = newBalance;
             // 打赏成功后刷新局部或整体详情 (由框架重新渲染)
@@ -429,7 +429,7 @@ export function createItemDetailView(itemData, currentUser) {
     const btnDeleteItem = container.querySelector("#btn-delete-item");
     if (btnDeleteItem) {
         btnDeleteItem.onclick = () => {
-            if (!currentUser) return showToast("请先登录您的账号！", "warning");
+            if (!currentUser) return showToast(t('feedback.login_required'), "warning");
             showDeleteConfirm(itemData, currentUser);
         };
     }
@@ -453,7 +453,7 @@ export function createItemDetailView(itemData, currentUser) {
             const btnUseItem = container.querySelector("#btn-use-item");
             if (!btnUseItem) return;
             if (res.owned) {
-                btnUseItem.innerHTML = `✅ 已拥有 (点击重新覆盖安装)`;
+                btnUseItem.innerHTML = `✅ ${t('item.owned_reinstall')}`;
                 Object.assign(btnUseItem.style, {
                     background: "#4CAF50",
                     color: "#fff",

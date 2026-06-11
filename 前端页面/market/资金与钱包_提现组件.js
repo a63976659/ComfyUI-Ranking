@@ -174,14 +174,23 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         isSubmitting = true;
         _setButtonState(btnSubmit, true, "#888", t('wallet.withdraw.submitting'));
 
+        // 30秒超时保护
+        const timeoutId = setTimeout(() => {
+            isSubmitting = false;
+            _setButtonState(btnSubmit, false, "#4CAF50", t('wallet.withdraw.confirm'));
+            showToast(t('wallet.withdraw.timeout') || "提现请求超时，请检查网络后重试", "warning");
+        }, 30000);
+
         try {
             await api.submitWithdraw({ amount, alipayAccount, real_name: realName, code, account: currentUser.account });
+            clearTimeout(timeoutId);
             
             showToast(t('wallet.withdraw.success'), "success");
             globalModal.closeTopModal();
             
             if (onSuccess) onSuccess(); 
         } catch (error) {
+            clearTimeout(timeoutId);
             showToast(t('wallet.withdraw.submit_failed') + error.message, "error");
             _setButtonState(btnSubmit, false, "#4CAF50", t('wallet.withdraw.confirm'));
         } finally {

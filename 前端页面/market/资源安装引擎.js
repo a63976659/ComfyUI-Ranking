@@ -219,22 +219,30 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在检测云端资源有效性...</span>`;
             
             try {
-                // 直接向云端发起验证
+                // 直接向云端发起验证（含10秒超时控制）
+                const valController = new AbortController();
+                const valTimeout = setTimeout(() => valController.abort(), 10000);
                 const valRes = await fetch(`${API.BASE_URL}/api/validate_resource`, {
                     method: "POST", headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({
                         url: itemData.link,
                         item_id: itemData.id,
                         account: currentUser.account
-                    })
+                    }),
+                    signal: valController.signal
                 });
+                clearTimeout(valTimeout);
                 const valData = await valRes.json();
                 if (!valRes.ok || valData.error) {
                     inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 拦截提示: ${valData.error || '无法访问源地址'}</span>`;
                     return; // 发现死链，强行阻断用户付款
                 }
             } catch(e) {
-                // 验证接口网络波动不阻断主流程
+                if (e.name === 'AbortError') {
+                    console.warn("[资源验证] 超时，跳过验证");
+                } else {
+                    console.warn("[资源验证] 网络异常，跳过验证:", e.message || e);
+                }
             }
 
             // 已购买用户跳过购买确认弹窗，直接进入后续流程
@@ -354,7 +362,13 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
 
                     if (result.status === "success") {
                         progress.complete(result.message);
-                        showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
+                        // 根据后端返回的 message 判断是否为自更新场景
+                        const isSelfUpdate = result.message && result.message.includes("重启") && result.message.includes("生效");
+                        if (isSelfUpdate) {
+                            showToast(`🔄 插件 [${itemData.title}] 新版本已就绪，重启 ComfyUI 即可生效！`, "success");
+                        } else {
+                            showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
+                        }
 
                         // 🚀 安装成功后，盖上本地版本戳
                         if (itemData.latest_version) {
@@ -396,8 +410,15 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                                 : `<span style="color: #F44336;">❌ 安装失败: ${data.error}</span>`;
                             showToast(`插件 [${itemData.title}] 安装失败: ${data.error}`, "error");
                         } else {
-                            inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🎉 工具安装成功！</div><div style="color: #aaa; margin-top: 5px;">请重启 ComfyUI 以加载新节点。</div>`;
-                            showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
+                            // 根据后端返回的 message 判断是否为自更新场景
+                            const isSelfUpdate = data.message && data.message.includes("重启") && data.message.includes("生效");
+                            if (isSelfUpdate) {
+                                inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🔄 新版本已就绪！</div><div style="color: #aaa; margin-top: 5px;">重启 ComfyUI 即可生效。</div>`;
+                                showToast(`🔄 插件 [${itemData.title}] 新版本已就绪，重启 ComfyUI 即可生效！`, "success");
+                            } else {
+                                inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🎉 工具安装成功！</div><div style="color: #aaa; margin-top: 5px;">请重启 ComfyUI 以加载新节点。</div>`;
+                                showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
+                            }
 
                             if (itemData.latest_version) {
                                 localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
@@ -472,7 +493,14 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败 (${res.status})：${errText}</span>`;
                         return;
                     }
-                    const data = await res.json();
+                    let data;
+                    try {
+                        data = await res.json();
+                    } catch (parseErr) {
+                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 响应解析失败，请重试</span>`;
+                        showToast(t('common.parse_error') || '响应解析失败', "error");
+                        return;
+                    }
                     if (data.error) {
                         inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${data.error}</span>`;
                         showToast(`工作流加载失败：${data.error}`, "error");

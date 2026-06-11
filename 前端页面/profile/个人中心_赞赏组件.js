@@ -45,7 +45,7 @@ export async function openTipModal(currentUser, targetUser, onSuccess, itemId = 
     // 刷新钱包余额，避免使用缓存的旧值
     // ==========================================
     try {
-        const walletRes = await api.getWallet(currentUser.account);
+        const walletRes = await api.getWallet(currentUser.account, { noCache: true });
         if (walletRes && walletRes.status === "success") {
             currentUser.balance = walletRes.balance || 0;
         }
@@ -165,8 +165,23 @@ export async function openTipModal(currentUser, targetUser, onSuccess, itemId = 
             const level = calculateTipLevel(amount);
             showToast(level.isMaxLevel ? "🎉 恭喜您成为至尊赞助者！已达最高等级。" : "🎉 打赏成功！感谢您的慷慨支持。", "success");
             
+            // 🐛 Bug修复：打赏成功后主动刷新余额，避免依赖缓存旧数据
+            let freshBalance = res.balance;
+            try {
+                const freshWallet = await api.getWallet(currentUser.account, { noCache: true });
+                if (freshWallet && freshWallet.status === "success") {
+                    freshBalance = freshWallet.balance;
+                }
+            } catch (walletErr) {
+                console.warn("打赏后刷新余额失败，使用tipUser响应中的balance:", walletErr);
+            }
+            currentUser.balance = freshBalance;
+            
+            // 派发全局余额更新事件，通知其他组件同步
+            window.dispatchEvent(new CustomEvent('comfy-wallet-update', { detail: { balance: freshBalance } }));
+            
             globalModal.closeTopModal();
-            if (onSuccess) onSuccess(res.balance);
+            if (onSuccess) onSuccess(freshBalance);
         } catch (err) {
             // 余额不足引导充值
             if (err.message && err.message.includes("余额不足")) {

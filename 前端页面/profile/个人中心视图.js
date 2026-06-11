@@ -42,7 +42,15 @@ async function syncBannerCache(account, bannerUrl) {
         
         const blob = await response.blob();
         
-        // 转换为 Base64 并存储
+        // ✅ 大图不存localStorage（超过512KB的图片转Base64后会轻松超过配额）
+        if (blob.size > 512 * 1024) {
+            // 大图改用 sessionStorage 临时缓存（关闭标签页即释放），或直接使用 blob URL
+            const blobUrl = URL.createObjectURL(blob);
+            window.dispatchEvent(new CustomEvent("comfy-banner-synced", { detail: { account, blobUrl } }));
+            return;
+        }
+        
+        // 转换为 Base64 并存储（仅小图）
         const reader = new FileReader();
         reader.onload = () => {
             try {

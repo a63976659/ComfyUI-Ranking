@@ -200,7 +200,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             
             <!-- 提交按钮 -->
             <button id="btn-publish" style="margin-top: 10px; padding: 14px; background: linear-gradient(135deg, #FF9800, #F57C00); border: none; color: #fff; border-radius: 10px; cursor: pointer; font-size: 15px; font-weight: bold; box-shadow: 0 4px 12px rgba(255,152,0,0.3);">
-                🚀 ${isEditMode ? '保存修改' : t('task.publish_task')}
+                🚀 ${isEditMode ? t('task.save_changes') : t('task.publish_task')}
             </button>
             
             <!-- 提示 -->
@@ -411,7 +411,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
         } finally {
             const publishBtn = container.querySelector("#btn-publish");
             publishBtn.disabled = false;
-            publishBtn.textContent = `🚀 ${isEditMode ? '保存修改' : t('task.publish_task')}`;
+            publishBtn.textContent = `🚀 ${isEditMode ? t('task.save_changes') : t('task.publish_task')}`;
         }
     };
     

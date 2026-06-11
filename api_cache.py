@@ -227,9 +227,12 @@ async def _serve_video_file(request, file_path):
                 end = int(end_str) if end_str else file_size - 1
             else:
                 raise ValueError("Invalid Range format")
-            if start >= file_size or start < 0 or end >= file_size or end < start:
+            # 边界校验：确保合法范围
+            start = max(0, start)
+            end = min(end, file_size - 1)
+            if start > end or start >= file_size:
                 return web.Response(status=416, text="Range Not Satisfiable")
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, TypeError):
             start = 0
             end = file_size - 1
 

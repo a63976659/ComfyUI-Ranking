@@ -105,7 +105,7 @@ async function loadTaskDetail(container, taskId, currentUser) {
     if (fromCache) {
         const toast = document.createElement('div');
         toast.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#FF9800; color:white; padding:10px 20px; border-radius:4px; z-index:10000; font-size:14px;';
-        toast.textContent = '⚠️ 网络连接失败，展示的是缓存的数据';
+        toast.textContent = t('feedback.cache_fallback');
         document.body.appendChild(toast);
         setTimeout(() => toast.remove(), 3000);
     } else {
@@ -211,8 +211,8 @@ function renderTaskDetail(contentEl, task, currentUser) {
         
         <!-- 👀 浏览量统计 -->
         <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px; padding: 10px; background: #1a1a1a; border-radius: 8px; color: #888; font-size: 12px;">
-            <span style="display: flex; align-items: center; gap: 4px;">🔥 浏览总量: <span id="task-view-total" style="color: #fff; font-weight: 500;">${task.views || 0}</span></span>
-            <span style="display: flex; align-items: center; gap: 4px;">📅 今日浏览: <span id="task-view-daily" style="color: #fff; font-weight: 500;">${task.daily_views || 0}</span></span>
+            <span style="display: flex; align-items: center; gap: 4px;">${t('task.view_total')}: <span id="task-view-total" style="color: #fff; font-weight: 500;">${task.views || 0}</span></span>
+            <span style="display: flex; align-items: center; gap: 4px;">${t('task.view_today')}: <span id="task-view-daily" style="color: #fff; font-weight: 500;">${task.daily_views || 0}</span></span>
         </div>
         
         <!-- 截止日期 -->

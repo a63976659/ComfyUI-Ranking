@@ -3,6 +3,7 @@ import os
 import re
 import ssl
 import json
+import time
 import asyncio
 import urllib.request
 import urllib.error
@@ -13,6 +14,10 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_NODES_DIR = os.path.dirname(THIS_DIR)
 COMFY_ROOT_DIR = os.path.dirname(CUSTOM_NODES_DIR)
 APP_MODELS_DIR = os.path.join(COMFY_ROOT_DIR, "models", "app")
+
+# 缓存穿透防护：记录下载失败的 app_id，短期内不重试
+_download_fail_cache = {}  # {app_id: timestamp}
+_DOWNLOAD_FAIL_TTL = 30  # 失败缓存 30 秒
 
 
 def _is_local_request(request):
@@ -108,6 +113,13 @@ async def _download_app_core(app_id, download_url, account, force_download=False
         if progress_callback:
             await progress_callback("downloading", 50, "从云端下载工作流...")
 
+        # 缓存穿透防护：检查近期是否下载失败过
+        if app_id in _download_fail_cache:
+            if time.time() - _download_fail_cache[app_id] < _DOWNLOAD_FAIL_TTL:
+                return (None, "云端暂时不可达，请稍后重试", False)
+            else:
+                del _download_fail_cache[app_id]
+
         proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_download"
         payload = json.dumps({
             "url": download_url,
@@ -149,13 +161,16 @@ async def _download_app_core(app_id, download_url, account, force_download=False
         except Exception:
             err_msg = str(e)
         print(f"❌ HTTP 错误 [{e.code}]: {err_msg}")
+        _download_fail_cache[app_id] = time.time()
         return (None, f"云端代理错误({e.code})：{err_msg[:200]}", False)
     except urllib.error.URLError as e:
         print(f"❌ 网络错误：{str(e)}")
+        _download_fail_cache[app_id] = time.time()
         return (None, f"网络连接失败：{str(e)}", False)
     except (TimeoutError, Exception) as e:
         print(f"❌ 应用下载错误：{type(e).__name__}: {str(e)}")
         print(traceback.format_exc())
+        _download_fail_cache[app_id] = time.time()
         return (None, f"{type(e).__name__}: {str(e)}", False)
 
 

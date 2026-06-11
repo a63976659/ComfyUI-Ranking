@@ -53,6 +53,10 @@ function _readAndPreviewImage(file, previewElement, cacheKey) {
             previewElement.style.backgroundPosition = "center";
             resolve(base64);
         };
+        reader.onerror = () => {
+            showToast("❌ 文件读取失败，请重试", "error");
+            resolve(null);
+        };
         reader.readAsDataURL(file);
     });
 }
@@ -179,41 +183,6 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                         </div>
                         <div id="moderation-status" style="margin-top: 8px; font-size: 11px; color: #666;"></div>
                     </div>
-                    
-                    <!-- 🏷️ 版本管理面板 -->
-                    <div style="background: var(--comfy-input-bg); padding: 12px; border-radius: 6px; border: 1px solid #444;">
-                        <div style="font-size: 13px; color: #fff; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
-                            <span>🏷️</span> 工具版本管理
-                        </div>
-                        <div style="font-size: 11px; color: #888; margin-bottom: 10px;">统一修改项目阶段与版本号，将同步更新所有相关位置</div>
-                        
-                        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                            <div style="flex: 1;">
-                                <label style="display: block; font-size: 11px; color: #aaa; margin-bottom: 4px;">项目阶段</label>
-                                <select id="admin-project-stage" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer;">
-                                    <option value="alpha">Alpha 内测</option>
-                                    <option value="beta">Beta 公测</option>
-                                    <option value="rc">RC 候选版</option>
-                                    <option value="stable">Stable 正式版</option>
-                                </select>
-                            </div>
-                            <div style="flex: 1;">
-                                <label style="display: block; font-size: 11px; color: #aaa; margin-bottom: 4px;">版本号</label>
-                                <div style="display: flex; gap: 4px;">
-                                    <input type="number" id="admin-version-major" min="0" max="99" value="1" style="width: 40px; padding: 8px 4px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; text-align: center;">
-                                    <span style="color: #666; line-height: 36px;">.</span>
-                                    <input type="number" id="admin-version-minor" min="0" max="99" value="0" style="width: 40px; padding: 8px 4px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; text-align: center;">
-                                    <span style="color: #666; line-height: 36px;">.</span>
-                                    <input type="number" id="admin-version-patch" min="0" max="99" value="0" style="width: 40px; padding: 8px 4px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; text-align: center;">
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div id="version-preview" style="background: #1a1a1a; padding: 8px 12px; border-radius: 4px; font-size: 12px; color: #4CAF50; margin-bottom: 10px;"></div>
-                        
-                        <button id="btn-apply-version" style="width: 100%; padding: 8px; background: linear-gradient(135deg, #FF9800, #F57C00); border: none; color: white; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">📢 应用版本更改</button>
-                        <div id="version-status" style="margin-top: 6px; font-size: 11px; color: #666; text-align: center;"></div>
-                    </div>
                 </div>
             </div>
             ` : ''}
@@ -322,85 +291,6 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                 }
             };
         }, 100);
-        
-        // 🏷️ 管理员：初始化版本管理面板
-        setTimeout(async () => {
-            const stageSelect = container.querySelector('#admin-project-stage');
-            const majorInput = container.querySelector('#admin-version-major');
-            const minorInput = container.querySelector('#admin-version-minor');
-            const patchInput = container.querySelector('#admin-version-patch');
-            const versionPreview = container.querySelector('#version-preview');
-            const versionStatus = container.querySelector('#version-status');
-            const applyBtn = container.querySelector('#btn-apply-version');
-            
-            if (!stageSelect || !majorInput) return;
-            
-            // 阶段显示映射
-            const stageLabels = {
-                'alpha': 'Alpha 内测',
-                'beta': 'Beta 公测',
-                'rc': 'RC 候选版',
-                'stable': 'Stable 正式版'
-            };
-            
-            // 更新预览
-            const updatePreview = () => {
-                const stage = stageSelect.value;
-                const version = `V${majorInput.value}.${minorInput.value}.${patchInput.value}`;
-                const stageLabel = stageLabels[stage] || stage;
-                versionPreview.innerHTML = `当前版本：<strong>${version}</strong> <span style="color: #FF9800;">${stageLabel}</span>`;
-            };
-            
-            // 绑定事件
-            [stageSelect, majorInput, minorInput, patchInput].forEach(el => {
-                el.addEventListener('change', updatePreview);
-                el.addEventListener('input', updatePreview);
-            });
-            
-            // 加载当前配置
-            try {
-                const res = await api.getSystemConfig('project_version');
-                if (res?.data) {
-                    const { stage, major, minor, patch } = res.data;
-                    if (stage) stageSelect.value = stage;
-                    if (major !== undefined) majorInput.value = major;
-                    if (minor !== undefined) minorInput.value = minor;
-                    if (patch !== undefined) patchInput.value = patch;
-                }
-                updatePreview();
-            } catch (e) {
-                console.warn('获取版本配置失败:', e);
-                updatePreview();
-            }
-            
-            // 应用版本更改
-            applyBtn.onclick = async () => {
-                applyBtn.disabled = true;
-                applyBtn.innerHTML = '⚙️ 应用中...';
-                versionStatus.innerHTML = '';
-                
-                const versionData = {
-                    stage: stageSelect.value,
-                    major: parseInt(majorInput.value) || 0,
-                    minor: parseInt(minorInput.value) || 0,
-                    patch: parseInt(patchInput.value) || 0
-                };
-                
-                try {
-                    await api.setSystemConfig('project_version', versionData);
-                    const version = `V${versionData.major}.${versionData.minor}.${versionData.patch}`;
-                    const stageLabel = stageLabels[versionData.stage] || versionData.stage;
-                    showToast(`✅ 版本已更新为 ${version} ${stageLabel}`, 'success');
-                    versionStatus.innerHTML = `<span style="color: #4CAF50;">✅ 已同步到所有相关位置</span>`;
-                } catch (e) {
-                    showToast('版本更新失败: ' + e.message, 'error');
-                    versionStatus.innerHTML = `<span style="color: #f44336;">❌ 更新失败</span>`;
-                } finally {
-                    applyBtn.disabled = false;
-                    applyBtn.innerHTML = '📢 应用版本更改';
-                }
-            };
-        }, 150);
     }
 
     // 加载本地界面背景预览（使用账号区分键）

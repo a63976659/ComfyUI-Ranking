@@ -65,8 +65,14 @@ async function handleTipCreator(creatorData, currentUser, onTipSuccess) {
     await openTipModal(currentUser, {
         account: creatorData.account,
         name: creatorData.name
-    }, () => {
-        // 打赏成功回调
+    }, (newBalance) => {
+        // 🐛 Bug修复：打赏成功后同步余额并通知其他组件
+        if (newBalance !== undefined && newBalance !== null) {
+            currentUser.balance = newBalance;
+        }
+        // 派发全局余额更新事件
+        window.dispatchEvent(new CustomEvent('comfy-wallet-update', { detail: { balance: currentUser.balance } }));
+        // 执行原有成功回调
         if (onTipSuccess) onTipSuccess();
     });
 }
@@ -247,8 +253,10 @@ export function createCreatorCard(creatorData, currentUser = null) {
     const hasBanner = showBanner && bannerUrl && bannerUrl.trim() !== '';  // ⚙️ 受设置控制
     
     // 🖼️ 全覆盖背景图样式
+    // 在使用 bannerUrl 之前添加安全过滤
+    const safeBannerUrl = (bannerUrl || '').replace(/['"()\\]/g, '');
     const cardBgStyle = hasBanner 
-        ? `background-image: url(${bannerUrl}); background-size: cover; background-position: center;`
+        ? `background-image: url(${safeBannerUrl}); background-size: cover; background-position: center;`
         : '';
     
     summaryView.innerHTML = `

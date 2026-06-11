@@ -45,7 +45,7 @@ export async function openNotificationCenter(currentUser, bellBtn) {
     // 生成标题链接的辅助函数
     function makeTitleLink(itemId, title) {
         if (!itemId || !title) return escapeHtml(title || '');
-        return `<span class="notif-item-link" data-item-id="${itemId}" 
+        return `<span class="notif-item-link" data-item-id="${escapeHtml(String(itemId))}"
             style="color:#FF9800; cursor:pointer; text-decoration:underline dotted;">
             ${escapeHtml(title)}
         </span>`;

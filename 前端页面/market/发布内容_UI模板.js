@@ -117,7 +117,7 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
         <div style="margin-bottom: 15px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px;">
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                 <input type="checkbox" id="is-original-checkbox" ${safeData.is_original ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #4CAF50;" />
-                <span style="font-size: 13px; color: #ccc;">🎨 ${t('publish.mark_original')}</span>
+                <span style="font-size: 13px; color: #ccc;">🎨 ${t('publish.mark_as_original')}</span>
             </label>
             <div id="original-hint-text" style="font-size: 11px; color: #888; margin-top: 6px; padding-left: 24px;">
                 ${t('publish.original_default_hint')}

@@ -1,5 +1,6 @@
 # api_tool.py
 import os
+import re
 import json
 import zipfile
 import urllib.request
@@ -12,6 +13,7 @@ import asyncio
 import tempfile
 import time
 import contextlib
+from pathlib import Path
 from aiohttp import web
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +48,29 @@ def _force_remove_readonly(func, path, exc_info):
     func(path)
 
 
+def _is_self_update(target_dir_name: str) -> bool:
+    """判断是否为自更新（目标目录名与自身一致）"""
+    self_dir_name = os.path.basename(THIS_DIR)
+    return target_dir_name == self_dir_name
+
+
+def _get_staging_path(clone_target_path: str) -> str:
+    """获取暂存目录路径"""
+    return clone_target_path + ".__staging__"
+
+
+def _write_update_pending_marker(target_path: str, staging_path: str):
+    """写入待应用更新标记"""
+    marker = {
+        "staging_dir": staging_path,
+        "version": time.strftime("%Y%m%d%H%M%S"),
+        "timestamp": time.time()
+    }
+    marker_path = os.path.join(target_path, ".update_pending")
+    with open(marker_path, "w", encoding="utf-8") as f:
+        json.dump(marker, f, ensure_ascii=False)
+
+
 async def install_tool_handler(request):
     # NOTE: 与 install_tool_stream_handler 共享核心安装逻辑（URL校验、双链路容灾、Git克隆），如需修改请同步
     if not _is_local_request(request):
@@ -62,16 +87,31 @@ async def install_tool_handler(request):
     valid_git_hosts = ["github.com", "gitlab.com", "gitee.com", "bitbucket.org", "kkgithub.com"]
     if not any(host in item_url for host in valid_git_hosts):
         return web.json_response({"error": "该资源链接不是有效的 Git 仓库地址，无法自动安装。请前往资源原始页面手动下载。"}, status=400)
+    
+    # 🔒 P0安全加固：URL 格式正则校验，防止注入攻击
+    _url_pattern = re.compile(r'^https?://[\w\-.]+(:\d+)?/[\w\-./]+$')
+    if not _url_pattern.match(item_url):
+        return web.json_response({"error": "URL格式不合法"}, status=400)
         
     target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
     clone_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
     
-    # 清理残留机制。如果文件夹已存在，说明可能是旧的无 .git 残缺安装，直接移除
-    if os.path.exists(clone_target_path):
-        try:
-            shutil.rmtree(clone_target_path, onerror=_force_remove_readonly)
-        except Exception as e:
-            return web.json_response({"error": f"目录 {target_dir_name} 已存在且被占用，无法自动清理，请先手动删除。错误: {str(e)}"}, status=400)
+    is_self = _is_self_update(target_dir_name)
+    
+    if is_self:
+        # 自更新模式：克隆到暂存目录
+        staging_path = _get_staging_path(clone_target_path)
+        if os.path.exists(staging_path):
+            shutil.rmtree(staging_path, onerror=_force_remove_readonly)
+        actual_clone_target = staging_path
+    else:
+        actual_clone_target = clone_target_path
+        # 清理残留机制。如果文件夹已存在，说明可能是旧的无 .git 残缺安装，直接移除
+        if os.path.exists(clone_target_path):
+            try:
+                shutil.rmtree(clone_target_path, onerror=_force_remove_readonly)
+            except Exception as e:
+                return web.json_response({"error": f"目录 {target_dir_name} 已存在且被占用，无法自动清理，请先手动删除。错误: {str(e)}"}, status=400)
         
     try:
         # 🚀 核心升级：双链路容灾机制
@@ -83,7 +123,7 @@ async def install_tool_handler(request):
         try:
             print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
             subprocess.run(
-                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
+                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, actual_clone_target],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -91,6 +131,9 @@ async def install_tool_handler(request):
                 timeout=1200  # 20分钟超时
             )
             print("✅ 镜像 Git Clone 安装成功！保留了完整的版本控制 (.git)。")
+            if is_self:
+                _write_update_pending_marker(clone_target_path, staging_path)
+                return web.json_response({"status": "success", "message": "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！"})
             return web.json_response({"status": "success"})
             
         except subprocess.TimeoutExpired:
@@ -100,12 +143,12 @@ async def install_tool_handler(request):
             print(f"⚠️ 镜像源不可用或发生冲突，系统正在自动无缝回退至直连: {item_url}")
             
             # 清理刚才克隆到一半可能留下的残缺空文件夹
-            if os.path.exists(clone_target_path):
-                shutil.rmtree(clone_target_path, onerror=_force_remove_readonly)
+            if os.path.exists(actual_clone_target):
+                shutil.rmtree(actual_clone_target, onerror=_force_remove_readonly)
                 
             # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
             subprocess.run(
-                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
+                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, actual_clone_target],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -113,6 +156,9 @@ async def install_tool_handler(request):
                 timeout=1200  # 20分钟超时
             )
             print("✅ 直连 Git Clone 安装成功！")
+            if is_self:
+                _write_update_pending_marker(clone_target_path, staging_path)
+                return web.json_response({"status": "success", "message": "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！"})
             return web.json_response({"status": "success"})
             
     except subprocess.TimeoutExpired:
@@ -263,6 +309,16 @@ async def install_private_tool_handler(request):
                     if not abs_target.startswith(abs_base):
                         print(f"[ComfyUI-Ranking] ⚠️ 跳过不安全路径: {target_path}")
                         continue
+                    
+                    # 🔒 P0安全加固 - 第三层防御：使用 resolve() 防止 Windows 特殊路径绕过和符号链接攻击
+                    try:
+                        resolved = Path(abs_target).resolve()
+                        allowed = Path(abs_base).resolve()
+                        if not str(resolved).startswith(str(allowed) + os.sep) and resolved != allowed:
+                            print(f"[ComfyUI-Ranking] [安全] 跳过危险路径: {target_path}")
+                            continue
+                    except (OSError, RuntimeError):
+                        continue  # 符号链接跟踪失败则跳过
                         
                     source = zip_ref.open(member)
                     dest_path = os.path.join(extract_target_path, target_path)
@@ -338,19 +394,37 @@ async def install_tool_stream_handler(request):
             await resp.write_eof()
             return resp
 
+        # 🔒 P0安全加固：URL 格式正则校验，防止注入攻击
+        _url_pattern = re.compile(r'^https?://[\w\-.]+(:\d+)?/[\w\-./]+$')
+        if not _url_pattern.match(item_url):
+            await send_progress("error", -1, "URL格式不合法", "error")
+            await resp.write_eof()
+            return resp
+
         await send_progress("validate", 5, "校验安装参数...")
 
         target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
         clone_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
 
-        await send_progress("cleanup", 15, "清理残留目录...")
-        if os.path.exists(clone_target_path):
-            try:
-                shutil.rmtree(clone_target_path, onerror=_force_remove_readonly)
-            except Exception as e:
-                await send_progress("error", -1, f"目录 {target_dir_name} 已存在且被占用，无法自动清理，请先手动删除。错误: {str(e)}", "error")
-                await resp.write_eof()
-                return resp
+        is_self = _is_self_update(target_dir_name)
+
+        if is_self:
+            # 自更新模式：克隆到暂存目录
+            staging_path = _get_staging_path(clone_target_path)
+            if os.path.exists(staging_path):
+                shutil.rmtree(staging_path, onerror=_force_remove_readonly)
+            actual_clone_target = staging_path
+            await send_progress("cleanup", 15, "准备暂存目录（自更新模式）...")
+        else:
+            actual_clone_target = clone_target_path
+            await send_progress("cleanup", 15, "清理残留目录...")
+            if os.path.exists(clone_target_path):
+                try:
+                    shutil.rmtree(clone_target_path, onerror=_force_remove_readonly)
+                except Exception as e:
+                    await send_progress("error", -1, f"目录 {target_dir_name} 已存在且被占用，无法自动清理，请先手动删除。错误: {str(e)}", "error")
+                    await resp.write_eof()
+                    return resp
 
         env = _prepare_git_env()
 
@@ -361,7 +435,7 @@ async def install_tool_stream_handler(request):
         try:
             await send_progress("git_cloning", 50, "正在克隆仓库（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path,
+                "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, actual_clone_target,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
@@ -392,20 +466,24 @@ async def install_tool_stream_handler(request):
             stdout, stderr = await clone_task
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    proc.returncode, ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, clone_target_path],
+                    proc.returncode, ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, actual_clone_target],
                     output=stdout, stderr=stderr
                 )
-            await send_progress("complete", 100, "✅ 安装成功！", "success")
+            if is_self:
+                _write_update_pending_marker(clone_target_path, staging_path)
+                await send_progress("complete", 100, "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！", "success")
+            else:
+                await send_progress("complete", 100, "✅ 安装成功！", "success")
 
         except subprocess.CalledProcessError as e1:
             await send_progress("git_fallback", 55, "镜像失败，切换直连源...")
 
-            if os.path.exists(clone_target_path):
-                shutil.rmtree(clone_target_path, onerror=_force_remove_readonly)
+            if os.path.exists(actual_clone_target):
+                shutil.rmtree(actual_clone_target, onerror=_force_remove_readonly)
 
             await send_progress("git_direct", 70, "正在直连克隆（浅克隆模式）...")
             proc = await asyncio.create_subprocess_exec(
-                "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path,
+                "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, actual_clone_target,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env
@@ -436,10 +514,14 @@ async def install_tool_stream_handler(request):
             stdout, stderr = await clone_task
             if proc.returncode != 0:
                 raise subprocess.CalledProcessError(
-                    proc.returncode, ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, clone_target_path],
+                    proc.returncode, ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, actual_clone_target],
                     output=stdout, stderr=stderr
                 )
-            await send_progress("complete", 100, "✅ 安装成功！", "success")
+            if is_self:
+                _write_update_pending_marker(clone_target_path, staging_path)
+                await send_progress("complete", 100, "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！", "success")
+            else:
+                await send_progress("complete", 100, "✅ 安装成功！", "success")
 
     except FileNotFoundError:
         await send_progress("error", -1, "系统中未检测到 Git，请先安装 Git 环境才能下载插件！", "error")
