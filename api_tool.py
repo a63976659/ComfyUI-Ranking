@@ -19,6 +19,9 @@ from aiohttp import web
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_NODES_DIR = os.path.dirname(THIS_DIR)
 
+# 🔒 URL 格式正则校验（模块级常量，避免每次请求重复编译）
+_URL_PATTERN = re.compile(r'^https?://[\w\-.]+(:\d+)?/[\w\-./]+$')
+
 MAX_ZIP_SIZE = 2 * 1024 * 1024 * 1024  # 2GB ZIP 包上限
 
 
@@ -89,8 +92,7 @@ async def install_tool_handler(request):
         return web.json_response({"error": "该资源链接不是有效的 Git 仓库地址，无法自动安装。请前往资源原始页面手动下载。"}, status=400)
     
     # 🔒 P0安全加固：URL 格式正则校验，防止注入攻击
-    _url_pattern = re.compile(r'^https?://[\w\-.]+(:\d+)?/[\w\-./]+$')
-    if not _url_pattern.match(item_url):
+    if not _URL_PATTERN.match(item_url):
         return web.json_response({"error": "URL格式不合法"}, status=400)
         
     target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
@@ -395,8 +397,7 @@ async def install_tool_stream_handler(request):
             return resp
 
         # 🔒 P0安全加固：URL 格式正则校验，防止注入攻击
-        _url_pattern = re.compile(r'^https?://[\w\-.]+(:\d+)?/[\w\-./]+$')
-        if not _url_pattern.match(item_url):
+        if not _URL_PATTERN.match(item_url):
             await send_progress("error", -1, "URL格式不合法", "error")
             await resp.write_eof()
             return resp

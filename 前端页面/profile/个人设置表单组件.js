@@ -43,9 +43,21 @@ function _readAndPreviewImage(file, previewElement, cacheKey) {
                 try {
                     localStorage.setItem(cacheKey, base64);
                 } catch (err) {
-                    showToast("❌ 图片过大，无法保存到本地", "error");
-                    resolve(null);
-                    return;
+                    // 配额溢出：清理同类型旧缓存后重试
+                    if (err.name === "QuotaExceededError") {
+                        try {
+                            const prefix = cacheKey.replace(/[^_]+$/, '');
+                            for (let i = localStorage.length - 1; i >= 0; i--) {
+                                const key = localStorage.key(i);
+                                if (key && key.startsWith(prefix) && key !== cacheKey) {
+                                    localStorage.removeItem(key);
+                                }
+                            }
+                            localStorage.setItem(cacheKey, base64);
+                        } catch (_) {
+                            // 仍然失败则放弃本地缓存，不影响预览
+                        }
+                    }
                 }
             }
             previewElement.style.backgroundImage = `url(${base64})`;
@@ -407,10 +419,24 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                         bannerUrl = cloudImageUrl;
                         // 保存到本地缓存
                         if (pendingBannerDataUrl) {
+                            const bannerCacheKey = getBannerCacheKey(userData.account);
                             try {
-                                localStorage.setItem(getBannerCacheKey(userData.account), pendingBannerDataUrl);
+                                localStorage.setItem(bannerCacheKey, pendingBannerDataUrl);
                             } catch (storageErr) {
-                                console.warn("背景图本地缓存失败:", storageErr);
+                                // 配额溢出：清理其他用户的旧 banner 缓存后重试
+                                if (storageErr.name === "QuotaExceededError") {
+                                    try {
+                                        for (let i = localStorage.length - 1; i >= 0; i--) {
+                                            const key = localStorage.key(i);
+                                            if (key && key.startsWith("ComfyRanking_ProfileBannerCache_") && key !== bannerCacheKey) {
+                                                localStorage.removeItem(key);
+                                            }
+                                        }
+                                        localStorage.setItem(bannerCacheKey, pendingBannerDataUrl);
+                                    } catch (_) {
+                                        // 仍然失败则放弃本地缓存（不影响云端保存）
+                                    }
+                                }
                             }
                         }
                     }

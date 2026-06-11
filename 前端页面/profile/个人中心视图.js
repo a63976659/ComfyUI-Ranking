@@ -55,10 +55,27 @@ async function syncBannerCache(account, bannerUrl) {
         reader.onload = () => {
             try {
                 localStorage.setItem(cacheKey, reader.result);
-                // 触发界面刷新，显示新缓存的背景图
                 window.dispatchEvent(new CustomEvent("comfy-banner-synced", { detail: { account } }));
             } catch (storageErr) {
-                console.warn("背景图本地缓存失败:", storageErr);
+                // 配额溢出：先清理其他用户的旧 banner 缓存后重试
+                if (storageErr.name === "QuotaExceededError") {
+                    try {
+                        const keysToRemove = [];
+                        for (let i = 0; i < localStorage.length; i++) {
+                            const key = localStorage.key(i);
+                            if (key && key.startsWith("ComfyRanking_ProfileBannerCache_") && key !== cacheKey) {
+                                keysToRemove.push(key);
+                            }
+                        }
+                        keysToRemove.forEach(k => localStorage.removeItem(k));
+                        localStorage.setItem(cacheKey, reader.result);
+                        window.dispatchEvent(new CustomEvent("comfy-banner-synced", { detail: { account } }));
+                        return;
+                    } catch (_) { /* 仍然失败，降级 */ }
+                    // 最终降级：使用 blob URL（不占 localStorage）
+                    const blobUrl = URL.createObjectURL(blob);
+                    window.dispatchEvent(new CustomEvent("comfy-banner-synced", { detail: { account, blobUrl } }));
+                }
             }
         };
         reader.onerror = () => console.warn("背景图读取失败");
