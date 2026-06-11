@@ -446,6 +446,25 @@ export function createBannerManageView(currentUser) {
     const bannerCard = document.createElement("div");
     bannerCard.style.cssText = "background: rgba(30,30,30,0.95); border: 1px solid rgba(85,85,85,0.6); border-radius: 12px; padding: 20px; margin-bottom: 16px;";
 
+    // 当前广告状态指示器
+    const statusRow = document.createElement("div");
+    statusRow.style.cssText = "display: flex; align-items: center; gap: 8px; margin-bottom: 14px; padding: 10px 12px; border-radius: 8px; background: rgba(40,40,40,0.8); border: 1px solid rgba(85,85,85,0.4);";
+    statusRow.innerHTML = '<span style="font-size: 12px; color: #888;">⏳ 正在检查广告状态...</span>';
+
+    // 异步检查当前广告状态
+    (async () => {
+        try {
+            const res = await api.getPublicBannerConfig({ noCache: true });
+            if (res && res.data && res.data.enabled && res.data.bannerImage) {
+                statusRow.innerHTML = '<span style="font-size: 12px; color: #4CAF50;">✅ 当前有广告正在展示</span>';
+            } else {
+                statusRow.innerHTML = '<span style="font-size: 12px; color: #f0ad4e;">⚠️ 当前无活跃广告</span>';
+            }
+        } catch (e) {
+            statusRow.innerHTML = '<span style="font-size: 12px; color: #888;">❓ 无法获取广告状态</span>';
+        }
+    })();
+
     // 启用/禁用开关
     const enableRow = document.createElement("div");
     enableRow.style.cssText = "display: flex; align-items: center; gap: 10px; margin-bottom: 14px;";
@@ -588,6 +607,11 @@ export function createBannerManageView(currentUser) {
     btnSaveBanner.onmouseenter = () => { btnSaveBanner.style.transform = "translateY(-1px)"; btnSaveBanner.style.boxShadow = "0 4px 12px rgba(76,175,80,0.4)"; };
     btnSaveBanner.onmouseleave = () => { btnSaveBanner.style.transform = "none"; btnSaveBanner.style.boxShadow = "none"; };
     btnSaveBanner.onclick = async () => {
+        // 保存验证：启用广告时必须上传横幅图片
+        if (enableSwitch.checked && !bannerImageUrl) {
+            showToast("⚠️ 启用广告时必须上传横幅图片", "warning");
+            return;
+        }
         const config = {
             enabled: enableSwitch.checked,
             bannerImage: bannerImageUrl,
@@ -603,6 +627,28 @@ export function createBannerManageView(currentUser) {
             showToast("✅ " + t('admin.banner_saved'), "success");
             // 保存成功后强制刷新广告横幅（内部已处理缓存清除）
             refreshBanner();
+            // 发布成功后清空表单（广告数据已保存至云端，不影响显示）
+            enableSwitch.checked = false;
+            bannerImageUrl = "";
+            bannerImgPreview.src = "";
+            bannerImgPreview.style.display = "none";
+            detailImageUrl = "";
+            detailImgPreview.src = "";
+            detailImgPreview.style.display = "none";
+            titleInput.value = "";
+            descInput.value = "";
+            detailTextarea.value = "";
+            // 刷新状态指示器
+            try {
+                const statusRes = await api.getPublicBannerConfig({ noCache: true });
+                if (statusRes && statusRes.data && statusRes.data.enabled && statusRes.data.bannerImage) {
+                    statusRow.innerHTML = '<span style="font-size: 12px; color: #4CAF50;">✅ 当前有广告正在展示</span>';
+                } else {
+                    statusRow.innerHTML = '<span style="font-size: 12px; color: #f0ad4e;">⚠️ 当前无活跃广告</span>';
+                }
+            } catch (e) {
+                // 状态刷新失败不影响主流程
+            }
         } catch (e) {
             showToast("❌ " + t('admin.save_failed') + ": " + e.message, "error");
         } finally {
@@ -612,6 +658,7 @@ export function createBannerManageView(currentUser) {
     };
 
     bannerCard.append(
+        statusRow,
         enableRow,
         bannerImgLabel, bannerImgPreview, bannerImgBtn, bannerImgInput,
         detailImgLabel, detailImgPreview, detailImgBtn, detailImgInput,
@@ -620,33 +667,6 @@ export function createBannerManageView(currentUser) {
         detailLabel, detailTextarea,
         btnSaveBanner
     );
-
-    // 页面加载时读取当前广告配置
-    (async () => {
-        try {
-            const res = await api.getBannerConfig();
-            const data = res && res.data;
-            if (data) {
-                enableSwitch.checked = !!data.enabled;
-                if (data.bannerImage) {
-                    bannerImageUrl = data.bannerImage;
-                    bannerImgPreview.src = data.bannerImage;
-                    bannerImgPreview.style.display = "block";
-                }
-                if (data.detailImage) {
-                    detailImageUrl = data.detailImage;
-                    detailImgPreview.src = data.detailImage;
-                    detailImgPreview.style.display = "block";
-                }
-                if (data.title) titleInput.value = data.title;
-                if (data.description) descInput.value = data.description;
-                if (data.detailContent) detailTextarea.value = data.detailContent;
-            }
-        } catch (e) {
-            // 静默失败，保留空表单
-            console.warn("加载广告配置失败:", e);
-        }
-    })();
 
     // 组装
     container.append(navBar, bannerCard);
