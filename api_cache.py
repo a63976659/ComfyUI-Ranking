@@ -144,6 +144,19 @@ async def cache_image_handler(request):
 
     url = _clean_nested_url(url, 'image')
 
+    # 🔄 拦截旧数据中残留的 via.placeholder.com 外部占位图URL，直接返回本地SVG
+    if 'via.placeholder.com' in url:
+        # 解析颜色和文字：/150/BG_COLOR/TEXT_COLOR?text=TEXT
+        import re as _re
+        _ph_match = _re.search(r'/([\dA-Fa-f]{6})/([\dA-Fa-f]{6})\?text=(.+?)(?:&|$)', url)
+        bg = f'#{_ph_match.group(1)}' if _ph_match else '#666'
+        fg = f'#{_ph_match.group(2)}' if _ph_match else '#fff'
+        txt = urllib.parse.unquote(_ph_match.group(3))[:4] if _ph_match else '?'
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="150" height="150">'
+               f'<rect fill="{bg}" width="150" height="150" rx="12"/>'
+               f'<text x="75" y="95" text-anchor="middle" fill="{fg}" font-size="40" font-family="sans-serif">{txt}</text></svg>')
+        return web.Response(body=svg.encode(), content_type='image/svg+xml')
+
     # 🚀 核心配合：拦截旧版因 Private 导致 401 的 HF 直链，强行重写为云端代理！
     if url.startswith("https://huggingface.co/datasets/ZHIWEI666/ComfyUI-Ranking/resolve/main/"):
         url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/image_proxy?url=" + urllib.parse.quote(url)
