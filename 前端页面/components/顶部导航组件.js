@@ -10,6 +10,7 @@ import { openSettingsPage } from "./全局设置组件.js";  // ⚙️ 新增
 import { CACHE } from "../core/全局配置.js";
 import { t } from "./用户体验增强.js";  // 🌐 多语言支持
 import { createTopBanner } from "./顶部广告组件.js";
+import { uploadFile } from "../market/发布内容_提交引擎.js";  // 🖼️ 带压缩管线的统一上传包装器
 
 // 🚀 新增：消息轮询定时器
 let messagePollingTimer = null;
@@ -131,18 +132,12 @@ export function createTopNav() {
                             window.dispatchEvent(new CustomEvent("comfy-route-back")); updateUserButtonState(); return; 
                         }
                         if (formData.type === "register") {
-                            if (formData.avatarFile) {
-                                userActionBtn.innerHTML = `⏳ ${t('auth.uploading_avatar') || '上传头像中...'}`;
-                                try {
-                                    const uploadRes = await api.uploadFile(formData.avatarFile, "avatar");
-                                    formData.avatarDataUrl = uploadRes.url; 
-                                } catch (uploadErr) {
-                                    // 上传失败时清除 base64 数据，避免巨大字符串存入后端
-                                    console.warn("头像上传失败，跳过头像设置:", uploadErr.message || uploadErr);
-                                    delete formData.avatarDataUrl;
-                                    delete formData.avatarFile;
-                                }
-                            }
+                            // 🚀 核心修复：/api/upload 需要登录凭证，注册时尚无 token 必然 401。
+                            // 调整时序为：先注册（不带头像）→ 自动登录拿到 token → 再上传头像并写入资料。
+                            const pendingAvatarFile = formData.avatarFile || null;
+                            delete formData.avatarFile;
+                            delete formData.avatarDataUrl;  // base64 预览值会被后端拒绝，不随注册提交
+
                             userActionBtn.innerHTML = `⏳ ${t('auth.registering') || '注册账号中...'}`;
                             await api.register(formData);
                             showToast(t('auth.register_success') + (t('auth.auto_login') || '！正在为您自动登录...'), "success");
@@ -150,6 +145,27 @@ export function createTopNav() {
                             const res = await api.login(formData.account, formData.password, true);
                             userData = { account: formData.account, name: formData.name, avatar: res.avatar, ...res }; 
                             token = res.token; isRemember = true; 
+
+                            // 🖼️ 登录成功后再上传头像（此时请求可携带 Authorization）
+                            if (pendingAvatarFile && token) {
+                                userActionBtn.innerHTML = `⏳ ${t('auth.uploading_avatar') || '上传头像中...'}`;
+                                // 提前写入 token，确保上传与资料更新请求能通过认证
+                                localStorage.setItem("ComfyCommunity_Token", token);
+                                try {
+                                    // 统一走带 processAvatar 压缩的包装器，规避后端 2MB 头像限制
+                                    const cloudAvatarUrl = await uploadFile(pendingAvatarFile, "avatar");
+                                    if (cloudAvatarUrl) {
+                                        const updateRes = await api.updateUserProfile(formData.account, { avatarDataUrl: cloudAvatarUrl });
+                                        userData = { ...userData, ...(updateRes.data || {}) };
+                                        if (userData.avatarDataUrl) userData.avatar = userData.avatarDataUrl;
+                                    } else {
+                                        showToast(t('auth.avatar_set_failed') || "⚠️ 头像设置失败，您可稍后在个人设置中重新上传", "warning");
+                                    }
+                                } catch (avatarErr) {
+                                    console.warn("注册后设置头像失败:", avatarErr.message || avatarErr);
+                                    showToast(t('auth.avatar_set_failed') || "⚠️ 头像设置失败，您可稍后在个人设置中重新上传", "warning");
+                                }
+                            }
                         } else if (formData.type === "login") {
                             const res = await api.login(formData.account, formData.password, formData.remember);
                             token = res.token; isRemember = formData.remember;

@@ -66,7 +66,71 @@
 
 ---
 
+## 🔌 开放API（第三方插件接入）
+
+本项目提供通用的开放API，允许第三方ComfyUI插件接入RanKing的账号系统与消费系统，实现统一登录、余额共享、计费与退款。
+
+### API端点
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/open/verify-token` | POST | 验证用户Token，返回账号信息（昵称、头像） |
+| `/api/open/balance` | GET | 查询用户钱包余额（balance / earn_balance / tip_balance / task_balance / frozen_balance） |
+| `/api/open/deduct` | POST | 通用扣款（从可用余额扣减，写入交易流水） |
+| `/api/open/refund` | POST | 退款（部分或全额回退至用户钱包） |
+
+### 接入方式
+
+- 每个第三方插件需向 RanKing 注册获取唯一的 `plugin_key`
+- 所有请求必须携带 `X-Plugin-Key` Header
+- 余额查询接口同时需要 `Authorization: Bearer <user_token>`
+- 扣款 / 退款 / Token验证 接口在请求体中携带 `token` 字段
+- 每个 `plugin_key` 独立限流（默认 100 次/分钟，按分钟滑窗内存计数）
+
+### 已接入插件
+
+| 插件 | 标识 | 说明 |
+|------|------|------|
+| **NodeCraft AI** | `nodecraft_ai` | ComfyUI 节点梦工厂 — AI 编程助手 |
+
+### 安全机制
+
+- **Plugin Key 验证**：未注册或非法 Key 直接返回 403
+- **细粒度权限**：每个插件可单独配置允许调用的接口（verify / balance / deduct / refund）
+- **独立限流**：按 `plugin_id` 维度隔离，互不影响
+- **悲观锁**：扣款/退款使用 `SELECT ... FOR UPDATE` 锁定钱包行，保证并发安全
+- **哈希链审计**：所有 `OPEN_DEDUCT` / `OPEN_REFUND` 操作写入 `Transaction` 表，包含 `prev_hash` + `tx_hash`，可全链路追溯
+- **跨插件隔离**：退款时校验 `related_account == plugin_id`，禁止跨插件互相退款
+- **退款防超额**：累计已退金额 + 本次退款金额 ≤ 原扣款金额
+
+### 错误码约定
+
+| 状态码 | 含义 |
+|--------|------|
+| 401 | 缺少 `X-Plugin-Key` 或用户 Token |
+| 402 | 余额不足 |
+| 403 | Plugin Key 无效 / 无对应权限 / 跨插件操作被拒 |
+| 404 | 原交易不存在（退款时） |
+| 429 | 触发插件级限流 |
+
+> 详细接入指南请参考 [`技术文档/13_开放API与第三方插件接入.md`](./技术文档/13_开放API与第三方插件接入.md)
+
+---
+
 ## 📝 更新记录
+
+### 2026-07-26
+- 解决了新用户注册时选择的头像一直无法生效的问题，现在注册完成后头像会正常显示
+- 头像如果没有设置成功，界面会明确提醒，可以稍后在个人设置里重新上传，不影响注册和登录
+- 注册时上传的头像会自动优化大小，避免因图片过大而设置失败
+
+### 2026-06-17
+- 新增通用开放API模块（`router_open_api.py`），允许第三方ComfyUI插件接入RanKing账号体系与消费系统
+- 新增 4 个开放接口：`/api/open/verify-token`、`/api/open/balance`、`/api/open/deduct`、`/api/open/refund`
+- 引入 `X-Plugin-Key` Header 鉴权机制，每个插件独立限流（默认100次/分钟）与权限隔离
+- 所有开放接口的扣款/退款均写入 Transaction 流水（含哈希链审计），扣款使用悲观锁保证并发安全
+- 首批接入插件：NodeCraft AI（节点梦工厂）— ComfyUI AI编程助手
+- 同步更新技术文档，新增第13章《开放API与第三方插件接入》
 
 ### 2026-06-12
 - 修复充值成功后重复收到多条到账提醒的问题
