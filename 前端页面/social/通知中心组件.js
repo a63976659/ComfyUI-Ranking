@@ -15,7 +15,8 @@ export async function openNotificationCenter(currentUser, bellBtn) {
     if (!currentUser) return showToast(t('notif.login_required'), "warning");
     
     const outerBox = document.createElement("div");
-    Object.assign(outerBox.style, { flex: "none", height: "1220px", boxSizing: "border-box", overflowY: "auto", padding: "15px", display: "flex", flexDirection: "column", background: "var(--comfy-menu-bg)" });
+    // 🔧 自适应高度：flex 填充剩余空间，内容超出时在容器内部滚动（与主界面保持一致）
+    Object.assign(outerBox.style, { flex: "1", minHeight: "0", boxSizing: "border-box", overflowY: "auto", padding: "15px", display: "flex", flexDirection: "column", background: "var(--comfy-menu-bg)" });
     
     const header = document.createElement("div");
     header.innerHTML = `

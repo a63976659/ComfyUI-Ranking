@@ -5,10 +5,10 @@ import { t } from "../components/用户体验增强.js";
 
 export function createAuthView(onSuccessCallback) {
     const container = document.createElement("div");
-    // 【高度对齐修复】：改为固定 1220px
+    // 🔧 自适应高度：flex 填充剩余空间，内容超出时在容器内部滚动（与主界面保持一致）
     Object.assign(container.style, { 
         display: "flex", flexDirection: "column", gap: "15px", color: "#ccc", 
-        fontSize: "14px", padding: "15px", flex: "none", height: "1220px", boxSizing: "border-box", overflowY: "auto", 
+        fontSize: "14px", padding: "15px", flex: "1", minHeight: "0", boxSizing: "border-box", overflowY: "auto", 
         background: "var(--comfy-menu-bg)"
     });
 

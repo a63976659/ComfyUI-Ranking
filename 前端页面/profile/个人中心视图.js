@@ -114,7 +114,8 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
     const container = document.createElement("div");
     Object.assign(container.style, { 
         display: "flex", flexDirection: "column", gap: "15px", color: "#eee", 
-        fontSize: "14px", padding: "15px", flex: "none", height: "1220px", boxSizing: "border-box", overflowY: "auto", 
+        // 🔧 自适应高度：flex 填充剩余空间，内容超出时在容器内部滚动（与主界面保持一致）
+        fontSize: "14px", padding: "15px", flex: "1", minHeight: "0", boxSizing: "border-box", overflowY: "auto",
         background: "var(--comfy-menu-bg)"
     });
 

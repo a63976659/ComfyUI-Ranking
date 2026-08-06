@@ -16,7 +16,8 @@ import { t, getLanguage } from "../components/用户体验增强.js";
 export function createWithdrawManageView(currentUser) {
     const container = document.createElement("div");
     container.className = "admin-withdraw-container";
-    container.style.cssText = "padding: 16px; background: var(--comfy-menu-bg); min-height: 100%;";
+    // 🔧 自适应高度：flex 填充剩余空间，内容超出时在容器内部滚动（与主界面保持一致）
+    container.style.cssText = "padding: 16px; background: var(--comfy-menu-bg); flex: 1; min-height: 0; overflow-y: auto;";
 
     renderWithdrawList(container, currentUser, "pending");
 

@@ -12,7 +12,7 @@ import { refreshBanner } from "../components/顶部广告组件.js";
  */
 export function createAdminPanelView(currentUser) {
     const container = document.createElement("div");
-    container.style.cssText = "padding: 16px; background: var(--comfy-menu-bg); min-height: 100%;";
+    container.style.cssText = "padding: 16px; background: var(--comfy-menu-bg); flex: 1; min-height: 0; overflow-y: auto;";
 
     // ==========================================
     // 顶部导航栏
@@ -264,7 +264,7 @@ export function createAdminPanelView(currentUser) {
  */
 export function createVersionManageView(currentUser) {
     const container = document.createElement("div");
-    container.style.cssText = "padding: 16px; background: var(--comfy-menu-bg); min-height: 100%;";
+    container.style.cssText = "padding: 16px; background: var(--comfy-menu-bg); flex: 1; min-height: 0; overflow-y: auto;";
 
     // 顶部导航栏
     const navBar = document.createElement("div");
@@ -416,7 +416,7 @@ export function createVersionManageView(currentUser) {
  */
 export function createBannerManageView(currentUser) {
     const container = document.createElement("div");
-    container.style.cssText = "padding: 16px; background: var(--comfy-menu-bg); min-height: 100%;";
+    container.style.cssText = "padding: 16px; background: var(--comfy-menu-bg); flex: 1; min-height: 0; overflow-y: auto;";
 
     // 顶部导航栏
     const navBar = document.createElement("div");

@@ -171,7 +171,8 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     const container = document.createElement("div");
     Object.assign(container.style, {
         display: "flex", flexDirection: "column", gap: "15px", color: "#ccc", 
-        fontSize: "14px", padding: "15px", overflowY: "auto", flex: "none", height: "1220px", boxSizing: "border-box"
+        // 🔧 自适应高度：flex 填充剩余空间，内容超出时在容器内部滚动（与主界面保持一致）
+        fontSize: "14px", padding: "15px", overflowY: "auto", flex: "1", minHeight: "0", boxSizing: "border-box"
     });
 
     const isEditMode = !!editItemData;

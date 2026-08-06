@@ -55,7 +55,8 @@ export function openChatModal(currentUser, targetAccount = null) {
         avatarEl.onmouseout = () => avatarEl.style.transform = "scale(1)";
     };
     const container = document.createElement("div");
-    Object.assign(container.style, { display: "flex", flexDirection: "column", flex: "none", height: "1000px", boxSizing: "border-box", color: "#fff", background: "var(--comfy-menu-bg)", overflow: "hidden" });
+    // 🔧 自适应高度：flex 填充剩余空间（与主界面保持一致）
+    Object.assign(container.style, { display: "flex", flexDirection: "column", flex: "1", minHeight: "0", boxSizing: "border-box", color: "#fff", background: "var(--comfy-menu-bg)", overflow: "hidden" });
     
     // 🚀 返回按钮位置可调整参数：margin-left 控制右移，margin-top 控制下移
     const topHeader = document.createElement("div");
