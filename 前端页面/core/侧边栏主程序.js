@@ -116,12 +116,13 @@ export function buildSidebarDOM() {
     `;
 
     const contentBoxWrapper = document.createElement("div");
-    Object.assign(contentBoxWrapper.style, { flex: "1", padding: "0 10px 10px 10px", display: "flex", flexDirection: "column" });
+    Object.assign(contentBoxWrapper.style, { flex: "1", minHeight: "0", padding: "0 10px 10px 10px", display: "flex", flexDirection: "column" });
 
     const contentArea = document.createElement("div");
     contentArea.className = "sidebar-scroll-container";
+    // 🔧 自适应高度：flex 填充剩余空间，内容少时随内容收缩，避免容器框与底部页脚间出现空白
     Object.assign(contentArea.style, {
-        flex: "none", height: "1122px", overflowY: "auto", padding: "10px",
+        flex: "1 1 auto", minHeight: "0", overflowY: "auto", padding: "10px",
         backgroundColor: "#1c1c1c", border: "1px solid #444", borderRadius: "8px",
         boxShadow: "inset 0 4px 10px rgba(0,0,0,0.3)"
     });
