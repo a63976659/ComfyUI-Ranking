@@ -557,6 +557,45 @@ export function buildSidebarDOM() {
     // 【核心新增】：将底部追加到容器的最下方
     container.appendChild(footerContainer);
     
+    // 🔧 自适应高度守护（事件驱动）：ComfyUI 侧边栏面板与本容器之间隔着一层未设高度的
+    // 包裹 div，height:100% 会退化为内容撑开、flex 填充链失效；且 Tab 注销重注册/面板切换
+    // 时 Vue 会重建该包裹层。因此监听侧边栏区域的 DOM 挂载事件，本容器每次被（重新）挂载
+    // 时立即为当前包裹层补 height:100%，使容器始终锁定面板可视高度，内容超出时在容器内部
+    // 滚动、页脚紧贴容器底部（零轮询，与 NodeCraft-AI 的 render 回调方案等效）
+    window.__comfyRankingSidebarRoot = container;
+    if (!window.__comfyRankingHeightFixerInstalled) {
+        window.__comfyRankingHeightFixerInstalled = true;
+        const 补包裹层高度 = () => {
+            const root = window.__comfyRankingSidebarRoot;
+            const wrapper = root && root.parentElement;
+            if (wrapper && wrapper.style.height !== "100%") {
+                wrapper.style.height = "100%";
+            }
+        };
+        const 安装监听 = () => {
+            // 锚定 ComfyUI 侧边栏布局的稳定节点（会话内不重建），包裹层的重建都发生在其内部
+            const 锚点 = document.querySelector('.side-bar-panel') || document.querySelector('.sidebar-content-container');
+            if (!锚点) return false;
+            new MutationObserver((_, observer) => {
+                // 锚点自身若被重建则断开并重新寻找挂载（极端情况，布局整体刷新时）
+                if (!锚点.isConnected) {
+                    observer.disconnect();
+                    setTimeout(() => 尝试安装(10), 500);
+                    return;
+                }
+                补包裹层高度();
+            }).observe(锚点, { childList: true, subtree: true });
+            return true;
+        };
+        // 锚点未就绪时延迟重试，保证监听一定装上
+        const 尝试安装 = (剩余次数) => {
+            if (安装监听() || 剩余次数 <= 0) return;
+            setTimeout(() => 尝试安装(剩余次数 - 1), 500);
+        };
+        // 回调内引用：锚点自身被重建时走同样的延迟重试路径
+        尝试安装(10);
+    }
+
     triggerLoad();
     return container;
 }
