@@ -79,6 +79,7 @@ from server import PromptServer
 from .api_tool import install_tool_handler, install_private_tool_handler, install_tool_stream_handler, install_private_tool_stream_handler
 from .api_app import download_app_handler, download_app_stream_handler
 from .api_cache import cache_image_handler, cache_video_handler, cache_stats_handler, cache_clear_handler  # 🟢 引入缓存代理模块（图片+视频+统计清理）
+from .api_billing import local_deduct_handler, local_refund_handler, local_balance_handler  # 💰 引入本地计费代理路由
 
 WEB_DIRECTORY = "./前端页面"
 NODE_CLASS_MAPPINGS = {}
@@ -95,5 +96,8 @@ routes.get("/community_hub/image")(cache_image_handler)  # 🟢 注册图片缓�
 routes.get("/community_hub/video")(cache_video_handler)    # 🎬 注册视频缓存路由
 routes.get("/community_hub/cache/stats")(cache_stats_handler)   # 📊 注册缓存统计路由
 routes.post("/community_hub/cache/clear")(cache_clear_handler)  # 🧹 注册缓存清理路由
+routes.post("/ranking/local/deduct")(local_deduct_handler)    # 💰 注册本地扣款路由
+routes.post("/ranking/local/refund")(local_refund_handler)    # 💰 注册本地退款路由
+routes.get("/ranking/local/balance")(local_balance_handler)   # 💰 注册本地余额查询路由
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
