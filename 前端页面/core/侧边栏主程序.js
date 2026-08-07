@@ -28,6 +28,24 @@ try {
     console.warn('🎯 UX 增强初始化失败:', e);
 }
 
+// 🚫 注入 Tab 文案样式（模块加载时执行一次）
+// Tab 文案用伪元素 content 渲染而非文本节点，使其不存在于 DOM 树中，
+// 从而既避开 ComfyUI 翻译插件（只改写文本节点 / innerText / title / option.text），
+// 也避开浏览器翻译扩展；否则英文界面下 Tools 会被译成“工具”
+(function _injectTabLabelStyle() {
+    if (document.getElementById('hub-tab-label-style')) return;
+    const style = document.createElement('style');
+    style.id = 'hub-tab-label-style';
+    style.textContent = '.hub-tab-btn::before { content: var(--tab-label); }';
+    document.head.appendChild(style);
+})();
+
+// 🚫 筛选框选项防翻译：原生 <option> 不支持伪元素，无法用上面那套方案，
+// 改用零宽空格打断词典匹配：翻译插件只做 T.Menu[txt] || T.Menu[txt.trim()] 精确取值，
+// 而 trim() 不移除 U+200B，两路都查不到 → 不翻译。字符零宽，视觉与布局无变化，
+// option 的 value 是独立字面量，排序/筛选逻辑不受影响
+const noTr = (txt) => `${txt}\u200b`;
+
 const Store = {
     save(key, value) { localStorage.setItem(`ComfyCommunitySidebar_${key}`, value); },
     load(key, defaultValue) { return localStorage.getItem(`ComfyCommunitySidebar_${key}`) || defaultValue; }
@@ -74,42 +92,42 @@ export function buildSidebarDOM() {
     sortContainer.innerHTML = `
         <!-- 通用排序选择框（工具/应用/推荐/创作者） -->
         <select id="hub-sort-select" style="background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
-            <option value="time">${t('market.latest')}</option>
-            <option value="downloads">${t('market.downloads')}</option>
-            <option value="likes">${t('market.like')}</option>
-            <option value="favorites">${t('market.favorites')}</option>
-            <option value="tips">💰 ${t('market.tips_ranking') || '近期打赏榜'}</option>
-            <option value="views">${t('market.views')}</option>
-            <option value="daily_views">${t('market.daily_views')}</option>
-            <option value="rating">${t('market.rating')}</option>
+            <option value="time">${noTr(t('market.latest'))}</option>
+            <option value="downloads">${noTr(t('market.downloads'))}</option>
+            <option value="likes">${noTr(t('market.like'))}</option>
+            <option value="favorites">${noTr(t('market.favorites'))}</option>
+            <option value="tips">💰 ${noTr(t('market.tips_ranking') || '近期打赏榜')}</option>
+            <option value="views">${noTr(t('market.views'))}</option>
+            <option value="daily_views">${noTr(t('market.daily_views'))}</option>
+            <option value="rating">${noTr(t('market.rating'))}</option>
         </select>
         <!-- 任务榜筛选控件（状态+排序） -->
         <select id="task-status-filter" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
-            <option value="">${t('task.filter_all')}</option>
-            <option value="open">${t('task.filter_open')}</option>
-            <option value="in_progress">${t('task.filter_in_progress')}</option>
-            <option value="submitted">${t('task.filter_submitted')}</option>
-            <option value="completed">${t('task.filter_completed')}</option>
-            <option value="disputed">${t('task.filter_disputed')}</option>
+            <option value="">${noTr(t('task.filter_all'))}</option>
+            <option value="open">${noTr(t('task.filter_open'))}</option>
+            <option value="in_progress">${noTr(t('task.filter_in_progress'))}</option>
+            <option value="submitted">${noTr(t('task.filter_submitted'))}</option>
+            <option value="completed">${noTr(t('task.filter_completed'))}</option>
+            <option value="disputed">${noTr(t('task.filter_disputed'))}</option>
         </select>
         <select id="task-sort-select" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
-            <option value="latest">${t('task.sort_latest')}</option>
-            <option value="price">${t('task.sort_price')}</option>
-            <option value="deadline">${t('task.sort_deadline')}</option>
-            <option value="views">${t('task.sort_views')}</option>
-            <option value="daily_views">${t('task.sort_daily_views')}</option>
-            <option value="likes">${t('task.sort_likes')}</option>
-            <option value="favorites">${t('task.sort_favorites')}</option>
+            <option value="latest">${noTr(t('task.sort_latest'))}</option>
+            <option value="price">${noTr(t('task.sort_price'))}</option>
+            <option value="deadline">${noTr(t('task.sort_deadline'))}</option>
+            <option value="views">${noTr(t('task.sort_views'))}</option>
+            <option value="daily_views">${noTr(t('task.sort_daily_views'))}</option>
+            <option value="likes">${noTr(t('task.sort_likes'))}</option>
+            <option value="favorites">${noTr(t('task.sort_favorites'))}</option>
         </select>
         <!-- 🎯 讨论区排序控件（专用） -->
         <select id="posts-sort-select" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
-            <option value="latest">${t('post.sort_latest')}</option>
-            <option value="likes">${t('post.sort_likes')}</option>
-            <option value="favorites">${t('post.sort_favorites')}</option>
-            <option value="tips">${t('post.sort_tips')}</option>
-            <option value="views">${t('post.sort_views')}</option>
-            <option value="daily_views">${t('post.sort_daily_views')}</option>
-            <option value="rating">${t('post.sort_rating') || t('market.rating')}</option>
+            <option value="latest">${noTr(t('post.sort_latest'))}</option>
+            <option value="likes">${noTr(t('post.sort_likes'))}</option>
+            <option value="favorites">${noTr(t('post.sort_favorites'))}</option>
+            <option value="tips">${noTr(t('post.sort_tips'))}</option>
+            <option value="views">${noTr(t('post.sort_views'))}</option>
+            <option value="daily_views">${noTr(t('post.sort_daily_views'))}</option>
+            <option value="rating">${noTr(t('post.sort_rating') || t('market.rating'))}</option>
         </select>
         <input type="text" id="hub-search-input" autocomplete="off" placeholder="🔍 ${t('common.search')}..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
         <button id="btn-open-publish" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">➕ ${t('market.publish')}</button>
@@ -429,7 +447,11 @@ export function buildSidebarDOM() {
 
     tabs.forEach(tab => {
         const btn = document.createElement("button");
-        btn.innerText = tab.label;
+        // 文案交由 ::before 渲染（见文件顶部 _injectTabLabelStyle），不产生文本节点；
+        // 伪元素内容不参与可访问名计算，用 aria-label 补回无障碍名称
+        btn.className = "hub-tab-btn";
+        btn.style.setProperty("--tab-label", JSON.stringify(tab.label));
+        btn.setAttribute("aria-label", tab.label);
         const isActive = currentTab === tab.id;
         const color = tabColors[tab.id];
         Object.assign(btn.style, { 
