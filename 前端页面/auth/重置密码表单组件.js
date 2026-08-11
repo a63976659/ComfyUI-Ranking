@@ -4,7 +4,7 @@ import { t } from "../components/用户体验增强.js";
 
 const INPUT_STYLE = 'width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;';
 
-export function renderResetForm(container, switchView, onSuccessCallback) {
+export function renderResetForm(container, switchView, onSuccessCallback, prefill = null) {
     container.innerHTML = `
         <div style="margin-bottom: 10px;"><label style="display: block; margin-bottom: 5px;">${t('auth.current_account')} <span style="color: #F44336;">*</span></label><input type="text" id="reset-account" placeholder="${t('auth.enter_account')}" style="${INPUT_STYLE}"></div>
         
@@ -26,6 +26,12 @@ export function renderResetForm(container, switchView, onSuccessCallback) {
     `;
 
     container.querySelector("#toggle-to-login").onclick = (e) => { e.preventDefault(); switchView("login"); };
+
+    // 🔎 找回账号跳转过来时，自动回填账号与邮箱
+    if (prefill) {
+        if (prefill.account) container.querySelector("#reset-account").value = prefill.account;
+        if (prefill.email) container.querySelector("#reset-verify").value = prefill.email;
+    }
     
     function startCountdown(btn, duration, resetColor) {
         let timeLeft = duration;
@@ -47,6 +53,9 @@ export function renderResetForm(container, switchView, onSuccessCallback) {
     // 发送验证码逻辑
     const btnSendCode = container.querySelector("#btn-send-code");
     let countdownTimer = null;
+
+    // 🔧 注册清理函数：视图切换时清除倒计时定时器，防止内存泄漏
+    container._onCleanup = () => { if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } };
     
     btnSendCode.onclick = async (e) => {
         e.preventDefault();

@@ -1,6 +1,7 @@
 import { renderLoginForm } from "./登录表单组件.js";
 import { renderRegisterForm } from "./注册表单组件.js";
 import { renderResetForm } from "./重置密码表单组件.js";
+import { renderRecoverForm } from "./找回账号表单组件.js";
 import { t } from "../components/用户体验增强.js";
 
 export function createAuthView(onSuccessCallback) {
@@ -26,14 +27,21 @@ export function createAuthView(onSuccessCallback) {
 
     const formContainer = container.querySelector("#auth-form-container");
 
-    const switchView = (viewState) => {
+    const switchView = (viewState, options = {}) => {
+        // 🔧 定时器清理：切换视图前执行上一个表单注册的清理函数（如验证码倒计时），防止内存泄漏
+        if (typeof formContainer._onCleanup === "function") {
+            formContainer._onCleanup();
+            formContainer._onCleanup = null;
+        }
         formContainer.innerHTML = ""; 
         if (viewState === "login") {
             renderLoginForm(formContainer, switchView, onSuccessCallback);
         } else if (viewState === "register") {
             renderRegisterForm(formContainer, switchView, onSuccessCallback);
         } else if (viewState === "reset") {
-            renderResetForm(formContainer, switchView, onSuccessCallback);
+            renderResetForm(formContainer, switchView, onSuccessCallback, options.prefill);
+        } else if (viewState === "recover") {
+            renderRecoverForm(formContainer, switchView);
         }
     };
 

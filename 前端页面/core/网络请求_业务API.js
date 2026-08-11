@@ -14,6 +14,7 @@ const api = {
     async sendVerifyCode(contact, type, actionType, account = null) { return request("/api/users/send_code", { method: "POST", body: { contact, contact_type: type, action_type: actionType, account } }); },
     async register(data) { return request("/api/users/register", { method: "POST", body: data }); },
     async login(account, password, remember = true) { return request("/api/users/login", { method: "POST", body: { account, password, remember } }); },
+    async recoverAccount(email, code) { return request("/api/users/recover_account", { method: "POST", body: { email, code } }); },
     
     // 🚀 核心修复：究极数据打捞装甲与弹窗报警
     async resetPassword(...args) { 
@@ -144,18 +145,6 @@ const api = {
         return request("/api/wallet/purchase", { method: "POST", body: { account: account, item_id: itemId } });
     },
     async submitWithdraw(data) { return request("/api/wallet/withdraw", { method: "POST", body: data }); },
-    async postSystemAnnouncement(adminAccount, contentText) {
-        if (!contentText || !contentText.trim()) throw new Error("公告内容不能为空！");
-        return request("/api/system/announcement", { method: "POST", body: { admin_account: adminAccount, content: contentText } });
-    },
-
-    // ==========================================
-    // 🔧 管理员调试：执行 Python 脚本
-    // ==========================================
-    async runAdminScript(adminAccount, scriptName) {
-        if (!scriptName || !scriptName.trim()) throw new Error("脚本名称不能为空！");
-        return request("/api/admin/run-script", { method: "POST", body: { admin_account: adminAccount, script_name: scriptName } });
-    },
 
     // ==========================================
     // 💬 讨论区 API
@@ -275,17 +264,6 @@ const api = {
             body: { response, evidence: evidence || [] }
         });
     },
-    async getAdminDisputes(status = null) {
-        let url = "/api/admin/disputes";
-        if (status) url += `?status=${status}`;
-        return request(url);
-    },
-    async resolveDispute(disputeId, resolution, ratio = null, note = null) {
-        return request(`/api/admin/disputes/${disputeId}/resolve`, {
-            method: "POST",
-            body: { resolution, ratio, note }
-        });
-    },
 
     // ==========================================
     // 🔄 P7后悔模式：退款API
@@ -300,7 +278,7 @@ const api = {
     },
 
     // ==========================================
-    // 🔒 管理员：系统配置 API
+    // 🔒 系统配置 API（图片审核开关等；版本/广告管理已迁至云端控制台）
     // ==========================================
     async getSystemConfig(configKey) {
         return request(`/api/admin/config/${configKey}`);
@@ -313,34 +291,10 @@ const api = {
     },
 
     // ==========================================
-    // 📢 广告管理 API
+    // 📢 广告展示 API（公开接口，供顶部广告组件读取）
     // ==========================================
-    async getBannerConfig() {
-        return request("/api/admin/config/banner_config");
-    },
     async getPublicBannerConfig(options = {}) {
         return request("/api/public/banner_config", options);
-    },
-    async setBannerConfig(config) {
-        return request("/api/admin/config/banner_config", {
-            method: "PUT",
-            body: config
-        });
-    },
-
-    // ==========================================
-    // 💰 管理员：提现管理 API
-    // ==========================================
-    async getAdminWithdrawals(status = null) {
-        let url = "/api/admin/withdrawals";
-        if (status) url += `?status=${status}`;
-        return request(url);
-    },
-    async completeWithdrawal(txId, paymentOrderId) {
-        return request(`/api/admin/withdrawals/${txId}/complete`, {
-            method: "POST",
-            body: { payment_order_id: paymentOrderId }
-        });
     }
 };
 

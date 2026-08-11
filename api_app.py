@@ -10,10 +10,29 @@ import urllib.error
 import traceback
 from aiohttp import web
 
+# 📦 三发行版兼容：folder_paths 仅存在于 ComfyUI 运行时，try 化防止脱离宿主时拖垮导入链
+try:
+    import folder_paths
+except Exception:
+    folder_paths = None
+
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_NODES_DIR = os.path.dirname(THIS_DIR)
-COMFY_ROOT_DIR = os.path.dirname(CUSTOM_NODES_DIR)
-APP_MODELS_DIR = os.path.join(COMFY_ROOT_DIR, "models", "app")
+
+# 📦 三发行版兼容：禁止用 ..\.. 层级硬推 ComfyUI 根目录（桌面版程序与数据分离会失效）
+# 解析优先级：custom_nodes 同级 models（秋叶/便携/桌面默认布局）→ folder_paths.models_dir → 插件自身目录内缓存（保底可写）
+def _resolve_app_models_dir():
+    sibling_models = os.path.join(CUSTOM_NODES_DIR, "..", "models")
+    if os.path.isdir(sibling_models):
+        return os.path.join(sibling_models, "app")
+    if folder_paths is not None:
+        try:
+            models_dir = getattr(folder_paths, "models_dir", None)
+            if models_dir and os.path.isdir(models_dir):
+                return os.path.join(models_dir, "app")
+        except Exception:
+            pass
+    return os.path.join(THIS_DIR, "缓存", "app")
 
 # 缓存穿透防护：记录下载失败的 app_id，短期内不重试
 _download_fail_cache = {}  # {app_id: timestamp}
@@ -86,14 +105,21 @@ async def _download_app_core(app_id, download_url, account, force_download=False
     - 失败时: (None, "错误描述", False)
     """
     try:
-        file_path = os.path.join(APP_MODELS_DIR, f"{app_id}.json")
-        os.makedirs(APP_MODELS_DIR, exist_ok=True)
+        # 📦 三发行版兼容：缓存目录解析失败时降级为不缓存（继续云端下载），不阻断功能
+        app_models_dir = None
+        try:
+            app_models_dir = _resolve_app_models_dir()
+            os.makedirs(app_models_dir, exist_ok=True)
+        except Exception as e:
+            print(f"⚠️ 应用缓存目录不可用，本次降级为不缓存: {e}")
+            app_models_dir = None
+        file_path = os.path.join(app_models_dir, f"{app_id}.json") if app_models_dir else None
 
         if progress_callback:
             await progress_callback("cache_check", 20, "检查本地缓存...")
 
         # 🚀 本地缓存优先：如果本地已有缓存且不强制重新下载，直接读取本地文件
-        if os.path.exists(file_path) and not force_download:
+        if file_path and os.path.exists(file_path) and not force_download:
             try:
                 print(f"📦 发现本地缓存 [{app_id}]，优先从本地加载...")
                 with open(file_path, "r", encoding="utf-8") as f:
@@ -147,9 +173,10 @@ async def _download_app_core(app_id, download_url, account, force_download=False
 
         # 下载成功后保存到本地缓存
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            print(f"💾 已缓存到本地：{file_path}")
+            if file_path:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"💾 已缓存到本地：{file_path}")
         except IOError as e:
             print(f"⚠️ 本地缓存写入失败：{str(e)}")
 

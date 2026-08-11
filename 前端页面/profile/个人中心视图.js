@@ -297,19 +297,6 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
 
             const listDOM = container.querySelector("#profile-list-container");
             renderProfileListContent(activeTab, listDOM, userData, currentUser, openOtherUserProfileModal);
-
-            // =========================================================
-            // 【新增】：管理后台入口按钮绑定事件
-            // =========================================================
-            const btnAdminPanel = container.querySelector("#btn-admin-panel");
-            if (btnAdminPanel) {
-                btnAdminPanel.onclick = () => {
-                    import("./管理后台组件.js").then(module => {
-                        const view = module.createAdminPanelView(currentUser);
-                        window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-                    }).catch(err => { console.error('加载管理后台失败:', err); });
-                };
-            }
         }
     }
 

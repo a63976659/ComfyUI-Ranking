@@ -12,7 +12,10 @@ export function renderLoginForm(container, switchView, onSuccessCallback) {
                 <input type="checkbox" id="login-remember" checked style="cursor: pointer;">
                 <label for="login-remember" style="font-size: 12px; color: #aaa; cursor: pointer;">${t('auth.remember_me')}</label>
             </div>
-            <a href="#" id="toggle-to-reset" style="color: #FF9800; text-decoration: underline; font-weight: bold; font-size: 12px; cursor: pointer; transition: opacity 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🔑 ${t('auth.forgot_password')}</a>
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <a href="#" id="toggle-to-recover" style="color: #2196F3; text-decoration: underline; font-weight: bold; font-size: 12px; cursor: pointer; transition: opacity 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🔎 ${t('auth.forgot_account')}</a>
+                <a href="#" id="toggle-to-reset" style="color: #FF9800; text-decoration: underline; font-weight: bold; font-size: 12px; cursor: pointer; transition: opacity 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🔑 ${t('auth.forgot_password')}</a>
+            </div>
         </div>
         <button id="btn-submit-login" style="width: 100%; padding: 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px;">${t('auth.login')}</button>
         <div style="text-align: center; font-size: 12px;"><span>${t('auth.no_account')} <a href="#" id="toggle-to-register" style="color: #4CAF50; text-decoration: none; font-weight: bold;">${t('auth.register_now')}</a></span></div>
@@ -20,6 +23,7 @@ export function renderLoginForm(container, switchView, onSuccessCallback) {
 
     container.querySelector("#toggle-to-register").onclick = (e) => { e.preventDefault(); switchView("register"); };
     container.querySelector("#toggle-to-reset").onclick = (e) => { e.preventDefault(); switchView("reset"); };
+    container.querySelector("#toggle-to-recover").onclick = (e) => { e.preventDefault(); switchView("recover"); };
     container.querySelector("#btn-submit-login").onclick = () => {
         const account = container.querySelector("#login-account").value.trim();
         const password = container.querySelector("#login-password").value;

@@ -8,7 +8,7 @@
 //   - 打赏等级工具.js (打赏榜单等级渲染)
 // ==========================================
 
-import { getBannerCacheKey, isAdmin, PLACEHOLDERS } from "../core/全局配置.js";
+import { getBannerCacheKey, PLACEHOLDERS } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 
 const escapeHtml = (str) => {
@@ -23,7 +23,6 @@ if (!document.getElementById('profile-template-styles')) {
     style.textContent = `
         .profile-nav-btn{background:rgba(51,51,51,0.8);border:1px solid rgba(85,85,85,0.8);color:#fff;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;display:flex;align-items:center;gap:6px;box-shadow:0 2px 4px rgba(0,0,0,0.3);transition:0.2s}
         .profile-nav-btn:hover{background:#4CAF50;border-color:#4CAF50}
-        .profile-nav-btn--admin:hover{background:#FF6B35;border-color:#FF6B35}
         .profile-header-btn{padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;transition:0.2s;backdrop-filter:blur(4px)}
         .profile-header-btn--settings{background:rgba(51,51,51,0.8);border:1px solid rgba(85,85,85,0.8);color:#ccc}
         .profile-header-btn--settings:hover{color:#fff;border-color:#888}
@@ -109,10 +108,6 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <div style="display: flex; gap: 8px; align-items: center;">
                         ${_backButtonHtml('backdrop-filter:blur(4px)')}
-                        ${isMe && isAdmin(userData.account) ? `
-                        <button id="btn-admin-panel" class="profile-nav-btn profile-nav-btn--admin" style="backdrop-filter:blur(4px)">
-                            <span style="font-size: 14px;">⚙️</span> ${t('admin.panel_title') || '管理后台'}
-                        </button>` : ''}
                     </div>
                     ${isMe ? `
                     <div style="display: flex; gap: 10px;">

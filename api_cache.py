@@ -11,6 +11,12 @@ import urllib.parse
 from urllib.parse import urlparse
 from aiohttp import web
 
+# 📦 三发行版兼容：folder_paths 仅存在于 ComfyUI 运行时，try 化防止脱离宿主时拖垮导入链
+try:
+    import folder_paths
+except Exception:
+    folder_paths = None
+
 # 视频下载锁字典（按 URL hash 粒度加锁）
 _video_download_locks = {}
 _video_locks_lock = asyncio.Lock()
@@ -119,15 +125,43 @@ def _cleanup_empty_cache(local_path, url_hash, ext):
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CUSTOM_NODES_DIR = os.path.dirname(THIS_DIR)
-COMFY_ROOT_DIR = os.path.dirname(CUSTOM_NODES_DIR)
-# 确保存放在 ComfyUI/models/cache/images
-CACHE_ROOT_DIR = os.path.join(COMFY_ROOT_DIR, "models", "cache")
-IMAGE_CACHE_DIR = os.path.join(CACHE_ROOT_DIR, "images")
-# 视频缓存目录（与图片分离）
-VIDEO_CACHE_DIR = os.path.join(CACHE_ROOT_DIR, "videos")
 
-os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
-os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)
+# 📦 三发行版兼容：禁止用 ..\.. 层级硬推 ComfyUI 根目录（桌面版程序与数据分离会失效）
+# 解析优先级：custom_nodes 同级 models（秋叶/便携/桌面默认布局）→ folder_paths.models_dir → 插件自身目录内缓存（保底可写）
+def _resolve_cache_root():
+    sibling_models = os.path.join(CUSTOM_NODES_DIR, "..", "models")
+    if os.path.isdir(sibling_models):
+        return os.path.join(sibling_models, "cache")
+    if folder_paths is not None:
+        try:
+            models_dir = getattr(folder_paths, "models_dir", None)
+            if models_dir and os.path.isdir(models_dir):
+                return os.path.join(models_dir, "cache")
+        except Exception:
+            pass
+    return os.path.join(THIS_DIR, "缓存")
+
+# 缓存目录懒初始化（不在导入期 makedirs，任何布局下都不会拖垮插件加载）
+IMAGE_CACHE_DIR = None
+VIDEO_CACHE_DIR = None
+
+def _ensure_cache_dirs():
+    """懒创建缓存目录；全部不可写时返回 False，调用方降级为不缓存（直连/报错），绝不崩溃"""
+    global IMAGE_CACHE_DIR, VIDEO_CACHE_DIR
+    if IMAGE_CACHE_DIR and VIDEO_CACHE_DIR:
+        return True
+    try:
+        root = _resolve_cache_root()
+        img_dir = os.path.join(root, "images")
+        vid_dir = os.path.join(root, "videos")
+        os.makedirs(img_dir, exist_ok=True)
+        os.makedirs(vid_dir, exist_ok=True)
+        IMAGE_CACHE_DIR = img_dir
+        VIDEO_CACHE_DIR = vid_dir
+        return True
+    except Exception as e:
+        print(f"[ComfyUI-Ranking] ⚠️ 缓存目录不可用，本次请求降级为不缓存: {e}")
+        return False
 
 # 视频缓存限制：100MB，平衡常见短视频需求与磁盘占用
 MAX_VIDEO_SIZE = 100 * 1024 * 1024  # 100MB
@@ -173,7 +207,11 @@ async def cache_image_handler(request):
     ext = url.split('.')[-1].split('?')[0]
     if len(ext) > 4 or not ext.isalnum(): 
         ext = "jpg" 
-        
+
+    # 📦 三发行版兼容：缓存目录懒初始化，不可写时降级为不缓存
+    if not _ensure_cache_dirs():
+        return web.Response(status=500, text="Cache directory unavailable")
+
     local_path = os.path.join(IMAGE_CACHE_DIR, f"{url_hash}.{ext}")
 
     # 🚀 优先级1：本地缓存存在且有效，直接返回（零延迟）
@@ -311,6 +349,10 @@ async def cache_video_handler(request):
     if ext not in valid_exts:
         ext = 'mp4'
 
+    # 📦 三发行版兼容：缓存目录懒初始化，不可写时降级为不缓存
+    if not _ensure_cache_dirs():
+        return web.Response(status=500, text="Cache directory unavailable")
+
     local_path = os.path.join(VIDEO_CACHE_DIR, f"{url_hash}.{ext}")
 
     # 🚀 优先级1：本地缓存存在且有效，直接返回（零延迟）
@@ -357,7 +399,7 @@ async def cache_video_handler(request):
                             return stream_resp
 
                         # 🚀 Tee 流式缓存：边下载边转发给客户端，同时写入本地缓存
-                        os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)
+                        os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)  # 双保险：懒初始化已保证存在
                         content_type = response.headers.get('Content-Type', 'video/mp4')
 
                         headers = {
