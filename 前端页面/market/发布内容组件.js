@@ -9,6 +9,24 @@ import { globalModal } from "../components/全局弹窗管理器.js";
 // 📌 模块级常量
 // ==========================================
 
+// 📋 三榜发布表单声明式规则：tool 插件榜 / app 工作流 / recommend 推荐榜
+// UI 显隐、联动、校验统一读取此配置，避免类型分支散落多处
+export const TYPE_RULES = {
+    tool: {
+        recommendForm: false, resType: { selectable: ['link', 'netdisk'] },
+        privateRepoWhenLink: true, price: true, refund: true, originalRequired: true
+    },
+    app: {
+        recommendForm: false, resType: { fixed: 'json' },
+        privateRepoWhenLink: true, price: true, refund: true, originalRequired: true
+    },
+    recommend: {
+        recommendForm: true, resType: { lockedByForm: true },
+        privateRepoWhenLink: false, price: false, refund: false, originalRequired: false,
+        formToResType: { recommend_tool: 'link', recommend_app: 'json', recommend_link: 'netdisk' }
+    }
+};
+
 // 封面标签统一样式
 const _COVER_LABEL_STYLE = 'position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px; pointer-events: none;';
 
@@ -286,8 +304,15 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
                     inputNetdiskPassword.value = editItemData.netdisk_password;
                 }
             } else if (editItemData.link && editItemData.link.includes("huggingface.co")) {
-                resTypeSelect.value = "json";
-                container.querySelector("#json-file-hint").style.display = "inline";
+                if (editItemData.type === "tool") {
+                    // 🔧 缺陷修复：tool 类型禁用 json 资源，HF 云端文件链接直接按外部链接回显，
+                    // 否则联动回退 link 后链接输入框为空，保存必然校验失败
+                    resTypeSelect.value = "link";
+                    inputLink.value = editItemData.link;
+                } else {
+                    resTypeSelect.value = "json";
+                    container.querySelector("#json-file-hint").style.display = "inline";
+                }
             } else if (editItemData.link) {
                 resTypeSelect.value = "link";
                 inputLink.value = editItemData.link;
@@ -337,82 +362,64 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         }
     };
 
-    // 🔄 推荐形式与资源接入联动函数
-    const syncRecommendToResType = () => {
-        const recType = recommendTypeSelect.value;
-        if (recType === "recommend_tool") {
-            resTypeSelect.value = "link";
-        } else if (recType === "recommend_app") {
-            resTypeSelect.value = "json";
-        } else if (recType === "recommend_link") {
-            resTypeSelect.value = "netdisk";
-        }
-        // 触发UI更新以显示对应输入框
-        updateFormView();
-    };
-
-    // 表单联动引擎 (强制状态机模型)
+    // 表单联动引擎 (强制状态机模型，读取 TYPE_RULES 声明式规则)
     const updateFormView = () => {
         const mainType = typeSelect.value;
-        if (mainType === "recommend") {
-            boxRecommendType.style.display = "block";
-            boxCover.style.display = "block";
-            boxPrice.style.display = "none";
-            boxAllowRefund.style.display = "none";  // 💸 推荐类型不显示退款勾选
-            boxResourceSelect.style.display = "block";
-            boxPrivateRepo.style.display = "none";
+        const rules = TYPE_RULES[mainType] || TYPE_RULES.tool;
+        const jsonOption = resTypeSelect.querySelector('option[value="json"]');
 
-            _setResourceTypeVisibility(resTypeSelect.value);
-        } else {
-            boxRecommendType.style.display = "none";
-            boxCover.style.display = "block";
-            boxPrice.style.display = "flex";
-            boxAllowRefund.style.display = "block";  // 💸 tool/app 类型显示退款勾选
-            boxResourceSelect.style.display = "block";
-            
-            // ☁️ 修改：原创工具可选择 "外部链接/Git" 或 "网盘链接"
-            const jsonOption = resTypeSelect.querySelector('option[value="json"]');
-            if (mainType === "tool") {
-                // 工具类型：允许选择 link 或 netdisk，禁用 json 选项
-                if (jsonOption) jsonOption.disabled = true;
-                if (resTypeSelect.value === "json") {
-                    resTypeSelect.value = "link";  // 默认回退到 link
+        boxRecommendType.style.display = rules.recommendForm ? "block" : "none";
+        boxCover.style.display = "block";
+        boxPrice.style.display = rules.price ? "flex" : "none";
+        boxAllowRefund.style.display = rules.refund ? "block" : "none";  // 💸 退款勾选仅规则允许的类型显示
+        boxResourceSelect.style.display = "block";
+        if (!rules.privateRepoWhenLink) boxPrivateRepo.style.display = "none";  // 推荐榜永不显示私有仓库区
+
+        if (rules.resType.lockedByForm) {
+            // 🔄 推荐榜：资源类型由推荐形式唯一决定，禁用手动修改（修复双控失配缺陷）
+            if (jsonOption) jsonOption.disabled = false;
+            const lockedResType = rules.formToResType[recommendTypeSelect.value] || "link";
+            // 编辑旧失配数据被归一化时，把网盘链接搬到链接输入框，避免保存时丢链接
+            if (isEditMode && resTypeSelect.value === "netdisk" && lockedResType === "link") {
+                const inputNetdiskLink = container.querySelector("#pub-netdisk-link");
+                if (inputNetdiskLink && inputNetdiskLink.value.trim() && !inputLink.value.trim()) {
+                    inputLink.value = inputNetdiskLink.value.trim();
                 }
-                resTypeSelect.disabled = false;
-            } else if (mainType === "app") {
-                if (jsonOption) jsonOption.disabled = false;
-                resTypeSelect.value = "json";
-                resTypeSelect.disabled = true;
-            } else {
-                if (jsonOption) jsonOption.disabled = false;
-                resTypeSelect.disabled = false;
             }
-
-            _setResourceTypeVisibility(resTypeSelect.value, { boxPrivateRepo });
+            resTypeSelect.value = lockedResType;
+            resTypeSelect.disabled = true;
+        } else if (rules.resType.fixed) {
+            // 工作流：锁定 json 资源
+            if (jsonOption) jsonOption.disabled = false;
+            resTypeSelect.value = rules.resType.fixed;
+            resTypeSelect.disabled = true;
+        } else {
+            // 插件榜：只允许白名单内的资源类型，非法值回退到首选项
+            ['link', 'netdisk', 'json'].forEach(v => {
+                const opt = resTypeSelect.querySelector(`option[value="${v}"]`);
+                if (opt) opt.disabled = !rules.resType.selectable.includes(v);
+            });
+            if (!rules.resType.selectable.includes(resTypeSelect.value)) {
+                resTypeSelect.value = rules.resType.selectable[0];
+            }
+            resTypeSelect.disabled = false;
         }
+
+        // 触发UI更新以显示对应输入框（仅允许私有仓库的类型传入该区引用）
+        _setResourceTypeVisibility(resTypeSelect.value, rules.privateRepoWhenLink ? { boxPrivateRepo } : {});
     };
 
     // ☁️ 编辑模式下：定义完 updateFormView 后，立即刷新表单UI状态
     if (isEditMode) {
         updateFormView();
-        // 编辑模式下如果是推荐类型，根据回显的推荐形式触发联动（但保留用户已设置的资源接入值）
-        if (typeSelect.value === "recommend") {
-            // 只有在没有明确设置资源接入值时才自动联动
-            // 编辑模式下 editItemData 已设置 resTypeSelect.value，所以这里不需要强制覆盖
-            // 但为了确保UI正确显示，调用一次 updateFormView
-            updateFormView();
-        }
     }
 
     typeSelect.onchange = () => {
         updateFormView();
-        // 当切换到推荐类型时，触发联动
-        if (typeSelect.value === "recommend") {
-            syncRecommendToResType();
-        }
     };
     recommendTypeSelect.onchange = () => {
-        syncRecommendToResType();
+        // 🔄 推荐形式变化时，资源类型由规则唯一决定并同步刷新
+        updateFormView();
     };
     resTypeSelect.onchange = updateFormView;
     
@@ -471,11 +478,11 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
     const originalHintText = container.querySelector("#original-hint-text");
     
-    // 根据类型更新原创提示文案
+    // 根据类型更新原创提示文案（读取 TYPE_RULES 规则）
     const updateOriginalHint = () => {
-        const mainType = typeSelect.value;
+        const rules = TYPE_RULES[typeSelect.value];
         if (originalHintText) {
-            if (mainType === "tool" || mainType === "app") {
+            if (rules?.originalRequired) {
                 originalHintText.innerHTML = `<span style="color: #FF9800;">⚠️ ${t('publish.original_required_hint')}</span>`;
             } else {
                 originalHintText.textContent = t('publish.original_default_hint');
@@ -519,9 +526,9 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     
     // 监听原创勾选框变化
     isOriginalCheckbox.onchange = (e) => {
-        const mainType = typeSelect.value;
-        // 只有工具/应用类型才需要确认弹窗
-        if ((mainType === "tool" || mainType === "app") && e.target.checked) {
+        const rules = TYPE_RULES[typeSelect.value];
+        // 只有规则要求原创强制的类型才需要确认弹窗
+        if (rules?.originalRequired && e.target.checked) {
             // 取消勾选，等待用户确认
             e.target.checked = false;
             showOriginalConfirmModal(

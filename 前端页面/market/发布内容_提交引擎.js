@@ -3,6 +3,15 @@ import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { removeCache } from "../components/性能优化工具.js";
+import { TYPE_RULES } from "./发布内容组件.js";  // 📋 三榜发布表单声明式规则（与 UI 联动同源）
+
+/**
+ * 📋 获取指定主类型的提交规则（校验与字段组装统一读取，与 UI 显隐同源）
+ * @param {string} mainType - 主类型: tool/app/recommend
+ */
+function getSubmitRules(mainType) {
+    return TYPE_RULES[mainType] || TYPE_RULES.tool;
+}
 
 /**
  * 🟢 根据发布类型清除对应缓存（精确清除，不影响其他页面）
@@ -243,13 +252,14 @@ export async function handlePublishSubmit(params) {
     const inputNetdiskPassword = container.querySelector("#pub-netdisk-password");  // 🔐 网盘密码
 
     const mainType = typeSelect.value;
+    const rules = getSubmitRules(mainType);  // 📋 本次提交的声明式规则
     let type = mainType;
     if (mainType === "recommend") type = recommendTypeSelect.value;
     
     const title = container.querySelector("#pub-title").value.trim();
     const shortDesc = container.querySelector("#pub-short").value.trim();
     const fullDesc = container.querySelector("#pub-full").value.trim();
-    const price = mainType === "recommend" ? 0 : (parseFloat(container.querySelector("#pub-price").value) || 0);
+    const price = rules.price ? (parseFloat(container.querySelector("#pub-price").value) || 0) : 0;
     
     let finalLink = inputLink.value.trim();
     let isJsonUpload = (resTypeSelect.value === "json") || (type === "recommend_app");
@@ -269,7 +279,8 @@ export async function handlePublishSubmit(params) {
     }
 
     let github_token = null;
-    if (boxPrivateRepo.style.display !== "none" && isPrivateCheck.checked) {
+    // 📋 仅规则允许私有仓库且该区可见、已勾选时才收集 token
+    if (rules.privateRepoWhenLink && boxPrivateRepo.style.display !== "none" && isPrivateCheck.checked) {
         github_token = container.querySelector("#pub-github-token").value.trim();
         if (!github_token) {
             const hasExistingToken = isEditMode && !!(editItemData?.github_token || editItemData?.has_private_token);
@@ -288,16 +299,16 @@ export async function handlePublishSubmit(params) {
     if (isJsonUpload && !jsonFile && !finalLink) return showToast(t('publish.json_required'), "warning");
     if (isNetdisk && !finalLink) return showToast(t('publish.netdisk_required'), "warning");  // ☁️
     
-    // 🎨 工具/应用类型必须勾选原创
+    // 🎨 规则要求原创强制的类型必须勾选原创
     const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
     const isOriginal = isOriginalCheckbox?.checked || false;
-    if ((type === "tool" || type === "app") && !isOriginal) {
+    if (rules.originalRequired && !isOriginal) {
         return showToast(t('publish.original_required_toast'), "warning");
     }
 
-    // 💸 是否支持退款 (仅 tool/app 类型)
+    // 💸 是否支持退款 (仅规则允许的类型提交)
     const allowRefundCheckbox = container.querySelector("#allow-refund-checkbox");
-    const allowRefund = (type === "tool" || type === "app") ? (allowRefundCheckbox?.checked ?? true) : null;
+    const allowRefund = rules.refund ? (allowRefundCheckbox?.checked ?? true) : null;
 
     submitBtn.innerHTML = `⏳ ${t('publish.connecting')}`;
     submitBtn.disabled = true; 

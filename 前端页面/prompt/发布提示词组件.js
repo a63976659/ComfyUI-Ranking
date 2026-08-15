@@ -534,7 +534,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             <!-- 确认发布按钮 -->
             <button id="btn-submit-prompt" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; color: #fff; border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: bold; transition: 0.2s; margin-top: 15px; margin-bottom: 5px;">
-                🚀 ${isEditMode ? t('prompt.save_submit') : t('prompt.publish_submit')}
+                ${isEditMode ? '💾' : '🚀'} ${isEditMode ? t('prompt.save_submit') : t('prompt.publish_submit')}
             </button>
         </div>
     `;
@@ -1430,7 +1430,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             showToast(t('prompt.publish_failed') + ": " + (err?.response?.data?.detail || err.message), "error");
         } finally {
             submitBtn.disabled = false;
-            submitBtn.textContent = `🚀 ${isEditMode ? t('prompt.save_submit') : t('prompt.publish_submit')}`;
+            submitBtn.textContent = `${isEditMode ? '💾' : '🚀'} ${isEditMode ? t('prompt.save_submit') : t('prompt.publish_submit')}`;
         }
     };
 
