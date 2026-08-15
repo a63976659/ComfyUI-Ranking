@@ -416,7 +416,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                                 inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🔄 新版本已就绪！</div><div style="color: #aaa; margin-top: 5px;">重启 ComfyUI 即可生效。</div>`;
                                 showToast(`🔄 插件 [${itemData.title}] 新版本已就绪，重启 ComfyUI 即可生效！`, "success");
                             } else {
-                                inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🎉 工具安装成功！</div><div style="color: #aaa; margin-top: 5px;">请重启 ComfyUI 以加载新节点。</div>`;
+                                inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🎉 插件安装成功！</div><div style="color: #aaa; margin-top: 5px;">请重启 ComfyUI 以加载新节点。</div>`;
                                 showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
                             }
 

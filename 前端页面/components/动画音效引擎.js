@@ -8,6 +8,7 @@
 //   - fan: 创作者榜 - 从下到上扇形载入
 //   - abyss: 讨论区 - 伪3D效果，从深渊中汇聚
 //   - dataflow: 任务榜 - 数据流效果，左右交替滑入
+//   - tetris: 提示词 - 俄罗斯方块式逐个下坠堆积
 // ==========================================
 
 import { getSettings } from "./全局设置组件.js";
@@ -281,6 +282,66 @@ function injectAnimationStyles() {
             pointer-events: none;
             border-radius: inherit;
         }
+        
+        /* ==========================================
+         * 🧱 俄罗斯方块堆积下坠动画 (提示词界面)
+         * 重力加速坠落 → 落地挤压回弹 → lock 闪光
+         * ========================================== */
+        @keyframes tetris-drop {
+            0% {
+                opacity: 0;
+                transform: translateY(-130px) scaleY(1.06) scaleX(0.96);
+                box-shadow: 0 0 0 0 rgba(0, 188, 212, 0);
+                animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45); /* 重力加速 */
+            }
+            12% { opacity: 1; }
+            55% {
+                opacity: 1;
+                transform: translateY(0) scaleY(1) scaleX(1);
+                animation-timing-function: ease-out;
+            }
+            68% {
+                /* 落地挤压 squash */
+                transform: translateY(3px) scaleY(0.93) scaleX(1.05);
+                box-shadow: 0 0 0 2px rgba(0, 188, 212, 0.55), 0 10px 22px rgba(0, 0, 0, 0.45);
+            }
+            82% {
+                /* 轻微回弹 */
+                transform: translateY(-4px) scaleY(1.02) scaleX(0.99);
+                box-shadow: 0 0 0 1px rgba(0, 188, 212, 0.3), 0 8px 18px rgba(0, 0, 0, 0.4);
+            }
+            100% {
+                opacity: 1;
+                transform: none;
+                box-shadow: none;
+            }
+        }
+        
+        /* 落定瞬间顶部高光（lock flash） */
+        @keyframes tetris-flash {
+            0%, 55% { opacity: 0; }
+            66% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        
+        .anim-tetris {
+            animation: tetris-drop 0.62s forwards;
+            opacity: 0;
+        }
+        
+        .anim-tetris::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, rgba(77, 208, 225, 0.9), transparent);
+            opacity: 0;
+            animation: tetris-flash 0.62s forwards;
+            animation-delay: inherit; /* 与主体动画的逐卡阶梯延迟同步 */
+            pointer-events: none;
+        }
     `;
     document.head.appendChild(style);
 }
@@ -292,7 +353,7 @@ function injectAnimationStyles() {
 /**
  * 为卡片应用动画
  * @param {HTMLElement} card - 卡片元素
- * @param {string} animationType - 动画类型：'cascade' | 'fan' | 'abyss' | 'dataflow'
+ * @param {string} animationType - 动画类型：'cascade' | 'fan' | 'abyss' | 'dataflow' | 'tetris'
  * @param {number} index - 卡片索引（用于计算延迟）
  * @param {number} totalVisible - 可见卡片总数
  */
@@ -346,6 +407,14 @@ export function applyCardAnimation(card, animationType, index, totalVisible = 10
             card.classList.add(isLeft ? 'anim-dataflow-left' : 'anim-dataflow-right');
             if (index < 3) setTimeout(() => playSound('blip'), delay);
             break;
+            
+        case 'tetris':
+            // 俄罗斯方块堆积下坠动画（逐个坠落 + 落地挤压回弹 + lock 闪光）
+            card.style.position = 'relative'; // 为 lock 闪光伪元素
+            card.style.animationDelay = `${index * 90}ms`; // 90ms 逐卡间隔，堆积节奏感
+            card.classList.add('anim-tetris');
+            if (index < 3) setTimeout(() => playSound('blip'), index * 90 + 340); // 对齐落地瞬间
+            break;
     }
     
     // 动画结束后清理类名
@@ -353,7 +422,7 @@ export function applyCardAnimation(card, animationType, index, totalVisible = 10
         card.classList.remove(
             'anim-cascade', 'anim-fan', 
             'anim-abyss', 'anim-abyss-tl', 'anim-abyss-tr', 'anim-abyss-bl', 'anim-abyss-br', 'anim-abyss-center',
-            'anim-dataflow-left', 'anim-dataflow-right'
+            'anim-dataflow-left', 'anim-dataflow-right', 'anim-tetris'
         );
         card.style.animationDelay = '';
     }, { once: true });
@@ -400,7 +469,8 @@ export function getAnimationTypeForTab(tabId) {
         'recommends': 'cascade', // 推荐榜
         'creators': 'fan',       // 创作者榜
         'posts': 'abyss',        // 讨论区
-        'tasks': 'dataflow'      // 任务榜
+        'tasks': 'dataflow',     // 任务榜
+        'prompts': 'tetris'      // 提示词界面
     };
     return animationMap[tabId] || 'cascade';
 }

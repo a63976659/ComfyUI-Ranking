@@ -507,7 +507,7 @@ export function applySafeAreaInsets() {
 // 🌐 P2-6: 多语言支持 (i18n) - 已拆分到独立文件
 // ==========================================
 // 国际化模块已拆分到独立文件，此处保持向后兼容导出
-export { t, setLanguage, getLanguage, initI18n, addTranslations } from './用户体验_国际化.js';
+export { t, tIfExists, setLanguage, getLanguage, initI18n, addTranslations } from './用户体验_国际化.js';
 
 
 

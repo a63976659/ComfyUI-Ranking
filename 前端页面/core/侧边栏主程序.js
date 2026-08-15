@@ -9,6 +9,7 @@
 import { createPublishView } from "../market/发布内容组件.js";
 import { createPublishTaskView } from "../task/发布任务组件.js";  // 🎯 新增：任务发布
 import { createPublishPostView } from "../post/发布帖子组件.js";  // 🎯 新增：帖子发布
+import { createPublishPromptView } from "../prompt/发布提示词组件.js";  // 🎯 新增：提示词发布
 import { createTopNav } from "../components/顶部导航组件.js";
 import { loadSidebarContent } from "./侧边栏数据引擎.js";
 import { createItemDetailView } from "../market/资源详情页面组件.js";
@@ -84,7 +85,8 @@ export function buildSidebarDOM() {
         { id: "recommends", label: t('nav.recommends') },
         { id: "creators", label: t('nav.creators') },
         { id: "tasks", label: t('nav.tasks') },
-        { id: "posts", label: t('nav.posts') }
+        { id: "posts", label: t('nav.posts') },
+        { id: "prompts", label: t('nav.prompts') }
     ];
 
     const sortContainer = document.createElement("div");
@@ -128,6 +130,14 @@ export function buildSidebarDOM() {
             <option value="views">${noTr(t('post.sort_views'))}</option>
             <option value="daily_views">${noTr(t('post.sort_daily_views'))}</option>
             <option value="rating">${noTr(t('post.sort_rating') || t('market.rating'))}</option>
+        </select>
+        <!-- 🧩 提示词排序控件（专用） -->
+        <select id="prompts-sort-select" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
+            <option value="latest">${noTr(t('prompt.sort_latest'))}</option>
+            <option value="likes">${noTr(t('prompt.sort_likes'))}</option>
+            <option value="favorites">${noTr(t('prompt.sort_favorites'))}</option>
+            <option value="views">${noTr(t('prompt.sort_views'))}</option>
+            <option value="daily_views">${noTr(t('prompt.sort_daily_views'))}</option>
         </select>
         <input type="text" id="hub-search-input" autocomplete="off" placeholder="🔍 ${t('common.search')}..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
         <button id="btn-open-publish" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">➕ ${t('market.publish')}</button>
@@ -302,6 +312,13 @@ export function buildSidebarDOM() {
         showInlineView(view);
     });
 
+    // 监听进入提示词编辑页面的请求
+    window.addEventListener("comfy-route-edit-prompt", (e) => {
+        const { promptData, currentUser } = e.detail;
+        const view = createPublishPromptView(currentUser, promptData);
+        showInlineView(view);
+    });
+
     // 🔔 通知跳转：切换到对应Tab并展开指定卡片
     window.addEventListener("comfy-route-to-item", async (e) => {
         const { itemId, itemType } = e.detail;
@@ -415,6 +432,10 @@ export function buildSidebarDOM() {
             // 讨论区 -> 打开发布帖子界面
             const view = createPublishPostView(currentUser);
             showInlineView(view);
+        } else if (currentTab === "prompts") {
+            // 🧩 提示词 -> 打开发布提示词界面
+            const view = createPublishPromptView(currentUser);
+            showInlineView(view);
         } else {
             // 工具/应用/推荐 -> 打开发布内容界面，并自动设置对应类型
             const publishView = createPublishView(currentUser, 
@@ -434,7 +455,8 @@ export function buildSidebarDOM() {
         recommends: { active: "#FF9800", inactive: "#FFB74D" }, // 推荐榜 - 橙色
         creators: { active: "#E91E63", inactive: "#F06292" },   // 创作者 - 粉色
         tasks: { active: "#FF5722", inactive: "#FF8A65" },      // 任务榜 - 深橙色
-        posts: { active: "#9C27B0", inactive: "#BA68C8" }       // 讨论区 - 紫色
+        posts: { active: "#9C27B0", inactive: "#BA68C8" },      // 讨论区 - 紫色
+        prompts: { active: "#00BCD4", inactive: "#4DD0E1" }     // 提示词 - 青色
     };
 
     // 文字阴影效果：多层阴影确保任何背景下都清晰可见
@@ -495,12 +517,14 @@ export function buildSidebarDOM() {
         const taskStatusFilter = sortContainer.querySelector("#task-status-filter");
         const taskSortSelect = sortContainer.querySelector("#task-sort-select");
         const postsSortSelect = sortContainer.querySelector("#posts-sort-select");
+        const promptsSortSelect = sortContainer.querySelector("#prompts-sort-select");
         const publishBtn = sortContainer.querySelector("#btn-open-publish");
         
         if (tabId === "tasks") {
             // 任务榜：隐藏通用排序，显示任务筛选
             hubSortSelect.style.display = "none";
             postsSortSelect.style.display = "none";
+            promptsSortSelect.style.display = "none";
             taskStatusFilter.style.display = "block";
             taskSortSelect.style.display = "block";
             publishBtn.style.display = "block";
@@ -508,6 +532,7 @@ export function buildSidebarDOM() {
             // 🎯 创作者界面：隐藏发布按钮，隐藏评分排序（创作者无评分）
             hubSortSelect.style.display = "block";
             postsSortSelect.style.display = "none";
+            promptsSortSelect.style.display = "none";
             taskStatusFilter.style.display = "none";
             taskSortSelect.style.display = "none";
             publishBtn.style.display = "none";
@@ -518,6 +543,15 @@ export function buildSidebarDOM() {
             // 🎯 讨论区：显示讨论区排序，隐藏通用排序和任务筛选
             hubSortSelect.style.display = "none";
             postsSortSelect.style.display = "block";
+            promptsSortSelect.style.display = "none";
+            taskStatusFilter.style.display = "none";
+            taskSortSelect.style.display = "none";
+            publishBtn.style.display = "block";
+        } else if (tabId === "prompts") {
+            // 🧩 提示词：显示提示词排序，隐藏其他所有排序筛选
+            hubSortSelect.style.display = "none";
+            postsSortSelect.style.display = "none";
+            promptsSortSelect.style.display = "block";
             taskStatusFilter.style.display = "none";
             taskSortSelect.style.display = "none";
             publishBtn.style.display = "block";
@@ -525,6 +559,7 @@ export function buildSidebarDOM() {
             // 其他Tab：显示通用排序，隐藏任务筛选和讨论区排序
             hubSortSelect.style.display = "block";
             postsSortSelect.style.display = "none";
+            promptsSortSelect.style.display = "none";
             taskStatusFilter.style.display = "none";
             taskSortSelect.style.display = "none";
             publishBtn.style.display = "block";
@@ -567,6 +602,15 @@ export function buildSidebarDOM() {
         window.dispatchEvent(new CustomEvent("comfy-posts-filter-change", {
             detail: {
                 sort: sortContainer.querySelector("#posts-sort-select").value
+            }
+        }));
+    };
+
+    // 🧩 提示词排序控件事件绑定
+    sortContainer.querySelector("#prompts-sort-select").onchange = () => {
+        window.dispatchEvent(new CustomEvent("comfy-prompts-filter-change", {
+            detail: {
+                sort: sortContainer.querySelector("#prompts-sort-select").value
             }
         }));
     };

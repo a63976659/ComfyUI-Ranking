@@ -184,6 +184,65 @@ const api = {
     },
 
     // ==========================================
+    // ✨ 提示词市场 API
+    // ==========================================
+    async getPrompts(promptType = null, category = null, page = 1, limit = 20, sort = "latest") {
+        let url = `/api/prompts?page=${page}&limit=${limit}&sort=${sort}`;
+        if (promptType) url += `&prompt_type=${promptType}`;
+        if (category) url += `&category=${encodeURIComponent(category)}`;
+        return request(url);
+    },
+    async getPromptDetail(promptId) {
+        return request(`/api/prompts/${promptId}`);
+    },
+    async createPrompt(data) {
+        return request("/api/prompts", { method: "POST", body: data });
+    },
+    async updatePrompt(promptId, data) {
+        return request(`/api/prompts/${promptId}`, { method: "PUT", body: data });
+    },
+    async deletePrompt(promptId) {
+        return request(`/api/prompts/${promptId}`, { method: "DELETE" });
+    },
+    async togglePromptLike(promptId) {
+        return request(`/api/prompts/${promptId}/like`, { method: "POST" });
+    },
+    async togglePromptFavorite(promptId) {
+        return request(`/api/prompts/${promptId}/favorite`, { method: "POST" });
+    },
+    async tipPrompt(promptId, amount, isAnon = false) {
+        return request(`/api/prompts/${promptId}/tip?amount=${amount}&is_anon=${isAnon}`, { method: "POST" });
+    },
+    async getPromptComments(promptId) {
+        return request(`/api/prompts/${promptId}/comments`);
+    },
+    async addPromptComment(promptId, content) {
+        return request(`/api/prompts/${promptId}/comments?content=${encodeURIComponent(content)}`, { method: "POST" });
+    },
+    async recordPromptView(promptId) {
+        return request(`/api/prompts/${promptId}/view`, { method: "POST" });
+    },
+    async purchasePrompt(promptId) {
+        // 🐛 防御性校验，防止 promptId 为空导致请求 /purchase/undefined
+        if (!promptId) {
+            console.warn('⚠️ purchasePrompt: promptId 为空，已拦截无效请求');
+            return { success: false, error: 'promptId 不能为空' };
+        }
+        return request(`/api/prompts/${promptId}/purchase`, { method: "POST" });
+    },
+    async getMyPrompts() {
+        return request("/api/my-prompts");
+    },
+    async getPromptCategories(promptType = null) {
+        let url = "/api/prompt-categories";
+        if (promptType) url += `?prompt_type=${promptType}`;
+        return request(url);
+    },
+    async getPromptTags() {
+        return request("/api/prompt-tags");
+    },
+
+    // ==========================================
     // 📝 任务榜 API
     // ==========================================
     async getTasks(page = 1, limit = 20, status = null, sort = "latest") {

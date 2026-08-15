@@ -49,6 +49,15 @@ async function getTasksView() {
     return tasksViewModule;
 }
 
+// 🧩 提示词组件（动态导入）
+let promptsViewModule = null;
+async function getPromptsView() {
+    if (!promptsViewModule) {
+        promptsViewModule = await import("../prompt/提示词组件.js");
+    }
+    return promptsViewModule;
+}
+
 
 // ==========================================
 // 🔧 配置常量
@@ -301,6 +310,29 @@ export async function loadSidebarContent({
             const errorDiv = document.createElement('div');
             errorDiv.style.cssText = 'text-align:center; padding: 40px 20px; color:#F44336;';
             errorDiv.textContent = `❌ 任务榜加载失败: ${error.message}`;
+            contentArea.appendChild(errorDiv);
+        }
+        return;
+    }
+    
+    // ========== 🧩 提示词特殊处理 ==========
+    if (tab === "prompts") {
+        try {
+            const promptsModule = await getPromptsView();
+            const promptsView = promptsModule.createPromptsView(currentUser, keyword);
+            // 🔧 清理旧视图事件监听器
+            Array.from(contentArea.children).forEach(child => {
+                if (child._cleanup) child._cleanup();
+            });
+            contentArea.innerHTML = "";
+            contentArea.appendChild(promptsView);
+        } catch (error) {
+            console.error("提示词加载失败:", error);
+            // 使用安全的DOM操作替代innerHTML，防止XSS
+            contentArea.innerHTML = '';
+            const errorDiv = document.createElement('div');
+            errorDiv.style.cssText = 'text-align:center; padding: 40px 20px; color:#F44336;';
+            errorDiv.textContent = `❌ 提示词加载失败: ${error.message}`;
             contentArea.appendChild(errorDiv);
         }
         return;
