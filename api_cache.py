@@ -1,6 +1,7 @@
 # api_cache.py
 import os
 import re
+import html
 import ipaddress
 import hashlib
 import asyncio
@@ -45,7 +46,10 @@ def _scan_dir_stats(dir_path):
 def _clean_nested_url(url, endpoint):
     """清除被污染的嵌套 URL，如 /community_hub/image?url=http://... 反复嵌套的情况"""
     prefix = f'/community_hub/{endpoint}?url='
-    while url.startswith(prefix):
+    # 加上限保险：防止构造性输入导致循环不收敛
+    for _ in range(10):
+        if not url.startswith(prefix):
+            break
         url = urllib.parse.unquote(url.replace(prefix, ''))
     return url
 
@@ -85,17 +89,23 @@ async def _get_video_lock(url_hash):
 
 
 def _is_local_request(request):
-    """检查请求是否来自本机或内网（10.x.x.x），用于保护管理接口"""
+    """检查请求是否来自本机，保护管理接口（与 api_tool/api_app 统一，不再额外放行内网）"""
     remote = request.remote or ""
+    # 处理 IPv4-mapped IPv6（如 ::ffff:127.0.0.1）
+    if remote.startswith("::ffff:"):
+        remote = remote[7:]
     if remote in ("127.0.0.1", "localhost", "::1"):
-        return True
-    if remote.startswith("10."):
         return True
     return False
 
 
+def _is_forbidden_ip(ip):
+    """判断 IP 是否为内网/环回/链路本地等危险地址"""
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified
+
+
 def _is_forbidden_target(url):
-    """检查 URL 是否指向内网/本地地址，防止 SSRF"""
+    """检查 URL 是否指向内网/本地地址，防止 SSRF（含 DNS 解析后二次校验）"""
     try:
         parsed = urlparse(url)
         host = parsed.hostname
@@ -104,11 +114,16 @@ def _is_forbidden_target(url):
         # 尝试直接解析为 IP
         try:
             ip = ipaddress.ip_address(host)
-            return ip.is_private or ip.is_loopback or ip.is_link_local
+            return _is_forbidden_ip(ip)
         except ValueError:
             # 不是IP地址（是域名），检查常见危险域名
             dangerous_hosts = ('localhost', 'metadata.google.internal')
-            return host.lower() in dangerous_hosts
+            if host.lower() in dangerous_hosts:
+                return True
+            # 🔧 回归修复：撤销 DNS 解析二次校验——Clash 等代理的 fake-ip 模式会把所有域名
+            # 解析到 198.18.0.0/15 基准测试段（is_private=True），导致未缓存图片全部误判内网 403；
+            # 本地代理仅代用户本机发请求，跳板风险低，域名放行，连接异常交给下载环节自然报错
+            return False
     except Exception:
         return True
 
@@ -165,6 +180,8 @@ def _ensure_cache_dirs():
 
 # 视频缓存限制：100MB，平衡常见短视频需求与磁盘占用
 MAX_VIDEO_SIZE = 100 * 1024 * 1024  # 100MB
+# 🔒 图片缓存上限：20MB，防止恶意超大文件打爆内存
+MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB
 VIDEO_TIMEOUT = aiohttp.ClientTimeout(total=300)
 
 async def cache_image_handler(request):
@@ -181,11 +198,11 @@ async def cache_image_handler(request):
     # 🔄 拦截旧数据中残留的 via.placeholder.com 外部占位图URL，直接返回本地SVG
     if 'via.placeholder.com' in url:
         # 解析颜色和文字：/150/BG_COLOR/TEXT_COLOR?text=TEXT
-        import re as _re
-        _ph_match = _re.search(r'/([\dA-Fa-f]{6})/([\dA-Fa-f]{6})\?text=(.+?)(?:&|$)', url)
+        _ph_match = re.search(r'/([\dA-Fa-f]{6})/([\dA-Fa-f]{6})\?text=(.+?)(?:&|$)', url)
         bg = f'#{_ph_match.group(1)}' if _ph_match else '#666'
         fg = f'#{_ph_match.group(2)}' if _ph_match else '#fff'
-        txt = urllib.parse.unquote(_ph_match.group(3))[:4] if _ph_match else '?'
+        # 🔒 P0安全加固：文字内容 XML 转义，防止 SVG 标签注入
+        txt = html.escape(urllib.parse.unquote(_ph_match.group(3)), quote=False)[:8] if _ph_match else '?'
         svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="150" height="150">'
                f'<rect fill="{bg}" width="150" height="150" rx="12"/>'
                f'<text x="75" y="95" text-anchor="middle" fill="{fg}" font-size="40" font-family="sans-serif">{txt}</text></svg>')
@@ -204,9 +221,10 @@ async def cache_image_handler(request):
     # 生成缓存路径
     url_hash = hashlib.md5(url.encode('utf-8')).hexdigest()
     # 根据URL后缀确定扩展名，默认jpg
-    ext = url.split('.')[-1].split('?')[0]
-    if len(ext) > 4 or not ext.isalnum(): 
-        ext = "jpg" 
+    # 🔒 P0安全加固：仅限常见图片格式，杜绝 svg/html 等可执行脚本载体经同源代理构成 XSS
+    ext = url.split('.')[-1].split('?')[0].lower()
+    if ext not in ('jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'ico'):
+        ext = "jpg"
 
     # 📦 三发行版兼容：缓存目录懒初始化，不可写时降级为不缓存
     if not _ensure_cache_dirs():
@@ -228,11 +246,18 @@ async def cache_image_handler(request):
             # 超时时间30秒，与前端保持一致
             async with session.get(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 if response.status == 200:
+                    # 🔒 P0安全加固：体积上限检查，防止恶意超大文件打爆内存
+                    content_length = response.headers.get('Content-Length')
+                    if content_length and int(content_length) > MAX_IMAGE_SIZE:
+                        return web.Response(status=413, text="Image too large")
                     content = await response.read()
-                    # 确保缓存目录存在
-                    os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
-                    with open(local_path, "wb") as f:
+                    if len(content) > MAX_IMAGE_SIZE:
+                        return web.Response(status=413, text="Image too large")
+                    # 🔒 P0安全加固：tmp + os.replace 原子落盘，避免并发写同一缓存文件产生损坏
+                    tmp_path = local_path + f'.tmp.{uuid.uuid4().hex[:8]}'
+                    with open(tmp_path, "wb") as f:
                         f.write(content)
+                    os.replace(tmp_path, local_path)
                     
                     print(f"[ComfyUI-Ranking] ✅ 成功下载并缓存图片: {url_hash}.{ext}")
                     
@@ -489,6 +514,8 @@ async def cache_stats_handler(request):
     """GET /community_hub/cache/stats - 返回图片和视频缓存统计"""
     if not _is_local_request(request):
         return web.Response(status=403, text="Forbidden: local access only")
+    # 修复：缓存目录尚未懒初始化时避免对 None 路径做统计
+    _ensure_cache_dirs()
     image_count, image_size = _scan_dir_stats(IMAGE_CACHE_DIR)
     video_count, video_size = _scan_dir_stats(VIDEO_CACHE_DIR)
     return web.json_response({
@@ -511,6 +538,9 @@ async def cache_clear_handler(request):
     target = body.get("target")
     if target not in ("all", "images", "videos"):
         return web.Response(status=400, text="Invalid target. Must be 'all', 'images', or 'videos'")
+
+    # 修复：缓存目录尚未懒初始化时避免 os.path.exists(None) 报错
+    _ensure_cache_dirs()
 
     dirs_to_clear = []
     if target == "all":

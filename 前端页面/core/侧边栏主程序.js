@@ -59,7 +59,23 @@ const BackgroundStore = {
     clear() { localStorage.removeItem(getBackgroundKey()); }
 };
 
+// 🔧 P1修复：window 监听注册表（语言切换会重建 buildSidebarDOM，需先移除旧监听防止累积泄漏）
+let _sidebarWindowListeners = [];
+function _cleanupSidebarWindowListeners() {
+    for (const { event, handler } of _sidebarWindowListeners) {
+        window.removeEventListener(event, handler);
+    }
+    _sidebarWindowListeners = [];
+}
+function _onSidebarWindow(event, handler) {
+    window.addEventListener(event, handler);
+    _sidebarWindowListeners.push({ event, handler });
+}
+
 export function buildSidebarDOM() {
+    // 🔧 P1修复：重建前先清理上一轮的 window 监听，避免重复注册
+    _cleanupSidebarWindowListeners();
+
     const container = document.createElement("div");
     
     // 加载本地背景图
@@ -205,7 +221,7 @@ export function buildSidebarDOM() {
     });
     
     // 监听从设置页面触发的背景更新事件
-    window.addEventListener("comfy-sidebar-bg-update", () => {
+    _onSidebarWindow("comfy-sidebar-bg-update", () => {
         const newBg = BackgroundStore.load();
         if (newBg) {
             container.style.backgroundImage = `url(${newBg})`;
@@ -249,15 +265,15 @@ export function buildSidebarDOM() {
         footerContainer.style.display = "block"; // 【核心】：返回列表时恢复底部
     };
 
-    window.addEventListener("comfy-route-view", (e) => {
+    _onSidebarWindow("comfy-route-view", (e) => {
         showInlineView(e.detail.view);
     });
 
-    window.addEventListener("comfy-route-back", () => {
+    _onSidebarWindow("comfy-route-back", () => {
         hideInlineView();
     });
 
-    window.addEventListener("comfy-open-detail", (e) => {
+    _onSidebarWindow("comfy-open-detail", (e) => {
         const { itemData, currentUser } = e.detail;
         const view = createItemDetailView(itemData, currentUser);
         showInlineView(view);
@@ -265,7 +281,7 @@ export function buildSidebarDOM() {
 
     // 监听进入修改编辑页面的请求
     // 🔴 修复：编辑时先获取详情API数据，确保 has_private_token 等字段完整（列表缓存可能缺少该字段）
-    window.addEventListener("comfy-route-edit-publish", async (e) => {
+    _onSidebarWindow("comfy-route-edit-publish", async (e) => {
         const { itemData, currentUser } = e.detail;
 
         // 先展示加载状态，避免用户感知延迟
@@ -295,7 +311,7 @@ export function buildSidebarDOM() {
     });
 
     // 监听进入任务编辑页面的请求
-    window.addEventListener("comfy-route-edit-task", (e) => {
+    _onSidebarWindow("comfy-route-edit-task", (e) => {
         const { taskData, currentUser } = e.detail;
         try {
             const view = createPublishTaskView(currentUser, taskData);
@@ -306,21 +322,21 @@ export function buildSidebarDOM() {
     });
 
     // 监听进入帖子编辑页面的请求
-    window.addEventListener("comfy-route-edit-post", (e) => {
+    _onSidebarWindow("comfy-route-edit-post", (e) => {
         const { postData, currentUser } = e.detail;
         const view = createPublishPostView(currentUser, postData);
         showInlineView(view);
     });
 
     // 监听进入提示词编辑页面的请求
-    window.addEventListener("comfy-route-edit-prompt", (e) => {
+    _onSidebarWindow("comfy-route-edit-prompt", (e) => {
         const { promptData, currentUser } = e.detail;
         const view = createPublishPromptView(currentUser, promptData);
         showInlineView(view);
     });
 
     // 🔔 通知跳转：切换到对应Tab并展开指定卡片
-    window.addEventListener("comfy-route-to-item", async (e) => {
+    _onSidebarWindow("comfy-route-to-item", async (e) => {
         const { itemId, itemType } = e.detail;
         if (!itemId) return;
         
@@ -411,11 +427,11 @@ export function buildSidebarDOM() {
         });
     };
 
-    window.addEventListener("comfy-user-logout", triggerLoad);
-    window.addEventListener("comfy-user-login", triggerLoad);
+    _onSidebarWindow("comfy-user-logout", triggerLoad);
+    _onSidebarWindow("comfy-user-login", triggerLoad);
     
     // 监听子组件请求刷新列表
-    window.addEventListener("comfy-trigger-sidebar-reload", (e) => { 
+    _onSidebarWindow("comfy-trigger-sidebar-reload", (e) => { 
         triggerLoad(e.detail?.force ?? false); 
     });
 

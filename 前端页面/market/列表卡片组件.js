@@ -2,7 +2,7 @@
 import { createCommentSection, setupToggleButton, createRatingStars } from "../social/评论与互动组件.js";
 import { api } from "../core/网络请求API.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
-import { recordView } from "../components/互动工具函数.js";
+import { recordView, escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：escapeHtml 局部副本已移除
 import { renderItemTrendChart } from "../components/图表渲染组件.js";
 import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
 import { setupResourceInstall, checkItemStatus } from "./资源安装引擎.js";
@@ -12,16 +12,6 @@ import { renderTipBoardHTML, isMaxTipLevel } from "../components/打赏等级工
 import { lazyLoadImages } from "../components/性能优化工具.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR, CACHE } from "../core/全局配置.js";
-
-/**
- * 转义HTML特殊字符，防止XSS注入
- */
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
 
 /**
  * 生成价格显示HTML（含待生效价格提示）

@@ -3,12 +3,8 @@ import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { CACHE, PLACEHOLDERS } from "../core/全局配置.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t } from "../components/用户体验增强.js";
-
-// 🔒 XSS防护：对用户可控字段进行 HTML 转义
-const escapeHtml = (str) => {
-    if (!str) return '';
-    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-};
+// 🔒 XSS防护：对用户可控字段进行 HTML 转义（🧹 P2归一：使用统一版）
+import { escapeHtml } from "../components/互动工具函数.js";
 
 // 🚀 本地存储键管理
 const getChatListKey = (account) => `${CACHE.LOCAL_KEYS.CHAT_LIST}_${account}`;

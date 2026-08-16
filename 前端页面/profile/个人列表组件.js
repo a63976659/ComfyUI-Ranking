@@ -5,6 +5,7 @@ import { getAcquiredItems, checkItemStatus } from "../market/资源安装引擎.
 import { showToast } from "../components/UI交互提示组件.js";
 import { t, tIfExists, getLanguage } from "../components/用户体验增强.js";
 import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 /**
  * 👤 渲染用户卡片（复用于粉丝列表和关注列表）
@@ -647,14 +648,6 @@ function createTaskItem(task, statusColors, statusLabels, currentUser) {
     };
     
     return taskDiv;
-}
-
-/**
- * 🔒 HTML转义
- */
-function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /**

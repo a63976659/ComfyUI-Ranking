@@ -51,6 +51,9 @@ def _sanitize_app_id(app_id):
     """校验并规范化 app_id，防止路径穿越"""
     if not app_id or not re.fullmatch(r'[A-Za-z0-9_\-\.]{1,128}', app_id):
         return None
+    # 🔒 P0安全加固：拒绝纯点号/含相对路径段的 ID，防止 ".." 逃逸出缓存目录
+    if app_id in (".", "..") or ".." in app_id or app_id.startswith("."):
+        return None
     return app_id
 
 
@@ -80,17 +83,31 @@ def _parse_cloud_response(content):
         print(f"原始内容前 200 字符：{content[:200]}")
         return None, "云端返回的数据格式错误，无法解析为 JSON"
 
-def _sync_download(proxy_api_url, payload, ssl_context, timeout=120):
+def _sync_download(proxy_api_url, payload, ssl_context, timeout=120, token=""):
     """同步下载函数（在线程池中运行，避免阻塞事件循环）"""
+    headers = {'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+    # 🔒 P0安全加固：转发用户 JWT，云端以 Authorization Token 为准鉴权
+    if token:
+        headers['Authorization'] = f"Bearer {token}"
     req = urllib.request.Request(
         proxy_api_url, 
         data=payload, 
-        headers={'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
+        headers=headers
     )
     with urllib.request.urlopen(req, timeout=timeout, context=ssl_context) as response:
         return response.read().decode('utf-8')
 
-async def _download_app_core(app_id, download_url, account, force_download=False, progress_callback=None):
+def _read_cache_sync(fp):
+    with open(fp, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def _write_cache_sync(fp, text):
+    with open(fp, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+async def _download_app_core(app_id, download_url, account, force_download=False, progress_callback=None, token=""):
     """获取应用JSON：优先本地缓存，回退云端下载
 
     Args:
@@ -99,6 +116,7 @@ async def _download_app_core(app_id, download_url, account, force_download=False
         account: 用户账号（鉴权凭证）
         force_download: 是否强制重新下载（忽略缓存）
         progress_callback: 可选的异步回调，签名为 async def(stage, progress, message)
+        token: 用户 JWT，转发给云端做 Authorization 鉴权
 
     返回: (json_data, error_msg, from_cache)
     - 成功时: (dict, None, bool)
@@ -122,10 +140,10 @@ async def _download_app_core(app_id, download_url, account, force_download=False
         if file_path and os.path.exists(file_path) and not force_download:
             try:
                 print(f"📦 发现本地缓存 [{app_id}]，优先从本地加载...")
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    json_data = json.loads(content)
-                    print(f"✅ 本地缓存加载成功，大小：{len(content)} bytes")
+                # 🔧 P1修复：文件读取移交线程，避免同步 IO 阻塞事件循环
+                content = await asyncio.to_thread(_read_cache_sync, file_path)
+                json_data = json.loads(content)
+                print(f"✅ 本地缓存加载成功，大小：{len(content)} bytes")
                 if progress_callback:
                     await progress_callback("cache_hit", 50, "命中本地缓存！")
                 return (json_data, None, True)
@@ -139,8 +157,8 @@ async def _download_app_core(app_id, download_url, account, force_download=False
         if progress_callback:
             await progress_callback("downloading", 50, "从云端下载工作流...")
 
-        # 缓存穿透防护：检查近期是否下载失败过
-        if app_id in _download_fail_cache:
+        # 缓存穿透防护：检查近期是否下载失败过（强制刷新时跳过，避免云端刚抖动导致 force 必然失败）
+        if not force_download and app_id in _download_fail_cache:
             if time.time() - _download_fail_cache[app_id] < _DOWNLOAD_FAIL_TTL:
                 return (None, "云端暂时不可达，请稍后重试", False)
             else:
@@ -160,8 +178,8 @@ async def _download_app_core(app_id, download_url, account, force_download=False
         print(f"📍 代理地址：{proxy_api_url}")
         print(f"🔗 下载链接：{download_url[:50]}...")
         print(f"⏳ 正在请求云端代理 (超时设置：120 秒)...")
-        loop = asyncio.get_event_loop()
-        content = await loop.run_in_executor(None, _sync_download, proxy_api_url, payload, ssl_context, 120)
+        loop = asyncio.get_running_loop()
+        content = await loop.run_in_executor(None, _sync_download, proxy_api_url, payload, ssl_context, 120, token)
         print(f"✅ 云端响应成功，数据大小：{len(content)} bytes")
 
         json_data, error_msg = _parse_cloud_response(content)
@@ -174,8 +192,8 @@ async def _download_app_core(app_id, download_url, account, force_download=False
         # 下载成功后保存到本地缓存
         try:
             if file_path:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(content)
+                # 🔧 P1修复：缓存写入移交线程，避免同步 IO 阻塞事件循环
+                await asyncio.to_thread(_write_cache_sync, file_path, content)
                 print(f"💾 已缓存到本地：{file_path}")
         except IOError as e:
             print(f"⚠️ 本地缓存写入失败：{str(e)}")
@@ -194,7 +212,7 @@ async def _download_app_core(app_id, download_url, account, force_download=False
         print(f"❌ 网络错误：{str(e)}")
         _download_fail_cache[app_id] = time.time()
         return (None, f"网络连接失败：{str(e)}", False)
-    except (TimeoutError, Exception) as e:
+    except Exception as e:
         print(f"❌ 应用下载错误：{type(e).__name__}: {str(e)}")
         print(traceback.format_exc())
         _download_fail_cache[app_id] = time.time()
@@ -213,6 +231,7 @@ async def download_app_handler(request):
     download_url = data.get("url")
     app_id = _sanitize_app_id(data.get("id", "default_app"))
     account = data.get("account")
+    token = data.get("token") or ""  # 🔒 P0安全加固：用户 JWT，转发给云端鉴权
     force_download = data.get("force", False)
 
     if not download_url or not account:
@@ -220,7 +239,7 @@ async def download_app_handler(request):
     if not app_id:
         return web.json_response({"error": "非法的应用 ID"}, status=400)
 
-    json_data, error_msg, from_cache = await _download_app_core(app_id, download_url, account, force_download)
+    json_data, error_msg, from_cache = await _download_app_core(app_id, download_url, account, force_download, token=token)
     if error_msg:
         return web.json_response({"error": error_msg}, status=500)
     return web.json_response({"status": "success", "data": json_data, "from_cache": from_cache})
@@ -231,10 +250,20 @@ async def download_app_stream_handler(request):
     if not _is_local_request(request):
         return web.json_response({"error": "Forbidden: local access only"}, status=403)
 
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        resp = web.StreamResponse(status=400, headers={'Content-Type': 'text/event-stream'})
+        await resp.prepare(request)
+        await resp.write(f"data: {json.dumps({'stage': 'error', 'progress': -1, 'message': 'Invalid JSON', 'status': 'error'}, ensure_ascii=False)}\n\n".encode('utf-8'))
+        await resp.write_eof()
+        return resp
     download_url = data.get("url")
     app_id = _sanitize_app_id(data.get("id", "default_app"))
     account = data.get("account")
+    token = data.get("token") or ""  # 🔒 P0安全加固：用户 JWT，转发给云端鉴权
     force_download = data.get("force", False)
 
     resp = web.StreamResponse(status=200, headers={
@@ -269,7 +298,7 @@ async def download_app_stream_handler(request):
     async def progress_cb(stage, progress, message):
         await send_progress(stage, progress, message)
 
-    json_data, error_msg, from_cache = await _download_app_core(app_id, download_url, account, force_download, progress_callback=progress_cb)
+    json_data, error_msg, from_cache = await _download_app_core(app_id, download_url, account, force_download, progress_callback=progress_cb, token=token)
 
     if error_msg:
         await send_progress("error", -1, error_msg, "error")

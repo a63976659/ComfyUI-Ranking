@@ -28,6 +28,14 @@ function clearUsesCache() {
 }
 
 /**
+ * 🔒 P0安全加固：读取当前登录 Token（转发给本地插件，由其代理向云端做 Authorization 鉴权）
+ * @returns {string} JWT Token（未登录时为空字符串）
+ */
+function _getAuthToken() {
+    return localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token") || "";
+}
+
+/**
  * 渲染网盘资源UI（链接+密码+按钮绑定）
  * @param {HTMLElement} inlineStatusBox - 状态显示容器
  * @param {Object} itemData - 资源数据
@@ -356,7 +364,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     // 发起 SSE 流式安装请求
                     const result = await requestSSE(
                         `${localApiEndpoint}_stream`,
-                        { url: itemData.link, id: itemData.id, account: currentUser.account },
+                        { url: itemData.link, id: itemData.id, account: currentUser.account, token: _getAuthToken() },
                         (event) => progress.update(event.progress, event.message)
                     );
 
@@ -399,7 +407,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     try {
                         const res = await fetch(localApiEndpoint, {
                             method: "POST", headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account })
+                            body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account, token: _getAuthToken() })
                         });
                         const data = await res.json();
 
@@ -446,7 +454,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             try {
                 const result = await requestSSE(
                     "/community_hub/download_app_stream",
-                    { url: itemData.link, id: itemData.id, account: currentUser.account },
+                    { url: itemData.link, id: itemData.id, account: currentUser.account, token: _getAuthToken() },
                     (event) => progress.update(event.progress, event.message),
                     { timeout: 120000 }  // 应用JSON下载2分钟足够
                 );
@@ -486,7 +494,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     const res = await fetch("/community_hub/download_app", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account })
+                        body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account, token: _getAuthToken() })
                     });
                     if (!res.ok) {
                         const errText = await res.text().catch(() => '未知服务端错误');

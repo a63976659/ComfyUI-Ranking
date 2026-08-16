@@ -16,10 +16,14 @@ import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
  */
 function clearTaskListCache() {
     removeCache('api_/api/tasks');
+    // 🔧 P1修复：任务榜组件实际使用 TasksCache_${status}_${sort} 键（非 ListCache_*），按真实键格式精准清除
+    const statuses = ['', 'open', 'in_progress', 'submitted', 'completed', 'disputed'];
     // 任务榜排序值：latest, price, deadline, views, daily_views, likes, favorites
     const sorts = ['latest', 'price', 'deadline', 'views', 'daily_views', 'likes', 'favorites'];
-    for (const sort of sorts) {
-        removeCache(`ListCache_tasks_${sort}`);
+    for (const status of statuses) {
+        for (const sort of sorts) {
+            removeCache(`TasksCache_${status}_${sort}`);
+        }
     }
     console.log('🗑️ 已清除任务列表缓存');
 }

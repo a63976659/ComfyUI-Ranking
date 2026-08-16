@@ -312,7 +312,7 @@ export const ANALYTICS = {
 // ==========================================
 export const LINKS = {
     // GitHub 仓库
-    GITHUB_REPO: "https://github.com/ZHIWEI666/ComfyUI-Ranking",
+    GITHUB_REPO: "https://github.com/a63976659/ComfyUI-Ranking",
     
     // 文档地址
     DOCS: "",

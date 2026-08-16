@@ -10,11 +10,7 @@
 
 import { getBannerCacheKey, PLACEHOLDERS } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
-
-const escapeHtml = (str) => {
-    if (!str) return '';
-    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-};
+import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 一次性注入组件样式（CSS类替代内联hover事件+减少重复样式）
 if (!document.getElementById('profile-template-styles')) {

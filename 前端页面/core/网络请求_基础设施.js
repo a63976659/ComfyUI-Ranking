@@ -11,6 +11,7 @@
 
 import { removeCache, getCacheWithMeta } from "../components/性能优化工具.js";
 import { API, CACHE } from "./全局配置.js";
+import { logoutAndClearUserData } from "./状态管理.js";
 import { CACHE_CONFIG, CACHE_INVALIDATION_MAP, invalidateRelatedCache, _getCacheTTL, getCache, setCache } from "./网络请求_缓存管理.js";
 import { unproxyImages } from "./网络请求_图片代理.js";
 
@@ -34,6 +35,41 @@ const pendingRequests = new Map();
 let isOnline = navigator.onLine;
 window.addEventListener('online', () => { isOnline = true; console.log('🌐 网络已恢复'); });
 window.addEventListener('offline', () => { isOnline = false; console.log('📴 网络已断开'); });
+
+// 🔧 修复：401（Token 过期/签名无效）统一处理——清除本地凭证并提示重新登录。
+// 背景：服务端更换 JWT_SECRET 或 Token 过期后，旧 Token 被云端拒签，若不清除
+// 本地凭证会导致所有登录态操作反复报「Token 签名无效」。去重窗口：并发请求
+// 同时收到 401 时只提示一次。
+let _authExpiredAt = 0;
+function notifyTokenExpired(serverMsg) {
+    const now = Date.now();
+    if (now - _authExpiredAt < 5000) return;
+    _authExpiredAt = now;
+    console.warn(`⚠️ 登录凭证已失效（${serverMsg}），本地 Token 已清除，请重新登录`);
+    // 动态 import UI 组件，与 proxyImages 同样避免模块初始化时序问题
+    import("../components/UI交互提示组件.js").then(async ({ showToast }) => {
+        const { t } = await import("../components/用户体验_国际化.js");
+        showToast(t('auth.token_expired'), "warning", 4000);
+    }).catch(() => {});
+}
+
+function handleAuthExpired(serverMsg, failedToken) {
+    // 竞态防护：若用户在 401 返回前已重新登录（存储中的 Token 已更换），
+    // 不清理新凭证；失败请求未携带 Token 时 401 与登录态无关，同样不打扰
+    if (!failedToken) return false;
+    const currentToken = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
+    if (currentToken !== failedToken) return false;
+    // 清除前取出账号，用于清理账号级 Profile 缓存
+    let account = null;
+    try {
+        const userStr = localStorage.getItem("ComfyCommunity_User") || sessionStorage.getItem("ComfyCommunity_User");
+        if (userStr) account = JSON.parse(userStr)?.user?.account || null;
+    } catch (e) {}
+    // 与手动登出同深度的完整清理：Token/User、私有数据缓存、内存缓存与安装版本戳
+    logoutAndClearUserData(account);
+    notifyTokenExpired(serverMsg);
+    return true;
+}
 
 // 🚀 P4优化：请求取消管理器
 const requestCancelManager = {
@@ -160,16 +196,18 @@ async function request(endpoint, options = {}) {
         if (tokenParts.length === 3) {
             // 标准 JWT 格式
             headers["Authorization"] = `Bearer ${token}`;
-        } else if (token.startsWith("mock_token_")) {
-            // 兼容旧版 mock_token 格式（后端 verify_token_with_fallback 支持）
-            headers["Authorization"] = `Bearer ${token}`;
         } else {
-            // 完全无法识别的格式才清除
-            console.warn("⚠️ 检测到无效 Token 格式，已自动清除，请重新登录");
+            // 🔒 P0同步：旧版 mock_token 已被后端明确拒绝（伪造后门已封堵），
+            // 以及其他无法识别的格式，统一清除本地旧凭证并提示重新登录。
+            // 🔧 修复：凭证既已清除，同步广播登出事件重置导航登录态/停止轮询，
+            // 并给用户明确提示（原实现仅 console.warn 静默清理）
+            console.warn("⚠️ 检测到无效/已过期的旧版 Token，已自动清除，请重新登录");
             localStorage.removeItem("ComfyCommunity_Token");
             localStorage.removeItem("ComfyCommunity_User");
             sessionStorage.removeItem("ComfyCommunity_Token");
             sessionStorage.removeItem("ComfyCommunity_User");
+            window.dispatchEvent(new CustomEvent('comfy-ranking-auth-expired'));
+            notifyTokenExpired("无效/已过期的旧版 Token");
         }
     }
     
@@ -260,8 +298,15 @@ async function request(endpoint, options = {}) {
                     // 🚀 P1优化：4xx 错误不重试，5xx 错误可重试
                     if (response.status >= 400 && response.status < 500) {
                         if (response.status === 401) {
-                            // 广播登出事件，通知所有组件清除登录状态
-                            window.dispatchEvent(new CustomEvent('comfy-ranking-auth-expired'));
+                            // 🔧 修复：清除失效凭证并提示重新登录（原实现仅广播事件，无人清理）；
+                            // 传入本请求实际使用的 Token 做竞态比对，避免误清重新登录后签发的新凭证。
+                            // 仅当确认凭证确实失效后才广播登出事件（导航停止轮询并重置登录态），
+                            // 迟到的旧 401 或匿名请求的 401 不再误触发登录态重置。
+                            // 登录接口的 401 语义是「密码错误」而非凭证失效，不走全局清理，
+                            // 避免与登录表单自身的错误提示重复叠加
+                            if (endpoint !== "/api/users/login" && handleAuthExpired(errorMsg, token)) {
+                                window.dispatchEvent(new CustomEvent('comfy-ranking-auth-expired'));
+                            }
                         }
                         throw new Error(errorMsg);
                     }

@@ -3,11 +3,8 @@ import { api } from "../core/网络请求API.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR, isAdmin } from "../core/全局配置.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
-
-const escapeHtml = (str) => {
-    if (!str) return '';
-    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-};
+// 🧹 P2归一：escapeHtml 局部副本已移除，改用统一版
+import { escapeHtml } from "../components/互动工具函数.js";
 
 export function setupToggleButton(btnElement, initialState, initialCount, activeText, inactiveText, activeColor, apiCallback) {
     let isActive = initialState;

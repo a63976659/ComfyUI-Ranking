@@ -17,16 +17,8 @@ import { t } from "../components/用户体验增强.js";
 import { removeCache } from "../components/性能优化工具.js";
 import { invalidateRelatedCache } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-
-/**
- * 转义HTML特殊字符，防止XSS注入
- */
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+// 🧹 P2归一：escapeHtml 局部副本已移除，改用统一版（转义更严格，防XSS语义不变）
+import { escapeHtml } from "../components/互动工具函数.js";
 
 // 🔄 P7后悔模式：渲染退款按钮
 async function renderRefundButton(container, itemData, currentUser) {

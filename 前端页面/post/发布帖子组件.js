@@ -17,10 +17,11 @@ import { API } from "../core/全局配置.js";
 // 📦 清除帖子列表缓存
 function clearPostListCache() {
     removeCache('api_/api/posts');
-    // 帖子排序值：latest, likes, favorites, views, daily_views
-    const sorts = ['latest', 'likes', 'favorites', 'views', 'daily_views', 'rating'];
+    // 🔧 P1修复：讨论区组件实际使用 PostsCache_${sort} 键（非 ListCache_*），按真实键格式精准清除
+    // 讨论区排序值：latest, likes, favorites, tips, views, daily_views, rating
+    const sorts = ['latest', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
     for (const sort of sorts) {
-        removeCache(`ListCache_posts_${sort}`);
+        removeCache(`PostsCache_${sort}`);
     }
     console.log('🗑️ 已清除帖子列表缓存');
 }

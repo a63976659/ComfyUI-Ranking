@@ -12,11 +12,8 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
-
-// 🛡️ 安全转义：防止网络返回数据注入 HTML
-function escapeHtml(str) {
-    return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
+// 🛡️ 安全转义：防止网络返回数据注入 HTML（🧹 P2归一：使用统一版）
+import { escapeHtml } from "../components/互动工具函数.js";
 
 export function renderRecoverForm(container, switchView) {
     container.innerHTML = `

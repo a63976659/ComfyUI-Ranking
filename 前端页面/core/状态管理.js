@@ -20,7 +20,7 @@
  */
 
 import { CACHE } from "./全局配置.js";
-import { clearSensitiveCache } from "../components/性能优化工具.js";
+import { clearSensitiveCache, clearAllCache } from "../components/性能优化工具.js";
 
 
 // ==========================================
@@ -328,6 +328,30 @@ export function logout() {
     }
 
     eventBus.emit(EVENTS.USER_LOGOUT);
+}
+
+/**
+ * 🔧 新增：登出并清理用户私有数据缓存
+ * 手动登出与 401 凭证失效强制登出共用，保证两条路径清理范围一致，
+ * 避免强制登出后聊天记录/通知等私有缓存残留被下一账号读到
+ * @param {string|null} account - 当前账号（清除账号级 Profile 缓存用，可为 null）
+ */
+export function logoutAndClearUserData(account = null) {
+    // 清除当前账号的 Profile 级缓存
+    if (account) {
+        localStorage.removeItem(`ComfyCommunity_ProfileCache_${account}`);
+        localStorage.removeItem(`ComfyRanking_SidebarBackground_${account}`);
+        localStorage.removeItem(`ComfyRanking_ProfileBannerCache_${account}`);
+    }
+    // 清除通用用户数据缓存（列表/聊天记录/通知）
+    localStorage.removeItem("ComfyCommunity_ListCache");
+    localStorage.removeItem("ComfyCommunity_ChatHistory");
+    localStorage.removeItem("ComfyRanking_Notifications");
+    localStorage.removeItem("ComfyRanking_ChatList");
+    // 清除所有 ComfyRanking_ 前缀的数据缓存与内存敏感数据
+    clearAllCache();
+    // logout() 内部已含 clearSensitiveCache 与 Token/User/版本戳清理
+    logout();
 }
 
 

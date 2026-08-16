@@ -34,7 +34,8 @@ const _pendingActions = new Set();
 export async function recordView(apiMethod, contentId, cachePrefix, onSuccess = null) {
     // 🚀 登录检查：未登录时跳过浏览量记录，避免 401 错误
     const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
-    if (!token || (token.split(".").length !== 3 && !token.startsWith("mock_token_"))) {
+    // 🔒 P0同步：旧版 mock_token 已被后端拒绝，仅标准 JWT 格式才记录浏览量
+    if (!token || token.split(".").length !== 3) {
         return null;
     }
 
@@ -280,15 +281,45 @@ export { renderTipBoardHTML } from './打赏等级工具.js';
 // ==========================================
 
 /**
- * HTML转义
- * @param {string} str - 原始字符串
+ * HTML转义（统一版：各组件局部副本已归一到此）
+ * @param {*} str - 原始字符串（非字符串会先强制转换，兼容数字等入参）
  * @returns {string} 转义后的字符串
  */
 export function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;")
+    if (str === null || str === undefined || str === "") return "";
+    return String(str).replace(/&/g, "&amp;")
               .replace(/</g, "&lt;")
               .replace(/>/g, "&gt;")
               .replace(/"/g, "&quot;")
               .replace(/'/g, "&#039;");
+}
+
+/**
+ * 读取用户设置中的列表缓存 TTL（统一版：讨论区/任务榜/提示词组件局部副本已归一到此）
+ * @returns {number} 毫秒数，默认30分钟
+ */
+export function getCacheTTL() {
+    try {
+        const s = localStorage.getItem('ComfyCommunity_Settings');
+        if (s) { const v = parseInt(JSON.parse(s).cacheExpireSeconds); if (v >= 60 && v <= 86400) return v * 1000; }
+    } catch(e) {}
+    return 1000 * 60 * 30;  // 默认30分钟
+}
+
+/**
+ * 🕐 相对时间格式化（统一版："刚刚/n分钟前/..."，仅适用于相对时间语义，
+ * 绝对日期/本地化时间场景请勿复用）
+ * @param {number} timestamp - Unix 秒级时间戳
+ * @returns {string}
+ */
+export function formatTime(timestamp) {
+    if (!timestamp) return "";
+    const now = Date.now() / 1000;
+    const diff = now - timestamp;
+    if (diff < 60) return t('time.just_now');
+    if (diff < 3600) return t('time.minutes_ago', { n: Math.floor(diff / 60) });
+    if (diff < 86400) return t('time.hours_ago', { n: Math.floor(diff / 3600) });
+    if (diff < 604800) return t('time.days_ago', { n: Math.floor(diff / 86400) });
+    const date = new Date(timestamp * 1000);
+    return `${date.getMonth() + 1}/${date.getDate()}`;
 }

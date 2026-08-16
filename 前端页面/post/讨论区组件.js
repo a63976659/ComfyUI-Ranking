@@ -22,16 +22,10 @@ import { applyCardAnimation } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { createRatingStars } from "../social/评论与互动组件.js";
+import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 缓存配置
 const CACHE_KEY_PREFIX = "PostsCache";
-function getCacheTTL() {
-    try {
-        const s = localStorage.getItem('ComfyCommunity_Settings');
-        if (s) { const v = parseInt(JSON.parse(s).cacheExpireSeconds); if (v >= 60 && v <= 86400) return v * 1000; }
-    } catch(e) {}
-    return 1000 * 60 * 30;  // 默认30分钟
-}
 const PAGE_SIZE = 20;
 
 // 缓存当前用户
@@ -637,34 +631,4 @@ function createPostCard(post) {
     };
     
     return card;
-}
-
-/**
- * 🕐 格式化时间
- */
-function formatTime(timestamp) {
-    if (!timestamp) return "";
-    
-    const now = Date.now() / 1000;
-    const diff = now - timestamp;
-    
-    if (diff < 60) return t('time.just_now');
-    if (diff < 3600) return t('time.minutes_ago', { n: Math.floor(diff / 60) });
-    if (diff < 86400) return t('time.hours_ago', { n: Math.floor(diff / 3600) });
-    if (diff < 604800) return t('time.days_ago', { n: Math.floor(diff / 86400) });
-    
-    const date = new Date(timestamp * 1000);
-    return `${date.getMonth() + 1}/${date.getDate()}`;
-}
-
-/**
- * 🔒 HTML转义
- */
-function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;")
-              .replace(/</g, "&lt;")
-              .replace(/>/g, "&gt;")
-              .replace(/"/g, "&quot;")
-              .replace(/'/g, "&#039;");
 }

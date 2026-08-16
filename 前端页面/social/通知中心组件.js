@@ -6,6 +6,7 @@ import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { CACHE, PLACEHOLDERS } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
+import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 🚀 本地存储键管理
 const getNotifCacheKey = (account) => `${CACHE.LOCAL_KEYS.NOTIFICATIONS}_${account}`;
@@ -50,14 +51,6 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             style="color:#FF9800; cursor:pointer; text-decoration:underline dotted;">
             ${escapeHtml(title)}
         </span>`;
-    }
-
-    // HTML 转义函数
-    function escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
     }
 
     // 跳转到任务详情页

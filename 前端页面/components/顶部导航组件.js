@@ -16,6 +16,24 @@ import { uploadFile } from "../market/发布内容_提交引擎.js";  // 🖼️
 let messagePollingTimer = null;
 let isPollingActive = false;  // 🔧 P3优化：防止重复启动轮询
 
+// 🔧 P1修复：window 监听只安装一次并始终指向最新导航实例
+// （createTopNav 会随侧边栏重建反复调用，若每次 addEventListener 会累积旧闭包，
+//   旧闭包持有的 bellBtn/userActionBtn 已脱离 DOM，轮询徽标更新也随之失效）
+let _navInstance = null;
+let _navWindowHandlers = null;
+function _registerNavWindowListeners() {
+    if (_navWindowHandlers) {
+        for (const { event, handler } of _navWindowHandlers) window.removeEventListener(event, handler);
+    }
+    _navWindowHandlers = [
+        { event: "comfy-user-logout", handler: () => { if (_navInstance) _navInstance.onLogout(); } },
+        // 🔧 修复：凭证失效（401）时除停止轮询外，同步重置导航登录态（原实现未重置，头像按钮仍显示已登录）
+        { event: "comfy-ranking-auth-expired", handler: () => { stopMessagePolling(); if (_navInstance) _navInstance.onLogout(); } },
+        { event: "storage", handler: (event) => { if (_navInstance) _navInstance.onStorage(event); } }
+    ];
+    for (const { event, handler } of _navWindowHandlers) window.addEventListener(event, handler);
+}
+
 export function createTopNav() {
     const userHeader = document.createElement("div");
     Object.assign(userHeader.style, {
@@ -83,11 +101,8 @@ export function createTopNav() {
         }
     } catch (e) {}
 
-    window.addEventListener("comfy-user-logout", () => { currentUser = null; updateUserButtonState(); });
-
-    window.addEventListener('comfy-ranking-auth-expired', () => {
-        stopMessagePolling();
-    });
+    // 🔧 P1修复：登出/token失效/storage 监听已提升至模块级统一注册（见 _registerNavWindowListeners），
+    // 避免每次 createTopNav 重复 addEventListener 导致闭包累积与轮询失效
 
     chatEntryBtn.onclick = () => {
         if (!currentUser) return showToast(t('auth.login_required') || "请先登录您的社区账号！", "warning");
@@ -198,7 +213,8 @@ export function createTopNav() {
     };
 
     // 🔄 跨标签页登录状态同步：其他标签页修改 localStorage 时触发
-    window.addEventListener('storage', (event) => {
+    // 🔧 P1修复：改为模块级统一注册的 storage 监听回调（onStorage），不再逐实例 addEventListener
+    const handleCrossTabStorage = (event) => {
         if (event.key === 'ComfyCommunity_Token' || event.key === 'ComfyCommunity_User') {
             if (!event.newValue) {
                 // 其他标签页登出 → 本标签页也同步登出
@@ -217,9 +233,16 @@ export function createTopNav() {
                 } catch (e) {}
             }
         }
-    });
+    };
     
     updateUserButtonState();
+
+    // 🔧 P1修复：注册为当前活跃实例，模块级监听将路由到本实例的回调
+    _navInstance = {
+        onLogout: () => { currentUser = null; updateUserButtonState(); },
+        onStorage: handleCrossTabStorage
+    };
+    _registerNavWindowListeners();
 
     const actionWrapper = document.createElement("div");
     actionWrapper.style.display = "flex"; actionWrapper.style.alignItems = "center";

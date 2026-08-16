@@ -13,8 +13,7 @@ import { openWithdrawModal } from "../market/资金与钱包_提现组件.js";
 import { buildProfileHTML } from "./个人中心_UI模板.js";   
 import { openTipModal } from "./个人中心_赞赏组件.js";     
 import { getBannerCacheKey, getCurrentAccount } from "../core/全局配置.js";
-import { clearAllCache, clearSensitiveCache } from "../components/性能优化工具.js";
-import { logout } from "../core/状态管理.js";
+import { logoutAndClearUserData } from "../core/状态管理.js";
 
 
 // ==========================================
@@ -215,29 +214,11 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                         // 获取当前账号（清除前获取）
                         const currentAccount = getCurrentAccount();
 
-                        // 1. 清除当前用户的 Profile 缓存
-                        if (currentAccount) {
-                            localStorage.removeItem(`ComfyCommunity_ProfileCache_${currentAccount}`);
-                            localStorage.removeItem(`ComfyRanking_SidebarBackground_${currentAccount}`);
-                            localStorage.removeItem(`ComfyRanking_ProfileBannerCache_${currentAccount}`);
-                        }
+                        // 1. 完整清理：账号级 Profile 缓存、私有数据缓存、全量数据缓存、
+                        //    内存敏感数据与 Token/User/版本戳（与 401 强制登出共用同一函数）
+                        logoutAndClearUserData(currentAccount);
 
-                        // 2. 清除通用用户数据缓存
-                        localStorage.removeItem("ComfyCommunity_ListCache");
-                        localStorage.removeItem("ComfyCommunity_ChatHistory");
-                        localStorage.removeItem("ComfyRanking_Notifications");
-                        localStorage.removeItem("ComfyRanking_ChatList");
-
-                        // 3. 清除所有 ComfyRanking_ 前缀的数据缓存
-                        clearAllCache();
-
-                        // 4. 清除内存中的敏感数据缓存
-                        clearSensitiveCache();
-
-                        // 5. 调用状态管理 logout（清除 Token、User、内存状态）
-                        logout();
-
-                        // 6. 触发事件
+                        // 2. 触发事件
                         window.dispatchEvent(new CustomEvent("comfy-route-back"));
                         window.dispatchEvent(new CustomEvent("comfy-user-logout"));
                         showToast(t('feedback.logged_out'), "info");

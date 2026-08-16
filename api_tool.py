@@ -25,6 +25,35 @@ _URL_PATTERN = re.compile(r'^https?://[\w\-.]+(:\d+)?/[\w\-./]+$')
 MAX_ZIP_SIZE = 2 * 1024 * 1024 * 1024  # 2GB ZIP 包上限
 
 
+def _resolve_install_target(item_url: str):
+    """🔒 P0安全加固：从 URL 推导安装目标目录，防御路径穿越
+    返回 (target_dir_name, target_path)；非法时返回 (None, None)
+    """
+    target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
+    # 目录名白名单校验 + 显式拒绝相对路径段，杜绝 ".." 逃逸出 custom_nodes 目录
+    if (not target_dir_name
+            or not re.fullmatch(r'[A-Za-z0-9_\-.]+', target_dir_name)
+            or target_dir_name in (".", "..")
+            or ".." in target_dir_name):
+        return None, None
+    target_path = os.path.normpath(os.path.join(CUSTOM_NODES_DIR, target_dir_name))
+    base = os.path.normpath(CUSTOM_NODES_DIR)
+    if not target_path.startswith(base + os.sep):
+        return None, None
+    return target_dir_name, target_path
+
+
+def _detect_zip_top_level(namelist):
+    """探测 ZIP 公共顶层目录（不依赖首条目，首条目为文件时返回 None 表示无顶层包裹）"""
+    tops = {n.split('/', 1)[0] for n in namelist}
+    if len(tops) == 1:
+        top = next(iter(tops))
+        # 仅当所有条目都位于该顶层目录下时才视为包裹目录
+        if all(n.startswith(top + '/') for n in namelist):
+            return top + '/'
+    return None
+
+
 def _is_local_request(request):
     """检查请求是否来自本机，保护敏感安装接口"""
     remote = request.remote or ""
@@ -51,6 +80,69 @@ def _force_remove_readonly(func, path, exc_info):
     func(path)
 
 
+class _ZipTargetOccupiedError(Exception):
+    """旧版本目录被 ComfyUI 进程占用，无法删除"""
+
+
+def _extract_zip_to_target_sync(zip_path, extract_target_path):
+    """🔧 P1修复：同步解压例程（由 asyncio.to_thread 在工作线程中调用，避免阻塞事件循环）
+    含三层路径穿越防护；压缩包为空抛 ValueError，旧目录被占用抛 _ZipTargetOccupiedError
+    """
+    with zipfile.ZipFile(zip_path) as zip_ref:
+        namelist = zip_ref.namelist()
+        if not namelist:
+            raise ValueError("下载的压缩包结构为空")
+
+        top_level_dir = _detect_zip_top_level(namelist)
+
+        # 🚀 核心修复 1：执行纯净更新！在确认 ZIP 完好无损后，先彻底抹除旧版本文件夹，防止残留的废弃 .py 文件引发报错
+        if os.path.exists(extract_target_path):
+            try:
+                shutil.rmtree(extract_target_path, onerror=_force_remove_readonly)
+            except Exception:
+                raise _ZipTargetOccupiedError()
+
+        os.makedirs(extract_target_path, exist_ok=True)
+
+        for member in namelist:
+            # 🚀 修复：无统一顶层包裹（首条目为文件/多顶层）时解压全部条目，不再漏装
+            if top_level_dir and member.startswith(top_level_dir):
+                target_path = member.replace(top_level_dir, "", 1)
+            else:
+                target_path = member
+            if not target_path:
+                continue
+            # 防止路径穿越攻击 - 第一层防御
+            if ".." in target_path or target_path.startswith("/") or target_path.startswith("\\"):
+                print(f"[ComfyUI-Ranking] ⚠️ 跳过不安全路径: {target_path}")
+                continue
+            # 防止路径穿越攻击 - 第二层防御：使用 normpath 规范化检查
+            abs_target = os.path.normpath(os.path.join(extract_target_path, target_path))
+            abs_base = os.path.normpath(extract_target_path)
+            if not abs_target.startswith(abs_base):
+                print(f"[ComfyUI-Ranking] ⚠️ 跳过不安全路径: {target_path}")
+                continue
+            # 🔒 P0安全加固 - 第三层防御：使用 resolve() 防止 Windows 特殊路径绕过和符号链接攻击
+            try:
+                resolved = Path(abs_target).resolve()
+                allowed = Path(abs_base).resolve()
+                if not str(resolved).startswith(str(allowed) + os.sep) and resolved != allowed:
+                    print(f"[ComfyUI-Ranking] [安全] 跳过危险路径: {target_path}")
+                    continue
+            except (OSError, RuntimeError):
+                continue  # 符号链接跟踪失败则跳过
+
+            source = zip_ref.open(member)
+            dest_path = os.path.join(extract_target_path, target_path)
+            if member.endswith('/'):
+                os.makedirs(dest_path, exist_ok=True)
+            else:
+                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                with open(dest_path, "wb") as target:
+                    shutil.copyfileobj(source, target)  # 强制写入纯净新文件
+        return len(namelist)
+
+
 def _is_self_update(target_dir_name: str) -> bool:
     """判断是否为自更新（目标目录名与自身一致）"""
     self_dir_name = os.path.basename(THIS_DIR)
@@ -74,13 +166,32 @@ def _write_update_pending_marker(target_path: str, staging_path: str):
         json.dump(marker, f, ensure_ascii=False)
 
 
+async def _run_git_clone(url, target, env, timeout=1200):
+    """🚀 非阻塞 Git Clone（异步子进程），避免 subprocess.run 阻塞事件循环卡死整个 ComfyUI
+    返回 (returncode, stdout, stderr)
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", url, target,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+        raise subprocess.TimeoutExpired(["git", "clone", url], timeout)
+    return proc.returncode, stdout, stderr
+
+
 async def install_tool_handler(request):
     # NOTE: 与 install_tool_stream_handler 共享核心安装逻辑（URL校验、双链路容灾、Git克隆），如需修改请同步
     if not _is_local_request(request):
         return web.json_response({"error": "Forbidden: local access only"}, status=403)
     data = await request.json()
     item_url = data.get("url")
-    item_id = data.get("id")
     account = data.get("account") # 用户身份凭证
     
     if not item_url or not account: 
@@ -95,8 +206,9 @@ async def install_tool_handler(request):
     if not _URL_PATTERN.match(item_url):
         return web.json_response({"error": "URL格式不合法"}, status=400)
         
-    target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
-    clone_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
+    target_dir_name, clone_target_path = _resolve_install_target(item_url)
+    if not target_dir_name:
+        return web.json_response({"error": "安装目标目录名不合法，已拦截"}, status=400)
     
     is_self = _is_self_update(target_dir_name)
     
@@ -122,46 +234,35 @@ async def install_tool_handler(request):
         
         env = _prepare_git_env()
 
-        try:
-            print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
-            subprocess.run(
-                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", mirror_url, actual_clone_target],
-                capture_output=True,
-                text=True,
-                check=True,
-                env=env,
-                timeout=1200  # 20分钟超时
-            )
+        print(f"正在尝试通过加速镜像 Clone: {mirror_url}")
+        rc, stdout, stderr = await _run_git_clone(mirror_url, actual_clone_target, env)
+        if rc == 0:
             print("✅ 镜像 Git Clone 安装成功！保留了完整的版本控制 (.git)。")
             if is_self:
                 _write_update_pending_marker(clone_target_path, staging_path)
                 return web.json_response({"status": "success", "message": "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！"})
             return web.json_response({"status": "success"})
-            
-        except subprocess.TimeoutExpired:
-            return web.json_response({"error": "安装超时：仓库过大或网络异常，请检查网络后重试"}, status=504)
-            
-        except subprocess.CalledProcessError as e1:
-            print(f"⚠️ 镜像源不可用或发生冲突，系统正在自动无缝回退至直连: {item_url}")
-            
-            # 清理刚才克隆到一半可能留下的残缺空文件夹
-            if os.path.exists(actual_clone_target):
-                shutil.rmtree(actual_clone_target, onerror=_force_remove_readonly)
-                
-            # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
-            subprocess.run(
-                ["git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", item_url, actual_clone_target],
-                capture_output=True,
-                text=True,
-                check=True,
-                env=env,
-                timeout=1200  # 20分钟超时
-            )
+
+        print(f"⚠️ 镜像源不可用或发生冲突，系统正在自动无缝回退至直连: {item_url}")
+
+        # 清理刚才克隆到一半可能留下的残缺空文件夹
+        if os.path.exists(actual_clone_target):
+            shutil.rmtree(actual_clone_target, onerror=_force_remove_readonly)
+
+        # 链路 B：官方直连 (专门照顾开了科学上网/全局代理的用户)
+        rc, stdout, stderr = await _run_git_clone(item_url, actual_clone_target, env)
+        if rc == 0:
             print("✅ 直连 Git Clone 安装成功！")
             if is_self:
                 _write_update_pending_marker(clone_target_path, staging_path)
                 return web.json_response({"status": "success", "message": "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！"})
             return web.json_response({"status": "success"})
+
+        # 两条链路都失败了的最终兜底（并清理残缺目录，避免残留半成品）
+        if os.path.exists(actual_clone_target):
+            shutil.rmtree(actual_clone_target, onerror=_force_remove_readonly)
+        error_msg = (stderr or stdout or b"").decode('utf-8', errors='ignore')
+        return web.json_response({"error": f"Git Clone 失败，镜像与直连均不可用。请检查网络或开启代理: {error_msg}"}, status=500)
             
     except subprocess.TimeoutExpired:
         return web.json_response({"error": "安装超时：仓库过大或网络异常，请检查网络后重试"}, status=504)
@@ -169,11 +270,6 @@ async def install_tool_handler(request):
     except FileNotFoundError:
         # 拦截用户电脑根本没装 Git 的情况
         return web.json_response({"error": "系统中未检测到 Git，请先安装 Git 环境才能下载插件！"}, status=500)
-        
-    except subprocess.CalledProcessError as e2:
-        # 两条链路都失败了的最终兜底
-        error_msg = e2.stderr or e2.stdout
-        return web.json_response({"error": f"Git Clone 失败，镜像与直连均不可用。请检查网络或开启代理: {error_msg}"}, status=500)
         
     except Exception as e:
         # 兜底异常拦截
@@ -190,18 +286,22 @@ async def install_private_tool_handler(request):
     item_url = data.get("url")
     item_id = data.get("id")
     account = data.get("account")
+    token = data.get("token") or ""  # 🔒 P0安全加固：用户 JWT，转发给云端做身份鉴权
     
     if not item_url or not account or not item_id: 
         return web.json_response({"error": "缺少核心鉴权参数"}, status=400)
         
-    target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
-    extract_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
+    target_dir_name, extract_target_path = _resolve_install_target(item_url)
+    if not target_dir_name:
+        return web.json_response({"error": "安装目标目录名不合法，已拦截"}, status=400)
     tmp_path = None
     
     try:
         proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_github_zip"
         payload = json.dumps({"url": item_url, "item_id": item_id, "account": account}).encode("utf-8")
         headers = {'Content-Type': 'application/json'}
+        if token:
+            headers['Authorization'] = f"Bearer {token}"
         
         # ZIP 下载（最多重试3次）
         max_retries = 3
@@ -278,60 +378,15 @@ async def install_private_tool_handler(request):
         
         print("[ComfyUI-Ranking] ✅ 成功接收云端安全 ZIP 数据流，执行热覆盖解压...")
         
-        # 从临时文件磁盘解压（不占内存）
-        with zipfile.ZipFile(tmp_path) as zip_ref:
-            namelist = zip_ref.namelist()
-            if not namelist:
-                return web.json_response({"error": "下载的压缩包结构为空"}, status=500)
-                
-            top_level_dir = namelist[0].split('/')[0] + '/'
-            
-            # 🚀 核心修复 1：执行纯净更新！在确认 ZIP 完好无损后，先彻底抹除旧版本文件夹，防止残留的废弃 .py 文件引发报错
-            if os.path.exists(extract_target_path):
-                try:
-                    shutil.rmtree(extract_target_path, onerror=_force_remove_readonly)
-                except Exception as e:
-                    # 🚀 核心修复 2：拦截 Windows 下 Python 文件被 ComfyUI 进程死锁的情况
-                    return web.json_response({"error": "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。"}, status=500)
-            
-            os.makedirs(extract_target_path, exist_ok=True)
-            
-            for member in namelist:
-                if member.startswith(top_level_dir):
-                    target_path = member.replace(top_level_dir, "", 1)
-                    if not target_path: continue
-                    # 防止路径穿越攻击 - 第一层防御
-                    if ".." in target_path or target_path.startswith("/") or target_path.startswith("\\"):
-                        print(f"[ComfyUI-Ranking] ⚠️ 跳过不安全路径: {target_path}")
-                        continue
-                    
-                    # 防止路径穿越攻击 - 第二层防御：使用 normpath 规范化检查
-                    abs_target = os.path.normpath(os.path.join(extract_target_path, target_path))
-                    abs_base = os.path.normpath(extract_target_path)
-                    if not abs_target.startswith(abs_base):
-                        print(f"[ComfyUI-Ranking] ⚠️ 跳过不安全路径: {target_path}")
-                        continue
-                    
-                    # 🔒 P0安全加固 - 第三层防御：使用 resolve() 防止 Windows 特殊路径绕过和符号链接攻击
-                    try:
-                        resolved = Path(abs_target).resolve()
-                        allowed = Path(abs_base).resolve()
-                        if not str(resolved).startswith(str(allowed) + os.sep) and resolved != allowed:
-                            print(f"[ComfyUI-Ranking] [安全] 跳过危险路径: {target_path}")
-                            continue
-                    except (OSError, RuntimeError):
-                        continue  # 符号链接跟踪失败则跳过
-                        
-                    source = zip_ref.open(member)
-                    dest_path = os.path.join(extract_target_path, target_path)
-                    
-                    if member.endswith('/'):
-                        os.makedirs(dest_path, exist_ok=True)
-                    else:
-                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                        with open(dest_path, "wb") as target:
-                            shutil.copyfileobj(source, target) # 强制写入纯净新文件
-                                
+        # 🔧 P1修复：解压（大块同步磁盘IO）移交工作线程，避免阻塞事件循环
+        try:
+            await asyncio.to_thread(_extract_zip_to_target_sync, tmp_path, extract_target_path)
+        except _ZipTargetOccupiedError:
+            # 🚀 核心修复 2：拦截 Windows 下 Python 文件被 ComfyUI 进程死锁的情况
+            return web.json_response({"error": "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。"}, status=500)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=500)
+        
         print(f"[ComfyUI-Ranking] 🎉 私有插件 {target_dir_name} 静默更新/安装完成！无 .git 目录残留。")
         return web.json_response({"status": "success"})
         
@@ -363,7 +418,6 @@ async def install_tool_stream_handler(request):
         return web.json_response({"error": "Forbidden: local access only"}, status=403)
     data = await request.json()
     item_url = data.get("url")
-    item_id = data.get("id")
     account = data.get("account")
 
     resp = web.StreamResponse(
@@ -404,8 +458,11 @@ async def install_tool_stream_handler(request):
 
         await send_progress("validate", 5, "校验安装参数...")
 
-        target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
-        clone_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
+        target_dir_name, clone_target_path = _resolve_install_target(item_url)
+        if not target_dir_name:
+            await send_progress("error", -1, "安装目标目录名不合法，已拦截", "error")
+            await resp.write_eof()
+            return resp
 
         is_self = _is_self_update(target_dir_name)
 
@@ -546,6 +603,7 @@ async def install_private_tool_stream_handler(request):
     item_url = data.get("url")
     item_id = data.get("id")
     account = data.get("account")
+    token = data.get("token") or ""  # 🔒 P0安全加固：用户 JWT，转发给云端做身份鉴权
 
     resp = web.StreamResponse(
         status=200,
@@ -575,12 +633,17 @@ async def install_private_tool_stream_handler(request):
         await send_progress("validate", 5, "校验安装参数...")
         await send_progress("auth", 15, "验证购买权限...")
 
-        target_dir_name = item_url.rstrip("/").split("/")[-1].replace(".git", "")
-        extract_target_path = os.path.join(CUSTOM_NODES_DIR, target_dir_name)
+        target_dir_name, extract_target_path = _resolve_install_target(item_url)
+        if not target_dir_name:
+            await send_progress("error", -1, "安装目标目录名不合法，已拦截", "error")
+            await resp.write_eof()
+            return resp
 
         proxy_api_url = "https://zhiwei666-comfyui-ranking-api.hf.space/api/proxy_github_zip"
         payload = json.dumps({"url": item_url, "item_id": item_id, "account": account}).encode("utf-8")
         headers = {'Content-Type': 'application/json'}
+        if token:
+            headers['Authorization'] = f"Bearer {token}"
         
         # ZIP 下载（最多重试3次）
         max_retries = 3
@@ -589,7 +652,9 @@ async def install_private_tool_stream_handler(request):
             try:
                 req = urllib.request.Request(proxy_api_url, data=payload, headers=headers)
                 await send_progress("downloading", 30, "从云端下载资源包..." + (f"（第{attempt+1}次尝试）" if attempt > 0 else ""))
-                with urllib.request.urlopen(req, timeout=600) as response:
+                # 🚀 修复：同步 urlopen 改为线程执行，避免阻塞事件循环导致心跳失效
+                response = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=600))
+                try:
                     content_length = int(response.headers.get('Content-Length', 0))
                     
                     # 磁盘空间检查（仅第一次）
@@ -674,8 +739,10 @@ async def install_private_tool_stream_handler(request):
                                     await send_progress("downloading", pct, f"下载中... 已接收 {mb_done:.1f}MB")
                                 last_progress_time = current_time
                 
-                # 下载成功，跳出重试循环
-                break
+                    # 下载成功，跳出重试循环
+                    break
+                finally:
+                    response.close()
                 
             except (http.client.IncompleteRead, urllib.error.URLError, ConnectionResetError, TimeoutError) as e:
                 if tmp_path and os.path.exists(tmp_path):
@@ -696,59 +763,19 @@ async def install_private_tool_stream_handler(request):
 
         await send_progress("download_done", 60, "下载完成，准备解压...")
 
-        # 从临时文件磁盘解压（不占内存）
-        with zipfile.ZipFile(tmp_path) as zip_ref:
-            namelist = zip_ref.namelist()
-            if not namelist:
-                await send_progress("error", -1, "下载的压缩包结构为空", "error")
-                await resp.write_eof()
-                return resp
-
-            top_level_dir = namelist[0].split('/')[0] + '/'
-
-            await send_progress("extracting", 75, "解压安装文件...")
-
-            if os.path.exists(extract_target_path):
-                try:
-                    shutil.rmtree(extract_target_path, onerror=_force_remove_readonly)
-                except Exception as e:
-                    await send_progress("error", -1, "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。", "error")
-                    await resp.write_eof()
-                    return resp
-
-            os.makedirs(extract_target_path, exist_ok=True)
-
-            total_files = len(namelist)
-            processed = 0
-            for member in namelist:
-                if member.startswith(top_level_dir):
-                    target_path = member.replace(top_level_dir, "", 1)
-                    if not target_path:
-                        continue
-                    # 防止路径穿越攻击 - 第一层防御
-                    if ".." in target_path or target_path.startswith("/") or target_path.startswith("\\"):
-                        continue
-                    # 防止路径穿越攻击 - 第二层防御：使用 normpath 规范化检查
-                    abs_target = os.path.normpath(os.path.join(extract_target_path, target_path))
-                    abs_base = os.path.normpath(extract_target_path)
-                    if not abs_target.startswith(abs_base):
-                        continue
-
-                    source = zip_ref.open(member)
-                    dest_path = os.path.join(extract_target_path, target_path)
-
-                    if member.endswith('/'):
-                        os.makedirs(dest_path, exist_ok=True)
-                    else:
-                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                        with open(dest_path, "wb") as target:
-                            shutil.copyfileobj(source, target)
-
-                processed += 1
-                # 每解压 50 个文件推送一次进度
-                if processed % 50 == 0:
-                    progress_pct = 75 + int(processed / total_files * 15)  # 75%~90%
-                    await send_progress("installing", progress_pct, f"写入目标目录... {processed}/{total_files}")
+        # 🔧 P1修复：解压（大块同步磁盘IO）移交工作线程，避免阻塞事件循环导致 SSE 心跳停滞
+        await send_progress("extracting", 75, "解压安装文件...")
+        try:
+            await asyncio.to_thread(_extract_zip_to_target_sync, tmp_path, extract_target_path)
+        except _ZipTargetOccupiedError:
+            await send_progress("error", -1, "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。", "error")
+            await resp.write_eof()
+            return resp
+        except ValueError as e:
+            await send_progress("error", -1, str(e), "error")
+            await resp.write_eof()
+            return resp
+        await send_progress("installing", 90, "写入目标目录... 完成")
 
         await send_progress("complete", 100, "✅ 安装成功！", "success")
 

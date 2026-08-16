@@ -49,7 +49,17 @@ function _initChart(domElement, itemData) {
             }]
         });
         
-        window.addEventListener('resize', () => chartInstance.resize());
+        // 🔧 P1修复：resize 监听可自清理——容器被移出 DOM（详情/列表关闭）后
+        // 下次触发时自动解绑并 dispose 图表实例，避免监听累积与实例泄漏
+        const onResize = () => {
+            if (!document.contains(domElement) || chartInstance.isDisposed()) {
+                window.removeEventListener('resize', onResize);
+                if (!chartInstance.isDisposed()) chartInstance.dispose();
+                return;
+            }
+            chartInstance.resize();
+        };
+        window.addEventListener('resize', onResize);
         
         // 初始化完成后延迟调用resize确保正确渲染
         setTimeout(() => {

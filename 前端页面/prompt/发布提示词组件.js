@@ -15,6 +15,7 @@ import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
 import { removeCache } from "../components/性能优化工具.js";
 import { API } from "../core/全局配置.js";
+import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 📦 清除提示词列表缓存（前缀扫描，覆盖全部 类型/分类/排序 组合）
 function clearPromptsListCache() {
@@ -1452,18 +1453,6 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     loadRecommendTags();
 
     return container;
-}
-
-/**
- * 🔒 HTML转义（textarea 内容回填用）
- */
-function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;")
-              .replace(/</g, "&lt;")
-              .replace(/>/g, "&gt;")
-              .replace(/"/g, "&quot;")
-              .replace(/'/g, "&#039;");
 }
 
 /**

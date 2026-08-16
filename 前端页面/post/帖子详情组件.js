@@ -19,7 +19,7 @@ import { t } from "../components/用户体验增强.js";
 import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { removeCache, findInListCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
-import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml } from "../components/互动工具函数.js";
+import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml, formatTime } from "../components/互动工具函数.js";  // 🧹 P2归一：局部 formatTime 已移除
 import { createRatingStars } from "../social/评论与互动组件.js";
 
 /**
@@ -591,21 +591,6 @@ async function loadComments(container, postId, currentUser) {
  */
 function renderTipBoard(tipBoard) {
     return renderCommonTipBoardHTML(tipBoard, 5, t('post.no_tips'));
-}
-
-/**
- * 🕐 格式化时间
- */
-function formatTime(timestamp) {
-    if (!timestamp) return "";
-    const now = Date.now() / 1000;
-    const diff = now - timestamp;
-    if (diff < 60) return t('time.just_now');
-    if (diff < 3600) return t('time.minutes_ago', { n: Math.floor(diff / 60) });
-    if (diff < 86400) return t('time.hours_ago', { n: Math.floor(diff / 3600) });
-    if (diff < 604800) return t('time.days_ago', { n: Math.floor(diff / 86400) });
-    const date = new Date(timestamp * 1000);
-    return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 /**
