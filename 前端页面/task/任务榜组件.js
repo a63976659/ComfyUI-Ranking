@@ -19,7 +19,7 @@ import { api } from "../core/网络请求API.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { setCache, getCache, createSkeleton, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
-import { applyCardAnimation } from "../components/动画音效引擎.js";
+import { applyViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
@@ -80,16 +80,6 @@ function _renderNoTasksView() {
             <div style="font-size: 12px; color: #888;">${t('task.be_first')}</div>
         </div>
     `;
-}
-
-/**
- * ✨ 批量应用卡片动画
- */
-function _applyCardsAnimation(cards) {
-    const visibleCount = Math.min(cards.length, 8);
-    cards.forEach((card, index) => {
-        applyCardAnimation(card, 'dataflow', index, visibleCount);
-    });
 }
 
 /**
@@ -286,10 +276,8 @@ export function createTasksView(currentUser, keyword = "") {
             // 🖼️ 懒加载新渲染的图片
             lazyLoadImages(tasksList);
             
-            // ✨ 应用数据流动画（仅首次加载）
-            if (!append && page === 1) {
-                _applyCardsAnimation(cards);
-            }
+            // ✨ 应用视口感知动画：可见卡片依次错开载入，滚动/分页进入视口的卡片自动补播
+            applyViewportAnimations(tasksList, cards, 'dataflow', !append);
             
             // 显示/隐藏加载更多（基于过滤后的数据）
             const loadedCount = page * PAGE_SIZE;
@@ -348,8 +336,8 @@ export function createTasksView(currentUser, keyword = "") {
         // 🖼️ 懒加载新渲染的图片
         lazyLoadImages(tasksList);
         
-        // ✨ 应用数据流动画
-        _applyCardsAnimation(cards);
+        // ✨ 应用视口感知动画
+        applyViewportAnimations(tasksList, cards, 'dataflow', true);
         
         // 显示加载更多
         if (filteredTasks.length > PAGE_SIZE) {
@@ -430,10 +418,17 @@ export function createTasksView(currentUser, keyword = "") {
                             
                             const displayTasks = _filterTasksByKeyword(tasks, searchKeyword);
                             
+                            const newCards = [];
                             displayTasks.forEach(task => {
                                 const card = createTaskCard(task);
+                                newCards.push(card);
                                 tasksList.appendChild(card);
                             });
+                            
+                            // ✨ 视口感知动画：追加卡片复用同一观察器
+                            if (newCards.length > 0) {
+                                applyViewportAnimations(tasksList, newCards, 'dataflow', false);
+                            }
                             
                             // 🖼️ 懒加载追加的图片
                             lazyLoadImages(tasksList);

@@ -356,8 +356,9 @@ function injectAnimationStyles() {
  * @param {string} animationType - 动画类型：'cascade' | 'fan' | 'abyss' | 'dataflow' | 'tetris'
  * @param {number} index - 卡片索引（用于计算延迟）
  * @param {number} totalVisible - 可见卡片总数
+ * @param {boolean} silent - 是否静默（不播放音效），滚动补播场景使用
  */
-export function applyCardAnimation(card, animationType, index, totalVisible = 10) {
+export function applyCardAnimation(card, animationType, index, totalVisible = 10, silent = false) {
     const settings = getSettings();
     if (!settings.enableAnimations) return;
     
@@ -381,7 +382,7 @@ export function applyCardAnimation(card, animationType, index, totalVisible = 10
         case 'cascade':
             // 瀑布式动画
             card.classList.add('anim-cascade');
-            if (index === 0) playSound('whoosh');
+            if (!silent && index === 0) playSound('whoosh');
             break;
             
         case 'fan':
@@ -389,7 +390,7 @@ export function applyCardAnimation(card, animationType, index, totalVisible = 10
             const fanDelay = (totalVisible - 1 - index) * baseDelay;
             card.style.animationDelay = `${fanDelay}ms`;
             card.classList.add('anim-fan');
-            if (index === totalVisible - 1) playSound('whoosh');
+            if (!silent && index === totalVisible - 1) playSound('whoosh');
             break;
             
         case 'abyss':
@@ -397,7 +398,7 @@ export function applyCardAnimation(card, animationType, index, totalVisible = 10
             const directions = ['anim-abyss-tl', 'anim-abyss-tr', 'anim-abyss-bl', 'anim-abyss-br', 'anim-abyss-center'];
             const direction = directions[index % directions.length];
             card.classList.add(direction);
-            if (index === 0) playSound('charge');
+            if (!silent && index === 0) playSound('charge');
             break;
             
         case 'dataflow':
@@ -405,7 +406,7 @@ export function applyCardAnimation(card, animationType, index, totalVisible = 10
             const isLeft = index % 2 === 0;
             card.style.position = 'relative'; // 为扫描线效果
             card.classList.add(isLeft ? 'anim-dataflow-left' : 'anim-dataflow-right');
-            if (index < 3) setTimeout(() => playSound('blip'), delay);
+            if (!silent && index < 3) setTimeout(() => playSound('blip'), delay);
             break;
             
         case 'tetris':
@@ -413,7 +414,7 @@ export function applyCardAnimation(card, animationType, index, totalVisible = 10
             card.style.position = 'relative'; // 为 lock 闪光伪元素
             card.style.animationDelay = `${index * 90}ms`; // 90ms 逐卡间隔，堆积节奏感
             card.classList.add('anim-tetris');
-            if (index < 3) setTimeout(() => playSound('blip'), index * 90 + 340); // 对齐落地瞬间
+            if (!silent && index < 3) setTimeout(() => playSound('blip'), index * 90 + 340); // 对齐落地瞬间
             break;
     }
     
@@ -428,33 +429,61 @@ export function applyCardAnimation(card, animationType, index, totalVisible = 10
     }, { once: true });
 }
 
+// ==========================================
+// 👁️ 视口感知动画（滚动进入视口时补播）
+// ==========================================
+
+// 容器 -> 观察器映射（同一视图的首次渲染与分页追加复用同一观察器）
+const _viewportObservers = new WeakMap();
+
 /**
- * 批量为容器中的卡片应用动画
- * @param {HTMLElement} container - 容器元素
+ * ✨ 视口感知卡片动画：
+ * - 已在视口内的卡片立即依次错开播放载入动画
+ * - 屏幕外的卡片在滚动进入视口时自动补播动画（每张只播一次）
+ * - 基于原生 IntersectionObserver，无滚动监听开销，同一时刻仅少量卡片在动画，保证流畅度
+ * @param {HTMLElement} container - 卡片容器（首次渲染与分页追加须为同一容器）
+ * @param {HTMLElement[]} cards - 待观察的卡片列表
  * @param {string} animationType - 动画类型
- * @param {string} cardSelector - 卡片选择器（可选）
+ * @param {boolean} isFirstBatch - 是否首次渲染批次（为 true 时清理旧视图残留的观察器）
  */
-export function animateCards(container, animationType, cardSelector = null) {
+export function applyViewportAnimations(container, cards, animationType, isFirstBatch = false) {
     const settings = getSettings();
     if (!settings.enableAnimations) return;
-    
+
     // 确保样式已注入
     injectAnimationStyles();
-    
-    // 获取卡片元素
-    const cards = cardSelector 
-        ? Array.from(container.querySelectorAll(cardSelector))
-        : Array.from(container.children).filter(el => el.nodeType === 1);
-    
-    // 计算可见卡片数量（基于容器高度估算）
-    const containerHeight = container.clientHeight || 600;
-    const estimatedCardHeight = 160; // 估算卡片高度
-    const visibleCount = Math.min(Math.ceil(containerHeight / estimatedCardHeight) + 2, 15);
-    
-    // 应用动画
-    cards.forEach((card, index) => {
-        applyCardAnimation(card, animationType, index, visibleCount);
-    });
+
+    // 视图重建：停止上一批残留卡片的补播观察
+    if (isFirstBatch) {
+        const oldObserver = _viewportObservers.get(container);
+        if (oldObserver) {
+            oldObserver.disconnect();
+            _viewportObservers.delete(container);
+        }
+    }
+
+    let observer = _viewportObservers.get(container);
+    if (!observer) {
+        observer = new IntersectionObserver((entries) => {
+            // 本批进入视口的卡片，按文档顺序（从上到下）排列后错开播放
+            const entering = entries
+                .filter(e => e.isIntersecting)
+                .sort((a, b) =>
+                    (a.target.compareDocumentPosition(b.target) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1
+                );
+            if (entering.length === 0) return;
+
+            entering.forEach((entry, i) => {
+                observer.unobserve(entry.target);
+                // 仅入视图后首批播放音效，避免滚动时音效刷屏
+                applyCardAnimation(entry.target, animationType, i, entering.length, observer._introPlayed);
+            });
+            observer._introPlayed = true;
+        }, { threshold: 0.1 });
+        _viewportObservers.set(container, observer);
+    }
+
+    cards.forEach(card => observer.observe(card));
 }
 
 /**

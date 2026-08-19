@@ -18,7 +18,7 @@ import { api } from "../core/网络请求API.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { setCache, getCache, createSkeleton, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
-import { applyCardAnimation } from "../components/动画音效引擎.js";
+import { applyViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { createRatingStars } from "../social/评论与互动组件.js";
@@ -154,10 +154,17 @@ export function createPostsView(currentUser, keyword = "") {
             let displayPosts = posts.filter(post => _matchesSearch(post, searchKeyword));
             
             // 渲染帖子卡片
+            const newCards = [];
             displayPosts.forEach(post => {
                 const card = createPostCard(post);
+                newCards.push(card);
                 postsGrid.appendChild(card);
             });
+            
+            // ✨ 视口感知动画：追加卡片复用同一观察器
+            if (newCards.length > 0) {
+                applyViewportAnimations(postsGrid, newCards, 'abyss', false);
+            }
             
             // 图片懒加载
             lazyLoadImages(postsGrid);
@@ -356,13 +363,8 @@ export function createPostsView(currentUser, keyword = "") {
                 postsGrid.appendChild(card);
             });
             
-            // ✨ 应用深渊汇聚动画（仅首次加载）
-            if (!append && page === 1) {
-                const visibleCount = Math.min(cards.length, 8);
-                cards.forEach((card, index) => {
-                    applyCardAnimation(card, 'abyss', index, visibleCount);
-                });
-            }
+            // ✨ 应用视口感知动画：可见卡片依次错开汇聚，滚动/分页进入视口的卡片自动补播
+            applyViewportAnimations(postsGrid, cards, 'abyss', !append);
             
             // 🚀 图片懒加载
             lazyLoadImages(postsGrid);
@@ -426,11 +428,8 @@ export function createPostsView(currentUser, keyword = "") {
             postsGrid.appendChild(card);
         });
         
-        // ✨ 应用深渊汇聚动画
-        const visibleCount = Math.min(cards.length, 8);
-        cards.forEach((card, index) => {
-            applyCardAnimation(card, 'abyss', index, visibleCount);
-        });
+        // ✨ 应用视口感知动画
+        applyViewportAnimations(postsGrid, cards, 'abyss', true);
         
         // 🚀 图片懒加载
         lazyLoadImages(postsGrid);

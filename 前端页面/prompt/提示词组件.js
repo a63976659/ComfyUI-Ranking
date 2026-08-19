@@ -17,7 +17,7 @@
 import { api, proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { setCache, getCache, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
-import { applyCardAnimation } from "../components/动画音效引擎.js";
+import { applyViewportAnimations } from "../components/动画音效引擎.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
@@ -238,9 +238,17 @@ export function createPromptsView(currentUser, keyword = "") {
             let displayPrompts = prompts.filter(p => _matchesSearch(p, searchKeyword));
 
             // 渲染卡片
+            const newCards = [];
             displayPrompts.forEach(p => {
-                promptsGrid.appendChild(createPromptCard(p));
+                const card = createPromptCard(p);
+                newCards.push(card);
+                promptsGrid.appendChild(card);
             });
+
+            // ✨ 视口感知动画：追加卡片复用同一观察器
+            if (newCards.length > 0) {
+                applyViewportAnimations(promptsGrid, newCards, 'tetris', false);
+            }
 
             // 图片懒加载
             lazyLoadImages(promptsGrid);
@@ -420,13 +428,8 @@ export function createPromptsView(currentUser, keyword = "") {
                 promptsGrid.appendChild(card);
             });
 
-            // ✨ 应用堆积下坠动画（仅首次加载；prompts-grid 的 overflow-y:auto 会裁剪坠落起始段，卡片从容器上沿内侧滑入）
-            if (!append && page === 1) {
-                const visibleCount = Math.min(cards.length, 8);
-                cards.forEach((card, index) => {
-                    applyCardAnimation(card, 'tetris', index, visibleCount);
-                });
-            }
+            // ✨ 应用视口感知动画（prompts-grid 的 overflow-y:auto 会裁剪坠落起始段，卡片从容器上沿内侧滑入）；滚动/分页进入视口的卡片自动补播
+            applyViewportAnimations(promptsGrid, cards, 'tetris', !append);
 
             // 🚀 图片懒加载
             lazyLoadImages(promptsGrid);
@@ -489,11 +492,8 @@ export function createPromptsView(currentUser, keyword = "") {
             promptsGrid.appendChild(card);
         });
 
-        // ✨ 应用堆积下坠动画
-        const visibleCount = Math.min(cards.length, 8);
-        cards.forEach((card, index) => {
-            applyCardAnimation(card, 'tetris', index, visibleCount);
-        });
+        // ✨ 应用视口感知动画
+        applyViewportAnimations(promptsGrid, cards, 'tetris', true);
 
         // 🚀 图片懒加载
         lazyLoadImages(promptsGrid);

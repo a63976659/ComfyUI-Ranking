@@ -28,7 +28,7 @@ import {
     getCacheWithMeta,
     lazyLoadImages 
 } from "../components/性能优化工具.js";
-import { applyCardAnimation, getAnimationTypeForTab } from "../components/动画音效引擎.js";
+import { applyViewportAnimations, getAnimationTypeForTab } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 
 // 💬 讨论区组件（动态导入）
@@ -407,13 +407,8 @@ export async function loadSidebarContent({
         
         contentArea.appendChild(fragment);
         
-        // ✨ 应用动画（仅对首次渲染的可见卡片）
-        if (!append) {
-            const visibleCount = Math.min(cards.length, 12); // 只对前12张卡片播放动画
-            cards.forEach((card, index) => {
-                applyCardAnimation(card, animationType, index, visibleCount);
-            });
-        }
+        // ✨ 应用视口感知动画：可见卡片依次错开载入，滚动/分页进入视口的卡片自动补播动画
+        applyViewportAnimations(contentArea, cards, animationType, !append);
         
         // 对新渲染的图片启用懒加载
         lazyLoadImages(contentArea, "img:not(.lazy-loaded):not(.lazy-loading)");
