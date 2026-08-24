@@ -16,7 +16,7 @@
 
 import { api, proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { setCache, getCache, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
+import { setCache, getCacheWithMeta, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
 import { applyViewportAnimations } from "../components/动画音效引擎.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
@@ -24,10 +24,29 @@ import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具�
 
 // 缓存配置
 const CACHE_KEY_PREFIX = "PromptsCache";
+const CATEGORIES_CACHE_PREFIX = "PromptsCategoriesCache";  // 📴 分类缓存键前缀（离线容灾）
 const PAGE_SIZE = 20;
 
 // 缓存当前用户
 let currentUserCache = null;
+
+// 📴 分类同步中标记：防止多次切换重复发起长耗时请求
+let _categoriesSyncing = false;
+
+/**
+ * 📴 读取本地分类缓存（含过期缓存，离线容灾）
+ */
+function _loadCategoriesCache(type) {
+    const { value, found } = getCacheWithMeta(`${CATEGORIES_CACHE_PREFIX}_${type}`, true);
+    return (found && Array.isArray(value)) ? value : null;
+}
+
+/**
+ * 📴 持久化分类缓存
+ */
+function _saveCategoriesCache(type, list) {
+    setCache(`${CATEGORIES_CACHE_PREFIX}_${type}`, list, getCacheTTL(), true);
+}
 
 // 🔧 修复内存泄漏：保存当前筛选事件监听器引用，以便在重新创建时移除
 let currentFilterHandler = null;
@@ -207,19 +226,59 @@ export function createPromptsView(currentUser, keyword = "") {
         return chip;
     };
 
-    // 📥 加载分类并刷新列表
-    const loadCategoriesAndReload = async () => {
+    // 📥 后台同步分类（静默，不阻塞首屏；失败保留旧缓存）
+    const syncCategoriesInBackground = async () => {
+        const typeAtSync = currentType;
         try {
-            const res = await api.getPromptCategories(currentType);
-            categoriesCache = { type: currentType, list: res.data || res || [] };
+            const res = await api.getPromptCategories(typeAtSync);
+            const list = res.data || res || [];
+            // 期间若已切换模块，结果转存到对应模块缓存，并重新同步当前模块
+            // （同步标记保持 true，由递归链的 finally 统一释放，避免窗口期内重复发请求）
+            if (typeAtSync !== currentType) {
+                categoriesCache = { type: typeAtSync, list };
+                _saveCategoriesCache(typeAtSync, list);
+                syncCategoriesInBackground();
+                return;
+            }
+            categoriesCache = { type: typeAtSync, list };
+            _saveCategoriesCache(typeAtSync, list);
+            renderCategoryBar(list);
         } catch (err) {
-            console.warn("加载提示词分类失败:", err);
-            if (!categoriesCache || categoriesCache.type !== currentType) {
-                categoriesCache = { type: currentType, list: [] };
+            console.warn("后台更新提示词分类失败（保留本地缓存）:", err);
+        } finally {
+            if (typeAtSync === currentType) _categoriesSyncing = false;
+        }
+    };
+
+    // 📥 加载分类并刷新列表
+    // ⚡ 完全不阻塞首屏：按"内存缓存 → localStorage 缓存 → 空分类占位"取数，
+    // 立即渲染分类栏 + 立即加载列表，分类网络请求一律退到后台静默拉取，
+    // 保证断网/云端不通时首屏与子界面切换与其他榜单一样秒开
+    // （与插件榜/工作流/推荐榜/任务榜/讨论区的四态策略一致）
+    const loadCategoriesAndReload = () => {
+        let list = null;
+        // 1. 优先内存缓存（同模块重复进入/切换）
+        if (categoriesCache && categoriesCache.type === currentType) {
+            list = categoriesCache.list;
+        } else {
+            // 2. 其次 localStorage 缓存（重启后离线可用）
+            const stored = _loadCategoriesCache(currentType);
+            if (stored) {
+                categoriesCache = { type: currentType, list: stored };
+                list = stored;
             }
         }
-        renderCategoryBar(categoriesCache.list);
+        // 3. 无任何缓存：先渲染仅含"全部"的分类栏占位，后台拉取到分类后自动补全
+        if (!list) {
+            categoriesCache = { type: currentType, list: [] };
+            list = [];
+        }
+        renderCategoryBar(list);
         loadPrompts(1);
+        if (!_categoriesSyncing) {
+            _categoriesSyncing = true;
+            syncCategoriesInBackground();
+        }
     };
 
     // 🚀 自动分页加载回调
@@ -376,10 +435,10 @@ export function createPromptsView(currentUser, keyword = "") {
     const loadPrompts = async (page = 1, append = false) => {
         const cacheKey = getCacheKey();
 
-        // ✅ 优先从本地缓存读取
+        // ✅ 优先从本地缓存读取（含过期缓存：离线容灾，与插件榜/工作流/推荐榜策略一致）
         if (!append && page === 1) {
-            const cachedData = getCache(cacheKey);
-            if (cachedData && cachedData.length > 0) {
+            const { value: cachedData, found: hasCacheData } = getCacheWithMeta(cacheKey, true);
+            if (hasCacheData && cachedData && cachedData.length > 0) {
                 allPromptsData = proxyImages(cachedData);
                 renderPromptsFromCache(allPromptsData);
                 // 后台静默更新
@@ -451,10 +510,10 @@ export function createPromptsView(currentUser, keyword = "") {
         } catch (err) {
             console.error("加载提示词失败:", err);
             isLoadingFromNetwork = false;
-            // 网络失败时尝试从缓存读取
+            // 网络失败时尝试从缓存读取（包括过期缓存，离线容灾）
             if (!append) {
-                const cachedData = getCache(cacheKey);
-                if (cachedData && cachedData.length > 0) {
+                const { value: cachedData, found: hasCacheData } = getCacheWithMeta(cacheKey, true);
+                if (hasCacheData && cachedData && cachedData.length > 0) {
                     allPromptsData = proxyImages(cachedData);
                     renderPromptsFromCache(allPromptsData);
                     showToast(t('prompt.network_cache'), "warning");

@@ -29,21 +29,29 @@ const BANNER_CACHE_KEY = "ComfyRanking_BannerConfig";
 const BANNER_CACHE_TTL = 60 * 60 * 1000; // 1小时缓存
 
 /**
- * 从后端加载广告配置
- * @returns {Promise<Object|null>} 配置对象，失败返回 null
+ * 读取本地广告配置缓存（非破坏性，不删除过期数据）
+ * @returns {{ data: Object|null, fresh: boolean }} data 为缓存内容（无缓存为 null），fresh 表示是否仍在 TTL 内
  */
-async function loadBannerConfig() {
+function readBannerCache() {
     try {
-        // 1. 优先使用本地缓存
         const cached = localStorage.getItem(BANNER_CACHE_KEY);
         if (cached) {
             const { data, timestamp } = JSON.parse(cached);
-            if (Date.now() - timestamp < BANNER_CACHE_TTL) {
-                return data;
-            }
+            return { data: data || null, fresh: Date.now() - timestamp < BANNER_CACHE_TTL };
         }
+    } catch (parseErr) {
+        // 缓存数据损坏，清除
+        localStorage.removeItem(BANNER_CACHE_KEY);
+    }
+    return { data: null, fresh: false };
+}
 
-        // 2. 调用公开接口获取
+/**
+ * 后台静默同步广告配置：不阻塞首屏渲染
+ * 成功后更新缓存并刷新 DOM；失败时保留当前已展示的内容
+ */
+async function syncBannerInBackground() {
+    try {
         const res = await api.getPublicBannerConfig();
         if (res && res.status === "success") {
             if (res.data) {
@@ -52,27 +60,18 @@ async function loadBannerConfig() {
                     data: res.data,
                     timestamp: Date.now()
                 }));
+                activeConfig = { ...BANNER_CONFIG, ...res.data };
             } else {
                 // 广告已禁用，清除旧缓存避免显示过期内容
                 localStorage.removeItem(BANNER_CACHE_KEY);
+                activeConfig = { ...BANNER_CONFIG };
             }
-            return res.data;
+            updateBannerDOM();
         }
     } catch (e) {
-        console.warn("广告配置加载失败，尝试使用缓存", e);
-        // 网络失败时使用过期缓存降级
-        try {
-            const cached = localStorage.getItem(BANNER_CACHE_KEY);
-            if (cached) {
-                const { data } = JSON.parse(cached);
-                return data;
-            }
-        } catch (parseErr) {
-            // 缓存数据损坏，清除后返回 null
-            localStorage.removeItem(BANNER_CACHE_KEY);
-        }
+        // 网络失败：保留当前展示内容（首屏已由缓存或默认值渲染）
+        console.warn("后台更新广告配置失败（保留当前内容）:", e);
     }
-    return null;
 }
 
 /**
@@ -98,13 +97,18 @@ export function createTopBanner() {
     // 保存模块级引用
     bannerContainer = container;
 
-    // 异步加载配置并更新容器
-    loadBannerConfig().then(remoteConfig => {
-        if (remoteConfig) {
-            activeConfig = { ...BANNER_CONFIG, ...remoteConfig };
-        }
+    // ⚡ 完全不阻塞首屏：先读本地缓存（过期也立即使用）并立即渲染，
+    // 网络请求一律退到后台静默同步，保证断网/云端不通时横幅不受影响
+    // （与插件榜/提示词等榜单的缓存优先策略一致）
+    const { data: cachedData, fresh } = readBannerCache();
+    if (cachedData) {
+        activeConfig = { ...BANNER_CONFIG, ...cachedData };
         updateBannerDOM();
-    });
+    }
+    // 缓存新鲜则无需请求；过期或无缓存时后台静默同步
+    if (!fresh) {
+        syncBannerInBackground();
+    }
 
     return container;
 }

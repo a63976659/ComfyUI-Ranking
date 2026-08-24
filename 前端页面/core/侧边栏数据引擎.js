@@ -24,7 +24,6 @@ import {
     createPaginationLoader, 
     createSkeleton, 
     setCache, 
-    getCache,
     getCacheWithMeta,
     lazyLoadImages 
 } from "../components/性能优化工具.js";
@@ -522,8 +521,8 @@ export async function loadSidebarContent({
                         console.log(`✅ ${savedTab}_${savedSort} 检测到新数据，执行静默更新`);
                         state.allData = newData;
                         state.displayedCount = 0; // 重置分页计数
-                        const shouldPersist = savedTab !== "creators";
-                        setCache(cacheKey, newData, getCacheExpireTime(), shouldPersist);
+                        // 📴 持久化到 localStorage，保证重启后离线仍可展示
+                        setCache(cacheKey, newData, getCacheExpireTime(), true);
                         
                         // 更新创作者 sessionStorage 缓存
                         if (savedTab === "creators") {
@@ -540,8 +539,7 @@ export async function loadSidebarContent({
                         }
                     } else {
                         // 数据无变化，仅刷新缓存过期时间
-                        const shouldPersist = savedTab !== "creators";
-                        setCache(cacheKey, state.allData, getCacheExpireTime(), shouldPersist);
+                        setCache(cacheKey, state.allData, getCacheExpireTime(), true);
                     }
                 } catch (err) {
                     console.warn(`⚠️ ${savedTab}_${savedSort} 后台刷新失败:`, err);
@@ -576,9 +574,8 @@ export async function loadSidebarContent({
             _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
         }
         
-        // 存入当前排序的缓存（创作者数据不持久化到 localStorage）
-        const shouldPersist = tab !== "creators";
-        setCache(cacheKey, locallySorted, getCacheExpireTime(), shouldPersist);
+        // 存入当前排序的缓存（📴 创作者数据同样持久化到 localStorage，保证重启后离线可展示）
+        setCache(cacheKey, locallySorted, getCacheExpireTime(), true);
         
         return; // 本地排序后直接返回，不需要后台刷新（数据是同一批）
     }
@@ -614,11 +611,10 @@ export async function loadSidebarContent({
             }
         }
         
-        // 存入缓存（创作者数据不持久化到 localStorage，且搜索结果不存入缓存）
-        const shouldPersist = tab !== "creators";
+        // 存入缓存（📴 创作者数据同样持久化到 localStorage，保证重启后离线可展示；搜索结果不存入缓存）
         const isCreatorSearch = tab === "creators" && keyword;
         if (!isCreatorSearch) {
-            setCache(cacheKey, realData, getCacheExpireTime(), shouldPersist);
+            setCache(cacheKey, realData, getCacheExpireTime(), true);
         }
         
         // 创作者非搜索数据存入 sessionStorage（用于离线降级）
@@ -643,7 +639,9 @@ export async function loadSidebarContent({
         console.error("数据加载失败:", error);
         
         // 🚀 回退到任何可用缓存（包括过期的）
-        if (hasCacheData && cachedData) {
+        // 🔍 创作者Tab搜索场景跳过此分支：renderBatch 对创作者不做本地过滤，
+        // 直接渲染全量缓存会导致搜索结果未过滤，改由下方本地搜索降级分支处理
+        if (hasCacheData && cachedData && !(tab === "creators" && keyword)) {
             console.warn(`📴 网络失败，降级显示${isCacheExpired ? '过期' : ''}缓存`);
             state.allData = cachedData;
             renderBatch(cachedData.slice(0, pageSize), false);
@@ -667,11 +665,15 @@ export async function loadSidebarContent({
             if (state.allData && state.allData.length > 0) {
                 fallbackData = state.allData;
             }
-            // 2. 尝试从 sessionStorage 获取
+            // 2. 从本地列表缓存获取（含过期缓存，搜索结果不入库故不会污染）
+            if (!fallbackData && hasCacheData && cachedData) {
+                fallbackData = cachedData;
+            }
+            // 3. 尝试从 sessionStorage 获取
             if (!fallbackData) {
                 fallbackData = getCreatorsFromSessionStorage();
             }
-            // 3. 从其他排序状态获取
+            // 4. 从其他排序状态获取
             if (!fallbackData) {
                 fallbackData = findExistingTabData("creators");
             }
