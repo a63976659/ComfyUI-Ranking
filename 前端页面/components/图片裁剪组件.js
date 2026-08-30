@@ -14,6 +14,15 @@ function _clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
 }
 
+// 📱 触控设备检测（用于提示文案区分；优先 matchMedia 能力媒体查询，兼容实时仿真切换与无 ontouchstart 的浏览器）
+function _isTouchDevice() {
+    try {
+        if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+        if (window.matchMedia && window.matchMedia('(hover: none)').matches) return true;
+    } catch (e) { /* 降级到下方检测 */ }
+    return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+}
+
 /**
  * 创建图片裁剪弹窗
  * @param {File} file - 要裁剪的图片文件
@@ -50,9 +59,11 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
         let ratioText = '16:9';
         if (aspectRatio === 1) ratioText = '1:1';
         else if (aspectRatio < 1) ratioText = '9:16';
+        // 📱 触控设备与鼠标设备的操作提示区分（移动端无滚轮/拖动概念）
+        const gestureHint = _isTouchDevice() ? '单指拖动调整位置 | 双指捏合或滑块缩放' : '拖动调整位置 | 滚轮缩放';
         header.innerHTML = `
             <span style="font-size: 16px; font-weight: bold; color: #fff;">✂️ ${title}</span>
-            <span style="font-size: 12px; color: #888;">比例 ${ratioText} | 拖动调整位置 | 滚轮缩放</span>
+            <span style="font-size: 12px; color: #888;">比例 ${ratioText} | ${gestureHint}</span>
         `;
 
         // 裁剪区域容器
@@ -74,7 +85,9 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
         Object.assign(cropContainer.style, {
             width: `${containerWidth}px`, height: `${containerHeight}px`,
             position: "relative", overflow: "hidden", borderRadius: "8px",
-            background: "#1a1a1a", border: "2px solid #4CAF50", cursor: "move"
+            background: "#1a1a1a", border: "2px solid #4CAF50", cursor: "move",
+            // 📱 禁止浏览器接管触摸手势（页面滚动/双指缩放页面），交由裁剪组件自行处理
+            touchAction: "none"
         });
 
         // 图片元素
@@ -183,6 +196,93 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
             updateImagePosition();
         };
 
+        // 📱 触控支持：单指拖动 + 双指捏合缩放（移动端无鼠标事件与滚轮）
+        let pinchStartDist = 0;
+        let pinchStartScale = 1;
+        let pinchCenterX = 0;
+        let pinchCenterY = 0;
+        let pinchStartOffsetX = 0;
+        let pinchStartOffsetY = 0;
+
+        // 获取缩放边界（与滚轮缩放共用同一规则）
+        function _getScaleLimits() {
+            const minScaleX = containerWidth / imgNaturalWidth;
+            const minScaleY = containerHeight / imgNaturalHeight;
+            const minScale = Math.max(minScaleX, minScaleY);
+            return { minScale, maxScale: minScale * 5 };
+        }
+
+        function _getTouchMidPoint(touches) {
+            return {
+                x: (touches[0].clientX + touches[1].clientX) / 2,
+                y: (touches[0].clientY + touches[1].clientY) / 2
+            };
+        }
+
+        function _getTouchDistance(touches) {
+            const dx = touches[0].clientX - touches[1].clientX;
+            const dy = touches[0].clientY - touches[1].clientY;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        function handleTouchStart(e) {
+            if (e.touches.length === 1) {
+                isDragging = true;
+                dragStartX = e.touches[0].clientX - offsetX;
+                dragStartY = e.touches[0].clientY - offsetY;
+            } else if (e.touches.length === 2) {
+                isDragging = false;
+                pinchStartDist = _getTouchDistance(e.touches);
+                pinchStartScale = scale;
+                const mid = _getTouchMidPoint(e.touches);
+                pinchCenterX = mid.x;
+                pinchCenterY = mid.y;
+                pinchStartOffsetX = offsetX;
+                pinchStartOffsetY = offsetY;
+            }
+            e.preventDefault();
+        }
+
+        function handleTouchMove(e) {
+            if (e.touches.length === 1 && isDragging) {
+                // 单指拖动
+                offsetX = e.touches[0].clientX - dragStartX;
+                offsetY = e.touches[0].clientY - dragStartY;
+                updateImagePosition();
+            } else if (e.touches.length === 2 && pinchStartDist > 0) {
+                // 双指捏合缩放（以两指中点为锚点，图片跟随手指中心移动）
+                const { minScale, maxScale } = _getScaleLimits();
+                const newScale = _clamp(pinchStartScale * (_getTouchDistance(e.touches) / pinchStartDist), minScale, maxScale);
+                const ratio = newScale / pinchStartScale;
+                const mid = _getTouchMidPoint(e.touches);
+                const centerX = containerWidth / 2;
+                const centerY = containerHeight / 2;
+                offsetX = (mid.x - pinchCenterX) + (pinchStartOffsetX - (centerX - pinchCenterX)) * ratio + (centerX - pinchCenterX);
+                offsetY = (mid.y - pinchCenterY) + (pinchStartOffsetY - (centerY - pinchCenterY)) * ratio + (centerY - pinchCenterY);
+                scale = newScale;
+                updateImagePosition();
+            }
+            e.preventDefault();
+        }
+
+        function handleTouchEnd(e) {
+            if (e.touches.length === 0) {
+                isDragging = false;
+                pinchStartDist = 0;
+            } else if (e.touches.length === 1) {
+                // 双指抬起剩单指：切换为拖动模式，避免图片跳变
+                pinchStartDist = 0;
+                isDragging = true;
+                dragStartX = e.touches[0].clientX - offsetX;
+                dragStartY = e.touches[0].clientY - offsetY;
+            }
+        }
+
+        cropContainer.addEventListener("touchstart", handleTouchStart, { passive: false });
+        cropContainer.addEventListener("touchmove", handleTouchMove, { passive: false });
+        cropContainer.addEventListener("touchend", handleTouchEnd);
+        cropContainer.addEventListener("touchcancel", handleTouchEnd);
+
         // 缩放滑块
         const sliderContainer = document.createElement("div");
         Object.assign(sliderContainer.style, {
@@ -261,6 +361,10 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
             document.removeEventListener("mousemove", handleMouseMove);
             document.removeEventListener("mouseup", handleMouseUp);
             document.removeEventListener("keydown", handleKeyDown);
+            cropContainer.removeEventListener("touchstart", handleTouchStart);
+            cropContainer.removeEventListener("touchmove", handleTouchMove);
+            cropContainer.removeEventListener("touchend", handleTouchEnd);
+            cropContainer.removeEventListener("touchcancel", handleTouchEnd);
             overlay.remove();
         }
 

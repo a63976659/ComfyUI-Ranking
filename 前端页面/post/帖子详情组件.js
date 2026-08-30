@@ -16,7 +16,7 @@ import { getVideoPlayerHTML, setupVideoPlayerEvents, cleanupVideoPlayer } from "
 import { renderTipLevelHTML } from "../components/打赏等级工具.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t } from "../components/用户体验增强.js";
-import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR, IS_WEB_MODE } from "../core/全局配置.js";
 import { removeCache, findInListCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml, formatTime } from "../components/互动工具函数.js";  // 🧹 P2归一：局部 formatTime 已移除
@@ -198,7 +198,7 @@ async function loadPostDetail(container, postId, currentUser) {
                 </div>
                 ${currentUser && currentUser.account === post.author ? `
                 <div style="display: flex; gap: 8px;" onclick="event.stopPropagation()">
-                    <button id="btn-edit-post" style="background: #2196F3; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="${t('common.edit')}">✏️</button>
+                    ${IS_WEB_MODE ? '' : `<button id="btn-edit-post" style="background: #2196F3; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="${t('common.edit')}">✏️</button>`}
                     <button id="btn-delete-post" style="background: #F44336; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="${t('common.delete')}">🗑️</button>
                 </div>
                 ` : ''}

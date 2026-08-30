@@ -15,7 +15,7 @@ import { loadSidebarContent } from "./侧边栏数据引擎.js";
 import { createItemDetailView } from "../market/资源详情页面组件.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { api } from "./网络请求API.js";  // 🔴 编辑模式需调用详情API获取完整数据
-import { CACHE, getBackgroundKey } from "./全局配置.js";
+import { CACHE, getBackgroundKey, IS_WEB_MODE } from "./全局配置.js";
 import { debounce } from "../components/性能优化工具.js";
 import { cleanupImageSandbox } from "../components/图片沙盒组件.js";  // 🔧 P3优化：导入清理函数
 import { getVersionConfig, formatVersionString } from "../components/关于插件组件.js";  // 🏷️ 动态版本号
@@ -53,10 +53,21 @@ const Store = {
 };
 
 // 工具背景图本地存储管理（账号隔离）
+// 📱 移动端适配：iOS 隐私模式/存储压力下 localStorage 写入会抛异常，写入/删除均做兜底（与个人设置表单写法一致）
 const BackgroundStore = {
-    save(base64) { localStorage.setItem(getBackgroundKey(), base64); },
+    save(base64) {
+        try {
+            localStorage.setItem(getBackgroundKey(), base64);
+        } catch (e) {
+            console.warn("⚠️ 界面背景保存失败（存储空间不足或不可用）:", e.message);
+        }
+    },
     load() { return localStorage.getItem(getBackgroundKey()) || null; },
-    clear() { localStorage.removeItem(getBackgroundKey()); }
+    clear() {
+        try {
+            localStorage.removeItem(getBackgroundKey());
+        } catch (e) { /* 静默兜底 */ }
+    }
 };
 
 // 🔧 P1修复：window 监听注册表（语言切换会重建 buildSidebarDOM，需先移除旧监听防止累积泄漏）
@@ -158,6 +169,12 @@ export function buildSidebarDOM() {
         <input type="text" id="hub-search-input" autocomplete="off" placeholder="🔍 ${t('common.search')}..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
         <button id="btn-open-publish" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">➕ ${t('market.publish')}</button>
     `;
+
+    // 📱 Web 模式：隐藏发布入口（网页版不支持发布族功能，编辑路由监听处另有中央兜底）
+    if (IS_WEB_MODE) {
+        const publishBtn = sortContainer.querySelector("#btn-open-publish");
+        if (publishBtn) publishBtn.style.display = "none";
+    }
 
     const contentBoxWrapper = document.createElement("div");
     Object.assign(contentBoxWrapper.style, { flex: "1", minHeight: "0", padding: "0 10px 10px 10px", display: "flex", flexDirection: "column" });
@@ -282,6 +299,8 @@ export function buildSidebarDOM() {
     // 监听进入修改编辑页面的请求
     // 🔴 修复：编辑时先获取详情API数据，确保 has_private_token 等字段完整（列表缓存可能缺少该字段）
     _onSidebarWindow("comfy-route-edit-publish", async (e) => {
+        // 📱 Web 模式中央兜底：发布族功能仅本地 ComfyUI 可用
+        if (IS_WEB_MODE) return showToast("⚠️ 网页版暂不支持发布/编辑功能", "warning");
         const { itemData, currentUser } = e.detail;
 
         // 先展示加载状态，避免用户感知延迟
@@ -312,6 +331,7 @@ export function buildSidebarDOM() {
 
     // 监听进入任务编辑页面的请求
     _onSidebarWindow("comfy-route-edit-task", (e) => {
+        if (IS_WEB_MODE) return showToast("⚠️ 网页版暂不支持发布/编辑功能", "warning");
         const { taskData, currentUser } = e.detail;
         try {
             const view = createPublishTaskView(currentUser, taskData);
@@ -323,6 +343,7 @@ export function buildSidebarDOM() {
 
     // 监听进入帖子编辑页面的请求
     _onSidebarWindow("comfy-route-edit-post", (e) => {
+        if (IS_WEB_MODE) return showToast("⚠️ 网页版暂不支持发布/编辑功能", "warning");
         const { postData, currentUser } = e.detail;
         const view = createPublishPostView(currentUser, postData);
         showInlineView(view);
@@ -330,6 +351,7 @@ export function buildSidebarDOM() {
 
     // 监听进入提示词编辑页面的请求
     _onSidebarWindow("comfy-route-edit-prompt", (e) => {
+        if (IS_WEB_MODE) return showToast("⚠️ 网页版暂不支持发布/编辑功能", "warning");
         const { promptData, currentUser } = e.detail;
         const view = createPublishPromptView(currentUser, promptData);
         showInlineView(view);
@@ -535,6 +557,8 @@ export function buildSidebarDOM() {
         const postsSortSelect = sortContainer.querySelector("#posts-sort-select");
         const promptsSortSelect = sortContainer.querySelector("#prompts-sort-select");
         const publishBtn = sortContainer.querySelector("#btn-open-publish");
+        // 📱 Web 模式：发布按钮全程隐藏（初始化与切Tab均不恢复显示）
+        const publishDisplay = IS_WEB_MODE ? "none" : "block";
         
         if (tabId === "tasks") {
             // 任务榜：隐藏通用排序，显示任务筛选
@@ -543,7 +567,7 @@ export function buildSidebarDOM() {
             promptsSortSelect.style.display = "none";
             taskStatusFilter.style.display = "block";
             taskSortSelect.style.display = "block";
-            publishBtn.style.display = "block";
+            publishBtn.style.display = publishDisplay;
         } else if (tabId === "creators") {
             // 🎯 创作者界面：隐藏发布按钮，隐藏评分排序（创作者无评分）
             hubSortSelect.style.display = "block";
@@ -562,7 +586,7 @@ export function buildSidebarDOM() {
             promptsSortSelect.style.display = "none";
             taskStatusFilter.style.display = "none";
             taskSortSelect.style.display = "none";
-            publishBtn.style.display = "block";
+            publishBtn.style.display = publishDisplay;
         } else if (tabId === "prompts") {
             // 🧩 提示词：显示提示词排序，隐藏其他所有排序筛选
             hubSortSelect.style.display = "none";
@@ -570,7 +594,7 @@ export function buildSidebarDOM() {
             promptsSortSelect.style.display = "block";
             taskStatusFilter.style.display = "none";
             taskSortSelect.style.display = "none";
-            publishBtn.style.display = "block";
+            publishBtn.style.display = publishDisplay;
         } else {
             // 其他Tab：显示通用排序，隐藏任务筛选和讨论区排序
             hubSortSelect.style.display = "block";
@@ -578,7 +602,7 @@ export function buildSidebarDOM() {
             promptsSortSelect.style.display = "none";
             taskStatusFilter.style.display = "none";
             taskSortSelect.style.display = "none";
-            publishBtn.style.display = "block";
+            publishBtn.style.display = publishDisplay;
             const ratingOpt = hubSortSelect.querySelector('option[value="rating"]');
             if (ratingOpt) ratingOpt.style.display = "";
         }

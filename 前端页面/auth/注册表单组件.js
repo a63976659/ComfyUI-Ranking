@@ -2,6 +2,7 @@ import { api } from "../core/网络请求API.js";
 import { regionData, getSortedCountries } from "./国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
+import { openImageCropper } from "../components/图片裁剪组件.js";
 import { PLACEHOLDERS } from "../core/全局配置.js";
 
 const INPUT_STYLE = 'width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;';
@@ -106,22 +107,33 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
     let selectedAvatarFile = null;
     genderSelect.onchange = (e) => { if (!selectedAvatarFile) avatarPreview.src = DEFAULT_AVATAR; };
 
-    avatarInput.onchange = (e) => {
+    avatarInput.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        if (file.size > 3 * 1024 * 1024) { 
-            avatarError.style.display = "block"; 
-            avatarInput.value = ""; 
-            selectedAvatarFile = null; 
-            avatarPreview.src = DEFAULT_AVATAR; 
+        // 📱 移动端适配：手机拍照原图普遍超过 3MB，不再用原始大小拦截，
+        // 统一先走 1:1 裁剪压缩管线（输出 ≤512×512 JPG），与个人设置头像链路一致；
+        // 用户取消裁剪时静默还原默认头像预览。
+        avatarInput.value = "";
+        let croppedFile;
+        try {
+            croppedFile = await openImageCropper(file, 1, t('auth.avatar'), 1);
+        } catch (err) {
             showToast(t('auth.file_too_large'), "warning");
-            return; 
+            selectedAvatarFile = null;
+            avatarPreview.src = DEFAULT_AVATAR;
+            return;
+        }
+        if (!croppedFile) {
+            selectedAvatarFile = null;
+            avatarPreview.src = DEFAULT_AVATAR;
+            return;
         }
         avatarError.style.display = "none"; 
-        selectedAvatarFile = file; 
+        selectedAvatarFile = croppedFile; 
         const reader = new FileReader(); 
         reader.onload = (event) => avatarPreview.src = event.target.result; 
-        reader.readAsDataURL(file);
+        reader.onerror = () => showToast(t('auth.file_too_large'), "warning");
+        reader.readAsDataURL(croppedFile);
     };
 
     container.querySelector("#toggle-to-login").onclick = (e) => { e.preventDefault(); switchView("login"); };

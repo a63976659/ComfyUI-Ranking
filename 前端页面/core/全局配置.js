@@ -293,6 +293,15 @@ export const FEATURES = {
 
 
 // ==========================================
+// 🌐 运行环境开关
+// ==========================================
+// 移动端网页版运行时开关：Web 引导页（云端Space代码/移动端网页/index.html）
+// 在模块求值前置位 window.__RANKING_WEB_MODE__ = true；ComfyUI 环境不置位，恒为 false，
+// 本地侧边栏行为零变化。所有「仅本地可用」功能的门控均以此为准
+export const IS_WEB_MODE = typeof window !== "undefined" && window.__RANKING_WEB_MODE__ === true;
+
+
+// ==========================================
 // 📊 统计埋点配置（预留）
 // ==========================================
 export const ANALYTICS = {
@@ -551,6 +560,7 @@ export default {
     UI,
     VALIDATION,
     FEATURES,
+    IS_WEB_MODE,
     ANALYTICS,
     LINKS,
     getApiUrl,

@@ -8,7 +8,7 @@
 import { api, proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
-import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR, isAdmin } from "../core/全局配置.js";
+import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR, isAdmin, IS_WEB_MODE } from "../core/全局配置.js";
 import { removeCache, findInListCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
@@ -196,7 +196,7 @@ function renderTaskDetail(contentEl, task, currentUser) {
             </div>
             ${isPublisher && ["open", "in_progress", "submitted"].includes(task.status) ? `
             <div style="display: flex; gap: 8px;">
-                <button id="btn-edit-task" style="background: #2196F3; border: none; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;" title="${t('common.edit')}">✏️ ${t('common.edit')}</button>
+                ${IS_WEB_MODE ? '' : `<button id="btn-edit-task" style="background: #2196F3; border: none; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;" title="${t('common.edit')}">✏️ ${t('common.edit')}</button>`}
                 ${task.status === "open" ? `
                 <button id="btn-delete-task" style="background: #F44336; border: none; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;" title="${t('common.delete')}">🗑️ ${t('common.delete')}</button>
                 ` : ''}

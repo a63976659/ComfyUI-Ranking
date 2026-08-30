@@ -5,7 +5,7 @@
 // 作用：处理图片URL的本地代理转换，支持入口清洗和出口剥离
 // ==========================================
 
-import { API } from './全局配置.js';
+import { API, IS_WEB_MODE } from './全局配置.js';
 
 // 🟢 入口清洗：接收云端数据时，转换为本地代理，并带【自愈机制】清理被污染的历史数据
 // 🚀 统一缓存：所有头像字段都走同一个缓存代理，无需重复下载
@@ -54,7 +54,8 @@ export function proxyImages(obj) {
 
                 // 只有最终剥离出来的确实是外部网络链接（包括云端代理URL），才挂上本地缓存代理
                 if (originalUrl.startsWith('http')) {
-                    obj[key] = `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
+                    // 📱 Web 模式：同源/直链可直接加载，不挂本地代理前缀
+                    obj[key] = IS_WEB_MODE ? originalUrl : `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
                 } else {
                     obj[key] = originalUrl;
                 }
@@ -63,7 +64,7 @@ export function proxyImages(obj) {
                 let originalUrl = _unwrapProxy(obj[key], '/community_hub/video?url=');
                 // 只有外部网络链接才挂上本地视频缓存代理
                 if (originalUrl.startsWith('http')) {
-                    obj[key] = `/community_hub/video?url=${encodeURIComponent(originalUrl)}`;
+                    obj[key] = IS_WEB_MODE ? originalUrl : `/community_hub/video?url=${encodeURIComponent(originalUrl)}`;
                 } else if (originalUrl && !originalUrl.startsWith('/') && !originalUrl.startsWith('data:')) {
                     // 🎬 相对路径（如 uploads/post_video/...）
                     // 离线时不构造远程 URL，保持原样让浏览器从当前域尝试加载
@@ -71,7 +72,8 @@ export function proxyImages(obj) {
                         obj[key] = originalUrl;
                     } else {
                         const fullUrl = `${API.BASE_URL}/api/image_proxy?path=${encodeURIComponent(originalUrl)}`;
-                        obj[key] = `/community_hub/video?url=${encodeURIComponent(fullUrl)}`;
+                        // 📱 Web 模式：同源直接走云端代理接口，无需本地视频代理中转
+                        obj[key] = IS_WEB_MODE ? fullUrl : `/community_hub/video?url=${encodeURIComponent(fullUrl)}`;
                     }
                 } else {
                     obj[key] = originalUrl;
@@ -83,7 +85,7 @@ export function proxyImages(obj) {
                         let originalUrl = _unwrapProxy(url, '/community_hub/image?url=');
                         // 只有外部网络链接（包括云端代理URL）才挂上本地缓存代理
                         if (originalUrl.startsWith('http')) {
-                            return `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
+                            return IS_WEB_MODE ? originalUrl : `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
                         }
                         return originalUrl;
                     }

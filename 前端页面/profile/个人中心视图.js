@@ -12,7 +12,7 @@ import { openRechargeModal } from "../market/资金与钱包_充值组件.js";
 import { openWithdrawModal } from "../market/资金与钱包_提现组件.js"; 
 import { buildProfileHTML } from "./个人中心_UI模板.js";   
 import { openTipModal } from "./个人中心_赞赏组件.js";     
-import { getBannerCacheKey, getCurrentAccount } from "../core/全局配置.js";
+import { getBannerCacheKey, getCurrentAccount, IS_WEB_MODE } from "../core/全局配置.js";
 import { logoutAndClearUserData } from "../core/状态管理.js";
 
 
@@ -33,7 +33,8 @@ async function syncBannerCache(account, bannerUrl) {
         // 处理代理 URL（云端 URL 可能需要通过本地代理访问）
         let fetchUrl = bannerUrl;
         if (bannerUrl.startsWith('http') && !bannerUrl.includes('/community_hub/image')) {
-            fetchUrl = `/community_hub/image?url=${encodeURIComponent(bannerUrl)}`;
+            // 📱 Web 模式：同源/直链可直接 fetch，无需本地代理中转
+            if (!IS_WEB_MODE) fetchUrl = `/community_hub/image?url=${encodeURIComponent(bannerUrl)}`;
         }
         
         const response = await fetch(fetchUrl);

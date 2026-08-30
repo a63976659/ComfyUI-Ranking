@@ -10,6 +10,7 @@
 // ==========================================
 
 import { api, proxyImages } from "../core/网络请求API.js";
+import { IS_WEB_MODE } from "../core/全局配置.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 import { setupResourceInstall } from "./资源安装引擎.js";
 import { renderTipBoardHTML } from "../components/打赏等级工具.js";
@@ -364,7 +365,10 @@ export function createItemDetailView(itemData, currentUser) {
     }
 
     let actionBtnHtml = '';
-    if (!isUpdateAvailable && localVersionHash) {
+    if (IS_WEB_MODE) {
+        // 📱 Web 模式：保留「立即获取」按钮但行为受限（未购买仅触发购买、已购买提示电脑端安装，见资源安装引擎）；不渲染重装/更新按钮
+        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: none; background: #2196F3; color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">⬇️ ${t('item.get_now')} <span style="font-size: 12px; font-weight: normal; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px;">${isFree ? t('item.free') : itemData.price + ' ' + t('common.credits')}</span></button>`;
+    } else if (!isUpdateAvailable && localVersionHash) {
         actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: none; background: #4CAF50; color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">✅ ${t('item.owned_reinstall')}</button>`;
     } else if (isUpdateAvailable) {
         actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: 1px solid #FF9800; background: rgba(255, 152, 0, 0.2); color: #FF9800; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);" onmouseover="this.style.background='#FF9800'; this.style.color='#fff'" onmouseout="this.style.background='rgba(255, 152, 0, 0.2)'; this.style.color='#FF9800'">♻️ ${t('item.update_available')}</button>`;
@@ -446,7 +450,8 @@ export function createItemDetailView(itemData, currentUser) {
             const btnUseItem = container.querySelector("#btn-use-item");
             if (!btnUseItem) return;
             if (res.owned) {
-                btnUseItem.innerHTML = `✅ ${t('item.owned_reinstall')}`;
+                // 📱 Web 模式无本地重装概念，文案改为「已购买」
+                btnUseItem.innerHTML = `✅ ${t(IS_WEB_MODE ? 'item.owned_purchased' : 'item.owned_reinstall')}`;
                 Object.assign(btnUseItem.style, {
                     background: "#4CAF50",
                     color: "#fff",

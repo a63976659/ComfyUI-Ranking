@@ -343,18 +343,18 @@ async function request(endpoint, options = {}) {
                     (error instanceof TypeError && error.message.includes('fetch'))  // 网络错误
                 );
                 
-                if (isRetryable && attempt < maxRetries) {
-                    lastError = error;
-                    continue;  // 重试
+                if (isRetryable) {
+                    // 🔧 修复：重试耗尽时不再直接 throw（否则循环后的「过期缓存兜底」
+                    // 分支永远不可达，断网时无法无缝切换本地数据）。记录友好错误后跳出循环，
+                    // 让 GET 请求走过期缓存回退；无缓存时仍以该友好错误抛出。
+                    lastError = error.name === 'AbortError'
+                        ? new Error('网络请求超时，请检查网络连接')
+                        : new Error('网络连接失败，请检查网络');
+                    if (attempt < maxRetries) continue;  // 重试
+                    break;  // 重试耗尽 → 跳到过期缓存兜底
                 }
                 
-                // 🔧 P3优化：错误分类处理，提供更清晰的错误信息
-                if (error.name === 'AbortError') {
-                    throw new Error('网络请求超时，请检查网络连接');
-                }
-                if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('Failed to fetch'))) {
-                    throw new Error('网络连接失败，请检查网络');
-                }
+                // 🔧 P3优化：错误分类处理，提供更清晰的错误信息（不可重试错误直接抛出）
                 if (error instanceof SyntaxError) {
                     throw new Error('服务器响应格式错误');
                 }

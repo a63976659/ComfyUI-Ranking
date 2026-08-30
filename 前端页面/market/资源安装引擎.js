@@ -1,10 +1,22 @@
 // 前端页面/market/资源安装引擎.js
-import { app } from "../../../scripts/app.js"; 
 import { showToast, showConfirm, createInstallProgress } from "../components/UI交互提示组件.js";
 import { api } from "../core/网络请求API.js";
 import { requestSSE, request } from "../core/网络请求_基础设施.js";
 import { openUserProfileModal } from "../profile/个人中心视图.js";
-import { API, CACHE } from "../core/全局配置.js";
+import { API, CACHE, IS_WEB_MODE } from "../core/全局配置.js";
+
+// 📱 Web 模式兼容：ComfyUI 的 app 对象仅存在于本地环境，改为受保护动态导入
+// （Web 模式不暴露安装/下载入口，不会走到此路径；万一走到也不抛错）
+async function _loadGraphToCanvas(graphData) {
+    try {
+        const { app } = await import("../../../scripts/app.js");
+        app.loadGraphData(graphData);
+        return true;
+    } catch (e) {
+        console.warn("当前环境不支持加载工作流到画布:", e);
+        return false;
+    }
+}
 import { removeCache } from "../components/性能优化工具.js";
 
 // ==========================================
@@ -185,6 +197,19 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
         const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool';
         const isApp = itemData.type === 'app' || itemData.type === 'recommend_app';
 
+        // 📱 Web 模式：不支持下载/安装。免费（含作者本人）或已购买 → 仅提醒电脑端安装；未购买 → 放行到下方纯购买流程
+        if (IS_WEB_MODE) {
+            if (isFree) return showToast("请在电脑端进行安装", "warning");
+            let webOwned = false;
+            try {
+                const st = await api.getPurchaseStatus(currentUser.account, itemData.id);
+                webOwned = !!(st && st.owned);
+            } catch (e) {
+                console.warn('购买状态查询失败，继续购买流程', e);
+            }
+            if (webOwned) return showToast("请在电脑端进行安装", "warning");
+        }
+
         // 记录是否已经拥有，决定是否涨销量
         let alreadyOwned = false;
 
@@ -308,6 +333,16 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 showToast("获取失败：" + err.message, "error");
                 return;
             }
+        }
+
+        // 📱 Web 模式：购买完成即止，不进入任何下载/安装/网盘交付分支
+        if (IS_WEB_MODE) {
+            inlineStatusBox.style.display = "block";
+            inlineStatusBox.innerHTML = alreadyOwned
+                ? `<span style="color: #4CAF50;">✅ 您已购买过此资源，请在电脑端进行安装。</span>`
+                : `<span style="color: #4CAF50;">✅ 购买成功！请在电脑端进行安装。</span>`;
+            showToast("请在电脑端进行安装", "info");
+            return;
         }
 
         // ☁️ 优先处理网盘资源（不论是工具还是应用）
@@ -461,7 +496,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
 
                 if (result.status === "success") {
                     progress.complete(result.message);
-                    app.loadGraphData(result.data);
+                    await _loadGraphToCanvas(result.data);
                     showToast(`✅ 工作流 [${itemData.title}] 已成功加载到画布！`, "success");
 
                     // 🚀 安装成功后，盖上本地版本戳
@@ -513,7 +548,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${data.error}</span>`;
                         showToast(`工作流加载失败：${data.error}`, "error");
                     } else {
-                        app.loadGraphData(data.data);
+                        await _loadGraphToCanvas(data.data);
                         inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-weight: bold;">✅ 工作流已加载到画布！</div><div style="color: #888; margin-top: 4px;">由于本地节点差异可能出现飘红，请使用管理器补全节点。</div>`;
                         showToast(`✅ 工作流 [${itemData.title}] 已成功加载到画布！`, "success");
 

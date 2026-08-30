@@ -11,6 +11,7 @@
 import { showToast } from "./UI交互提示组件.js";
 import { setLanguage, getLanguage, t } from "./用户体验增强.js";
 import { clearAllCache } from "./性能优化工具.js";
+import { IS_WEB_MODE } from "../core/全局配置.js";
 
 // 🔧 设置项 localStorage Key
 const SETTINGS_KEY = "ComfyCommunity_Settings";
@@ -362,8 +363,8 @@ export function createSettingsView() {
                 </div>
                 <div style="display: flex; gap: 10px; width: 100%; flex-wrap: wrap;">
                     <button id="btn-clear-browser-cache" class="cache-clear-btn">${t('settings.clear_browser_cache')}</button>
-                    <button id="btn-clear-disk-cache" class="cache-clear-btn">${t('settings.clear_disk_cache')}</button>
-                    <button id="btn-clear-all-cache" class="cache-clear-btn">${t('settings.clear_all_cache')}</button>
+                    ${IS_WEB_MODE ? '' : `<button id="btn-clear-disk-cache" class="cache-clear-btn">${t('settings.clear_disk_cache')}</button>
+                    <button id="btn-clear-all-cache" class="cache-clear-btn">${t('settings.clear_all_cache')}</button>`}
                 </div>
             </div>
             
@@ -510,6 +511,16 @@ export function createSettingsView() {
     const cacheStatsPanel = container.querySelector("#cache-stats-panel");
     
     async function loadCacheStats() {
+        // 📱 Web 模式：无本地磁盘缓存，仅统计浏览器缓存
+        if (IS_WEB_MODE) {
+            const browserStats = getBrowserCacheStats();
+            cacheStatsPanel.innerHTML = `
+                <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #aaa; font-size: 13px;">
+                    <span style="color: #ccc;">${t('settings.cache_browser')}：</span>${browserStats.count} ${t('settings.files')} · ${formatSize(browserStats.totalSize)}
+                </div>
+            `;
+            return;
+        }
         try {
             const [diskRes, browserStats] = await Promise.all([
                 fetch("/community_hub/cache/stats").then(r => r.ok ? r.json() : null).catch(() => null),
@@ -587,8 +598,8 @@ export function createSettingsView() {
     }
     
     btnClearBrowser.onclick = () => handleClearCache(btnClearBrowser, 'browser');
-    btnClearDisk.onclick = () => handleClearCache(btnClearDisk, 'disk');
-    btnClearAll.onclick = () => handleClearCache(btnClearAll, 'all');
+    if (btnClearDisk) btnClearDisk.onclick = () => handleClearCache(btnClearDisk, 'disk');
+    if (btnClearAll) btnClearAll.onclick = () => handleClearCache(btnClearAll, 'all');
     
     // 进入设置页时自动加载缓存统计
     loadCacheStats();

@@ -9,7 +9,7 @@ import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t, getLanguage } from "../components/用户体验增强.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
-import { setCache, getCache, removeCache, createSkeleton } from "../components/性能优化工具.js";
+import { setCache, getCacheWithMeta, removeCache, createSkeleton } from "../components/性能优化工具.js";
 
 const escapeHtml = (str) => {
     if (!str) return '';
@@ -145,8 +145,8 @@ async function renderDisputeList(container, currentUser, statusFilter = null) {
         };
     });
 
-    // 🚀 缓存优先策略：尝试从缓存加载
-    const cachedData = getCache(CACHE_KEY);
+    // 🚀 缓存优先策略：尝试从缓存加载（含过期缓存：离线容灾，与榜单/讨论区/任务榜一致）
+    const { value: cachedData } = getCacheWithMeta(CACHE_KEY, true);
     
     if (cachedData && cachedData.length > 0) {
         // 有缓存，先显示缓存数据

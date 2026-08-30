@@ -8,7 +8,7 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t, getLanguage } from "../components/用户体验增强.js";
-import { isAdmin } from "../core/全局配置.js";
+import { isAdmin, IS_WEB_MODE } from "../core/全局配置.js";
 
 /**
  * 创建申诉详情视图
@@ -118,14 +118,14 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
         <div class="dispute-section">
             <div class="dispute-section-title"><span class="icon">👥</span> ${t('dispute.parties')}</div>
             <div class="dispute-party">
-                <img class="dispute-party-avatar" src="${dispute.publisher_avatar || '/community_hub/image?url=https://api.dicebear.com/7.x/avataaars/svg'}" alt="">
+                <img class="dispute-party-avatar" src="${dispute.publisher_avatar || (IS_WEB_MODE ? 'https://api.dicebear.com/7.x/avataaars/svg' : '/community_hub/image?url=https://api.dicebear.com/7.x/avataaars/svg')}" alt="">
                 <div class="dispute-party-info">
                     <div class="dispute-party-name">${dispute.publisher_name || dispute.publisher}</div>
                     <div class="dispute-party-role">${t('dispute.publisher')} ${dispute.initiator_role === "publisher" ? `（${t('dispute.initiator')}）` : `（${t('dispute.respondent')}）`}</div>
                 </div>
             </div>
             <div class="dispute-party">
-                <img class="dispute-party-avatar" src="${dispute.assignee_avatar || '/community_hub/image?url=https://api.dicebear.com/7.x/avataaars/svg'}" alt="">
+                <img class="dispute-party-avatar" src="${dispute.assignee_avatar || (IS_WEB_MODE ? 'https://api.dicebear.com/7.x/avataaars/svg' : '/community_hub/image?url=https://api.dicebear.com/7.x/avataaars/svg')}" alt="">
                 <div class="dispute-party-info">
                     <div class="dispute-party-name">${dispute.assignee_name || dispute.assignee}</div>
                     <div class="dispute-party-role">${t('task.assignee')} ${dispute.initiator_role === "assignee" ? `（${t('dispute.initiator')}）` : `（${t('dispute.respondent')}）`}</div>

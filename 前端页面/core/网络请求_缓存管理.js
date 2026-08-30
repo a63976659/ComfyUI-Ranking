@@ -135,8 +135,9 @@ export function getCache(key) {
                 _updateLRU(fk);
                 return cached.value;
             }
-            // 过期，清除
-            localStorage.removeItem(fk);
+            // 🔧 修复：过期条目不再物理删除，保留给断网时的过期缓存兜底使用；
+            // 过期数据的真正清理由配额溢出时的 _cleanExpiredStorage / LRU 淘汰承担。
+            // （原实现此处删除会导致 request() 新鲜检查先删、离线兜底后读而落空）
         }
     } catch (e) {
         console.warn("⚠️ 缓存读取失败:", key);
@@ -180,8 +181,8 @@ export function getCacheWithMeta(key, ignoreExpiry = false) {
                 _updateLRU(fk);
                 return { value: cached.value, expired, found: true };
             }
-            // 过期且不忽略，清除
-            localStorage.removeItem(fk);
+            // 🔧 修复：与 getCache 一致，过期条目保留不删（供离线兜底），仅返回未命中；
+            // 内存中的过期副本已在上方删除，下次可重新从 storage 回填
         }
     } catch (e) {
         console.warn("⚠️ 缓存读取失败:", key);

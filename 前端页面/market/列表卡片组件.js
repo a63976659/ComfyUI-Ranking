@@ -11,7 +11,7 @@ import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 import { renderTipBoardHTML, isMaxTipLevel } from "../components/打赏等级工具.js";
 import { lazyLoadImages } from "../components/性能优化工具.js";
 import { t } from "../components/用户体验增强.js";
-import { getCachedProfile, getProfileWithSWR, CACHE } from "../core/全局配置.js";
+import { getCachedProfile, getProfileWithSWR, CACHE, IS_WEB_MODE } from "../core/全局配置.js";
 
 /**
  * 生成价格显示HTML（含待生效价格提示）
@@ -394,11 +394,13 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
         
         authorActionArea.innerHTML = `
             <div style="flex: 1; font-size: 12px; color: #FF9800; display: flex; align-items: center; font-weight: bold;">👑 ${t('market.creator_manage')}</div>
-            <button id="btn-edit-item" style="padding: 6px 12px; background: #2196F3; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold; font-size: 12px; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">✏️ ${t('market.edit_content')}</button>
+            ${IS_WEB_MODE ? '' : `<button id="btn-edit-item" style="padding: 6px 12px; background: #2196F3; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold; font-size: 12px; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">✏️ ${t('market.edit_content')}</button>`}
             <button id="btn-del-item" style="padding: 6px 12px; background: #F44336; border: none; border-radius: 4px; color: white; cursor: pointer; font-weight: bold; font-size: 12px; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🗑️ ${t('market.delete_permanently')}</button>
         `;
         
-        authorActionArea.querySelector("#btn-edit-item").onclick = (e) => {
+        // 📱 Web 模式不渲染编辑按钮，此处需空值保护
+        const btnEditItem = authorActionArea.querySelector("#btn-edit-item");
+        if (btnEditItem) btnEditItem.onclick = (e) => {
             e.stopPropagation();
             window.dispatchEvent(new CustomEvent("comfy-route-edit-publish", { detail: { itemData, currentUser } }));
         };
