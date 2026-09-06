@@ -2,12 +2,13 @@
 // ==========================================
 // 🏪 全局状态管理中心
 // ==========================================
-// 作用：集中管理应用状态，提供响应式更新和事件通知
+// 作用：集中管理应用状态（含全项目网络状态），提供响应式更新和事件通知
 // 关联文件：
 //   - 类型定义.js (类型定义)
 //   - 所有需要共享状态的组件
 //   - 顶部导航组件.js (用户登录状态)
 //   - 侧边栏主程序.js (当前视图状态)
+//   - 网络请求_基础设施.js / 网络请求_图片代理.js (调用 isOnline() 决定是否走缓存回退)
 // ==========================================
 // 🏗️ P2架构优化：轻量级状态管理
 // 🏗️ P2质量优化：JSDoc 类型注释
@@ -53,10 +54,9 @@ const state = {
         users: new Map()
     },
     
-    // 网络状态
+    // 网络状态（全项目唯一数据源，见下方「🌐 网络状态管理」段落）
     network: {
-        isOnline: navigator.onLine,
-        lastSyncTime: null
+        isOnline: navigator.onLine
     }
 };
 
@@ -432,9 +432,15 @@ export function isLoading() {
 // ==========================================
 // 🌐 网络状态管理
 // ==========================================
+// 🏗️ 全项目网络状态的唯一数据源。
+// online/offline 事件只在本模块注册一次，下列消费方一律调用 isOnline()，
+// 不再各自维护状态副本与重复监听，避免出现「横幅显示离线但列表仍在发请求」
+// 这类多份状态不同步的分裂表现：
+//   - 网络请求_基础设施.js —— 离线 GET 直返缓存、重试耗尽回退过期缓存
+//   - 网络请求_图片代理.js —— 离线时不构造远程直链，保持相对路径原样
 
 /**
- * 更新网络状态
+ * 更新网络状态（仅供内部 online/offline 监听调用）
  * @param {boolean} online - 是否在线
  */
 export function setNetworkStatus(online) {
@@ -442,19 +448,23 @@ export function setNetworkStatus(online) {
     state.network.isOnline = online;
     
     if (wasOnline !== online) {
+        console.log(online ? '🌐 网络已恢复' : '📴 网络已断开');
         eventBus.emit(EVENTS.NETWORK_CHANGE, { online });
     }
 }
 
 /**
  * 检查是否在线
+ * 
+ * 注意：navigator.onLine 仅反映本机网络接口状态，不代表云端服务可达；
+ * 云端不可达（502 / DNS 污染 / 证书失败）由 request() 的重试耗尽兜底负责。
  * @returns {boolean}
  */
 export function isOnline() {
     return state.network.isOnline;
 }
 
-// 自动监听网络状态
+// 自动监听网络状态（全项目唯一一次注册）
 if (typeof window !== "undefined") {
     window.addEventListener("online", () => setNetworkStatus(true));
     window.addEventListener("offline", () => setNetworkStatus(false));

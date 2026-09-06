@@ -6,6 +6,7 @@ import ipaddress
 import hashlib
 import asyncio
 import uuid
+import time
 import aiohttp
 import mimetypes
 import urllib.parse
@@ -22,6 +23,43 @@ except Exception:
 _video_download_locks = {}
 _video_locks_lock = asyncio.Lock()
 _video_lock_refs = {}  # {url_hash: int} 引用计数器，替代 lock._waiters
+
+# 🚦 云端可达性熔断器
+# 背景：云端不可达时，每个未缓存的图片/视频请求会在下载环节挂满超时才失败；
+# 浏览器对 localhost 只有 6 条 HTTP/1.1 并发连接，挂起的媒体请求会占满通道，
+# 连带阻塞侧边栏组件的动态 import JS 与本地 API 调用，导致"本地数据也切换很慢"。
+# 熔断后未缓存媒体毫秒级快速失败（图片返回占位图、视频返回 503），连接立即释放；
+# 冷却期结束自动半开放行试探，任一请求收到应答即关闭熔断，网络恢复后无需人工干预。
+_NET_FAIL_THRESHOLD = 3    # 连续网络层失败（超时/连接错误）达到该次数即打开熔断
+_NET_COOLDOWN = 20.0       # 熔断冷却时长（秒），期间未缓存媒体请求快速失败
+_upstream_fail_count = 0
+_circuit_open_until = 0.0  # 熔断打开截止时刻（monotonic 时钟，不受系统时间调整影响）
+
+
+def _upstream_circuit_open():
+    return time.monotonic() < _circuit_open_until
+
+
+def _record_upstream_failure():
+    global _upstream_fail_count, _circuit_open_until
+    _upstream_fail_count += 1
+    if _upstream_fail_count >= _NET_FAIL_THRESHOLD:
+        _circuit_open_until = time.monotonic() + _NET_COOLDOWN
+        _upstream_fail_count = 0
+        print(f"[ComfyUI-Ranking] [!] 云端不可达，媒体代理熔断 {int(_NET_COOLDOWN)} 秒（未缓存图片显示占位图/视频快速失败，本地通道不再被堵）")
+
+
+def _record_upstream_success():
+    # 收到任何 HTTP 应答即证明网络层可达（404 等内容由调用方照常处理）
+    global _upstream_fail_count
+    _upstream_fail_count = 0
+
+
+# 熔断期内未缓存图片的占位图（纯静态内容，无用户输入，无注入面）
+_CIRCUIT_PLACEHOLDER_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="150" height="150">'
+    '<rect fill="#3a3a3a" width="150" height="150" rx="12"/></svg>'
+).encode()
 
 def _scan_dir_stats(dir_path):
     """使用 os.scandir() 统计目录下的直接文件数量和总大小"""
@@ -183,6 +221,8 @@ MAX_VIDEO_SIZE = 100 * 1024 * 1024  # 100MB
 # 🔒 图片缓存上限：20MB，防止恶意超大文件打爆内存
 MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB
 VIDEO_TIMEOUT = aiohttp.ClientTimeout(total=300)
+# 图片下载超时收窄为 15 秒（连接阶段 5 秒）：批量故障由熔断器兜底，此处收窄单次挂起的伤害
+IMAGE_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5)
 
 async def cache_image_handler(request):
     """本地 API：异步拦截图片请求，防阻塞实现硬盘级永久缓存
@@ -237,14 +277,20 @@ async def cache_image_handler(request):
         content_type, _ = mimetypes.guess_type(local_path)
         return web.FileResponse(local_path, headers={'Content-Type': content_type or 'image/jpeg'})
 
+    # 🚦 熔断期内且本地无缓存：立即返回占位图，绝不挂起等待网络，
+    # 避免占满浏览器对 localhost 的 6 条并发连接、连带卡住界面切换与本地请求
+    if _upstream_circuit_open():
+        return web.Response(body=_CIRCUIT_PLACEHOLDER_SVG, content_type='image/svg+xml',
+                            headers={'Cache-Control': 'no-store'})
+
     # 优先级2：本地无缓存或缓存无效，尝试从网络下载
     try:
         async with aiohttp.ClientSession() as session:
             # 伪装 User-Agent 防止被拦截
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
             # 加入 ssl=False 彻底解决 ComfyUI 整合包证书报错问题
-            # 超时时间30秒，与前端保持一致
-            async with session.get(url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=30)) as response:
+            async with session.get(url, headers=headers, ssl=False, timeout=IMAGE_TIMEOUT) as response:
+                _record_upstream_success()  # 收到任何应答即证明云端可达
                 if response.status == 200:
                     # 🔒 P0安全加固：体积上限检查，防止恶意超大文件打爆内存
                     content_length = response.headers.get('Content-Length')
@@ -269,10 +315,12 @@ async def cache_image_handler(request):
                     return web.Response(status=response.status, text=f"Upstream returned {response.status}")
     except asyncio.TimeoutError as e:
         print(f"[ComfyUI-Ranking] ⚠️ 图片代理超时: {url[:80]}... 错误: {str(e)}")
+        _record_upstream_failure()
         _cleanup_empty_cache(local_path, url_hash, ext)
         return web.Response(status=504, text="Image proxy timeout")
     except aiohttp.ClientError as e:
         print(f"[ComfyUI-Ranking] ⚠️ 图片代理连接错误: {url[:80]}... 错误: {str(e)}")
+        _record_upstream_failure()
         _cleanup_empty_cache(local_path, url_hash, ext)
         return web.Response(status=502, text=f"Image proxy connection error: {str(e)}")
     except Exception as e:
@@ -384,6 +432,10 @@ async def cache_video_handler(request):
     if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
         return await _serve_video_file(request, local_path)
 
+    # 🚦 熔断期内且本地无缓存：快速失败，不挂起 300 秒占死浏览器本地连接通道
+    if _upstream_circuit_open():
+        return web.Response(status=503, text="Upstream circuit open, retry later")
+
     # 优先级2：本地无缓存或缓存无效，尝试从网络下载
     lock = await _get_video_lock(url_hash)
     try:
@@ -396,6 +448,7 @@ async def cache_video_handler(request):
                 async with aiohttp.ClientSession() as session:
                     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                     async with session.get(url, headers=headers, ssl=False, timeout=VIDEO_TIMEOUT) as response:
+                        _record_upstream_success()  # 收到任何应答即证明云端可达
                         if response.status != 200:
                             print(f"[ComfyUI-Ranking] ⚠️ 视频下载失败 (状态码: {response.status}): {url[:80]}...")
                             return web.Response(status=response.status, text=f"Upstream returned {response.status}")
@@ -490,10 +543,12 @@ async def cache_video_handler(request):
                         return resp
             except asyncio.TimeoutError as e:
                 print(f"[ComfyUI-Ranking] ⚠️ 视频代理超时: {url[:80]}... 错误: {str(e)}")
+                _record_upstream_failure()
                 _cleanup_empty_cache(local_path, url_hash, ext)
                 return web.Response(status=504, text="Video proxy timeout")
             except aiohttp.ClientError as e:
                 print(f"[ComfyUI-Ranking] ⚠️ 视频代理连接错误: {url[:80]}... 错误: {str(e)}")
+                _record_upstream_failure()
                 _cleanup_empty_cache(local_path, url_hash, ext)
                 return web.Response(status=502, text=f"Video proxy connection error: {str(e)}")
             except Exception as e:

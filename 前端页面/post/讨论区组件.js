@@ -17,7 +17,7 @@
 import { api } from "../core/网络请求API.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { setCache, getCacheWithMeta, createSkeleton, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
+import { readListCache, writeListCache, createSkeleton, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
 import { applyViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
@@ -312,8 +312,8 @@ export function createPostsView(currentUser, keyword = "") {
         
         // ✅ 优先从本地缓存读取（含过期缓存：离线容灾，与插件榜/工作流/推荐榜策略一致）
         if (!append && page === 1) {
-            const { value: cachedData, found: hasCacheData } = getCacheWithMeta(cacheKey, true);
-            if (hasCacheData && cachedData && cachedData.length > 0) {
+            const cachedData = readListCache(cacheKey);
+            if (cachedData) {
                 // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
                 allPostsData = proxyImages(cachedData);
                 renderPostsFromCache(allPostsData);
@@ -337,7 +337,7 @@ export function createPostsView(currentUser, keyword = "") {
             // 缓存第一页数据
             if (page === 1) {
                 allPostsData = proxyImages(posts);
-                setCache(cacheKey, posts, getCacheTTL(), true);
+                writeListCache(cacheKey, posts, getCacheTTL());  // 存原始数据，离线时经图片代理后可展示
             } else {
                 allPostsData = [...allPostsData, ...proxyImages(posts)];
             }
@@ -388,8 +388,8 @@ export function createPostsView(currentUser, keyword = "") {
             isLoadingFromNetwork = false;
             // 网络失败时尝试从缓存读取（包括过期缓存，离线容灾）
             if (!append) {
-                const { value: cachedData, found: hasCacheData } = getCacheWithMeta(cacheKey, true);
-                if (hasCacheData && cachedData && cachedData.length > 0) {
+                const cachedData = readListCache(cacheKey);
+                if (cachedData) {
                     // 🚀 缓存数据也需要过一遍图片代理
                     allPostsData = proxyImages(cachedData);
                     renderPostsFromCache(allPostsData);
@@ -457,7 +457,7 @@ export function createPostsView(currentUser, keyword = "") {
             
             // 更新缓存
             const cacheKey = getCacheKey();
-            setCache(cacheKey, posts, getCacheTTL(), true);
+            writeListCache(cacheKey, posts, getCacheTTL());
             
             // 对比新旧数据，有变化时重新渲染
             if (_postsDataChanged(allPostsData, posts)) {

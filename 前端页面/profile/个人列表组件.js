@@ -1,7 +1,7 @@
 // 前端页面/profile/个人列表组件.js
 import { api } from "../core/网络请求API.js";
 import { createItemCard } from "../market/列表卡片组件.js";
-import { getAcquiredItems, checkItemStatus } from "../market/资源安装引擎.js";
+import { getAcquiredItems } from "../market/资源安装引擎.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t, tIfExists, getLanguage } from "../components/用户体验增强.js";
 import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";

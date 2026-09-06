@@ -465,6 +465,12 @@ export async function loadSidebarContent({
     };
     
     // ========== 尝试从缓存加载 ==========
+    // 📌 本处的缓存口径与 任务榜/讨论区/提示词（统一走 性能优化工具.js 的
+    // readListCache，命中后一律调 silentRefresh 后台补新）**刻意不同**，不是历史遗留，勿顺手归一：
+    //   - 这里缓存的是全量数据（items 200 条 / creators 500 条），分页完全在本地做，
+    //     所以缓存命中即等于「数据完整」，只在 expired 时才值得再发一次网络请求；
+    //   - 那三个列表只缓存第一页，命中后数据必然不完整，故一律后台 silentRefresh 补新。
+    // 若强行统一成「总是后台刷新」，插件榜会在每次 Tab 切换时多发一次 200 条的全量请求。
     // 获取完整缓存信息（包含过期状态）
     const { value: cachedData, expired: isCacheExpired, found: hasCacheData } = getCacheWithMeta(cacheKey, true);
     
@@ -538,8 +544,13 @@ export async function loadSidebarContent({
                             _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, savedTab);
                         }
                     } else {
-                        // 数据无变化，仅刷新缓存过期时间
-                        setCache(cacheKey, state.allData, getCacheExpireTime(), true);
+                        // 关键字段无变化 → 无需重渲染。但 newData 才是刚从云端取回的权威数据，
+                        // 缓存必须回写 newData：若仍回写旧的 state.allData，等于把旧数据固化并
+                        // 续期（续期后 isCacheExpired 转 false，下次连静默刷新都不再触发），
+                        // 导致缓存中的旧版本号被长期锁死、卡片徽章无法出现。
+                        // 注意此处刻意不更新 state.allData：首屏已按旧数据渲染，保持二者一致可
+                        // 避免分页加载与已渲染卡片错位；新数据在下次进入读取缓存时生效
+                        setCache(cacheKey, newData, getCacheExpireTime(), true);
                     }
                 } catch (err) {
                     console.warn(`⚠️ ${savedTab}_${savedSort} 后台刷新失败:`, err);
@@ -853,7 +864,8 @@ function _shouldUpdateData(oldData, newData) {
     if (oldData.length !== newData.length) return true;
     
     // 检查ID顺序是否一致（检测排序变化、新增/删除）
-    const checkCount = Math.min(10, oldData.length);
+    // 比对条数覆盖首屏渲染量（PAGE_SIZE），避免首屏可见卡片（第 11~20 条）的版本/数字更新被漏检
+    const checkCount = Math.min(PAGE_SIZE, oldData.length);
     for (let i = 0; i < checkCount; i++) {
         const oldId = oldData[i].id || oldData[i].account;
         const newId = newData[i].id || newData[i].account;
@@ -864,6 +876,10 @@ function _shouldUpdateData(oldData, newData) {
         for (const field of keyFields) {
             if ((oldData[i][field] || 0) !== (newData[i][field] || 0)) return true;
         }
+
+        // 检查版本号（字符串）：云端扫描到插件新版本时往往只有 latest_version 变化，
+        // 点赞/下载/浏览等数字字段全不动；若不比对它，卡片上的"可更新"徽章将永远刷不出来
+        if ((oldData[i].latest_version || '') !== (newData[i].latest_version || '')) return true;
     }
     return false;
 }

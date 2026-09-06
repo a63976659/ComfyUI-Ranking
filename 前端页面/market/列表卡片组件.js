@@ -80,9 +80,11 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
     const initialCommentCount = itemData.commentsData ? calcActiveComments(itemData.commentsData) : (itemData.comments || 0);
     
     // 🚀 检查插件安装状态（用于显示更新徽章）
+    // 徽章作为标题行的独立 flex 项（flex: none），不再追加在标题文本之后，
+    // 避免标题容器的 overflow: hidden + ellipsis 在长标题时把徽章一并裁掉
     const installStatus = checkItemStatus(itemData.id, itemData.latest_version);
     const updateBadgeHtml = installStatus.hasUpdate 
-        ? `<span style="margin-left: 6px; background: linear-gradient(135deg, #FF9800, #F44336); color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 10px; font-weight: bold; animation: pulse 2s infinite;">🔄 ${t('market.update_available')}</span>` 
+        ? `<span style="flex: none; white-space: nowrap; background: linear-gradient(135deg, #FF9800, #F44336); color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 10px; font-weight: bold; animation: pulse 2s infinite;">🔄 ${t('market.update_available')}</span>` 
         : '';
 
     const summaryView = document.createElement("div");
@@ -92,10 +94,11 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
     // 🚀 核心修改：为评论计数的 span 加上专属的 class，并填入过滤后的真实数量
     // 🚀 布局重构：第1行标题+使用次数，第2行描述，第3行互动数据+发布者信息
     summaryView.innerHTML = `
-        <!-- 第1行: 标题 + 使用次数 -->
-        <div style="display: flex; align-items: center; margin-bottom: 4px;">
-            <div style="font-weight: bold; font-size: 14px; color: #4CAF50; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(itemData.title)}${updateBadgeHtml}</div>
-            <span style="margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px;">
+        <!-- 第1行: 标题 + 更新徽章 + 使用次数 -->
+        <div style="display: flex; align-items: center; margin-bottom: 4px; gap: 6px;">
+            <div style="font-weight: bold; font-size: 14px; color: #4CAF50; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(itemData.title)}</div>
+            ${updateBadgeHtml}
+            <span style="margin-left: auto; flex: none; font-size: 11px; color: #888; display: flex; align-items: center; gap: 6px;">
                 <span data-stat="uses" style="display: flex; align-items: center; gap: 2px;">📥 ${itemData.uses || 0}</span>
                 <span data-stat="views" style="display: flex; align-items: center; gap: 2px;">🔥 ${itemData.views || 0}</span>
             </span>

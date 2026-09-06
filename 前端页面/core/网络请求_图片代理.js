@@ -6,6 +6,7 @@
 // ==========================================
 
 import { API, IS_WEB_MODE } from './全局配置.js';
+import { isOnline } from './状态管理.js';  // 🌐 网络状态统一取自 状态管理.js，不再直读 navigator.onLine
 
 // 🟢 入口清洗：接收云端数据时，转换为本地代理，并带【自愈机制】清理被污染的历史数据
 // 🚀 统一缓存：所有头像字段都走同一个缓存代理，无需重复下载
@@ -68,7 +69,7 @@ export function proxyImages(obj) {
                 } else if (originalUrl && !originalUrl.startsWith('/') && !originalUrl.startsWith('data:')) {
                     // 🎬 相对路径（如 uploads/post_video/...）
                     // 离线时不构造远程 URL，保持原样让浏览器从当前域尝试加载
-                    if (navigator.onLine === false) {
+                    if (!isOnline()) {
                         obj[key] = originalUrl;
                     } else {
                         const fullUrl = `${API.BASE_URL}/api/image_proxy?path=${encodeURIComponent(originalUrl)}`;

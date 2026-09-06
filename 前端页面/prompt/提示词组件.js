@@ -16,7 +16,9 @@
 
 import { api, proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { setCache, getCacheWithMeta, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
+// 📦 列表缓存走 readListCache/writeListCache 统一口径；分类缓存形态不同（空数组也是
+// 有效缓存态），仍用底层 setCache/getCacheWithMeta
+import { setCache, getCacheWithMeta, readListCache, writeListCache, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
 import { applyViewportAnimations } from "../components/动画音效引擎.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
@@ -437,8 +439,8 @@ export function createPromptsView(currentUser, keyword = "") {
 
         // ✅ 优先从本地缓存读取（含过期缓存：离线容灾，与插件榜/工作流/推荐榜策略一致）
         if (!append && page === 1) {
-            const { value: cachedData, found: hasCacheData } = getCacheWithMeta(cacheKey, true);
-            if (hasCacheData && cachedData && cachedData.length > 0) {
+            const cachedData = readListCache(cacheKey);
+            if (cachedData) {
                 allPromptsData = proxyImages(cachedData);
                 renderPromptsFromCache(allPromptsData);
                 // 后台静默更新
@@ -461,7 +463,7 @@ export function createPromptsView(currentUser, keyword = "") {
             // 缓存第一页数据
             if (page === 1) {
                 allPromptsData = proxyImages(prompts);
-                setCache(cacheKey, prompts, getCacheTTL(), true);
+                writeListCache(cacheKey, prompts, getCacheTTL());  // 存原始数据，离线时经图片代理后可展示
             } else {
                 allPromptsData = [...allPromptsData, ...proxyImages(prompts)];
             }
@@ -512,8 +514,8 @@ export function createPromptsView(currentUser, keyword = "") {
             isLoadingFromNetwork = false;
             // 网络失败时尝试从缓存读取（包括过期缓存，离线容灾）
             if (!append) {
-                const { value: cachedData, found: hasCacheData } = getCacheWithMeta(cacheKey, true);
-                if (hasCacheData && cachedData && cachedData.length > 0) {
+                const cachedData = readListCache(cacheKey);
+                if (cachedData) {
                     allPromptsData = proxyImages(cachedData);
                     renderPromptsFromCache(allPromptsData);
                     showToast(t('prompt.network_cache'), "warning");
@@ -580,7 +582,7 @@ export function createPromptsView(currentUser, keyword = "") {
 
             // 更新缓存
             const cacheKey = getCacheKey();
-            setCache(cacheKey, prompts, getCacheTTL(), true);
+            writeListCache(cacheKey, prompts, getCacheTTL());
 
             // 对比新旧数据，有变化时重新渲染
             if (_promptsDataChanged(allPromptsData, prompts)) {

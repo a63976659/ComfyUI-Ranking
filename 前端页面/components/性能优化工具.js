@@ -5,8 +5,10 @@
 // 作用：提供分页加载、图片懒加载、缓存管理等性能优化工具
 // 关联文件：
 //   - 全局配置.js (配置中心)
+//   - 网络请求_缓存管理.js (列表缓存工具 readListCache/writeListCache 的底层实现)
 //   - 列表卡片组件.js (使用分页加载)
 //   - 创作者卡片组件.js (使用分页加载)
+//   - 任务榜组件.js / 讨论区组件.js / 提示词组件.js (使用列表缓存工具)
 //   - 所有图片渲染场景 (使用懒加载)
 // ==========================================
 // 🏗️ P2架构优化：使用配置中心常量
@@ -14,6 +16,9 @@
 // ==========================================
 
 import { PAGINATION } from "../core/全局配置.js";
+// 📦 列表缓存工具需要本地可用的缓存实现；下方「向后兼容重导出」那行是纯转发、
+// 不会生成本地绑定，故此处必须单独 import（勿误删，否则 readListCache 运行时报错）
+import { setCache, getCacheWithMeta } from "../core/网络请求_缓存管理.js";
 
 // ==========================================
 // 🔒 P0安全优化：敏感数据脱敏工具
@@ -1236,8 +1241,39 @@ const eventManager = {
 export { eventManager };
 
 // ==========================================
-// 🔍 列表缓存查找工具（详情页离线回退用）
+// 🔍 列表缓存工具（列表视图缓存优先 / 详情页离线回退用）
 // ==========================================
+
+/**
+ * 📴 读取列表首屏缓存（离线容灾口径，任务榜/讨论区/提示词统一走这里）
+ *
+ * 口径说明（原三处各自实现 getCacheWithMeta(key, true) + found && length>0，
+ * 抄写三份容易在维护中走偏，故归一到本函数）：
+ *   - 忽略过期：第二个参数传 true，缓存过期也算命中——断网/云端不通时首屏仍要能出内容，
+ *     新鲜度交由调用方的 silentRefresh 后台补齐，不在此处拦
+ *   - 空列表不算命中：云端确实返回过 0 条时同样落到网络分支重新拉取，
+ *     避免用户新建第一条内容后被旧的空缓存挡住
+ *   - 返回值是写入时的原始数据，调用方自行 proxyImages（与改造前完全一致）
+ *
+ * @param {string} cacheKey - 完整缓存 Key（含各自的筛选参数）
+ * @returns {Array|null} 命中返回数组，未命中/空列表返回 null
+ */
+export function readListCache(cacheKey) {
+    const { value } = getCacheWithMeta(cacheKey, true);  // true = 忽略过期
+    if (!Array.isArray(value) || value.length === 0) return null;
+    return value;
+}
+
+/**
+ * 💾 回写列表首屏缓存（持久化到 localStorage，保证重启后离线仍可展示）
+ * @param {string} cacheKey - 完整缓存 Key
+ * @param {Array} items - 原始数据（未经图片代理）
+ * @param {number} ttl - 有效期（毫秒），由调用方传 getCacheTTL()
+ */
+export function writeListCache(cacheKey, items, ttl) {
+    if (!Array.isArray(items)) return;
+    setCache(cacheKey, items, ttl, true);  // true = 持久化 localStorage
+}
 
 /**
  * 🔍 从列表缓存中查找指定项（详情页离线回退用）

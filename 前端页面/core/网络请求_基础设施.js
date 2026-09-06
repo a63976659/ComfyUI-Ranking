@@ -11,7 +11,7 @@
 
 import { removeCache, getCacheWithMeta } from "../components/性能优化工具.js";
 import { API, CACHE } from "./全局配置.js";
-import { logoutAndClearUserData } from "./状态管理.js";
+import { logoutAndClearUserData, isOnline } from "./状态管理.js";
 import { CACHE_CONFIG, CACHE_INVALIDATION_MAP, invalidateRelatedCache, _getCacheTTL, getCache, setCache } from "./网络请求_缓存管理.js";
 import { unproxyImages } from "./网络请求_图片代理.js";
 
@@ -31,10 +31,8 @@ const BASE_URL = API.BASE_URL;
 // ⚡ P1性能优化：请求去重（相同GET请求只发一次）
 const pendingRequests = new Map();
 
-// 🚀 P3优化：网络状态监控
-let isOnline = navigator.onLine;
-window.addEventListener('online', () => { isOnline = true; console.log('🌐 网络已恢复'); });
-window.addEventListener('offline', () => { isOnline = false; console.log('📴 网络已断开'); });
+// 🚀 P3优化：网络状态由 状态管理.js 的 isOnline() 统一提供（见下方离线模式支持），
+// 本模块不再自行注册 online/offline 监听。
 
 // 🔧 修复：401（Token 过期/签名无效）统一处理——清除本地凭证并提示重新登录。
 // 背景：服务端更换 JWT_SECRET 或 Token 过期后，旧 Token 被云端拒签，若不清除
@@ -226,8 +224,8 @@ async function request(endpoint, options = {}) {
         }
     }
     
-    // 🚀 P3优化：离线模式支持
-    if (!isOnline && method === "GET") {
+    // 🚀 P3优化：离线模式支持（网络状态取自 状态管理.js 的 isOnline()）
+    if (!isOnline() && method === "GET") {
         const { value, expired, found } = getCacheWithMeta(cacheKey, true);  // 忽略过期
         if (found) {
             console.log(`📴 离线模式：返回${expired ? '过期' : ''}缓存 (${endpoint})`);

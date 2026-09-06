@@ -9,9 +9,9 @@
 // ==========================================
 // 🎯 P1体验优化：
 //   - 统一错误处理与重试机制
-//   - 网络状态检测与离线提示
 //   - 按钮加载状态
 //   - 全局加载遮罩
+// 🌐 网络状态检测与离线横幅已收敛至 core/状态管理.js（见下方说明），本模块不再负责
 // ===========================================
 
 import { t } from "./用户体验增强.js";
@@ -338,87 +338,15 @@ export function showRetryDialog(message, retryFn, options = {}) {
 
 
 // ==========================================
-// 🌐 网络状态检测
+// 🌐 网络状态检测（已移除）
 // ==========================================
-
-let isOffline = !navigator.onLine;
-let offlineBanner = null;
-
-/**
- * 初始化网络状态监听
- */
-export function initNetworkStatusListener() {
-    window.addEventListener("online", () => {
-        isOffline = false;
-        hideOfflineBanner();
-        showToast("网络已恢复", "success");
-    });
-    
-    window.addEventListener("offline", () => {
-        isOffline = true;
-        showOfflineBanner();
-    });
-    
-    // 初始状态检测
-    if (!navigator.onLine) {
-        showOfflineBanner();
-    }
-}
-
-function showOfflineBanner() {
-    if (offlineBanner) return;
-    
-    offlineBanner = document.createElement("div");
-    Object.assign(offlineBanner.style, {
-        position: "fixed",
-        bottom: "0",
-        left: "0",
-        right: "0",
-        background: "linear-gradient(135deg, #FF5722, #E64A19)",
-        color: "#fff",
-        padding: "12px 20px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "12px",
-        fontSize: "14px",
-        fontWeight: "500",
-        zIndex: "9999",
-        boxShadow: "0 -4px 20px rgba(0,0,0,0.3)",
-        transform: "translateY(100%)",
-        transition: "transform 0.3s ease"
-    });
-    
-    offlineBanner.innerHTML = `
-        <span style="font-size: 18px;">📡</span>
-        <span>网络连接已断开，部分功能可能不可用</span>
-        <button onclick="location.reload()" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 12px;">刷新重试</button>
-    `;
-    
-    document.body.appendChild(offlineBanner);
-    
-    requestAnimationFrame(() => {
-        offlineBanner.style.transform = "translateY(0)";
-    });
-}
-
-function hideOfflineBanner() {
-    if (!offlineBanner) return;
-    
-    offlineBanner.style.transform = "translateY(100%)";
-    setTimeout(() => {
-        offlineBanner?.remove();
-        offlineBanner = null;
-    }, 300);
-}
-
-/**
- * 检查网络状态
- * @returns {boolean} - 是否在线
- */
-export function checkOnline() {
-    return navigator.onLine;
-}
+// 本模块曾自行维护一份 isOffline 状态并常驻显示底部「网络连接已断开」横幅，
+// 与 状态管理.js 的网络状态重复，且一条 online/offline 事件需喂多份状态。
+// 现统一收敛：
+//   - 网络状态唯一数据源：core/状态管理.js 的 isOnline()
+//   - 离线反馈改由列表层承担：缓存命中渲染后弹 xxx.network_cache toast
+//     （「网络异常，已加载本地缓存」），比常驻横幅更贴合实际可用状态
+// 原导出的 initNetworkStatusListener / checkOnline 全库无调用方，一并移除。
 
 
 // ==========================================
@@ -620,20 +548,6 @@ export async function withFeedback(asyncFn, options = {}) {
         if (button) {
             setButtonLoading(button, false);
         }
-    }
-}
-
-
-// ==========================================
-// 🚀 自动初始化
-// ==========================================
-
-// 页面加载时初始化网络状态监听
-if (typeof window !== "undefined") {
-    if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", initNetworkStatusListener);
-    } else {
-        initNetworkStatusListener();
     }
 }
 
