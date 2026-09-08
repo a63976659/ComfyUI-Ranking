@@ -178,7 +178,7 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         const timeoutId = setTimeout(() => {
             isSubmitting = false;
             _setButtonState(btnSubmit, false, "#4CAF50", t('wallet.withdraw.confirm'));
-            showToast(t('wallet.withdraw.timeout') || "提现请求超时，请检查网络后重试", "warning");
+            showToast(t('wallet.withdraw.timeout'), "warning");
         }, 30000);
 
         try {

@@ -15,7 +15,7 @@ import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 import { setupResourceInstall } from "./资源安装引擎.js";
 import { renderTipBoardHTML } from "../components/打赏等级工具.js";
 import { t } from "../components/用户体验增强.js";
-import { removeCache } from "../components/性能优化工具.js";
+import { removeCache, removeCacheByPrefix } from "../components/性能优化工具.js";
 import { invalidateRelatedCache } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 // 🧹 P2归一：escapeHtml 局部副本已移除，改用统一版（转义更严格，防XSS语义不变）
@@ -101,7 +101,7 @@ function _showConfirmOverlay({ title, titleColor, infoHtml, warningHtml, warning
     overlay.innerHTML = `
         <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 420px; width: 90%; color: #fff; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
             <div style="font-size: 18px; font-weight: bold; margin-bottom: 20px; color: ${titleColor}; display: flex; align-items: center; gap: 10px;">
-                ⚠️ ${title}
+                ⚠️ ${escapeHtml(title)}
             </div>
 
             <div style="background: #2a2d3e; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
@@ -119,7 +119,7 @@ function _showConfirmOverlay({ title, titleColor, infoHtml, warningHtml, warning
                     ${t('common.cancel')}
                 </button>
                 <button id="btn-confirm-action" style="background: ${confirmColor}; font-weight: bold; ${_btnBaseStyle}">
-                    ${confirmText}
+                    ${escapeHtml(confirmText)}
                 </button>
             </div>
         </div>
@@ -212,8 +212,10 @@ function burnLocalFiles(itemId) {
     removeCache(`ItemOwnership_${itemId}`);
     
     // 清除列表缓存（强制下次刷新）
-    removeCache('api_/api/items');
-    removeCache('api_/api/creators');
+    // 🔧 修复：API 层缓存键带完整查询串，removeCache 精确删除命中不到（no-op），
+    // 购买/下载后返回列表仍会看到旧数据，改用前缀删除
+    removeCacheByPrefix('api_/api/items');
+    removeCacheByPrefix('api_/api/creators');
     
     // 清除工具/应用/推荐列表缓存（使用标准 ListCache 格式）
     const tabs = ['tools', 'apps', 'recommends'];
@@ -328,7 +330,7 @@ export function createItemDetailView(itemData, currentUser) {
     let authorInfoHtml = `
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             <div>
-                <strong>${t('item.author')}：</strong> <span id="detail-author-name">${authorName}</span>
+                <strong>${t('item.author')}：</strong> <span id="detail-author-name">${escapeHtml(authorName)}</span>
                 <!-- 原创标识 -->
                 ${itemData.is_original ? `
                 <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; 

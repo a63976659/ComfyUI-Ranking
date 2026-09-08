@@ -11,7 +11,7 @@
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { createCommentSection } from "../social/评论与互动组件.js";
 import { renderTipLevelHTML, getTipLevelRuleShort } from "../components/打赏等级工具.js";
-import { getBannerCacheKey, PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { getBannerCacheKey, PLACEHOLDERS, getCachedProfile, getProfileWithSWR, escapeHtml } from "../core/全局配置.js";
 import { api } from "../core/网络请求_业务API.js";
 import { getSettings } from "../components/全局设置组件.js";
 import { t } from "../components/用户体验增强.js";
@@ -51,7 +51,7 @@ let currentExpandedCard = null;
 async function handleTipCreator(creatorData, currentUser, onTipSuccess) {
     // 检查用户是否登录
     if (!currentUser) {
-        showToast(t('creator.tip_login_required') || "请先登录", "warning");
+        showToast(t('creator.tip_login_required'), "warning");
         return;
     }
     
@@ -92,7 +92,7 @@ function loadECharts() {
  * 渲染打赏榜单条目HTML（匿名/非匿名共用外层结构）
  */
 function _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml, containerId = '') {
-    const idAttr = containerId ? ` id="${containerId}"` : '';
+    const idAttr = containerId ? ` id="${escapeHtml(containerId)}"` : '';
     return `<div${idAttr} style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:${idx % 2 === 0 ? '#222' : 'var(--comfy-menu-bg)'};border-radius:4px;margin-bottom:4px;">` +
         `<div style="display:flex;align-items:center;gap:8px;"><span style="font-size:14px;min-width:24px;">${rankIcon}</span>${userHtml}</div>` +
         `<div style="display:flex;align-items:center;gap:6px;">${levelHtml}<span style="color:#4CAF50;font-weight:bold;font-size:11px;">${entry.amount}</span></div></div>`;
@@ -125,7 +125,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
         container.innerHTML = `
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                 <div style="font-size: 12px; font-weight: bold; color: #FF9800; display: flex; align-items: center; gap: 6px;">
-                    ${title}
+                    ${escapeHtml(title)}
                     <span style="font-size: 10px; color: #888; font-weight: normal;">(${t('creator.tip_board.count', {count: 0})})</span>
                 </div>
                 ${creatorData ? `<button id="btn-tip-creator-empty" class="creator-tip-btn" style="${_TIP_BUTTON_STYLE}">${t('creator.tip_this_creator')}</button>` : ''}
@@ -188,14 +188,16 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
             });
         }, 0);
         
-        const userHtml = `<span class="tip-board-user" data-account="${entry.account}" data-anon="false" style="display: flex; align-items: center; gap: 6px; color: #4CAF50; cursor: pointer; font-size: 13px;"><img class="tip-board-avatar" src="${avatarUrl}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--comfy-input-bg);"><span class="tip-board-name">${userName}</span></span>`;
+        // 🔒 XSS防护：昵称/头像均来自用户可修改的资料，写入 HTML 前必须转义
+        // （下方 SWR 刷新路径用的是 .src / .textContent，本身就是安全的）
+        const userHtml = `<span class="tip-board-user" data-account="${escapeHtml(entry.account)}" data-anon="false" style="display: flex; align-items: center; gap: 6px; color: #4CAF50; cursor: pointer; font-size: 13px;"><img class="tip-board-avatar" src="${escapeHtml(avatarUrl)}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--comfy-input-bg);"><span class="tip-board-name">${escapeHtml(userName)}</span></span>`;
         return _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml, containerId);
     }).join("");
 
     container.innerHTML = `
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
             <div style="font-size: 12px; font-weight: bold; color: #FF9800; display: flex; align-items: center; gap: 6px;">
-                ${title}
+                ${escapeHtml(title)}
                 <span style="font-size: 10px; color: #888; font-weight: normal;">(${t('creator.tip_board.count', {count: tipBoard.length})})</span>
             </div>
             ${creatorData ? `<button id="btn-tip-creator" class="creator-tip-btn" style="${_TIP_BUTTON_STYLE}">${t('creator.tip_this_creator')}</button>` : ''}
@@ -264,11 +266,11 @@ export function createCreatorCard(creatorData, currentUser = null) {
             ${hasBanner ? '<div style="position: absolute; inset: 0; background: rgba(0,0,0,0.2); border-radius: 8px;"></div>' : ''}
             <div style="position: relative; z-index: 1;">
                 <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px; padding: 5px 0;">
-                    <img class="creator-avatar-link" src="${avatarSrc}" title="${t('creator.visit_profile')}" style="width: 50px; height: 50px; border-radius: 50%; border: 2px solid ${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}; object-fit: cover; cursor: pointer; transition: 0.2s; ${hasBanner ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.3);' : ''}" onmouseover="this.style.borderColor='#4CAF50'" onmouseout="this.style.borderColor='${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}'">
-                    <div class="creator-name-link" title="${t('creator.visit_profile')}" style="font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; color: #FFD700; text-shadow: 0 1px 4px rgba(0,0,0,0.8), 0 0 8px rgba(255,215,0,0.3);" onmouseover="this.style.color='#FFA500'" onmouseout="this.style.color='#FFD700'">${creatorData.name}</div>
+                    <img class="creator-avatar-link" src="${escapeHtml(avatarSrc)}" title="${t('creator.visit_profile')}" style="width: 50px; height: 50px; border-radius: 50%; border: 2px solid ${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}; object-fit: cover; cursor: pointer; transition: 0.2s; ${hasBanner ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.3);' : ''}" onmouseover="this.style.borderColor='#4CAF50'" onmouseout="this.style.borderColor='${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}'">
+                    <div class="creator-name-link" title="${t('creator.visit_profile')}" style="font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; color: #FFD700; text-shadow: 0 1px 4px rgba(0,0,0,0.8), 0 0 8px rgba(255,215,0,0.3);" onmouseover="this.style.color='#FFA500'" onmouseout="this.style.color='#FFD700'">${escapeHtml(creatorData.name)}</div>
                     <div data-stat="downloads" style="font-size: 12px; color: #FF6B6B; margin-left: auto; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">${t('creator.usage_count', {count: creatorData.downloads || 0})}</div>
                 </div>
-                <div style="font-size: 12px; color: ${hasBanner ? '#ccc' : '#aaa'}; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 10px;">${creatorData.shortDesc && creatorData.shortDesc !== "null" ? creatorData.shortDesc : t('profile.no_intro') || "这个人很懒，什么都没写..."}</div>
+                <div style="font-size: 12px; color: ${hasBanner ? '#ccc' : '#aaa'}; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 10px;">${escapeHtml(creatorData.shortDesc && creatorData.shortDesc !== "null" ? creatorData.shortDesc : t('profile.no_intro'))}</div>
                 <div style="background: rgba(34,34,34,${hasBanner ? '0.8' : '1'}); border-radius: 6px; padding: 8px 10px; border: 1px dashed #555;">
                     <div style="display: flex; gap: 15px; font-size: 12px; color: #eee; justify-content: space-between; margin-bottom: 8px;">
                         <span data-stat="likes" style="color: #FF5722;">👍 ${t('creator.stats.likes')}: <strong>${creatorData.likes}</strong></span>

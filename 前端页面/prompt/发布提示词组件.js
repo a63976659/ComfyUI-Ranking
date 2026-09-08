@@ -13,30 +13,19 @@
 import { api } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
-import { removeCache } from "../components/性能优化工具.js";
-import { API, CACHE } from "../core/全局配置.js";
+import { removeCacheByPrefix } from "../components/性能优化工具.js";
+import { API } from "../core/全局配置.js";
 import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 📦 清除提示词列表缓存（前缀扫描，覆盖全部 类型/分类/排序 组合）
 function clearPromptsListCache() {
-    try {
-        const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            if (k && k.includes('PromptsCache')) keysToRemove.push(k);
-        }
-        keysToRemove.forEach(k => {
-            localStorage.removeItem(k);
-            // 🔧 同步清内存副本：getCacheWithMeta 优先读内存 Map，只删 localStorage 的话
-            // 内存里的旧列表仍会命中，发布后切回提示词界面会先看到旧数据（要等后台
-            // silentRefresh 拉回新数据才自愈）。removeCache 会按 CACHE.PREFIX 还原完整键
-            // 并删除内存 + localStorage 两级。
-            if (k.startsWith(CACHE.PREFIX)) {
-                removeCache(k.slice(CACHE.PREFIX.length));
-            }
-        });
-    } catch (e) {}
-    removeCache('api_/api/prompts');
+    // 🔧 改用缓存模块的前缀删除原语：原先手写的 localStorage 扫描 + removeCache 组合
+    // 与 removeCacheByPrefix 等价（同样内存 + localStorage 两级清除，且同样能匹配不带
+    // CACHE.PREFIX 的裸键），统一收口避免各发布组件各写一遍易漏清内存的遍历
+    removeCacheByPrefix('PromptsCache');
+    // 🔧 修复：API 层缓存键带完整查询串（api_/api/prompts?type=..&category=..&sort=..），
+    // 原先的 removeCache 精确删除命中不到（no-op），改用前缀删除
+    removeCacheByPrefix('api_/api/prompts');
     console.log('🗑️ 已清除提示词列表缓存');
 }
 

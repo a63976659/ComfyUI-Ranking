@@ -4,6 +4,7 @@ import { handlePublishSubmit } from "./发布内容_提交引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { showConfirm, showToast } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
+import { escapeHtml } from "../core/全局配置.js";
 
 // ==========================================
 // 📌 模块级常量
@@ -40,7 +41,7 @@ function _createImagePreviewWrapper(imgUrl, idx) {
     const wrapper = document.createElement('div');
     wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
     wrapper.innerHTML = `
-        <img src="${imgUrl}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
+        <img src="${escapeHtml(imgUrl)}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
         ${idx === 0 ? `<span class="cover-label" style="${_COVER_LABEL_STYLE}">${t('post.cover')}</span>` : ''}
         <button data-action="remove" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
     `;

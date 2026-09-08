@@ -11,12 +11,14 @@
 import { api } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
-import { removeCache } from "../components/性能优化工具.js";
-import { API } from "../core/全局配置.js";
+import { removeCache, removeCacheByPrefix } from "../components/性能优化工具.js";
+import { API, escapeHtml } from "../core/全局配置.js";
 
 // 📦 清除帖子列表缓存
 function clearPostListCache() {
-    removeCache('api_/api/posts');
+    // 🔧 修复：API 层缓存键带完整查询串（api_/api/posts?sort=..&limit=..），
+    // removeCache 精确删除命中不到（no-op），发帖后讨论区仍会从旧缓存返回，改用前缀删除
+    removeCacheByPrefix('api_/api/posts');
     // 🔧 P1修复：讨论区组件实际使用 PostsCache_${sort} 键（非 ListCache_*），按真实键格式精准清除
     // 讨论区排序值：latest, likes, favorites, tips, views, daily_views, rating
     const sorts = ['latest', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
@@ -372,14 +374,14 @@ export function createPublishPostView(currentUser, editPostData = null) {
             <!-- 模式切换 -->
             <div style="margin-bottom: 15px;">
                 <label style="display: block; font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 8px;">
-                    ${t('post.mode_label') || '发布模式'}
+                    ${t('post.mode_label')}
                 </label>
                 <div style="display: flex; gap: 0; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; overflow: hidden;">
                     <button id="mode-image" style="flex: 1; padding: 10px; background: #4CAF50; color: #fff; border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;">
-                        📷 ${t('post.mode_image') || '图文'}
+                        📷 ${t('post.mode_image')}
                     </button>
                     <button id="mode-video" style="flex: 1; padding: 10px; background: transparent; color: #888; border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s; border-left: 1px solid #444;">
-                        🎬 ${t('post.mode_video') || '视频'}
+                        🎬 ${t('post.mode_video')}
                     </button>
                 </div>
             </div>
@@ -402,14 +404,14 @@ export function createPublishPostView(currentUser, editPostData = null) {
             <!-- 视频上传区 -->
             <div id="video-upload-section" style="margin-bottom: 20px; display: none;">
                 <label style="display: block; font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 8px;">
-                    🎬 ${t('post.upload_video') || '上传视频'} <span style="color: #F44336;">*</span>
+                    🎬 ${t('post.upload_video')} <span style="color: #F44336;">*</span>
                     <span style="font-weight: normal; color: #888; font-size: 12px;">（mp4/webm/mov，≤50MB，≤3分钟）</span>
                 </label>
                 <input type="file" id="video-input" accept="video/mp4,video/webm,video/quicktime" style="display: none;">
                 <div id="video-preview-area" style="padding: 15px; background: #1a1a1a; border: 2px dashed #444; border-radius: 8px; cursor: pointer; transition: 0.2s;">
                     <div id="video-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: #666; font-size: 13px;">
                         <div style="font-size: 32px; margin-bottom: 8px;">🎬</div>
-                        ${t('post.click_upload_video') || '点击选择视频'}
+                        ${t('post.click_upload_video')}
                     </div>
                     <div id="video-player-wrap" style="display: none;">
                         <video id="video-player" controls style="width: 100%; max-height: 300px; border-radius: 8px; background: #000; display: block;"></video>
@@ -422,7 +424,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                         </div>
                         <!-- 封面区域 -->
                         <div id="video-cover-wrap" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color, #333);">
-                            <div style="font-size: 12px; font-weight: bold; color: #fff; margin-bottom: 8px;">${t('post.video_cover') || '视频封面'}</div>
+                            <div style="font-size: 12px; font-weight: bold; color: #fff; margin-bottom: 8px;">${t('post.video_cover')}</div>
                             <div style="display: flex; align-items: center; gap: 12px;">
                                 <div style="position: relative; width: 80px; height: 80px; flex-shrink: 0;">
                                     <img id="cover-thumb" src="" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid #4CAF50; display: none;">
@@ -430,10 +432,10 @@ export function createPublishPostView(currentUser, editPostData = null) {
                                 </div>
                                 <div style="display: flex; flex-direction: column; gap: 6px;">
                                     <button id="btn-capture-frame" style="padding: 6px 12px; background: #333; border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
-                                        📸 ${t('post.capture_frame') || '截取当前帧'}
+                                        📸 ${t('post.capture_frame')}
                                     </button>
                                     <button id="btn-upload-cover" style="padding: 6px 12px; background: #333; border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
-                                        🖼️ ${t('post.upload_cover') || '手动上传封面'}
+                                        🖼️ ${t('post.upload_cover')}
                                     </button>
                                     <input type="file" id="cover-input" accept="image/*" style="display: none;">
                                 </div>
@@ -448,7 +450,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 <label style="display: block; font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 8px;">
                     📝 ${t('post.title_label')} <span style="color: #F44336;">*</span>
                 </label>
-                <input type="text" id="title-input" value="${editTitle}" placeholder="${t('post.title_placeholder')}" maxlength="50" style="width: 100%; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
+                <input type="text" id="title-input" value="${escapeHtml(editTitle)}" placeholder="${t('post.title_placeholder')}" maxlength="50" style="width: 100%; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
                 <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
                     <span id="title-count">${editTitle.length}</span>/50
                 </div>
@@ -459,7 +461,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 <label style="display: block; font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 8px;">
                     ✍️ ${t('post.content_label')}
                 </label>
-                <textarea id="content-input" placeholder="${t('post.content_placeholder')}" maxlength="2000" style="width: 100%; height: 200px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box; outline: none; resize: none; line-height: 1.6;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">${editContent}</textarea>
+                <textarea id="content-input" placeholder="${t('post.content_placeholder')}" maxlength="2000" style="width: 100%; height: 200px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box; outline: none; resize: none; line-height: 1.6;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">${escapeHtml(editContent)}</textarea>
                 <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
                     <span id="content-count">${editContent.length}</span>/2000
                 </div>
@@ -684,7 +686,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
             Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
             
             wrapper.innerHTML = `
-                <img src="${url}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
+                <img src="${escapeHtml(url)}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
                 ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
                 <button data-action="remove" data-existing-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
             `;
@@ -792,14 +794,14 @@ export function createPublishPostView(currentUser, editPostData = null) {
         const validExts = ['.mp4', '.webm', '.mov'];
         const isValidType = validTypes.includes(file.type) || validExts.some(ext => file.name.toLowerCase().endsWith(ext));
         if (!isValidType) {
-            _showVideoErrorAndReset(t('post.error_video_format') || '仅支持 mp4、webm、mov 格式的视频', videoInput);
+            _showVideoErrorAndReset(t('post.error_video_format'), videoInput);
             return;
         }
         
         // 大小检查
         const MAX_SIZE = 100 * 1024 * 1024;
         if (file.size > MAX_SIZE) {
-            _showVideoErrorAndReset(t('post.error_video_size') || '视频大小不能超过 100MB', videoInput);
+            _showVideoErrorAndReset(t('post.error_video_size'), videoInput);
             return;
         }
         
@@ -812,7 +814,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         tempVideo.onloadedmetadata = () => {
             URL.revokeObjectURL(tempUrl);
             if (tempVideo.duration > 180) {
-                _showVideoErrorAndReset(t('post.error_video_duration') || '视频时长不能超过 3 分钟', videoInput);
+                _showVideoErrorAndReset(t('post.error_video_duration'), videoInput);
                 return;
             }
             
@@ -826,7 +828,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         
         tempVideo.onerror = () => {
             URL.revokeObjectURL(tempUrl);
-            _showVideoErrorAndReset(t('post.error_video_load') || '无法读取视频信息', videoInput);
+            _showVideoErrorAndReset(t('post.error_video_load'), videoInput);
         };
     };
     
@@ -854,7 +856,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
             videoNameEl.textContent = videoFile.name;
             videoMetaEl.textContent = `${formatFileSize(videoFile.size)} · ${Math.round(videoDuration)}秒`;
         } else if (currentVideoUrl) {
-            videoNameEl.textContent = t('post.existing_video') || '已有视频';
+            videoNameEl.textContent = t('post.existing_video');
             videoMetaEl.textContent = '';
         }
         
@@ -930,7 +932,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
     btnCaptureFrame.onclick = async (e) => {
         e.stopPropagation();
         if (!videoPlayer.videoWidth) {
-            showToast(t('post.error_video_not_ready') || '视频尚未加载完成', "warning");
+            showToast(t('post.error_video_not_ready'), "warning");
             return;
         }
         const cover = await generateCoverFromVideo(videoPlayer);
@@ -938,9 +940,9 @@ export function createPublishPostView(currentUser, editPostData = null) {
             videoCoverFile = cover;
             currentCoverUrl = '';
             renderCoverThumb();
-            showToast(t('post.cover_captured') || '封面已更新', "success");
+            showToast(t('post.cover_captured'), "success");
         } else {
-            showToast(t('post.cover_capture_failed') || '封面截取失败', "error");
+            showToast(t('post.cover_capture_failed'), "error");
         }
     };
     
@@ -954,7 +956,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         const file = e.target.files?.[0];
         if (!file) return;
         if (!file.type.startsWith('image/')) {
-            _showVideoErrorAndReset(t('post.error_cover_format') || '请选择图片文件作为封面', coverInput);
+            _showVideoErrorAndReset(t('post.error_cover_format'), coverInput);
             return;
         }
         videoCoverFile = file;
@@ -984,15 +986,15 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 return;
             }
             if (!content) {
-                showToast(t('post.error_no_content') || '请输入正文内容', "warning");
+                showToast(t('post.error_no_content'), "warning");
                 return;
             }
             if (!videoFile && !currentVideoUrl) {
-                showToast(t('post.error_no_video') || '请选择视频文件', "warning");
+                showToast(t('post.error_no_video'), "warning");
                 return;
             }
             if (!videoCoverFile && !currentCoverUrl) {
-                showToast(t('post.error_no_cover') || '请等待封面生成或手动上传封面', "warning");
+                showToast(t('post.error_no_cover'), "warning");
                 return;
             }
             
@@ -1002,7 +1004,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 // 上传封面
                 let coverUrl = currentCoverUrl;
                 if (videoCoverFile) {
-                    submitBtn.textContent = `⏳ ${t('post.uploading_cover') || '上传封面中...'}`;
+                    submitBtn.textContent = `⏳ ${t('post.uploading_cover')}`;
                     const res = await api.uploadFile(videoCoverFile, "post");
                     coverUrl = res.url;
                 }
@@ -1010,9 +1012,9 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 // 上传视频（带进度的 XMLHttpRequest）
                 let videoUrl = currentVideoUrl;
                 if (videoFile) {
-                    submitBtn.textContent = `⏳ ${t('post.uploading_video') || '上传视频中...'} 0%`;
+                    submitBtn.textContent = `⏳ ${t('post.uploading_video')} 0%`;
                     const res = await uploadVideoWithProgress(videoFile, (percent) => {
-                        submitBtn.textContent = `⏳ ${t('post.uploading_video') || '上传视频中...'} ${percent}%`;
+                        submitBtn.textContent = `⏳ ${t('post.uploading_video')} ${percent}%`;
                     });
                     videoUrl = res.url;
                 }

@@ -159,7 +159,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
         if (isMe) tabs.push({ id: "collected", label: t('profile.my_collected') });
         if (isMe || !privacy.likes) tabs.push({ id: "liked", label: t('profile.recent_likes') });
         if (isMe || !privacy.follows) tabs.push({ id: "following", label: t('profile.following') });
-        if (isMe || !privacy.followers) tabs.push({ id: "followers", label: t('profile.followers') || "粉丝" });
+        if (isMe || !privacy.followers) tabs.push({ id: "followers", label: t('profile.followers') });
 
         if (!tabs.find(t => t.id === activeTab)) activeTab = "published";
 

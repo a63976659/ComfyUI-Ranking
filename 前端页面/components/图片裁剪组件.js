@@ -9,6 +9,10 @@
 // 🔧 P3优化：事件监听器生命周期管理，防止内存泄漏
 // ==========================================
 
+import { escapeHtml } from "../core/全局配置.js";
+// 🔧 i18n：头部操作提示走词典（用户体验_国际化.js 是零依赖叶子模块，引入不成环）
+import { t } from "./用户体验_国际化.js";
+
 // 辅助函数：将 value 限制在 [min, max] 范围内
 function _clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -59,11 +63,11 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
         let ratioText = '16:9';
         if (aspectRatio === 1) ratioText = '1:1';
         else if (aspectRatio < 1) ratioText = '9:16';
-        // 📱 触控设备与鼠标设备的操作提示区分（移动端无滚轮/拖动概念）
-        const gestureHint = _isTouchDevice() ? '单指拖动调整位置 | 双指捏合或滑块缩放' : '拖动调整位置 | 滚轮缩放';
+        // 📱 触控设备与鼠标设备的操作提示区分（移动端无滚轮/拖动概念）；文案走词典，随界面语言切换
+        const gestureHint = _isTouchDevice() ? t('crop.gesture_hint_touch') : t('crop.gesture_hint_mouse');
         header.innerHTML = `
-            <span style="font-size: 16px; font-weight: bold; color: #fff;">✂️ ${title}</span>
-            <span style="font-size: 12px; color: #888;">比例 ${ratioText} | ${gestureHint}</span>
+            <span style="font-size: 16px; font-weight: bold; color: #fff;">✂️ ${escapeHtml(title)}</span>
+            <span style="font-size: 12px; color: #888;">${escapeHtml(t('crop.ratio_label'))} ${ratioText} | ${escapeHtml(gestureHint)}</span>
         `;
 
         // 裁剪区域容器
@@ -203,6 +207,9 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
         let pinchCenterY = 0;
         let pinchStartOffsetX = 0;
         let pinchStartOffsetY = 0;
+        // 🔧 手势起始时容器的视口原点（含 border），用于把 clientX/Y 换算成与 img.style.left 同源的容器内坐标
+        let pinchOriginX = 0;
+        let pinchOriginY = 0;
 
         // 获取缩放边界（与滚轮缩放共用同一规则）
         function _getScaleLimits() {
@@ -234,9 +241,14 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
                 isDragging = false;
                 pinchStartDist = _getTouchDistance(e.touches);
                 pinchStartScale = scale;
+                // 🔧 clientX 是视口坐标，offsetX/containerWidth 是容器内坐标，两者必须同原点才能参与锚点计算；
+                // clientLeft/clientTop 为 2px 边框宽度（img 的 absolute 定位原点在 padding box 左上角）
+                const rect = cropContainer.getBoundingClientRect();
+                pinchOriginX = rect.left + cropContainer.clientLeft;
+                pinchOriginY = rect.top + cropContainer.clientTop;
                 const mid = _getTouchMidPoint(e.touches);
-                pinchCenterX = mid.x;
-                pinchCenterY = mid.y;
+                pinchCenterX = mid.x - pinchOriginX;
+                pinchCenterY = mid.y - pinchOriginY;
                 pinchStartOffsetX = offsetX;
                 pinchStartOffsetY = offsetY;
             }
@@ -255,10 +267,17 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
                 const newScale = _clamp(pinchStartScale * (_getTouchDistance(e.touches) / pinchStartDist), minScale, maxScale);
                 const ratio = newScale / pinchStartScale;
                 const mid = _getTouchMidPoint(e.touches);
+                // 换算到容器内坐标（与 handleTouchStart 同原点，一次捏合手势期间弹窗不移动）
+                const relX = mid.x - pinchOriginX;
+                const relY = mid.y - pinchOriginY;
+                // 图片 left = (W - s·imgW)/2 + o，故锚点不动的条件解出：
+                //   o1 = (p1 - p0) + ratio·(o0 - d) + d，其中 d = p0 - W/2 为起始手指相对容器中心的偏移
                 const centerX = containerWidth / 2;
                 const centerY = containerHeight / 2;
-                offsetX = (mid.x - pinchCenterX) + (pinchStartOffsetX - (centerX - pinchCenterX)) * ratio + (centerX - pinchCenterX);
-                offsetY = (mid.y - pinchCenterY) + (pinchStartOffsetY - (centerY - pinchCenterY)) * ratio + (centerY - pinchCenterY);
+                const anchorX = pinchCenterX - centerX;
+                const anchorY = pinchCenterY - centerY;
+                offsetX = (relX - pinchCenterX) + (pinchStartOffsetX - anchorX) * ratio + anchorX;
+                offsetY = (relY - pinchCenterY) + (pinchStartOffsetY - anchorY) * ratio + anchorY;
                 scale = newScale;
                 updateImagePosition();
             }

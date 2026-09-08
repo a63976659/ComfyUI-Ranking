@@ -103,11 +103,9 @@ async function loadTaskDetail(container, taskId, currentUser) {
     renderTaskDetail(contentEl, task, currentUser);
     
     if (fromCache) {
-        const toast = document.createElement('div');
-        toast.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#FF9800; color:white; padding:10px 20px; border-radius:4px; z-index:10000; font-size:14px;';
-        toast.textContent = t('feedback.cache_fallback');
-        document.body.appendChild(toast);
-        setTimeout(() => toast.remove(), 3000);
+        // 🔧 改用统一提示组件：原为手写 div（无动画、不排队、不避重叠，样式与其他提示不一致）；
+        // warning 类型的背景色与原手写值同为 #FF9800，视觉保持一致
+        showToast(t('feedback.cache_fallback'), 'warning');
     } else {
         // 只有在线加载成功时才记录浏览量
         recordTaskView(contentEl, taskId);
@@ -188,7 +186,7 @@ function renderTaskDetail(contentEl, task, currentUser) {
         
         <!-- 发布者信息 -->
         <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; padding: 10px; background: var(--comfy-menu-bg); border-radius: 8px;">
-            <img src="${task.publisher_avatar || PLACEHOLDERS.AVATAR_SMALL}"
+            <img src="${escapeHtml(task.publisher_avatar || PLACEHOLDERS.AVATAR_SMALL)}"
                  style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid var(--border-color, #333); cursor: pointer;" id="publisher-avatar">
             <div style="flex: 1;">
                 <div style="color: #fff; font-size: 14px; font-weight: 500;">${escapeHtml(task.publisher_name || task.publisher)}</div>
@@ -296,7 +294,7 @@ ${escapeHtml(task.description)}</div>
             <div style="margin-bottom: 20px; padding: 12px; background: rgba(33,150,243,0.1); border: 1px solid rgba(33,150,243,0.3); border-radius: 8px;">
                 <div style="font-size: 13px; font-weight: bold; color: #2196F3; margin-bottom: 8px;">👷 ${t('task.assignee')}</div>
                 <div style="display: flex; align-items: center; gap: 10px;">
-                    <img src="${task.assignee_avatar || PLACEHOLDERS.AVATAR_SMALL}"
+                    <img src="${escapeHtml(task.assignee_avatar || PLACEHOLDERS.AVATAR_SMALL)}"
                          style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">
                     <span style="color: #fff;">${escapeHtml(task.assignee_name || task.assignee)}</span>
                 </div>
@@ -321,7 +319,7 @@ ${escapeHtml(task.description)}</div>
                 <div id="applicants-list" style="display: flex; flex-direction: column; gap: 8px;">
                     ${task.applicants.map(app => `
                         <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--comfy-menu-bg); border-radius: 8px;">
-                            <img src="${app.avatar || PLACEHOLDERS.AVATAR_SMALL}"
+                            <img src="${escapeHtml(app.avatar || PLACEHOLDERS.AVATAR_SMALL)}"
                                  style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">
                             <div style="flex: 1;">
                                 <div style="color: #fff; font-size: 13px;">${escapeHtml(app.name || app.account)}</div>
@@ -337,7 +335,7 @@ ${escapeHtml(task.description)}</div>
         ` : ""}
         
         <!-- 操作按钮区域 -->
-        <div id="action-buttons" style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border-color, #333);
+        <div id="action-buttons" style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border-color, #333);">
         </div>
     `;
     
@@ -383,14 +381,17 @@ ${escapeHtml(task.description)}</div>
 function _showConfirmDialog({ title, icon, message, description, confirmText, confirmStyle, loadingText, errorText, width, onConfirm }) {
     const content = document.createElement("div");
     content.style.color = "#ccc";
+    // 🔒 XSS防护：message/description 可能嵌入其他用户的账号或昵称
+    // （如 t('task.confirm_assign', { assignee })），写入 innerHTML 前必须转义。
+    // 本函数的 4 个调用方传的都是词典文本/emoji/数字，转义不改变现有显示效果。
     content.innerHTML = `
         <div style="text-align: center;">
             <div style="font-size: 40px; margin-bottom: 15px;">${icon}</div>
-            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${message}</div>
-            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${description}</div>
+            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${escapeHtml(message)}</div>
+            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${escapeHtml(description)}</div>
             <div style="display: flex; gap: 10px;">
                 <button id="dialog-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="dialog-confirm" style="flex: 1; ${confirmStyle}; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${confirmText}</button>
+                <button id="dialog-confirm" style="flex: 1; ${confirmStyle}; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${escapeHtml(confirmText)}</button>
             </div>
         </div>
     `;
@@ -444,7 +445,7 @@ function showApplyDialog(task, currentUser) {
     content.innerHTML = `
         <div style="margin-bottom: 15px;">
             <div style="color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.apply_message_prompt')}</div>
-            <textarea id="apply-message" rows="4" placeholder="${t('task.apply_message_placeholder') || ''}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
+            <textarea id="apply-message" rows="4" placeholder="${t('task.apply_message_placeholder')}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
         </div>
         <div style="display: flex; gap: 10px;">
             <button id="apply-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
@@ -487,7 +488,7 @@ function showCancelApplyConfirmDialog(task, currentUser) {
         title: t('task.cancel_apply'),
         icon: '↩️',
         message: t('task.confirm_cancel_apply'),
-        description: t('task.cancel_apply_warning') || '',
+        description: t('task.cancel_apply_warning'),
         confirmText: t('common.confirm'),
         confirmStyle: 'background: #FF9800',
         errorText: t('task.cancel_apply_failed'),
@@ -511,7 +512,7 @@ function showCancelTaskConfirmDialog(task) {
         title: t('task.cancel_task'),
         icon: '⚠️',
         message: t('task.confirm_cancel_task'),
-        description: t('task.cancel_task_warning') || '',
+        description: t('task.cancel_task_warning'),
         confirmText: t('task.cancel_task'),
         confirmStyle: 'background: #F44336',
         loadingText: `⏳ ${t('common.cancelling')}...`,
@@ -558,7 +559,7 @@ function showRejectDialog(task, currentUser) {
     content.innerHTML = `
         <div style="margin-bottom: 15px;">
             <div style="color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.reject_reason_prompt')}</div>
-            <textarea id="reject-feedback" rows="4" placeholder="${t('task.reject_reason_placeholder') || ''}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
+            <textarea id="reject-feedback" rows="4" placeholder="${t('task.reject_reason_placeholder')}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
         </div>
         <div style="display: flex; gap: 10px;">
             <button id="reject-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
@@ -571,7 +572,7 @@ function showRejectDialog(task, currentUser) {
     content.querySelector("#reject-confirm").onclick = async () => {
         const feedback = content.querySelector("#reject-feedback").value.trim();
         if (!feedback) {
-            showToast(t('task.reject_reason_required') || '请输入拒绝原因', "warning");
+            showToast(t('task.reject_reason_required'), "warning");
             return;
         }
         
@@ -607,8 +608,8 @@ function showDeleteCommentConfirmDialog(taskId, comment, container, currentUser)
     content.innerHTML = `
         <div style="text-align: center;">
             <div style="font-size: 40px; margin-bottom: 15px;">⚠️</div>
-            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('post.delete_comment_confirm') || '确定删除这条评论吗？'}</div>
-            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('post.delete_comment_warning') || '删除后无法恢复'}</div>
+            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('post.delete_comment_confirm')}</div>
+            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('post.delete_comment_warning')}</div>
             <div style="display: flex; gap: 10px;">
                 <button id="delete-comment-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
                 <button id="delete-comment-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
@@ -625,11 +626,11 @@ function showDeleteCommentConfirmDialog(taskId, comment, container, currentUser)
         
         try {
             await api.deleteComment(taskId, comment.id);
-            showToast(t('post.delete_comment_success') || '评论已删除', "success");
+            showToast(t('post.delete_comment_success'), "success");
             globalModal.closeTopModal();
             loadTaskComments(container, taskId, currentUser);
         } catch (err) {
-            showToast((t('post.delete_comment_failed') || '删除失败') + ": " + err.message, "error");
+            showToast(t('post.delete_comment_failed') + ": " + err.message, "error");
             confirmBtn.disabled = false;
             confirmBtn.textContent = t('common.delete');
         }
@@ -935,9 +936,10 @@ function renderTipBoard(tipBoard) {
  */
 function _renderCommentAvatar(name, avatarUrl) {
     const initial = (name || 'U')[0].toUpperCase();
+    // 🔒 XSS防护：评论者昵称与头像均来自他人可修改的资料，写入 HTML 前必须转义
     return avatarUrl 
-        ? `<img class="swr-avatar" src="${avatarUrl}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">` 
-        : `<div class="swr-avatar" style="width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold;">${initial}</div>`;
+        ? `<img class="swr-avatar" src="${escapeHtml(avatarUrl)}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">` 
+        : `<div class="swr-avatar" style="width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold;">${escapeHtml(initial)}</div>`;
 }
 
 /**

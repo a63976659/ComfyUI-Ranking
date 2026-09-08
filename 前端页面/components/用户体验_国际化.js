@@ -31,6 +31,9 @@ const translations = {
         'common.sending': '发送中...',
         'common.retrying': '重试中...',
         'common.retry_failed': '重试失败，请稍后再试',
+        'common.no_more': '没有更多了',
+        'common.parse_error': '响应解析失败',
+        'common.network_error_retry': '网络连接失败，请稍后重试',
         'common.more': '更多',
         'common.back': '返回',
         'common.search': '搜索',
@@ -308,6 +311,7 @@ const translations = {
         'wallet.recharge.custom_placeholder': '请输入自定义金额 (1~10000)',
         'wallet.recharge.max_amount_exceeded': '单次充值金额不得超过10000元',
         'wallet.recharge.processing': '处理中...',
+        'wallet.recharge.timeout': '支付查询超时，如已支付请稍后刷新查看余额',
         
         // 提现相关
         'wallet.withdraw.title': '💳 收益提现中心',
@@ -326,6 +330,7 @@ const translations = {
         'wallet.withdraw.resend_in': '{seconds}s 后重发',
         'wallet.withdraw.confirm': '确认提现 (金额将转入冻结审核)',
         'wallet.withdraw.submitting': '⏳ 提交中...',
+        'wallet.withdraw.timeout': '提现请求超时，请检查网络后重试',
         'wallet.withdraw.no_balance': '您的可提现收益为 0，快去发布优质插件赚取积分吧！',
         'wallet.withdraw.min_amount': '最低提现额度为 1 积分！',
         'wallet.withdraw.fill_account': '请完整填写收款人支付宝账号与真实姓名！',
@@ -417,6 +422,7 @@ const translations = {
         'social.reply': '回复',
         'social.reply_to': '回复',
         'social.comment_deleted': '此条评论已由用户删除',
+        'social.delete_comment_title': '删除评论',
         'social.delete_comment_confirm': '确定要删除这条评论吗？删除后将无法恢复。',
         'social.no_comments': '暂无留言，来抢沙发吧~',
         
@@ -484,6 +490,7 @@ const translations = {
         'chat.date_day': '日',
         'chat.load_more': '加载更早的消息',
         'chat.msg_too_long': '消息不能超1000字',
+        'chat.send_failed': '发送失败: {msg}',
         'chat.load_list_failed': '加载对话列表失败',
         'chat.load_history_failed': '加载消息记录失败',
         'chat.load_failed_hint': '消息加载失败',
@@ -586,6 +593,12 @@ const translations = {
         'item.tip_board_title': '该作品赞赏贡献榜 (TOP 10)',
         'item.owned_reinstall': '已拥有 (点击重新覆盖安装)',
         'item.owned_purchased': '已购买 (请在电脑端安装)',
+        'web.publish_not_supported': '⚠️ 网页版暂不支持发布/编辑功能',
+        'web.install_on_desktop': '请在电脑端进行安装',
+        'web.purchase_success_desktop': '购买成功！请在电脑端进行安装',
+        'crop.ratio_label': '比例',
+        'crop.gesture_hint_touch': '单指拖动调整位置 | 双指捏合或滑块缩放',
+        'crop.gesture_hint_mouse': '拖动调整位置 | 滚轮缩放',
         'item.update_available': '发现新版本 (点击静默热更新)',
         'item.get_now': '立即获取使用',
         'item.free': '完全免费',
@@ -598,7 +611,13 @@ const translations = {
         // 反馈补充
         'feedback.deleted': '已成功删除',
         'feedback.delete_failed': '删除失败',
+        'feedback.retry_suffix': '，请重试',
         'feedback.cache_fallback': '⚠️ 网络连接失败，展示的是缓存数据',
+        // 🔧 新增：以下三条原为散落在各组件里的硬编码中文，现收口到词典以支持多语言
+        'feedback.offline_no_cache': '网络已断开，且无本地缓存',
+        'feedback.search_local_result': '⚠️ 网络不可用，显示本地搜索结果',
+        // 🔍 搜索请求被新关键词取代时抛出的错误消息（详见 网络请求_基础设施.js 的主动取消分支）
+        'feedback.request_cancelled': '请求已取消',
         
         // 通用
         'common.processing': '处理中',
@@ -813,6 +832,11 @@ const translations = {
         'post.network_cache': '网络异常，已加载本地缓存',
         'post.login_first': '请先登录后再发布作品',
         'post.video_tag': '视频',
+        'post.images_unit': '张',
+        'post.delete_comment_confirm': '确定删除这条评论吗？',
+        'post.delete_comment_warning': '删除后无法恢复',
+        'post.delete_comment_success': '评论已删除',
+        'post.delete_comment_failed': '删除失败',
         
         // 帖子详情
         'post.sort_latest': '最新',
@@ -1054,6 +1078,8 @@ const translations = {
         'common.uploading': '上传中',
         'common.upload_progress': '上传 ({current}/{total})',
         'common.submitting': '提交中',
+        'common.confirming': '确认中',
+        'common.cancelling': '取消中',
         'common.upload_image_progress': '上传图片 ({current}/{total})',
         'common.unknown_task': '未知任务',
         
@@ -1068,15 +1094,20 @@ const translations = {
         'task.confirm_assign': '确定选择 {assignee} 作为接单者吗？',
         'task.confirm_deposit': '将从您的账户扣除订金 {amount} 积分',
         'task.apply_message_prompt': '请输入申请留言（可选）：',
+        'task.apply_message_placeholder': '简单说明你的优势与预计交付时间...',
         'task.confirm_cancel_apply': '确定撤回申请吗？',
+        'task.cancel_apply_warning': '撤回后你的申请将从候选列表中移除',
         'task.apply_cancelled': '已撤回申请',
         'task.cancel_apply_failed': '撤回失败',
         'task.confirm_cancel_task': '确定取消任务吗？此操作不可撤销。',
+        'task.cancel_task_warning': '取消后已冻结的订金将退回你的账户',
         'task.task_cancelled': '任务已取消',
         'task.cancel_task_failed': '取消失败',
         'task.confirm_accept': '确定验收通过吗？',
         'task.confirm_pay_remaining': '将支付尾款 {amount} 积分给接单者',
         'task.reject_reason_prompt': '请输入不通过的原因：',
+        'task.reject_reason_placeholder': '请说明需要修改的具体问题...',
+        'task.reject_reason_required': '请输入拒绝原因',
         'task.work_returned': '已退回修改',
         'task.submit_work': '提交成果',
         'task.deliverable_images': '交付图片',
@@ -1268,6 +1299,8 @@ const translations = {
         // 个人列表
         'profile.privacy_hidden': '由于作者的隐私设置，该列表不对外公开',
         'profile.no_following': '暂无关注的人',
+        'profile.no_followers': '暂无粉丝',
+        'profile.load_more': '加载更多 ({count})',
         'profile.no_collected': '还没有收藏任何内容',
         'profile.go_discover': '去榜单页面或讨论区发现精彩内容吧！',
         'profile.collected_items': '收藏的资源',
@@ -1424,6 +1457,9 @@ const translations = {
         'common.sending': 'Sending...',
         'common.retrying': 'Retrying...',
         'common.retry_failed': 'Retry failed, please try again later',
+        'common.no_more': 'No more items',
+        'common.parse_error': 'Failed to parse response',
+        'common.network_error_retry': 'Network connection failed, please try again later',
         'common.more': 'More',
         'common.back': 'Back',
         'common.search': 'Search',
@@ -1696,6 +1732,7 @@ const translations = {
         'wallet.recharge.custom_placeholder': 'Enter custom amount (1~10000)',
         'wallet.recharge.max_amount_exceeded': 'Single recharge cannot exceed 10000',
         'wallet.recharge.processing': 'Processing...',
+        'wallet.recharge.timeout': 'Payment check timed out. If you have already paid, refresh later to see your balance',
         
         // Withdraw
         'wallet.withdraw.title': '💳 Earnings Withdrawal Center',
@@ -1714,6 +1751,7 @@ const translations = {
         'wallet.withdraw.resend_in': 'Resend in {seconds}s',
         'wallet.withdraw.confirm': 'Confirm Withdrawal (Funds Will Be Frozen for Review)',
         'wallet.withdraw.submitting': '⏳ Submitting...',
+        'wallet.withdraw.timeout': 'Withdrawal request timed out. Check your network and try again',
         'wallet.withdraw.no_balance': 'Your withdrawable balance is 0. Publish quality plugins to earn points!',
         'wallet.withdraw.min_amount': 'Minimum withdrawal is 1 point!',
         'wallet.withdraw.fill_account': 'Please fill in both Alipay account and real name!',
@@ -1804,6 +1842,7 @@ const translations = {
         'social.say_something': 'Say something...',
         'social.reply_to': 'Reply to',
         'social.comment_deleted': 'This comment has been deleted',
+        'social.delete_comment_title': 'Delete Comment',
         'social.delete_comment_confirm': 'Are you sure you want to delete this comment? This cannot be undone.',
         'social.no_comments': 'No comments yet. Be the first!',
         
@@ -1869,6 +1908,7 @@ const translations = {
         'chat.date_day': '',
         'chat.load_more': 'Load earlier messages',
         'chat.msg_too_long': 'Message cannot exceed 1000 characters',
+        'chat.send_failed': 'Send failed: {msg}',
         'chat.load_list_failed': 'Failed to load conversations',
         'chat.load_history_failed': 'Failed to load messages',
         'chat.load_failed_hint': 'Message loading failed',
@@ -1969,6 +2009,12 @@ const translations = {
         'item.tip_board_title': 'Top Supporters (TOP 10)',
         'item.owned_reinstall': 'Owned (Click to reinstall)',
         'item.owned_purchased': 'Purchased (Install on PC)',
+        'web.publish_not_supported': '⚠️ Publishing and editing are not available in the web version',
+        'web.install_on_desktop': 'Please install it in the desktop version',
+        'web.purchase_success_desktop': 'Purchase successful! Please install it in the desktop version',
+        'crop.ratio_label': 'Ratio',
+        'crop.gesture_hint_touch': 'Drag with one finger to reposition | Pinch or use the slider to zoom',
+        'crop.gesture_hint_mouse': 'Drag to reposition | Scroll to zoom',
         'item.update_available': 'Update available (Click for silent hot update)',
         'item.get_now': 'Get Now',
         'item.free': 'Free',
@@ -1977,7 +2023,11 @@ const translations = {
         'time.hours_later': ' hours effective',
         'feedback.deleted': 'Successfully deleted',
         'feedback.delete_failed': 'Delete failed',
+        'feedback.retry_suffix': ', please try again',
         'feedback.cache_fallback': '⚠️ Network failed, showing cached data',
+        'feedback.offline_no_cache': 'Network disconnected, and no local cache available',
+        'feedback.search_local_result': '⚠️ Network unavailable, showing local search results',
+        'feedback.request_cancelled': 'Request cancelled',
         'common.processing': 'Processing',
         'common.got_it': 'Got it',
         'confirm.delete_title': 'Confirm Delete',
@@ -2123,6 +2173,63 @@ const translations = {
         'task.publish_success': 'Task published!',
         'task.publish_failed': 'Publishing failed, please retry',
         'task.max_images': 'Max 6 images',
+        // 🔧 补齐：以下 50 条 zh-CN 已有、en-US 缺失，导致英文界面下任务榜退回中文显示
+        'task.description': 'Task Description',
+        'task.reference_images': 'Reference Images',
+        'task.reference_link': 'Reference Link',
+        'task.assignee': 'Assignee',
+        'task.note': 'Note',
+        // 中文量词「人」，英文不用量词（Applicants (5)），故刻意留空；t() 已修为尊重空值
+        'task.applicants_count': '',
+        'task.choose_assignee': 'Select',
+        'task.confirm_assign': 'Confirm selecting {assignee} as the assignee?',
+        'task.confirm_deposit': 'A deposit of {amount} credits will be deducted from your account',
+        'task.apply_message_prompt': 'Enter your application message (optional):',
+        'task.apply_message_placeholder': 'Briefly describe your strengths and estimated delivery time...',
+        'task.confirm_cancel_apply': 'Withdraw your application?',
+        'task.cancel_apply_warning': 'Your application will be removed from the candidate list',
+        'task.apply_cancelled': 'Application withdrawn',
+        'task.confirm_cancel_task': 'Cancel this task? This cannot be undone.',
+        'task.cancel_task_warning': 'The frozen deposit will be refunded to your account after cancellation',
+        'task.task_cancelled': 'Task cancelled',
+        'task.cancel_task_failed': 'Cancellation failed',
+        'task.confirm_accept': 'Approve and accept the delivery?',
+        'task.confirm_pay_remaining': 'The remaining {amount} credits will be paid to the assignee',
+        'task.reject_reason_prompt': 'Enter the reason for rejection:',
+        'task.reject_reason_placeholder': 'Describe the specific issues that need revision...',
+        'task.reject_reason_required': 'Please enter a reason for rejection',
+        'task.work_returned': 'Returned for revision',
+        'task.submit_work': 'Submit Work',
+        'task.deliverable_images': 'Delivery Images',
+        'task.support_multiple_images': 'Multiple images supported',
+        'task.note_optional': 'Note (optional)',
+        'task.note_placeholder': 'Describe the delivered content...',
+        'task.please_upload_deliverables': 'Please upload delivery images',
+        'task.upload_failed_retry': 'Image upload failed, please retry',
+        'task.submit_success_waiting': 'Work submitted, awaiting acceptance',
+        'task.start_dispute': 'File Dispute',
+        'task.accept_work': 'Accept Work',
+        'task.reject_work': 'Reject Work',
+        'task.task_title': 'Task Title',
+        'task.description_placeholder': 'Describe the requirements, delivery criteria, references...',
+        'task.reference_images_optional': 'Reference images (optional, max 6)',
+        'task.add_reference_image': 'Add reference image',
+        'task.reference_link_optional': 'Reference link (optional)',
+        'task.min_10_credits': 'Minimum 10 credits',
+        'task.deposit_deducted_on_assign': 'Deducted on assignment',
+        'task.price_description': 'Price Breakdown',
+        'task.deposit_on_assign': 'Deposit (deducted when assigning)',
+        'task.remaining_on_accept': 'Balance (deducted on acceptance)',
+        'task.publish_task': 'Publish Task',
+        'task.manage_in_task_list': 'After publishing, manage your tasks in the Task Board',
+        'task.please_enter_title': 'Please enter a task title',
+        'task.please_enter_description': 'Please enter a task description',
+        'task.price_min_10': 'Task price cannot be lower than 10 credits',
+        'task.please_select_deadline': 'Please select a deadline',
+        'task.uploading_images': 'Uploading images',
+        'task.upload_progress': 'Uploading images ({current}/{total})',
+        'task.publishing': 'Publishing',
+        'task.max_6_images': 'Max 6 images',
         'task.view_total': '🔥 Total Views',
         'task.view_today': '📅 Today Views',
         'task.save_changes': 'Save Changes',
@@ -2170,6 +2277,26 @@ const translations = {
         'dispute.notice_2': 'The other party will respond to your dispute',
         'dispute.notice_3': 'Please provide valid evidence',
         'dispute.max_images': 'Max 6 images',
+        // 🔧 补齐：以下 19 条 zh-CN 已有、en-US 缺失，导致英文界面下申诉流程退回中文显示
+        'dispute.start': 'File Dispute',
+        'dispute.reason': 'Dispute Reason',
+        'dispute.reason_placeholder': 'Please describe your reason in detail...',
+        'dispute.evidence_optional': 'Evidence images (optional, max 6)',
+        'dispute.click_upload_evidence': 'Click to upload evidence images',
+        'dispute.submit': 'Submit Dispute',
+        'dispute.submit_success': 'Dispute submitted, awaiting response',
+        'dispute.submit_failed': 'Dispute failed',
+        'dispute.max_6_images': 'Max 6 images',
+        'dispute.please_enter_reason': 'Please enter a dispute reason',
+        'dispute.get_detail_failed': 'Failed to load dispute details',
+        'dispute.related_task': 'Related Task',
+        'dispute.task_id': 'Task ID',
+        'dispute.click_upload_evidence_optional': 'Click to upload evidence images (optional)',
+        'dispute.resolution_result': 'Arbitration Result',
+        'dispute.upload_failed': 'Upload failed',
+        'dispute.please_enter_response': 'Please enter your response',
+        'dispute.response_submitted': 'Response submitted',
+        'dispute.split_result': 'Split by mutual agreement',
         
         // Posts / Forum
         'post.title': 'Forum',
@@ -2182,6 +2309,12 @@ const translations = {
         'post.network_cache': 'Network error, loaded from cache',
         'post.login_first': 'Please login to create posts',
         'post.video_tag': 'Video',
+        // 中文量词「张」，英文不用量词（🖼️ 5），故刻意留空；t() 已修为尊重空值
+        'post.images_unit': '',
+        'post.delete_comment_confirm': 'Delete this comment?',
+        'post.delete_comment_warning': 'This cannot be undone',
+        'post.delete_comment_success': 'Comment deleted',
+        'post.delete_comment_failed': 'Delete failed',
         'post.sort_latest': 'Latest',
         'post.sort_likes': '👍 Most Liked',
         'post.sort_favorites': '🔖 Most Favorited',
@@ -2210,6 +2343,13 @@ const translations = {
         'post.comment_failed': 'Comment failed',
         'post.tip_board_title': '🎁 Top Tippers',
         'post.no_tips': '🎁 No tips yet',
+        // 🔧 补齐：以下 6 条 zh-CN 已有、en-US 缺失，导致英文界面下讨论区退回中文显示
+        'post.uploading_images': 'Uploading images',
+        'post.edit_title': 'Edit Post',
+        'post.delete_confirm_title': 'Confirm Deletion',
+        'post.delete_confirm_desc': 'This cannot be undone. Delete this post?',
+        'post.delete_success': 'Deleted successfully',
+        'post.delete_failed': 'Deletion failed',
         
                 // ✨ Prompt Market
                 'nav.prompts': 'Prompts',
@@ -2413,6 +2553,8 @@ const translations = {
         'common.uploading': 'Uploading',
         'common.upload_progress': 'Upload ({current}/{total})',
         'common.submitting': 'Submitting',
+        'common.confirming': 'Confirming',
+        'common.cancelling': 'Cancelling',
         'common.upload_image_progress': 'Uploading ({current}/{total})',
         'common.unknown_task': 'Unknown Task',
         
@@ -2514,6 +2656,8 @@ const translations = {
         'profile.task_earnings': 'Task Earnings',
         'profile.privacy_hidden': 'This list is private due to the author\'s privacy settings',
         'profile.no_following': 'Not following anyone',
+        'profile.no_followers': 'No followers yet',
+        'profile.load_more': 'Load More ({count})',
         'profile.no_collected': 'No favorites yet',
         'profile.go_discover': 'Go discover content in rankings or forum!',
         'profile.collected_items': 'Favorited Resources',
@@ -2660,7 +2804,17 @@ const translations = {
  */
 export function t(key, params = {}) {
     const lang = translations[currentLang] || translations['zh-CN'];
-    let text = lang[key] || translations['zh-CN'][key] || key;
+    // 🔧 修复：原实现 lang[key] || zh[key] || key 会把「刻意留空的词条」当成缺失又退回中文。
+    // 中文量词/助词在英文里没有对应，必须留空：
+    //   chat.date_day        9月8日  → 9/8
+    //   chat.chatting_suffix 与 X 聊天 → Chatting with X
+    //   creator.output.unit  产出插件 12 个 → Plugins: 12
+    //   profile.transactions_unit  5笔 → 5
+    // 旧逻辑下英文界面实际显示为 9/8日、Chatting with X 聊天、Plugins: 12 个、(5笔)。
+    // 现改为：词条存在即采用（含空串），仅在真正缺键时才回退到中文。
+    let text = Object.prototype.hasOwnProperty.call(lang, key)
+        ? lang[key]
+        : (translations['zh-CN'][key] || key);
     
     // 处理插值 {name}
     Object.entries(params).forEach(([k, v]) => {
@@ -2676,7 +2830,10 @@ export function t(key, params = {}) {
  */
 export function tIfExists(key, fallback = '') {
     const lang = translations[currentLang] || translations['zh-CN'];
-    return lang[key] || translations['zh-CN'][key] || fallback;
+    // 🔧 与 t() 同口径：词条存在即采用（含刻意留空），仅在两级都缺键时用 fallback
+    if (Object.prototype.hasOwnProperty.call(lang, key)) return lang[key];
+    if (Object.prototype.hasOwnProperty.call(translations['zh-CN'], key)) return translations['zh-CN'][key];
+    return fallback;
 }
 
 /**

@@ -317,7 +317,7 @@ function _updatePlayButton(btnPlay, video) {
     if (!btnPlay) return;
     const playing = !video.paused && !video.ended;
     btnPlay.textContent = getPlayIcon(playing);
-    btnPlay.title = playing ? (t('video.pause') || '暂停') : (t('video.play') || '播放');
+    btnPlay.title = playing ? t('video.pause') : t('video.play');
 }
 
 /**
@@ -394,14 +394,14 @@ export function getVideoPlayerHTML(videoUrl, posterUrl, options = {}) {
       <div class="video-progress-tooltip">0:00</div>
     </div>
     <div class="video-controls-row">
-      <button class="video-btn-play" title="${t('video.play') || '播放'}">${getPlayIcon(false)}</button>
+      <button class="video-btn-play" title="${t('video.play')}">${getPlayIcon(false)}</button>
       <span class="video-time">0:00 / 0:00</span>
       <div class="video-volume-wrap">
-        <button class="video-btn-volume" title="${t('video.volume') || '音量'}">🔊</button>
+        <button class="video-btn-volume" title="${t('video.volume')}">🔊</button>
         <input type="range" class="video-volume-slider" min="0" max="100" value="100">
       </div>
       <div class="video-speed-wrap">
-        <button class="video-btn-speed" title="${t('video.speed') || '播放速度'}">1x</button>
+        <button class="video-btn-speed" title="${t('video.speed')}">1x</button>
         <div class="video-speed-menu">
           <div data-speed="0.5">0.5x</div>
           <div data-speed="1" class="active">1x</div>
@@ -410,7 +410,7 @@ export function getVideoPlayerHTML(videoUrl, posterUrl, options = {}) {
           <div data-speed="2">2x</div>
         </div>
       </div>
-      <button class="video-btn-fullscreen" title="${t('video.fullscreen') || '全屏'}">⛶</button>
+      <button class="video-btn-fullscreen" title="${t('video.fullscreen')}">⛶</button>
     </div>
   </div>
 </div>
@@ -444,10 +444,10 @@ export function setupVideoPlayerEvents(container) {
     if (!video) return;
 
     // 设置按钮文字（fallback）
-    if (btnPlay) btnPlay.title = t('video.play') || '播放';
-    if (btnVolume) btnVolume.title = t('video.volume') || '音量';
-    if (btnSpeed) btnSpeed.title = t('video.speed') || '播放速度';
-    if (btnFullscreen) btnFullscreen.title = t('video.fullscreen') || '全屏';
+    if (btnPlay) btnPlay.title = t('video.play');
+    if (btnVolume) btnVolume.title = t('video.volume');
+    if (btnSpeed) btnSpeed.title = t('video.speed');
+    if (btnFullscreen) btnFullscreen.title = t('video.fullscreen');
 
     let isDraggingProgress = false;
     let wasPlayingBeforeDrag = false;
@@ -824,7 +824,7 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
     const startRate = options.playbackRate || 1;
 
     overlay.innerHTML = `
-    <button class="fs-video-close" title="${t('video.close') || '关闭'}">✕</button>
+    <button class="fs-video-close" title="${t('video.close')}">✕</button>
     <video preload="metadata" poster="${safePoster}" playsinline
         style="width:100vw;height:100vh;object-fit:contain;">
       <source src="${safeVideo}">
@@ -837,14 +837,14 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
         <div class="video-progress-tooltip">0:00</div>
       </div>
       <div class="video-controls-row">
-        <button class="video-btn-play" title="${t('video.play') || '播放'}">▶</button>
+        <button class="video-btn-play" title="${t('video.play')}">▶</button>
         <span class="video-time">0:00 / 0:00</span>
         <div class="video-volume-wrap">
-          <button class="video-btn-volume" title="${t('video.volume') || '音量'}">🔊</button>
+          <button class="video-btn-volume" title="${t('video.volume')}">🔊</button>
           <input type="range" class="video-volume-slider" min="0" max="100" value="100">
         </div>
         <div class="video-speed-wrap">
-          <button class="video-btn-speed" title="${t('video.speed') || '播放速度'}">1x</button>
+          <button class="video-btn-speed" title="${t('video.speed')}">1x</button>
           <div class="video-speed-menu">
             <div data-speed="0.5">0.5x</div>
             <div data-speed="1" class="active">1x</div>
@@ -853,7 +853,7 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
             <div data-speed="2">2x</div>
           </div>
         </div>
-        <button class="video-btn-fullscreen" title="${t('video.exit_fullscreen') || '退出全屏'}">⛶</button>
+        <button class="video-btn-fullscreen" title="${t('video.exit_fullscreen')}">⛶</button>
       </div>
     </div>
   `;

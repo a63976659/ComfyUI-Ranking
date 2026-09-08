@@ -27,11 +27,12 @@ import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML 
  */
 function _generateAvatarHtml(avatar, name, size, extraStyle = '') {
     const initial = (name || 'U')[0].toUpperCase();
+    // 🔒 XSS防护：avatar / name 均来自他人可修改的资料（昵称首字母可能是 < ），写入 HTML 前必须转义
     if (avatar) {
-        return `<img class="swr-avatar" src="${avatar}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; ${extraStyle}">`;
+        return `<img class="swr-avatar" src="${escapeHtml(avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; ${extraStyle}">`;
     }
     const fontSize = Math.max(9, Math.round(size * 0.4));
-    return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${initial}</div>`;
+    return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${escapeHtml(initial)}</div>`;
 }
 
 /**
@@ -42,7 +43,7 @@ function _updateAvatarElement(avatarEl, profile, size, extraStyle = '') {
     if (avatarEl.tagName === 'IMG') {
         avatarEl.src = profile.avatar;
     } else {
-        avatarEl.outerHTML = `<img class="swr-avatar" src="${profile.avatar}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; ${extraStyle}">`;
+        avatarEl.outerHTML = `<img class="swr-avatar" src="${escapeHtml(profile.avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; ${extraStyle}">`;
     }
 }
 
@@ -464,7 +465,7 @@ async function showPurchaseConfirmDialog(contentArea, prompt, currentUser) {
         <div style="text-align: center;">
             <div style="font-size: 36px; margin-bottom: 12px;">💎</div>
             <div style="font-size: 15px; font-weight: bold; color: #fff; margin-bottom: 10px;">${t('prompt.purchase_confirm_title')}</div>
-            <div style="font-size: 13px; color: #aaa; margin-bottom: 15px; line-height: 1.6;">${t('prompt.purchase_confirm_desc', { price: prompt.price, title: prompt.title })}</div>
+            <div style="font-size: 13px; color: #aaa; margin-bottom: 15px; line-height: 1.6;">${t('prompt.purchase_confirm_desc', { price: prompt.price, title: escapeHtml(prompt.title) })}</div>
             <div style="margin-bottom: 15px; background: rgba(255,152,0,0.1); padding: 10px; border-radius: 4px; border: 1px solid #FF9800;">
                 ${t('prompt.purchase_balance')}: <strong style="color:#FF9800;">${balance}</strong>
             </div>
@@ -593,7 +594,7 @@ async function showTipDialog(prompt, currentUser, container) {
 
             // 本地前置余额校验
             if ((currentUser.balance || 0) < amount) {
-                showToast(t('wallet.insufficient_balance') || "余额不足，请前往充值", "warning");
+                showToast(t('wallet.insufficient_balance'), "warning");
                 return;
             }
 
@@ -686,7 +687,7 @@ async function loadComments(container, promptId, currentUser) {
         }
         try {
             sendBtn.disabled = true;
-            sendBtn.textContent = t('common.sending') || '...';
+            sendBtn.textContent = t('common.sending');
             await api.addPromptComment(promptId, content);
             commentInput.value = "";
             showToast(t('prompt.comment_success'), "success");

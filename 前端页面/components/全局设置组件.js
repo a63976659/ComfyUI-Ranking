@@ -430,7 +430,7 @@ export function createSettingsView() {
         setLanguage(newLang);
         
         const langName = LANGUAGE_OPTIONS.find(opt => opt.value === newLang)?.label || newLang;
-        showToast(`🌐 ${t('settings.language_changed') || '语言已切换为'} ${langName.split(' / ')[0]}`, "success");
+        showToast(`🌐 ${t('settings.language_changed')} ${langName.split(' / ')[0]}`, "success");
         
         // 🔄 通过路由系统刷新，保持 activeInlineView 同步
         setTimeout(() => {

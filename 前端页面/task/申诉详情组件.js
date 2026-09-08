@@ -8,7 +8,7 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t, getLanguage } from "../components/用户体验增强.js";
-import { isAdmin, IS_WEB_MODE } from "../core/全局配置.js";
+import { isAdmin, IS_WEB_MODE, escapeHtml } from "../core/全局配置.js";
 
 /**
  * 创建申诉详情视图
@@ -37,7 +37,7 @@ async function loadDisputeDetail(container, disputeId, currentUser, onBack) {
         const dispute = res.data;
         renderDisputeDetail(container, dispute, currentUser, onBack);
     } catch (err) {
-        container.innerHTML = `<div style="text-align: center; padding: 40px; color: #f44;">❌ ${err.message}</div>`;
+        container.innerHTML = `<div style="text-align: center; padding: 40px; color: #f44;">❌ ${escapeHtml(err.message)}</div>`;
     }
 }
 
@@ -110,7 +110,7 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
         <!-- 任务信息 -->
         <div class="dispute-section">
             <div class="dispute-section-title"><span class="icon">📋</span> ${t('dispute.related_task')}</div>
-            <div style="color: var(--input-text); font-size: 15px;">${dispute.task_title || t('common.unknown_task')}</div>
+            <div style="color: var(--input-text); font-size: 15px;">${escapeHtml(dispute.task_title || t('common.unknown_task'))}</div>
             <div style="font-size: 12px; color: #888; margin-top: 4px;">${t('dispute.task_id')}: ${dispute.task_id}</div>
         </div>
         
@@ -118,16 +118,16 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
         <div class="dispute-section">
             <div class="dispute-section-title"><span class="icon">👥</span> ${t('dispute.parties')}</div>
             <div class="dispute-party">
-                <img class="dispute-party-avatar" src="${dispute.publisher_avatar || (IS_WEB_MODE ? 'https://api.dicebear.com/7.x/avataaars/svg' : '/community_hub/image?url=https://api.dicebear.com/7.x/avataaars/svg')}" alt="">
+                <img class="dispute-party-avatar" src="${escapeHtml(dispute.publisher_avatar || (IS_WEB_MODE ? 'https://api.dicebear.com/7.x/avataaars/svg' : '/community_hub/image?url=https://api.dicebear.com/7.x/avataaars/svg'))}" alt="">
                 <div class="dispute-party-info">
-                    <div class="dispute-party-name">${dispute.publisher_name || dispute.publisher}</div>
+                    <div class="dispute-party-name">${escapeHtml(dispute.publisher_name || dispute.publisher)}</div>
                     <div class="dispute-party-role">${t('dispute.publisher')} ${dispute.initiator_role === "publisher" ? `（${t('dispute.initiator')}）` : `（${t('dispute.respondent')}）`}</div>
                 </div>
             </div>
             <div class="dispute-party">
-                <img class="dispute-party-avatar" src="${dispute.assignee_avatar || (IS_WEB_MODE ? 'https://api.dicebear.com/7.x/avataaars/svg' : '/community_hub/image?url=https://api.dicebear.com/7.x/avataaars/svg')}" alt="">
+                <img class="dispute-party-avatar" src="${escapeHtml(dispute.assignee_avatar || (IS_WEB_MODE ? 'https://api.dicebear.com/7.x/avataaars/svg' : '/community_hub/image?url=https://api.dicebear.com/7.x/avataaars/svg'))}" alt="">
                 <div class="dispute-party-info">
-                    <div class="dispute-party-name">${dispute.assignee_name || dispute.assignee}</div>
+                    <div class="dispute-party-name">${escapeHtml(dispute.assignee_name || dispute.assignee)}</div>
                     <div class="dispute-party-role">${t('task.assignee')} ${dispute.initiator_role === "assignee" ? `（${t('dispute.initiator')}）` : `（${t('dispute.respondent')}）`}</div>
                 </div>
             </div>
@@ -137,7 +137,7 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
         <div class="dispute-section">
             <div class="dispute-section-title"><span class="icon">📝</span> ${t('dispute.initiator_statement')}</div>
             <div class="dispute-content initiator">
-                <div style="color: var(--input-text);">${dispute.reason || t('common.none')}</div>
+                <div style="color: var(--input-text);">${escapeHtml(dispute.reason || t('common.none'))}</div>
                 ${_renderEvidenceGallery(dispute.evidence)}
                 <div class="dispute-time">${t('dispute.submitted_at')} ${formatTime(dispute.created_at)}</div>
             </div>
@@ -148,7 +148,7 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
             <div class="dispute-section-title"><span class="icon">💬</span> ${t('dispute.respondent_response')}</div>
             ${dispute.response ? `
                 <div class="dispute-content respondent">
-                    <div style="color: var(--input-text);">${dispute.response}</div>
+                    <div style="color: var(--input-text);">${escapeHtml(dispute.response)}</div>
                     ${_renderEvidenceGallery(dispute.response_evidence)}
                     <div class="dispute-time">${t('dispute.responded_at')} ${formatTime(dispute.responded_at)}</div>
                 </div>
@@ -156,7 +156,7 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
                 <div style="color: #888; padding: 12px; text-align: center;">${t('dispute.no_response')}</div>
                 ${canRespond ? `
                     <div class="dispute-respond-form">
-                        <textarea id="respondText" placeholder="${t('dispute.response_placeholder')}"></textarea>
+                        <textarea id="respondText" placeholder="${t('dispute.respond_placeholder')}"></textarea>
                         <div class="dispute-upload-area" id="uploadArea">📷 ${t('dispute.click_upload_evidence_optional')}</div>
                         <input type="file" id="fileInput" accept="image/*" multiple style="display: none;">
                         <div class="dispute-uploaded-images" id="uploadedImages"></div>
@@ -174,7 +174,7 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
                 <div class="dispute-resolution-title">⚖️ ${t('dispute.resolution_result')}</div>
                 <div class="dispute-resolution-result">${getResolutionText(dispute.resolution, dispute.resolution_ratio)}</div>
                 ${dispute.resolution_note ? `
-                    <div class="dispute-resolution-note">${dispute.resolution_note}</div>
+                    <div class="dispute-resolution-note">${escapeHtml(dispute.resolution_note)}</div>
                 ` : ""}
                 <div class="dispute-time">${t('dispute.resolved_at')} ${formatTime(dispute.resolved_at)}</div>
             </div>
@@ -183,6 +183,13 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
 
     // 返回按钮
     container.querySelector("#backBtn").onclick = () => onBack && onBack();
+
+    // 🔒 XSS防护：证据图片的点击放大改为 DOM 事件绑定
+    // （原内联 onclick="window.open('${img}')" 中的引号即使转义，也会被浏览器先还原
+    //  再交给 JS 解析，依然能被注入；data-full 经 HTML 解码后仍是原始 URL，行为不变）
+    container.querySelectorAll(".dispute-evidence-img").forEach(imgEl => {
+        imgEl.onclick = () => window.open(imgEl.dataset.full, '_blank');
+    });
 
     // 回应表单逻辑
     if (canRespond) {
@@ -212,7 +219,7 @@ function renderDisputeDetail(container, dispute, currentUser, onBack) {
         function renderUploadedImages() {
             uploadedImages.innerHTML = uploadedEvidence.map((url, idx) => `
                 <div class="img-wrapper">
-                    <img src="${url}">
+                    <img src="${escapeHtml(url)}">
                     <button class="remove-btn" data-idx="${idx}">×</button>
                 </div>
             `).join("");
@@ -266,6 +273,6 @@ function formatTime(timestamp) {
 function _renderEvidenceGallery(images) {
     if (!images || images.length === 0) return "";
     return `<div class="dispute-evidence">
-        ${images.map(img => `<img src="${img}" onclick="window.open('${img}')">`).join("")}
+        ${images.map(img => `<img class="dispute-evidence-img" src="${escapeHtml(img)}" data-full="${escapeHtml(img)}">`).join("")}
     </div>`;
 }

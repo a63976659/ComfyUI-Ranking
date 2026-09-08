@@ -4,7 +4,7 @@ import { regionData, getSortedCountries } from "../auth/国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { uploadFile } from "../market/发布内容_提交引擎.js";
 import { openImageCropper } from "../components/图片裁剪组件.js";
-import { CACHE, getBackgroundKey, getBannerCacheKey, PLACEHOLDERS } from "../core/全局配置.js";
+import { CACHE, getBackgroundKey, getBannerCacheKey, PLACEHOLDERS, escapeHtml } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 
 // 计算年龄工具函数
@@ -90,7 +90,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         <div style="margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #444; font-weight: bold; font-size: 16px;">⚙️ ${t('settings_form.title')}</div>
         <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;">
             <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 5px; background: var(--comfy-input-bg); padding: 10px; border-radius: 6px; border: 1px dashed #555;">
-                <img id="setting-avatar-preview" src="${userData.avatarDataUrl || PLACEHOLDERS.AVATAR}" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid #666;">
+                <img id="setting-avatar-preview" src="${escapeHtml(userData.avatarDataUrl || PLACEHOLDERS.AVATAR)}" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid #666;">
                 <div>
                     <button id="btn-trigger-avatar" style="padding: 6px 12px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; margin-bottom: 5px;">${t('settings_form.change_avatar')}</button>
                     <div style="font-size: 11px; color: #888;">${t('settings_form.avatar_hint')}</div>
@@ -100,7 +100,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
 
             <div style="background: var(--comfy-input-bg); padding: 10px; border-radius: 6px; border: 1px dashed #555;">
                 <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">🇺️ ${t('settings_form.banner_title')}</div>
-                <div id="setting-banner-preview" style="width: 100%; height: 80px; border-radius: 4px; background: ${userData.bannerUrl ? `url(${userData.bannerUrl})` : '#1a1a1a'}; background-size: cover; background-position: center; margin-bottom: 8px; border: 1px solid #444;"></div>
+                <div id="setting-banner-preview" style="width: 100%; height: 80px; border-radius: 4px; background: ${userData.bannerUrl ? `url(${String(userData.bannerUrl).replace(/['"()\\]/g, '')})` : '#1a1a1a'}; background-size: cover; background-position: center; margin-bottom: 8px; border: 1px solid #444;"></div>
                 <div style="display: flex; gap: 8px;">
                     <button id="btn-trigger-banner" style="flex: 1; padding: 6px 12px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px;">📷 ${t('settings_form.banner_upload')}</button>
                     <button id="btn-clear-banner" style="padding: 6px 12px; background: transparent; border: 1px solid #555; color: #888; border-radius: 4px; cursor: pointer; font-size: 12px;">🗑️ ${t('settings_form.banner_clear')}</button>
@@ -120,7 +120,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                 <input type="file" id="setting-ui-bg" accept="image/*" style="display: none;">
             </div>
 
-            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.display_name')}</label><input type="text" id="setting-name" value="${userData.name || ''}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
+            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.display_name')}</label><input type="text" id="setting-name" value="${escapeHtml(userData.name || '')}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
             
             <div style="display: flex; gap: 10px;">
                 <div style="flex: 1;"><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.gender')}</label>
@@ -133,7 +133,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                 <div style="flex: 1;">
                     <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.birthday')}</label>
                     <div style="display: flex; align-items: center; gap: 8px;">
-                        <input type="date" id="setting-birthday" value="${userData.birthday || ''}" style="flex: 1; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
+                        <input type="date" id="setting-birthday" value="${escapeHtml(userData.birthday || '')}" style="flex: 1; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
                         <span id="setting-age-display" style="color: #888; font-size: 12px; white-space: nowrap;">${userData.age ? userData.age + ' ' + t('profile.age_years') : ''}</span>
                     </div>
                 </div>
@@ -145,11 +145,11 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                     ${countryOptions}
                 </select>
                 <select id="setting-region" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px;">
-                    <option value="${userData.region || ''}">${userData.region || t('settings_form.select_country_first')}</option>
+                    <option value="${escapeHtml(userData.region || '')}">${escapeHtml(userData.region || t('settings_form.select_country_first'))}</option>
                 </select>
             </div>
 
-            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.intro')}</label><textarea id="setting-intro" rows="3" placeholder="${t('settings_form.intro_placeholder')}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box; resize: vertical;">${userData.intro || ''}</textarea></div>
+            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.intro')}</label><textarea id="setting-intro" rows="3" placeholder="${t('settings_form.intro_placeholder')}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box; resize: vertical;">${escapeHtml(userData.intro || '')}</textarea></div>
             
             <div style="margin-top: 15px; border-top: 1px solid #444; padding-top: 15px;">
                 <div style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #4CAF50;">🛡️ ${t('settings_form.privacy_title')}</div>
@@ -370,7 +370,14 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         }
     );
     container.querySelector("#btn-clear-banner").onclick = () => {
-        bannerUrl = null;
+        // 🔧 清除必须传空串而非 null：云端 PUT /api/users/{account} 的更新循环只写非 None 值
+        // （见 router_users_profile.py「遍历请求中的字段，只更新非空值」），传 null 等同于
+        // 「本次没改这个字段」而被跳过，云端旧图残留 —— 表现为点清除并保存后提示成功，
+        // 但自己和他人在创作者榜单里看到的背景图依然存在。空串则会真实落库，
+        // 且下游 hasBanner / bannerImageUrl 等判断都按 falsy 正确处理。
+        // 注意上方 `let bannerUrl = userData.bannerUrl || null` 的初值仍保持 null：那是「本次未涉及该字段」
+        // 的语义，可防止 userData 恰好缺 bannerUrl 时把云端图误清掉。
+        bannerUrl = "";
         pendingBannerFile = null;
         pendingBannerDataUrl = null;
         bannerPreview.style.backgroundImage = "none";

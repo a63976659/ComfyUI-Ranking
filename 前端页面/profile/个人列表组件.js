@@ -28,11 +28,13 @@ function renderUserCard(account, currentUser, openOtherUserModalCb) {
     const name = cached?.name || account;
     const intro = cached?.intro || '';
 
+    // 🔒 XSS防护：头像/昵称/简介均来自用户可修改的资料（下方 SWR 刷新路径用的是
+    // .src / .textContent，本身就是安全的，仅初次渲染的模板串需要转义）
     card.innerHTML = `
-        <img id="user-avatar-${account}" src="${avatar}" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid #4CAF50; flex-shrink: 0;">
+        <img id="user-avatar-${account}" src="${escapeHtml(avatar)}" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid #4CAF50; flex-shrink: 0;">
         <div style="flex: 1; min-width: 0;">
-            <div id="user-name-${account}" style="font-weight: bold; color: #4CAF50; font-size: 14px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">@${name}</div>
-            <div id="user-intro-${account}" style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${intro || t('profile.no_intro') || '暂无简介'}</div>
+            <div id="user-name-${account}" style="font-weight: bold; color: #4CAF50; font-size: 14px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">@${escapeHtml(name)}</div>
+            <div id="user-intro-${account}" style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(intro || t('profile.no_intro'))}</div>
         </div>
         <button style="padding: 6px 12px; background: #2196F3; border: none; border-radius: 4px; color: white; cursor: pointer; font-size: 12px; flex-shrink: 0;">${t('profile.homepage')}</button>
     `;
@@ -50,7 +52,7 @@ function renderUserCard(account, currentUser, openOtherUserModalCb) {
             nameDiv.textContent = `@${profile.name}`;
         }
         if (introDiv && profile.intro !== undefined) {
-            introDiv.textContent = profile.intro || t('profile.no_intro') || '暂无简介';
+            introDiv.textContent = profile.intro || t('profile.no_intro');
         }
     });
 
@@ -87,7 +89,7 @@ function renderPaginatedUserList(userList, containerDiv, currentUser, openOtherU
     containerDiv.innerHTML = "";
     
     if (userList.length === 0) {
-        containerDiv.innerHTML = `<div style='text-align:center; padding: 20px; color:#666;'>${emptyMessage}</div>`;
+        containerDiv.innerHTML = `<div style='text-align:center; padding: 20px; color:#666;'>${escapeHtml(emptyMessage)}</div>`;
         return;
     }
 
@@ -110,7 +112,7 @@ function renderPaginatedUserList(userList, containerDiv, currentUser, openOtherU
         // 如果有更多，显示"加载更多"按钮
         if (displayedCount < userList.length) {
             const loadMoreBtn = document.createElement("button");
-            loadMoreBtn.textContent = t('profile.load_more') || `加载更多 (${userList.length - displayedCount})`;
+            loadMoreBtn.textContent = t('profile.load_more', { count: userList.length - displayedCount });
             loadMoreBtn.style.cssText = "width: 100%; padding: 12px; background: var(--comfy-input-bg); border: 1px solid #555; border-radius: 6px; color: #4CAF50; cursor: pointer; font-size: 13px; margin-top: 8px; transition: all 0.2s;";
             loadMoreBtn.onmouseover = () => { loadMoreBtn.style.background = "#3a3a3a"; };
             loadMoreBtn.onmouseout = () => { loadMoreBtn.style.background = "var(--comfy-input-bg)"; };
@@ -142,13 +144,13 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
 
     // 👥 关注列表（使用 SWR 缓存技术）
     if (tabId === "following") {
-        _renderUserListTab(userData.following || [], domElement, currentUser, openOtherUserModalCb, t('profile.no_following') || '还没有关注任何人');
+        _renderUserListTab(userData.following || [], domElement, currentUser, openOtherUserModalCb, t('profile.no_following'));
         return;
     }
 
     // 👥 粉丝列表（使用 SWR 缓存技术）
     if (tabId === "followers") {
-        _renderUserListTab(userData.followers || [], domElement, currentUser, openOtherUserModalCb, t('profile.no_followers') || '还没有粉丝');
+        _renderUserListTab(userData.followers || [], domElement, currentUser, openOtherUserModalCb, t('profile.no_followers'));
         return;
     }
 
@@ -331,12 +333,14 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             containerDiv.style.cssText = "display: flex; flex-direction: column; gap: 15px;";
             
             // 💰 销售统计卡片（放在最上方，与打赏统计样式一致）
+            // 🔧 下方销售/打赏两处的 profile.transactions_unit 不再加 || '笔' 兜底：
+            // 该词条英文值刻意留空（中文 5笔 → 英文 5），兜底会把中文量词引回英文界面
             containerDiv.appendChild(_createStatsCard(
-                `💰 ${t('profile.sales_stats') || '销售统计'}`,
+                `💰 ${t('profile.sales_stats')}`,
                 [
-                    { value: `+${salesStats.total_sales || 0}`,    color: '#4CAF50', bgRgb: '76,175,80',  label: t('profile.sales_income') || '销售收入' },
-                    { value: `-${salesStats.total_purchase || 0}`,  color: '#F44336', bgRgb: '244,67,54', label: `${t('profile.purchase_expense') || '购买支出'} (${salesStats.purchase_count || 0}${t('profile.transactions_unit') || '笔'})` },
-                    { value: `${(salesStats.net_sales || 0) > 0 ? '+' : ''}${salesStats.net_sales || 0}`, color: '#2196F3', bgRgb: '33,150,243', label: t('profile.net_sales') || '净销售' }
+                    { value: `+${salesStats.total_sales || 0}`,    color: '#4CAF50', bgRgb: '76,175,80',  label: t('profile.sales_income') },
+                    { value: `-${salesStats.total_purchase || 0}`,  color: '#F44336', bgRgb: '244,67,54', label: `${t('profile.purchase_expense')} (${salesStats.purchase_count || 0}${t('profile.transactions_unit')})` },
+                    { value: `${(salesStats.net_sales || 0) > 0 ? '+' : ''}${salesStats.net_sales || 0}`, color: '#2196F3', bgRgb: '33,150,243', label: t('profile.net_sales') }
                 ],
                 ' margin-bottom: 15px;'
             ));
@@ -353,11 +357,11 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
 
             // 🎁 打赏统计卡片
             containerDiv.appendChild(_createStatsCard(
-                `🎁 ${t('profile.tip_stats') || '打赏统计'}`,
+                `🎁 ${t('profile.tip_stats')}`,
                 [
-                    { value: `+${tipStats.total_tip_in || 0}`,  color: '#4CAF50', bgRgb: '76,175,80',  label: `${t('profile.tip_received') || '收到打赏'} (${tipStats.tip_in_count || 0}${t('profile.transactions_unit') || '笔'})` },
-                    { value: `-${tipStats.total_tip_out || 0}`, color: '#F44336', bgRgb: '244,67,54', label: `${t('profile.tip_sent') || '打赏支出'} (${tipStats.tip_out_count || 0}${t('profile.transactions_unit') || '笔'})` },
-                    { value: `${(tipStats.net_tips || 0) > 0 ? '+' : ''}${tipStats.net_tips || 0}`, color: '#2196F3', bgRgb: '33,150,243', label: t('profile.net_tips') || '净打赏' }
+                    { value: `+${tipStats.total_tip_in || 0}`,  color: '#4CAF50', bgRgb: '76,175,80',  label: `${t('profile.tip_received')} (${tipStats.tip_in_count || 0}${t('profile.transactions_unit')})` },
+                    { value: `-${tipStats.total_tip_out || 0}`, color: '#F44336', bgRgb: '244,67,54', label: `${t('profile.tip_sent')} (${tipStats.tip_out_count || 0}${t('profile.transactions_unit')})` },
+                    { value: `${(tipStats.net_tips || 0) > 0 ? '+' : ''}${tipStats.net_tips || 0}`, color: '#2196F3', bgRgb: '33,150,243', label: t('profile.net_tips') }
                 ],
                 ' margin-bottom: 15px;'
             ));
@@ -464,7 +468,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
         const applyDOM = (items, posts, prompts) => {
             domElement.innerHTML = "";
             if ((!items || items.length === 0) && (!posts || posts.length === 0) && (!prompts || prompts.length === 0)) {
-                domElement.innerHTML = _renderEmptyState('🔖', t('profile.no_collected') || '还没有收藏任何内容', t('profile.go_discover') || '去榜单页面或讨论区发现精彩内容吧！');
+                domElement.innerHTML = _renderEmptyState('🔖', t('profile.no_collected'), t('profile.go_discover'));
                 return;
             }
             const listDiv = document.createElement("div");
@@ -473,7 +477,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             if (items && items.length > 0) {
                 const sectionTitle = document.createElement("div");
                 sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #FF9800; margin-bottom: 5px; padding: 5px 0;";
-                sectionTitle.textContent = `📦 ${t('profile.collected_items') || '收藏的资源'} (${items.length})`;
+                sectionTitle.textContent = `📦 ${t('profile.collected_items')} (${items.length})`;
                 listDiv.appendChild(sectionTitle);
                 items.forEach(item => { listDiv.appendChild(createItemCard(item, currentUser)); });
             }
@@ -481,7 +485,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             if (posts && posts.length > 0) {
                 const sectionTitle = document.createElement("div");
                 sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #9C27B0; margin-bottom: 5px; padding: 5px 0;" + (items && items.length > 0 ? " margin-top: 15px;" : "");
-                sectionTitle.textContent = `💬 ${t('profile.collected_posts') || '收藏的帖子'} (${posts.length})`;
+                sectionTitle.textContent = `💬 ${t('profile.collected_posts')} (${posts.length})`;
                 listDiv.appendChild(sectionTitle);
                 posts.forEach(post => { listDiv.appendChild(createPostItem(post, currentUser)); });
             }
@@ -489,7 +493,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             if (prompts && prompts.length > 0) {
                 const sectionTitle = document.createElement("div");
                 sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #00BCD4; margin-bottom: 5px; padding: 5px 0;" + ((items && items.length > 0) || (posts && posts.length > 0) ? " margin-top: 15px;" : "");
-                sectionTitle.textContent = `🧩 ${t('profile.collected_prompts') || '收藏的提示词'} (${prompts.length})`;
+                sectionTitle.textContent = `🧩 ${t('profile.collected_prompts')} (${prompts.length})`;
                 listDiv.appendChild(sectionTitle);
                 prompts.forEach(prompt => { listDiv.appendChild(createPromptItem(prompt, currentUser)); });
             }
@@ -528,7 +532,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             }
         } catch (error) {
             console.error("加载收藏失败:", error);
-            if (!cachedStr) domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#F44336;'>${t('profile.load_collected_failed') || '收藏加载失败'}</div>`;
+            if (!cachedStr) domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#F44336;'>${t('profile.load_collected_failed')}</div>`;
         }
         return;
     }
@@ -702,7 +706,7 @@ function createPostItem(post, currentUser) {
         <div style="display: flex; align-items: flex-start; gap: 10px;">
             ${coverImageUrl ? `
                 <div style="position: relative; flex-shrink: 0;">
-                    <img src="${coverImageUrl}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; display: block;">
+                    <img src="${escapeHtml(coverImageUrl)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; display: block;">
                     ${isVideo ? `
                     <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                                 width: 28px; height: 28px; background: rgba(0,0,0,0.6); border-radius: 50%;
@@ -721,7 +725,7 @@ function createPostItem(post, currentUser) {
                 <div style="display: flex; align-items: center; gap: 12px; font-size: 11px; color: #888;">
                     <span>❤️ ${post.like_count || 0}</span>
                     <span>💬 ${post.comment_count || 0}</span>
-                    ${isVideo ? `<span>🎬 ${t('post.video_tag') || '视频'}</span>` : ((post.images || []).length > 1 ? `<span>🖼️ ${(post.images || []).length}张</span>` : "")}
+                    ${isVideo ? `<span>🎬 ${t('post.video_tag')}</span>` : ((post.images || []).length > 1 ? `<span>🖼️ ${(post.images || []).length}${t('post.images_unit')}</span>` : "")}
                     <span style="margin-left: auto;">${timeStr}</span>
                 </div>
             </div>
@@ -770,13 +774,13 @@ function createPromptItem(prompt, currentUser) {
     // 价格徽标
     const priceBadge = (prompt.price > 0)
         ? `<span style="background: rgba(255,193,7,0.15); color: #FFC107; padding: 1px 6px; border-radius: 4px; font-size: 10px;">💎 ${prompt.price}</span>`
-        : `<span style="background: rgba(76,175,80,0.15); color: #4CAF50; padding: 1px 6px; border-radius: 4px; font-size: 10px;">${t('prompt.free') || '免费'}</span>`;
+        : `<span style="background: rgba(76,175,80,0.15); color: #4CAF50; padding: 1px 6px; border-radius: 4px; font-size: 10px;">${t('prompt.free')}</span>`;
 
     promptDiv.innerHTML = `
         <div style="display: flex; align-items: flex-start; gap: 10px;">
             ${coverImageUrl ? `
                 <div style="position: relative; flex-shrink: 0;">
-                    <img src="${coverImageUrl}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; display: block;">
+                    <img src="${escapeHtml(coverImageUrl)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; display: block;">
                     ${isVideo ? `
                     <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                                 width: 28px; height: 28px; background: rgba(0,0,0,0.6); border-radius: 50%;
@@ -865,9 +869,9 @@ function createTransactionCard(tx) {
             }
             // 状态标签
             if (tx.withdraw_status === 'pending') {
-                detailLine = `⏳ ${t('tx.withdraw_pending') || '待打款'}`;
+                detailLine = `⏳ ${t('tx.withdraw_pending')}`;
             } else if (tx.withdraw_status === 'completed') {
-                detailLine = `✅ ${t('tx.withdraw_completed') || '已完成'}`;
+                detailLine = `✅ ${t('tx.withdraw_completed')}`;
             }
             break;
             
@@ -927,7 +931,7 @@ function createTransactionCard(tx) {
             
         case 'RECHARGE':
             // 充值
-            description = t('tx.recharge_desc') || '支付宝充值';
+            description = t('tx.recharge_desc');
             break;
             
         case 'REFUND':
@@ -937,7 +941,7 @@ function createTransactionCard(tx) {
             
         case 'WITHDRAW_FEE':
             // 提现手续费
-            description = t('tx.withdraw_fee_desc') || '提现手续费';
+            description = t('tx.withdraw_fee_desc');
             break;
             
         default:
@@ -959,7 +963,7 @@ function createTransactionCard(tx) {
     
     // 实到金额（仅提现类型）
     const netAmountHtml = (tx.tx_type === 'WITHDRAW' && tx.net_amount !== null && tx.net_amount !== undefined)
-        ? `<div style="font-size: 11px; color: #888; text-align: right;">${t('tx.net_amount') || '实到'}: ${tx.net_amount}</div>`
+        ? `<div style="font-size: 11px; color: #888; text-align: right;">${t('tx.net_amount')}: ${tx.net_amount}</div>`
         : '';
     
     if (hasDetailedInfo) {
@@ -973,7 +977,7 @@ function createTransactionCard(tx) {
                         ${itemTitle}
                     </div>
                     ${description ? `<div style="font-size: 11px; color: #aaa; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(description)}</div>` : ''}
-                    ${detailText ? `<div style="font-size: 11px; color: #888; margin-top: 3px;">${detailText}</div>` : ''}
+                    ${detailText ? `<div style="font-size: 11px; color: #888; margin-top: 3px;">${escapeHtml(detailText)}</div>` : ''}
                 </div>
             </div>
             <div style="text-align: right; flex-shrink: 0; margin-left: 10px;">
@@ -990,7 +994,7 @@ function createTransactionCard(tx) {
                 <span style="font-size: 20px;">${typeConfig.icon}</span>
                 <div>
                     <div style="font-weight: bold; color: #eee; font-size: 13px;">${typeConfig.title}</div>
-                    <div style="font-size: 11px; color: #888;">${timeStr}${tx.related_account ? ' · ' + tx.related_account.substring(0, 8) + '...' : ''}</div>
+                    <div style="font-size: 11px; color: #888;">${timeStr}${tx.related_account ? ' · ' + escapeHtml(tx.related_account.substring(0, 8)) + '...' : ''}</div>
                 </div>
             </div>
             <div style="font-weight: bold; font-size: 15px; color: ${amountColor};">
@@ -1007,20 +1011,20 @@ function createTransactionCard(tx) {
  */
 function getTransactionTypeConfig(txType) {
     const configs = {
-        'WITHDRAW': { icon: '💸', title: t('tx.withdraw') || '提现申请' },
-        'TIP_IN': { icon: '🎁', title: t('tx.tip_in') || '收到打赏' },
-        'TIP_OUT': { icon: '🎁', title: t('tx.tip_out') || '打赏支出' },
-        'PURCHASE': { icon: '🛒', title: t('tx.purchase') || '购买资源' },
-        'TASK_DEPOSIT': { icon: '📋', title: t('tx.task_deposit') || '任务订金' },
-        'TASK_PAYMENT': { icon: '📋', title: t('tx.task_payment') || '任务尾款' },
-        'TASK_INCOME': { icon: '📋', title: t('tx.task_income') || '任务收入' },
-        'TASK_FREEZE': { icon: '🔒', title: t('tx.task_freeze') || '任务冻结' },
-        'TASK_REFUND': { icon: '↩️', title: t('tx.task_refund') || '任务退款' },
-        'TASK_CANCEL_REFUND': { icon: '🔄', title: t('tx.task_cancel_refund') || '任务取消退款' },
-        'SALE': { icon: '💎', title: t('tx.sale') || '销售收入', color: '#28a745' },
-        'RECHARGE': { icon: '💰', title: t('tx.recharge') || '充值' },
-        'REFUND': { icon: '↩️', title: t('tx.refund') || '退款' },
-        'WITHDRAW_FEE': { icon: '💸', title: t('tx.withdraw_fee') || '手续费' }
+        'WITHDRAW': { icon: '💸', title: t('tx.withdraw') },
+        'TIP_IN': { icon: '🎁', title: t('tx.tip_in') },
+        'TIP_OUT': { icon: '🎁', title: t('tx.tip_out') },
+        'PURCHASE': { icon: '🛒', title: t('tx.purchase') },
+        'TASK_DEPOSIT': { icon: '📋', title: t('tx.task_deposit') },
+        'TASK_PAYMENT': { icon: '📋', title: t('tx.task_payment') },
+        'TASK_INCOME': { icon: '📋', title: t('tx.task_income') },
+        'TASK_FREEZE': { icon: '🔒', title: t('tx.task_freeze') },
+        'TASK_REFUND': { icon: '↩️', title: t('tx.task_refund') },
+        'TASK_CANCEL_REFUND': { icon: '🔄', title: t('tx.task_cancel_refund') },
+        'SALE': { icon: '💎', title: t('tx.sale'), color: '#28a745' },
+        'RECHARGE': { icon: '💰', title: t('tx.recharge') },
+        'REFUND': { icon: '↩️', title: t('tx.refund') },
+        'WITHDRAW_FEE': { icon: '💸', title: t('tx.withdraw_fee') }
     };
     
     return configs[txType] || { icon: '💰', title: txType };

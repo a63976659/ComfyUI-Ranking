@@ -155,15 +155,17 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             } else if (isAnonymous) {
                 nameLabel = `<strong style="color: #fff;">${escapeHtml(msg.from_name || msg.from_user)}</strong>`;
             } else {
-                nameLabel = `<span class="notif-user-link" data-account="${msg.from_user}" 
+                // 🔒 XSS防护：from_user 是他人账号，写入 HTML 属性前必须转义
+                // （dataset.account 经浏览器解码后仍是原始值，下方跳转行为不变）
+                nameLabel = `<span class="notif-user-link" data-account="${escapeHtml(msg.from_user)}" 
                     style="color:#4FC3F7; cursor:pointer; text-decoration:underline dotted; font-weight:bold;">
                     ${escapeHtml(msg.from_name || msg.from_user)}
                 </span>`;
             }
             
             html += `
-                <div class="notif-item" data-account="${msg.from_user}" data-type="${msg.type}" data-item-id="${msg.target_item_id || ''}" style="padding: 12px; border-radius: 8px; background: ${bg}; border: ${border}; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; transition: 0.2s;" onmouseover="this.style.transform='scale(1.01)'" onmouseout="this.style.transform='scale(1)'">
-                    <img src="${msg.from_avatar || PLACEHOLDERS.AVATAR}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1px solid #555;">
+                <div class="notif-item" data-account="${escapeHtml(msg.from_user)}" data-type="${escapeHtml(msg.type)}" data-item-id="${escapeHtml(msg.target_item_id || '')}" style="padding: 12px; border-radius: 8px; background: ${bg}; border: ${border}; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; transition: 0.2s;" onmouseover="this.style.transform='scale(1.01)'" onmouseout="this.style.transform='scale(1)'">
+                    <img src="${escapeHtml(msg.from_avatar || PLACEHOLDERS.AVATAR)}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; border: 1px solid #555;">
                     <div style="flex: 1; min-width: 0;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                             ${nameLabel}

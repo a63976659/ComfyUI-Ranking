@@ -6,6 +6,8 @@
 // 接口：openImageViewer(imageUrls, startIndex, options)
 // ==========================================
 
+import { escapeHtml } from "../core/全局配置.js";
+
 // ==========================================
 // 🎨 CSS样式定义（CSS-in-JS模式）
 // ==========================================
@@ -785,7 +787,8 @@ class CyberImageViewer {
         for (let i = 0; i < maxThumbs; i++) {
             const thumb = document.createElement('div');
             thumb.className = 'cyber-thumb' + (i === this.currentIndex ? ' active' : '');
-            thumb.innerHTML = `<img src="${this.imageUrls[i]}" alt="">`;
+            // 🔒 XSS防护：图片 URL 来自其他用户发布的内容，写入 innerHTML 前必须转义
+            thumb.innerHTML = `<img src="${escapeHtml(this.imageUrls[i])}" alt="">`;
             thumb.addEventListener('click', (e) => {
                 this._stopAutoPlay(); // 手动切换时停止自动播放
                 this.goTo(i, e.clientX, e.clientY);

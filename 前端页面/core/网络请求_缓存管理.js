@@ -120,8 +120,8 @@ export function getCache(key) {
             _updateLRU(fk);
             return cached.value;
         }
-        // 过期，清除
-        memoryCache.delete(fk);
+        // 过期，清除（走 _deleteMemoryEntry 同步摘除 LRU 顺序数组，避免幽灵键挤占名额）
+        _deleteMemoryEntry(fk);
     }
     
     // 降级到 localStorage
@@ -164,8 +164,8 @@ export function getCacheWithMeta(key, ignoreExpiry = false) {
             _updateLRU(fk);
             return { value: cached.value, expired, found: true };
         }
-        // 过期且不忽略，清除
-        memoryCache.delete(fk);
+        // 过期且不忽略，清除（同上：必须同步维护 memoryCacheOrder）
+        _deleteMemoryEntry(fk);
     }
     
     // 降级到 localStorage
@@ -192,15 +192,68 @@ export function getCacheWithMeta(key, ignoreExpiry = false) {
 }
 
 /**
- * 删除缓存
+ * 删除内存缓存条目（同步维护 LRU 顺序数组）
+ * 🔧 修复：原先各处只调 memoryCache.delete(fk)，残留在 memoryCacheOrder 里的幽灵键会
+ * 占用 MAX_MEMORY_ITEMS 名额，使 _enforceCacheLimit 淘汰到已不存在的键，内存缓存实际容量缩水
+ * @param {string} fk - 完整缓存键（已含前缀）
+ */
+function _deleteMemoryEntry(fk) {
+    memoryCache.delete(fk);
+    const idx = memoryCacheOrder.indexOf(fk);
+    if (idx > -1) memoryCacheOrder.splice(idx, 1);
+}
+
+/**
+ * 删除缓存（精确键，内存 + localStorage 两级）
  * @param {string} key - 缓存键
  */
 export function removeCache(key) {
     const fk = _fullKey(key);
-    memoryCache.delete(fk);
+    _deleteMemoryEntry(fk);
     try {
         localStorage.removeItem(fk);
     } catch {}
+}
+
+/**
+ * 🧹 按前缀删除缓存（内存 + localStorage 两级）
+ * removeCache 是精确键删除，而 API 层缓存键总是带查询串（形如
+ * api_/api/items?type=tool&sort=time&limit=200），调用方无法预知完整键，
+ * 用 removeCache('api_/api/items') 删除会全部落空（no-op），故提供前缀删除。
+ * 键空间兼容：本模块 setCache 写入的键带 CACHE.PREFIX；少数历史缓存
+ * （如 SWR 头像 ComfyCommunity_ProfileCache_*）是直接写 localStorage 的裸键，
+ * 两种都要匹配，避免无条件补前缀导致裸键类前缀永远命中不到。
+ * @param {string} prefix - 缓存键前缀
+ * @returns {number} 实际删除的缓存项数（两级按完整键去重）
+ */
+export function removeCacheByPrefix(prefix) {
+    if (!prefix) return 0;
+    const candidates = prefix.startsWith(CACHE_PREFIX) ? [prefix] : [_fullKey(prefix), prefix];
+    const isMatch = (key) => candidates.some(p => key.startsWith(p));
+    const removed = new Set();
+    
+    // 🔧 内存层必须先清：getCache / getCacheWithMeta 都优先读 memoryCache，
+    // 只清 localStorage 的话旧数据仍会命中内存并被直接返回（请求根本不会发出）
+    for (const fk of Array.from(memoryCache.keys())) {
+        if (isMatch(fk)) {
+            _deleteMemoryEntry(fk);
+            removed.add(fk);
+        }
+    }
+    
+    try {
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && isMatch(k)) keysToRemove.push(k);
+        }
+        keysToRemove.forEach(k => {
+            localStorage.removeItem(k);
+            removed.add(k);
+        });
+    } catch {}
+    
+    return removed.size;
 }
 
 /**
@@ -460,19 +513,17 @@ export function invalidateRelatedCache(endpoint, method = null) {
         patterns = ["ComfyRanking_ListCache_"];
     }
     
+    // 🔧 修复：原实现只遍历 localStorage，漏清 memoryCache —— 而 getCache/getCacheWithMeta
+    // 都优先读内存 Map，POST 成功后内存里的旧列表仍会命中并被直接返回（连请求都不发），
+    // 表现为「发布/点赞已成功但界面还是旧数据」，要等内存条目 TTL 到期才自愈。
+    // 🔧 同时修复：原实现无条件给 pattern 补 CACHE.PREFIX，使上方映射表中的裸键前缀
+    // （ComfyCommunity_ProfileCache_，SWR 头像缓存直接写 localStorage、不带前缀）被拼成
+    // ComfyRanking_ComfyCommunity_ProfileCache_，永远匹配不到，改头像/昵称后该缓存清不掉。
+    // 现统一走 removeCacheByPrefix：两级缓存一起清，且兼容带前缀与裸键两种键空间。
     let cleared = 0;
-    Object.keys(localStorage).forEach(key => {
-        for (const pattern of patterns) {
-            // 自动补上缓存前缀，确保能匹配到实际的 localStorage 键
-            // localStorage 中的 key 形如 "ComfyRanking_api_/api/tasks?..."
-            const prefixedPattern = pattern.startsWith(CACHE.PREFIX) ? pattern : CACHE.PREFIX + pattern;
-            if (key.startsWith(prefixedPattern)) {
-                localStorage.removeItem(key);
-                cleared++;
-                break;
-            }
-        }
-    });
+    for (const pattern of patterns) {
+        cleared += removeCacheByPrefix(pattern);
+    }
     
     if (cleared > 0) {
         console.log(`🗑️ 精确清除缓存: ${cleared} 个项 (${endpoint}${method ? ` ${method}` : ''})`);

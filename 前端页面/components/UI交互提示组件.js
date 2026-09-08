@@ -15,6 +15,7 @@
 // ===========================================
 
 import { t } from "./用户体验增强.js";
+import { escapeHtml } from "../core/全局配置.js";
 
 // ==========================================
 // 📢 Toast 消息提示
@@ -72,9 +73,11 @@ export function showToast(message, type = "info", duration = 3000) {
         wordBreak: "break-word"
     });
 
+    // 提示文本统一转义：message 常携带昵称/标题/后端报错等用户可控内容，
+    // 全库无任何调用方故意向 showToast 传 HTML 标签，故无条件转义不会改变现有显示效果。
     toast.innerHTML = `
         <span style="font-size: 16px;">${icons[type] || icons.info}</span>
-        <span style="flex: 1;">${message}</span>
+        <span style="flex: 1;">${escapeHtml(message)}</span>
         <span class="toast-close" style="cursor: pointer; opacity: 0.7; font-size: 18px; margin-left: 8px;">×</span>
     `;
     
@@ -192,6 +195,7 @@ function _closeDialog(overlay, box, hasYTranslate = true, callback) {
  * @param {string} options.confirmText - 确认按钮文字
  * @param {string} options.cancelText - 取消按钮文字
  * @param {string} options.type - 类型: 'warning', 'danger', 'info'
+ * @param {boolean} options.html - 是否把 message 当作可信 HTML 渲染（默认 false，即按纯文本转义）
  * @returns {Promise<boolean>}
  */
 export function showConfirm(message, options = {}) {
@@ -199,7 +203,8 @@ export function showConfirm(message, options = {}) {
         title = "操作确认",
         confirmText = "确认执行",
         cancelText = "取消",
-        type = "warning"
+        type = "warning",
+        html = false
     } = options;
     
     const typeConfig = {
@@ -216,12 +221,12 @@ export function showConfirm(message, options = {}) {
         box.innerHTML = `
             <div style="font-size: 18px; font-weight: bold; color: ${config.color}; display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 24px;">${config.icon}</span>
-                <span>${title}</span>
+                <span>${escapeHtml(title)}</span>
             </div>
-            <div style="font-size: 14px; color: #ccc; line-height: 1.7; padding: 8px 0;">${message}</div>
+            <div style="font-size: 14px; color: #ccc; line-height: 1.7; padding: 8px 0;">${html ? message : escapeHtml(message)}</div>
             <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 8px;">
-                <button id="ui-btn-cancel" style="padding: 10px 20px; background: transparent; border: 1px solid #555; color: #aaa; border-radius: 6px; cursor: pointer; transition: 0.2s; font-size: 14px;">${cancelText}</button>
-                <button id="ui-btn-confirm" style="padding: 10px 20px; background: ${config.btnColor}; border: none; color: #fff; border-radius: 6px; cursor: pointer; font-weight: bold; box-shadow: 0 2px 8px ${config.btnColor}44; transition: 0.2s; font-size: 14px;">${confirmText}</button>
+                <button id="ui-btn-cancel" style="padding: 10px 20px; background: transparent; border: 1px solid #555; color: #aaa; border-radius: 6px; cursor: pointer; transition: 0.2s; font-size: 14px;">${escapeHtml(cancelText)}</button>
+                <button id="ui-btn-confirm" style="padding: 10px 20px; background: ${config.btnColor}; border: none; color: #fff; border-radius: 6px; cursor: pointer; font-weight: bold; box-shadow: 0 2px 8px ${config.btnColor}44; transition: 0.2s; font-size: 14px;">${escapeHtml(confirmText)}</button>
             </div>
         `;
 
@@ -265,13 +270,15 @@ export function showConfirm(message, options = {}) {
  * @param {string} message - 错误信息
  * @param {Function} retryFn - 重试函数
  * @param {Object} options - 配置选项
+ * @param {boolean} options.html - 是否把 message 当作可信 HTML 渲染（默认 false，即按纯文本转义）
  * @returns {Promise<boolean>} - 用户选择重试返回true
  */
 export function showRetryDialog(message, retryFn, options = {}) {
     const {
         title = "操作失败",
         retryText = "🔄 重试",
-        cancelText = "关闭"
+        cancelText = "关闭",
+        html = false
     } = options;
     
     return new Promise((resolve) => {
@@ -291,14 +298,14 @@ export function showRetryDialog(message, retryFn, options = {}) {
         box.innerHTML = `
             <div style="text-align: center;">
                 <div style="font-size: 48px; margin-bottom: 16px;">😕</div>
-                <div style="font-size: 20px; font-weight: bold; color: #F44336;">${title}</div>
+                <div style="font-size: 20px; font-weight: bold; color: #F44336;">${escapeHtml(title)}</div>
             </div>
             <div style="font-size: 14px; color: #bbb; line-height: 1.7; text-align: center; padding: 0 10px; background: #1a1a1a; border-radius: 8px; padding: 16px;">
-                ${message}
+                ${html ? message : escapeHtml(message)}
             </div>
             <div style="display: flex; gap: 12px; justify-content: center;">
-                <button id="ui-btn-cancel" style="flex: 1; padding: 12px 20px; background: #333; border: 1px solid #555; color: #aaa; border-radius: 8px; cursor: pointer; transition: 0.2s; font-size: 14px;">${cancelText}</button>
-                <button id="ui-btn-retry" style="flex: 1; padding: 12px 20px; background: linear-gradient(135deg, #2196F3, #1976D2); border: none; color: #fff; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 14px;">${retryText}</button>
+                <button id="ui-btn-cancel" style="flex: 1; padding: 12px 20px; background: #333; border: 1px solid #555; color: #aaa; border-radius: 8px; cursor: pointer; transition: 0.2s; font-size: 14px;">${escapeHtml(cancelText)}</button>
+                <button id="ui-btn-retry" style="flex: 1; padding: 12px 20px; background: linear-gradient(135deg, #2196F3, #1976D2); border: none; color: #fff; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 14px;">${escapeHtml(retryText)}</button>
             </div>
         `;
 
@@ -327,9 +334,15 @@ export function showRetryDialog(message, retryFn, options = {}) {
                 close();
                 resolve(true);
             } catch (error) {
-                // 重试失败，更新错误信息
-                box.querySelector("div[style*='background: #1a1a1a']").innerHTML = error.message || t('common.retry_failed');
-                retryBtn.innerHTML = retryText;
+                // 重试失败，更新错误信息（与初次渲染保持一致：默认纯文本，仅 html=true 时按 HTML 渲染）
+                const errText = error.message || t('common.retry_failed');
+                const errBox = box.querySelector("div[style*='background: #1a1a1a']");
+                if (html) {
+                    errBox.innerHTML = errText;
+                } else {
+                    errBox.textContent = errText;
+                }
+                retryBtn.innerHTML = escapeHtml(retryText);
                 retryBtn.disabled = false;
             }
         };
@@ -391,7 +404,7 @@ export function showLoading(message = "加载中...") {
     
     loadingOverlay.innerHTML = `
         <div class="loading-spinner" style="width: 48px; height: 48px; border: 4px solid var(--border-color, #333); border-top-color: #2196F3; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
-        <div class="loading-text" style="color: #fff; font-size: 14px; font-weight: 500;">${message}</div>
+        <div class="loading-text" style="color: #fff; font-size: 14px; font-weight: 500;">${escapeHtml(message)}</div>
     `;
     
     // 添加旋转动画样式
@@ -459,7 +472,7 @@ export function setButtonLoading(button, loading, loadingText = "处理中...") 
         button.disabled = true;
         button.style.opacity = "0.7";
         button.style.cursor = "not-allowed";
-        button.innerHTML = `<span class="btn-spinner"></span>${loadingText}`;
+        button.innerHTML = `<span class="btn-spinner"></span>${escapeHtml(loadingText)}`;
     } else {
         // 恢复原始状态
         button.disabled = button._originalDisabled || false;

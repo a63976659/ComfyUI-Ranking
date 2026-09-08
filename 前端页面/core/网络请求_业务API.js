@@ -8,6 +8,7 @@
 // ==========================================
 
 import { request } from "./网络请求_基础设施.js";
+import { API } from "./全局配置.js";
 
 // ============== 业务 API 导出 ==============
 const api = {
@@ -54,7 +55,9 @@ const api = {
     async updatePrivacy(account, privacy) { return request(`/api/users/${account}/privacy`, { method: "PUT", body: privacy }); },
     async toggleFollow(userId, targetAccount, isActive) { return request("/api/users/follow", { method: "POST", body: { user_id: userId, target_account: targetAccount, is_active: isActive } }); },
     async getCreators(sort, limit) { return request(`/api/creators?sort=${sort}&limit=${limit}`); },
-    async searchCreators(keyword, sort, limit = 50) { return request(`/api/creators/search?keyword=${encodeURIComponent(keyword)}&sort=${sort}&limit=${limit}`); },
+    // 🔍 带上取消分组 ID：用户继续输入时，上一次仍在途的搜索请求可被 requestCancelManager 撤销，
+    // 不再占用并发额度与超时预算（调用时机见 侧边栏数据引擎.js 的创作者搜索分支）
+    async searchCreators(keyword, sort, limit = 50) { return request(`/api/creators/search?keyword=${encodeURIComponent(keyword)}&sort=${sort}&limit=${limit}`, { componentId: API.SEARCH_COMPONENT_ID }); },
     async getCreatorDetails(account) { return request(`/api/creators/${account}/details`); },
     async uploadFile(file, fileType, timeout = 120000) {
         const formData = new FormData();

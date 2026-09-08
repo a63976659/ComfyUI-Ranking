@@ -11,7 +11,7 @@
 // ===========================================
 
 import { t } from "./用户体验增强.js";
-import { getCachedProfile, getProfileWithSWR, PLACEHOLDERS } from "../core/全局配置.js";
+import { getCachedProfile, getProfileWithSWR, PLACEHOLDERS, escapeHtml } from "../core/全局配置.js";
 import { api } from "../core/网络请求_业务API.js";
 
 /**
@@ -218,13 +218,15 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
         });
     }, 0);
     
+    // 🔒 XSS防护：昵称/头像来自用户可修改的资料，写入 HTML 前必须转义
+    // （上方 SWR 刷新路径用的是 .src / .textContent，本身就是安全的）
     return `
-        <div id="${containerId}" style="display:flex; justify-content:space-between; padding:${cfg.padding}px 0; font-size:${cfg.font}px; align-items:center; border-bottom:1px dashed #333;">
+        <div id="${escapeHtml(containerId)}" style="display:flex; justify-content:space-between; padding:${cfg.padding}px 0; font-size:${cfg.font}px; align-items:center; border-bottom:1px dashed #333;">
             <span style="display:flex; align-items:center; gap:6px;">
                 ${badgeHtml}
                 <span style="display:flex; align-items:center; gap:6px;">
-                    <img class="tip-board-avatar" src="${avatarUrl}" style="width:${cfg.avatar}px; height:${cfg.avatar}px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#333;">
-                    <span class="tip-board-name" style="color:#ddd;">${userName}</span>
+                    <img class="tip-board-avatar" src="${escapeHtml(avatarUrl)}" style="width:${cfg.avatar}px; height:${cfg.avatar}px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#333;">
+                    <span class="tip-board-name" style="color:#ddd;">${escapeHtml(userName)}</span>
                 </span>
             </span>
             <span style="display:flex; align-items:center; gap:6px;">
@@ -245,7 +247,7 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
  */
 export function renderTipBoardHTML(boardData, maxShow = 5, emptyText = "暂无打赏，快来成为首个赞赏人吧！", size = 'normal') {
     if (!boardData || boardData.length === 0) {
-        return `<div style="color:#666; font-size:12px; text-align:center; padding:12px 0;">${emptyText}</div>`;
+        return `<div style="color:#666; font-size:12px; text-align:center; padding:12px 0;">${escapeHtml(emptyText)}</div>`;
     }
     
     return boardData.slice(0, maxShow).map((t, i) => renderTipBoardItemHTML(t, i, size)).join('');

@@ -7,7 +7,7 @@ import { showToast } from "./UI交互提示组件.js";
 import { showAboutInfo } from "./关于插件组件.js";
 import { openNotificationCenter, loadUnreadCount } from "../social/通知中心组件.js";
 import { openSettingsPage } from "./全局设置组件.js";  // ⚙️ 新增
-import { CACHE } from "../core/全局配置.js";
+import { CACHE, escapeHtml } from "../core/全局配置.js";
 import { t } from "./用户体验增强.js";  // 🌐 多语言支持
 import { createTopBanner } from "./顶部广告组件.js";
 import { uploadFile } from "../market/发布内容_提交引擎.js";  // 🖼️ 带压缩管线的统一上传包装器
@@ -42,7 +42,7 @@ export function createTopNav() {
     });
 
     const titleSpan = document.createElement("div");
-    titleSpan.innerHTML = `<strong style='color:#4CAF50;'>ComfyUI</strong> ${t('nav.community') || '社区精选'}`;
+    titleSpan.innerHTML = `<strong style='color:#4CAF50;'>ComfyUI</strong> ${t('nav.community')}`;
     
     Object.assign(titleSpan.style, { fontSize: "16px", cursor: "pointer", transition: "opacity 0.2s" });
     titleSpan.title = "查看关于本插件与作者信息";
@@ -105,7 +105,7 @@ export function createTopNav() {
     // 避免每次 createTopNav 重复 addEventListener 导致闭包累积与轮询失效
 
     chatEntryBtn.onclick = () => {
-        if (!currentUser) return showToast(t('auth.login_required') || "请先登录您的社区账号！", "warning");
+        if (!currentUser) return showToast(t('auth.login_required'), "warning");
         openChatModal(currentUser);
     };
 
@@ -114,7 +114,7 @@ export function createTopNav() {
 
     const updateUserButtonState = () => {
         if (currentUser) {
-            userActionBtn.innerHTML = `👤 ${currentUser.name || currentUser.account || t('common.unknown_user') || '未知用户'}`;
+            userActionBtn.innerHTML = `👤 ${escapeHtml(currentUser.name || currentUser.account || t('common.unknown_user'))}`;
             userActionBtn.style.backgroundColor = "#2196F3";
             userActionBtn.style.borderColor = "#2196F3";
             userActionBtn.onclick = () => openUserProfileModal(currentUser);
@@ -138,12 +138,12 @@ export function createTopNav() {
                         let userData; let token; let isRemember = false;
                         
                         if (formData.type === "reset") {
-                            userActionBtn.innerHTML = `⏳ ${t('auth.resetting_password') || '修改密码中...'}`;
+                            userActionBtn.innerHTML = `⏳ ${t('auth.resetting_password')}`;
                             
                             // 🚀 核心修复：停止错误地拆解字段导致 undefined，直接将包含所有数据的 formData 对象完整传给 API 装甲！
                             await api.resetPassword(formData);
                             
-                            showToast(t('auth.password_reset_success') || "密码修改成功！请使用新密码重新登录。", "success");
+                            showToast(t('auth.password_reset_success'), "success");
                             window.dispatchEvent(new CustomEvent("comfy-route-back")); updateUserButtonState(); return; 
                         }
                         if (formData.type === "register") {
@@ -153,9 +153,9 @@ export function createTopNav() {
                             delete formData.avatarFile;
                             delete formData.avatarDataUrl;  // base64 预览值会被后端拒绝，不随注册提交
 
-                            userActionBtn.innerHTML = `⏳ ${t('auth.registering') || '注册账号中...'}`;
+                            userActionBtn.innerHTML = `⏳ ${t('auth.registering')}`;
                             await api.register(formData);
-                            showToast(t('auth.register_success') + (t('auth.auto_login') || '！正在为您自动登录...'), "success");
+                            showToast(t('auth.register_success') + t('auth.auto_login'), "success");
                             // 注册后自动登录，默认保持登录
                             const res = await api.login(formData.account, formData.password, true);
                             userData = { account: formData.account, name: formData.name, avatar: res.avatar, ...res }; 
@@ -163,7 +163,7 @@ export function createTopNav() {
 
                             // 🖼️ 登录成功后再上传头像（此时请求可携带 Authorization）
                             if (pendingAvatarFile && token) {
-                                userActionBtn.innerHTML = `⏳ ${t('auth.uploading_avatar') || '上传头像中...'}`;
+                                userActionBtn.innerHTML = `⏳ ${t('auth.uploading_avatar')}`;
                                 // 提前写入 token，确保上传与资料更新请求能通过认证
                                 localStorage.setItem("ComfyCommunity_Token", token);
                                 try {
@@ -174,11 +174,11 @@ export function createTopNav() {
                                         userData = { ...userData, ...(updateRes.data || {}) };
                                         if (userData.avatarDataUrl) userData.avatar = userData.avatarDataUrl;
                                     } else {
-                                        showToast(t('auth.avatar_set_failed') || "⚠️ 头像设置失败，您可稍后在个人设置中重新上传", "warning");
+                                        showToast(t('auth.avatar_set_failed'), "warning");
                                     }
                                 } catch (avatarErr) {
                                     console.warn("注册后设置头像失败:", avatarErr.message || avatarErr);
-                                    showToast(t('auth.avatar_set_failed') || "⚠️ 头像设置失败，您可稍后在个人设置中重新上传", "warning");
+                                    showToast(t('auth.avatar_set_failed'), "warning");
                                 }
                             }
                         } else if (formData.type === "login") {

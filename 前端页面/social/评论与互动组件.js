@@ -108,7 +108,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
 
             itemDiv.innerHTML = `
-                <img class="swr-avatar" src="${avatarSrc}" style="width: ${avatarSize}; height: ${avatarSize}; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">
+                <img class="swr-avatar" src="${escapeHtml(avatarSrc)}" style="width: ${avatarSize}; height: ${avatarSize}; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">
                 <div style="flex: 1;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
                         <span class="swr-name" style="color: #aaa; font-weight: bold; font-size: 11px;">${escapeHtml(comment.authorName || comment.author)}</span>
@@ -144,7 +144,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             if (canDelete) {
                 itemDiv.querySelector(".delete-btn").onclick = async () => {
                     const confirmed = await showConfirm(t('social.delete_comment_confirm'), {
-                        title: t('social.delete_comment_title') || t('common.confirm'),
+                        title: t('social.delete_comment_title'),
                         confirmText: t('common.confirm'),
                         cancelText: t('common.cancel'),
                         type: 'danger'
@@ -156,7 +156,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
                         comment.isDeleted = true;
                         renderList(); 
                         triggerCountUpdate();
-                    } catch(e) { showToast(t('feedback.delete_failed') + t('feedback.retry_suffix', '，请重试'), "error"); }
+                    } catch(e) { showToast(t('feedback.delete_failed') + t('feedback.retry_suffix'), "error"); }
                 };
             }
         }

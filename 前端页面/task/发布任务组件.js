@@ -8,14 +8,17 @@
 import { api } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
-import { removeCache } from "../components/性能优化工具.js";
+import { removeCache, removeCacheByPrefix } from "../components/性能优化工具.js";
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
+import { escapeHtml } from "../core/全局配置.js";
 
 /**
  * 🚀 清除任务列表缓存
  */
 function clearTaskListCache() {
-    removeCache('api_/api/tasks');
+    // 🔧 修复：API 层缓存键带完整查询串（api_/api/tasks?status=..&sort=..），
+    // removeCache 精确删除命中不到（no-op），发任务后任务榜仍会从旧缓存返回，改用前缀删除
+    removeCacheByPrefix('api_/api/tasks');
     // 🔧 P1修复：任务榜组件实际使用 TasksCache_${status}_${sort} 键（非 ListCache_*），按真实键格式精准清除
     const statuses = ['', 'open', 'in_progress', 'submitted', 'completed', 'disputed'];
     // 任务榜排序值：latest, price, deadline, views, daily_views, likes, favorites
@@ -102,7 +105,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             <button id="btn-back" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px;" onmouseover="this.style.background='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'">
                 ⬅ ${t('common.back')}
             </button>
-            <span style="flex: 1; text-align: center; font-size: 15px; font-weight: bold; color: #fff;">📝 ${isEditMode ? (t('task.edit_task') || '编辑任务') : t('task.publish')}</span>
+            <span style="flex: 1; text-align: center; font-size: 15px; font-weight: bold; color: #fff;">📝 ${isEditMode ? t('task.edit_task') : t('task.publish')}</span>
             <div style="width: 60px;"></div>
         </div>
         
@@ -114,7 +117,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                 <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
                     📌 ${t('task.task_title')} <span style="color: #F44336;">*</span>
                 </label>
-                <input type="text" id="task-title" maxlength="50" placeholder="${t('task.title_placeholder')}" value="${editTitle}" 
+                <input type="text" id="task-title" maxlength="50" placeholder="${t('task.title_placeholder')}" value="${escapeHtml(editTitle)}" 
                        style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
             </div>
             
@@ -124,7 +127,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                     📄 ${t('task.description')} <span style="color: #F44336;">*</span>
                 </label>
                 <textarea id="task-description" rows="6" maxlength="2000" placeholder="${t('task.description_placeholder')}"
-                          style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; resize: none; box-sizing: border-box; line-height: 1.5;">${editDescription}</textarea>
+                          style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; resize: none; box-sizing: border-box; line-height: 1.5;">${escapeHtml(editDescription)}</textarea>
                 <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
                     <span id="desc-count">${editDescription.length}</span>/2000
                 </div>
@@ -148,7 +151,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                 <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
                     🔗 ${t('task.reference_link_optional')}
                 </label>
-                <input type="url" id="ref-link" placeholder="https://..." value="${editRefLink}" 
+                <input type="url" id="ref-link" placeholder="https://..." value="${escapeHtml(editRefLink)}" 
                        style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
             </div>
             
@@ -308,7 +311,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     const renderImagePreview = () => {
         imagePreview.innerHTML = selectedImages.map((img, i) => `
             <div style="position: relative; padding-top: 100%; background: var(--comfy-menu-bg); border-radius: 8px; overflow: hidden;">
-                <img src="${img.dataUrl}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;">
+                <img src="${escapeHtml(img.dataUrl)}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;">
                 <button class="btn-remove-img" data-index="${i}" style="position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; background: rgba(244,67,54,0.9); border: none; border-radius: 50%; color: #fff; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center;">×</button>
             </div>
         `).join("");
@@ -383,7 +386,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                 
                 await api.updateTask(editTaskData.id, updateData);
                 
-                showToast(t('task.edit_success') || '任务修改成功', "success");
+                showToast(t('task.edit_success'), "success");
             } else {
                 // 新建模式：创建任务
                 publishBtn.textContent = `⏳ ${t('task.publishing')}...`;
@@ -411,7 +414,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             
         } catch (err) {
             console.error(isEditMode ? "修改任务失败:" : "发布任务失败:", err);
-            showToast(err.message || (isEditMode ? t('task.edit_failed') || '修改失败' : t('task.publish_failed')), "error");
+            showToast(err.message || (isEditMode ? t('task.edit_failed') : t('task.publish_failed')), "error");
         } finally {
             const publishBtn = container.querySelector("#btn-publish");
             publishBtn.disabled = false;

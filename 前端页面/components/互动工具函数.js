@@ -8,6 +8,8 @@
 
 import { showToast } from "./UI交互提示组件.js";
 import { t } from "./用户体验增强.js";
+// 本模块内部也需要转义（下方 renderInteractionButtonsHTML）；re-export 不会绑定本地标识符，故单独 import
+import { escapeHtml } from "../core/全局配置.js";
 
 // 开发模式检测，仅在本地环境输出调试日志
 const DEBUG = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
@@ -103,7 +105,7 @@ export function renderInteractionButtonsHTML(data, currentAccount, options = {})
     
     const tipBtn = showTip ? `
         <button id="btn-tip" style="background: #333; border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
-            💰 ${tipText}
+            💰 ${escapeHtml(tipText)}
         </button>
     ` : '';
     
@@ -279,20 +281,12 @@ export { renderTipBoardHTML } from './打赏等级工具.js';
 // ==========================================
 // 🔒 HTML转义（通用工具）
 // ==========================================
+// 实现已下沉至 core/全局配置.js（零依赖的底层叶子模块），此处以 re-export 方式
+// 对外暴露同名函数，既有调用方（个人列表组件.js 等）无需改动。
+// 下沉原因：UI交互提示组件.js / 打赏等级工具.js 需要转义，而本文件反向依赖
+// 这两者（导入 showToast、re-export renderTipBoardHTML），若仍在此定义会形成循环依赖。
 
-/**
- * HTML转义（统一版：各组件局部副本已归一到此）
- * @param {*} str - 原始字符串（非字符串会先强制转换，兼容数字等入参）
- * @returns {string} 转义后的字符串
- */
-export function escapeHtml(str) {
-    if (str === null || str === undefined || str === "") return "";
-    return String(str).replace(/&/g, "&amp;")
-              .replace(/</g, "&lt;")
-              .replace(/>/g, "&gt;")
-              .replace(/"/g, "&quot;")
-              .replace(/'/g, "&#039;");
-}
+export { escapeHtml } from "../core/全局配置.js";
 
 /**
  * 读取用户设置中的列表缓存 TTL（统一版：讨论区/任务榜/提示词组件局部副本已归一到此）

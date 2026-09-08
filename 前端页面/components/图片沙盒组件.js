@@ -12,6 +12,7 @@
 // ==========================================
 
 import { t } from "./用户体验增强.js";
+import { escapeHtml } from "../core/全局配置.js";
 import { openImageViewer } from "./图片展示测试.js";
 
 // 🔧 通用SVG占位图生成函数
@@ -77,8 +78,10 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     const isLocalProxy = firstUrl && firstUrl.startsWith('/community_hub/image?url=');
     const shouldLazy = lazyLoad && !isLocalProxy;
     
+    // 🔒 XSS防护：图片 URL 来自其他用户发布的内容，写入 HTML 属性前必须转义
+    // （上方 startsWith 代理判定用的是原始值，不受影响；浏览器解码后 dataset 仍为原 URL）
     const imgSrc = shouldLazy ? getPlaceholderSVG() : firstUrl;
-    const dataAttr = shouldLazy ? `data-src="${firstUrl}"` : '';
+    const dataAttr = shouldLazy ? `data-src="${escapeHtml(firstUrl)}"` : '';
     const lazyClass = shouldLazy ? 'lazy-image lazy-loading' : '';
     
     // 🖼️ 多图模式：显示左右切换按钮和计数器
@@ -101,8 +104,8 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     
     return `
         <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #aaa;">🖼️ ${t('image.gallery')}${hasMultiple ? ` (${imageUrls.length})` : ''}</div>
-        <div class="img-viewport" data-images='${JSON.stringify(imageUrls)}' data-current="0" style="position: relative; width: 100%; height: 260px; background: #111; border: 2px dashed #666; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; cursor: grab; user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;" oncontextmenu="return false;">
-            <img class="target-img ${lazyClass}" src="${imgSrc}" ${dataAttr} draggable="false" style="max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center; transition: transform 0.05s linear, opacity 0.3s ease; ${protectionStyles}">
+        <div class="img-viewport" data-images='${escapeHtml(JSON.stringify(imageUrls))}' data-current="0" style="position: relative; width: 100%; height: 260px; background: #111; border: 2px dashed #666; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; cursor: grab; user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;" oncontextmenu="return false;">
+            <img class="target-img ${lazyClass}" src="${escapeHtml(imgSrc)}" ${dataAttr} draggable="false" style="max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center; transition: transform 0.05s linear, opacity 0.3s ease; ${protectionStyles}">
             ${navButtons}
             <div style="position: absolute; top: 10px; right: 10px; display: flex; gap: 5px; opacity: 0.3; transition: 0.3s; z-index: 10;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3">
                 <button class="btn-zoom-out" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold;">-</button>

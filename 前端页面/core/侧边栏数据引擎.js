@@ -18,6 +18,9 @@
 
 import { api } from "./网络请求API.js";
 import { proxyImages } from "./网络请求API.js";
+// 🔍 搜索时撤销上一次在途请求所需的取消管理器与分组 ID
+import { requestCancelManager } from "./网络请求API.js";
+import { API } from "./全局配置.js";
 import { createItemCard } from "../market/列表卡片组件.js";
 import { createCreatorCard } from "../market/创作者卡片组件.js";
 import { 
@@ -29,6 +32,7 @@ import {
 } from "../components/性能优化工具.js";
 import { applyViewportAnimations, getAnimationTypeForTab } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
+import { showToast } from "../components/UI交互提示组件.js";  // 🔧 降级提示改走统一组件（原为手写 div）
 
 // 💬 讨论区组件（动态导入）
 let postsViewModule = null;
@@ -354,15 +358,25 @@ export async function loadSidebarContent({
         state.loader = null;  // 清除引用，防止旧分页器状态残留
     }
     
-    // ========== 渲染函数：渲染一批数据 ==========
+    // ========== 🔍 搜索过滤统一入口 ==========
+    // 🔧 修复：过滤职责原先分裂在三处且口径不一致 —— loadMoreData 与分页器的
+    // getTotalDataCount 都是「先过滤再切片」（正确），而各首屏分支是「先切 20 条再过滤」，
+    // renderBatch 内部又对切好的批次再过滤一次。后果不只是首屏条数偏少：首屏与分页
+    // 处于不同的数据空间（首屏在「原始前 20 条」里找匹配，分页在「过滤后全集」里按 20
+    // 步长切片），排在第 20 条之后的匹配项会永久丢失，甚至首屏直接显示「没有搜索到相关内容」。
+    // 现统一收口到本函数：所有取数路径都先过滤、再切片，renderBatch 只负责渲染。
+    // 创作者Tab的 keyword 由后端搜索接口过滤，此处不做本地过滤（与原口径一致）。
+    const _applySearchScope = (dataArray) => {
+        if (!keyword || tab === "creators") return dataArray;
+        return _filterBySearch(dataArray, keyword);
+    };
+    
+    // ========== 渲染函数：渲染一批数据（只渲染，过滤由 _applySearchScope 统一负责）==========
     const renderBatch = (dataArray, append = false) => {
         if (renderToken !== getRenderToken()) return;
         
-        // 搜索过滤（创作者Tab有keyword时不进行本地过滤，因为后端已过滤）
-        let displayData = dataArray;
-        if (keyword && tab !== "creators") {
-            displayData = _filterBySearch(dataArray, keyword);
-        }
+        // 🔧 数据已由调用方经 _applySearchScope 过滤，本函数只负责渲染（不再二次过滤）
+        const displayData = dataArray;
         
         // 首次渲染清空容器
         if (!append) {
@@ -449,11 +463,8 @@ export async function loadSidebarContent({
         const start = (page - 1) * size;
         const end = start + size;
         
-        // 从全量数据中截取（创作者Tab有keyword时不进行本地过滤，因为后端已过滤）
-        let dataSlice = state.allData;
-        if (keyword && tab !== "creators") {
-            dataSlice = _filterBySearch(state.allData, keyword);
-        }
+        // 从全量数据中截取（统一走 _applySearchScope，与首屏处于同一数据空间）
+        const dataSlice = _applySearchScope(state.allData);
         
         const batch = dataSlice.slice(start, end);
         
@@ -476,20 +487,24 @@ export async function loadSidebarContent({
     
     // 有缓存时直接渲染缓存（搜索时也使用缓存，renderBatch 会处理 keyword 过滤）
     // 🔍 创作者Tab有keyword时不使用缓存，每次都从后端搜索
-    // 🔍 如果当前state是搜索结果且keyword为空，跳过缓存，强制从网络重新加载全量数据
-    const skipCache = (tab === "creators" && keyword) || (tab === "creators" && !keyword && state.isSearchResult);
+    // 🔧 修复：原实现还把「刚清空搜索框」也列为跳过缓存的理由，但 cacheKey 不含 keyword、
+    // 搜索结果也从不写入该键（见下方 isCreatorSearch 判断），缓存里存的始终是干净的全量列表，
+    // 清空搜索框后完全可以直接用缓存上屏；强制联网只会让用户在弱网下白等一整个重试预算
+    const skipCache = tab === "creators" && !!keyword;
     if (!force && hasCacheData && !skipCache) {
         // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
         const proxiedData = proxyImages(cachedData);
         state.allData = proxiedData;
         state.isFullyLoaded = true;
+        // 缓存是全量列表而非搜索结果，清除搜索标记，避免下次加载仍被当作搜索结果处理
+        if (tab === "creators" && !keyword) state.isSearchResult = false;
         
-        // 首屏渲染（仅第一页）
-        const firstPage = proxiedData.slice(0, pageSize);
-        renderBatch(firstPage, false);
+        // 首屏渲染（仅第一页）—— 先过滤再切片，与 loadMoreData 同一数据空间
+        const scopedData = _applySearchScope(proxiedData);
+        renderBatch(scopedData.slice(0, pageSize), false);
         
         // 如果有更多数据，启动分页加载器
-        if (proxiedData.length > pageSize) {
+        if (scopedData.length > pageSize) {
             _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
         }
         
@@ -537,10 +552,12 @@ export async function loadSidebarContent({
                         
                         // 完整重新渲染（替代之前只更新数字的方案）
                         contentArea.innerHTML = "";
-                        const firstPage = newData.slice(0, pageSize);
-                        renderBatch(firstPage, false);
+                        // 🔧 先过滤再切片：搜索场景下静默刷新同样会触发，
+                        // 原实现在 newData 前 20 条里过滤，会漏掉靠后的匹配项
+                        const scopedNewData = _applySearchScope(newData);
+                        renderBatch(scopedNewData.slice(0, pageSize), false);
                         
-                        if (newData.length > pageSize) {
+                        if (scopedNewData.length > pageSize) {
                             _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, savedTab);
                         }
                     } else {
@@ -576,12 +593,12 @@ export async function loadSidebarContent({
         state.isFullyLoaded = true;
         state.displayedCount = 0;  // 重置已显示计数，因为数据重新排序了
         
-        // 首屏渲染
-        const firstPage = locallySorted.slice(0, pageSize);
-        renderBatch(firstPage, false);
+        // 首屏渲染（先过滤再切片）
+        const scopedSorted = _applySearchScope(locallySorted);
+        renderBatch(scopedSorted.slice(0, pageSize), false);
         
         // 启动分页加载器
-        if (locallySorted.length > pageSize) {
+        if (scopedSorted.length > pageSize) {
             _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
         }
         
@@ -591,10 +608,45 @@ export async function loadSidebarContent({
         return; // 本地排序后直接返回，不需要后台刷新（数据是同一批）
     }
     
-    // ========== 显示加载骨架屏 ==========
-    contentArea.innerHTML = "";
-    const skeleton = createSkeleton(tab === "creators" ? "list" : "card", 3);
-    contentArea.appendChild(skeleton);
+    // ========== 🚀 缓存先行：阻塞前先用本地已有数据上屏 ==========
+    // 走到这里说明上面两条快路径都没命中：要么是 force 强制刷新（刻意跳过缓存），
+    // 要么是本次会话还没有该 tab 的完整数据。弱网下一次列表请求最长要烧满整个重试预算，
+    // 期间用户只能盯骨架屏；此刻若本地已有可用数据，就先渲染首屏，网络请求照常往下走，
+    // 回来后按 renderToken + _shouldUpdateData 决定是否重渲染（与上方静默刷新同口径）。
+    // 🔍 创作者搜索场景不参与：renderBatch 对创作者不做本地过滤，先上屏全量列表会混入非搜索结果
+    let renderedInstant = false;
+    if (!isCreatorSearching) {
+        // 可立即上屏的数据：当前排序的列表缓存（force 时被跳过）→ 创作者 sessionStorage 降级副本
+        let instantData = (hasCacheData && Array.isArray(cachedData) && cachedData.length > 0) ? cachedData : null;
+        if (!instantData && tab === "creators") {
+            const sessionData = getCreatorsFromSessionStorage();
+            if (Array.isArray(sessionData) && sessionData.length > 0) instantData = sessionData;
+        }
+        if (instantData) {
+            console.log(`🚀 ${tab}_${sort} 缓存先行：先用本地数据渲染首屏，网络请求转后台`);
+            // 🚀 与上方缓存命中分支同口径：本地数据也过一遍图片代理（proxyImages 内部会先剥除
+            // 已有代理前缀，幂等），确保代理规则新增的字段同样被处理
+            // sessionStorage 副本的顺序不保证与当前排序一致，统一本地排一次（对已排序数据幂等）
+            const sortedData = sortDataLocally(proxyImages(instantData), tab, sort);
+            state.allData = sortedData;
+            state.isFullyLoaded = true;
+            state.isSearchResult = false;
+            // 🔧 先过滤再切片（tools/apps/recommends 带 keyword 时同样会进入本分支）
+            const scopedInstant = _applySearchScope(sortedData);
+            renderBatch(scopedInstant.slice(0, pageSize), false);
+            if (scopedInstant.length > pageSize) {
+                _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
+            }
+            renderedInstant = true;
+        }
+    }
+    
+    // ========== 显示加载骨架屏（已有本地数据上屏时跳过，避免闪屏）==========
+    if (!renderedInstant) {
+        contentArea.innerHTML = "";
+        const skeleton = createSkeleton(tab === "creators" ? "list" : "card", 3);
+        contentArea.appendChild(skeleton);
+    }
     
     // ========== 从网络加载数据 ==========
     try {
@@ -608,6 +660,11 @@ export async function loadSidebarContent({
         } else if (tab === "creators") {
             // 🔍 创作者搜索：有 keyword 时调用后端搜索API，否则获取列表
             if (keyword) {
+                // 🔍 先撤销上一次仍在途的搜索请求：用户继续输入后，上一次的关键词已经作废，
+                // 但它的请求还会继续占用并发额度（全局最多 6 个）与最长 10 秒的超时预算，
+                // 把最新这次搜索挤到后面排队，弱网下表现为「一直在转圈」。
+                // 只撤销搜索分组，不影响列表、详情、点赞等任何其它请求
+                requestCancelManager.cancelAll(API.SEARCH_COMPONENT_ID);
                 response = await api.searchCreators(keyword, sort);
                 realData = response.data || [];
                 realData = proxyImages(realData);  // 确保图片走本地缓存代理
@@ -633,21 +690,51 @@ export async function loadSidebarContent({
             saveCreatorsToSessionStorage(realData);
         }
         
-        // 更新状态
-        state.allData = realData;
         state.isFullyLoaded = true;
         
-        // 渲染首屏
-        const firstPage = realData.slice(0, pageSize);
-        renderBatch(firstPage, false);
+        // 🚀 缓存先行场景：网络数据与已上屏的本地数据无实质差异时不重渲染，避免清屏重画
+        // 打断用户已经滚动的阅读位置（与上方后台静默刷新同口径）。缓存已在上面回写权威新数据，
+        // 此处刻意不更新 state.allData，保持与已渲染卡片一致，防止分页加载错位
+        if (renderedInstant && !_shouldUpdateData(state.allData, realData)) {
+            return;
+        }
+        
+        // 更新状态
+        state.allData = realData;
+        
+        // 渲染首屏（先过滤再切片：tools/apps/recommends 的 keyword 是本地搜索，
+        // realData 是未过滤的全量数据，原实现在前 20 条里过滤会漏掉靠后的匹配项）
+        const scopedReal = _applySearchScope(realData);
+        renderBatch(scopedReal.slice(0, pageSize), false);
         
         // 启动分页加载器
-        if (realData.length > pageSize) {
+        if (scopedReal.length > pageSize) {
             _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
         }
         
     } catch (error) {
+        // 🔍 防竞态：本次加载已被更新的加载取代（切Tab、换排序、继续输入关键词）时直接退出。
+        // renderBatch 内部本来就有这道守卫，但它之外的降级分支会直接写 contentArea.innerHTML
+        // 并弹提示，缺少守卫会让过期结果覆盖掉新内容
+        if (renderToken !== getRenderToken()) {
+            console.warn(`⏹️ ${tab}_${sort} 请求已过期，忽略本次失败`);
+            return;
+        }
+        // 🔍 主动撤销（上方 cancelAll）不是网络故障：用户只是又敲了一个字，
+        // 新一次加载已经在跑了。这里必须静默退出，否则会误弹「网络不可用」提示
+        if (error && error.name === 'RequestCancelledError') {
+            console.log(`⏹️ ${tab}_${sort} 搜索请求已被新关键词取代`);
+            return;
+        }
         console.error("数据加载失败:", error);
+        
+        // 🚀 缓存先行场景：首屏已经用本地数据上屏，网络失败时保持当前画面即可，不再走下面的
+        // 降级分支（否则会把同一批数据重渲染一遍、重播卡片动画）。与上方后台静默刷新失败一致：
+        // 只记录日志，不额外打扰用户
+        if (renderedInstant) {
+            console.warn(`📴 ${tab}_${sort} 网络刷新失败，保持已渲染的本地数据`);
+            return;
+        }
         
         // 🚀 回退到任何可用缓存（包括过期的）
         // 🔍 创作者Tab搜索场景跳过此分支：renderBatch 对创作者不做本地过滤，
@@ -655,15 +742,15 @@ export async function loadSidebarContent({
         if (hasCacheData && cachedData && !(tab === "creators" && keyword)) {
             console.warn(`📴 网络失败，降级显示${isCacheExpired ? '过期' : ''}缓存`);
             state.allData = cachedData;
-            renderBatch(cachedData.slice(0, pageSize), false);
+            // 🔧 先过滤再切片：本分支已排除 creators+keyword，但 tools/apps/recommends
+            // 带 keyword 时会进来；renderBatch 不再自行过滤，此处必须显式过滤
+            const scopedCached = _applySearchScope(cachedData);
+            renderBatch(scopedCached.slice(0, pageSize), false);
             
             // 如果是过期缓存，显示提示
+            // 🔧 改用统一提示组件 + 词典（原为手写 div、无动画不排队，且文案硬编码中文）
             if (isCacheExpired) {
-                const toastDiv = document.createElement('div');
-                toastDiv.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#FF9800; color:white; padding:10px 20px; border-radius:4px; z-index:10000; font-size:14px;';
-                toastDiv.textContent = '⚠️ 网络连接失败，展示的是上次缓存的数据';
-                document.body.appendChild(toastDiv);
-                setTimeout(() => toastDiv.remove(), 3000);
+                showToast(t('feedback.cache_fallback'), 'warning');
             }
             return;
         }
@@ -702,11 +789,8 @@ export async function loadSidebarContent({
                             </div>
                         `;
                         
-                        const toastDiv = document.createElement('div');
-                        toastDiv.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#FF9800; color:white; padding:10px 20px; border-radius:4px; z-index:10000; font-size:14px;';
-                        toastDiv.textContent = '⚠️ 网络不可用，显示本地搜索结果';
-                        document.body.appendChild(toastDiv);
-                        setTimeout(() => toastDiv.remove(), 3000);
+                        // 🔧 改用统一提示组件 + 词典（原为手写 div 且文案硬编码中文）
+                        showToast(t('feedback.search_local_result'), 'warning');
                         return;
                     }
                 }
@@ -714,26 +798,24 @@ export async function loadSidebarContent({
                 // 按当前排序排序
                 displayData = sortDataLocally(displayData, tab, sort);
                 state.allData = displayData;
-                renderBatch(displayData.slice(0, pageSize), false);
+                // 统一走 _applySearchScope（创作者Tab恒等返回，数据已由上方
+                // searchCreatorsLocally 过滤），保证各渲染入口口径完全一致
+                const scopedFallback = _applySearchScope(displayData);
+                renderBatch(scopedFallback.slice(0, pageSize), false);
                 
                 // 启动分页加载器
-                if (displayData.length > pageSize) {
+                if (scopedFallback.length > pageSize) {
                     _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab);
                 }
                 
-                const toastDiv = document.createElement('div');
-                toastDiv.style.cssText = 'position:fixed; top:20px; left:50%; transform:translateX(-50%); background:#FF9800; color:white; padding:10px 20px; border-radius:4px; z-index:10000; font-size:14px;';
-                toastDiv.textContent = keyword 
-                    ? '⚠️ 网络不可用，显示本地搜索结果' 
-                    : '⚠️ 网络连接失败，展示的是本地缓存的数据';
-                document.body.appendChild(toastDiv);
-                setTimeout(() => toastDiv.remove(), 3000);
+                // 🔧 改用统一提示组件 + 词典（原为手写 div 且两条文案均硬编码中文）
+                showToast(keyword ? t('feedback.search_local_result') : t('feedback.cache_fallback'), 'warning');
                 return;
             } else if (keyword) {
                 contentArea.innerHTML = '';
                 const emptyDiv = document.createElement('div');
                 emptyDiv.style.cssText = 'text-align:center; padding: 40px 20px; color:#888;';
-                emptyDiv.textContent = `🔌 ${t('common.network_error_retry') || '网络连接失败，请稍后重试'}`;
+                emptyDiv.textContent = `🔌 ${t('common.network_error_retry')}`;
                 contentArea.appendChild(emptyDiv);
                 return;
             }
@@ -778,24 +860,24 @@ function _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyw
         // 添加手动加载按钮作为 fallback
         let nextPage = 2;
         const loadMoreBtn = document.createElement('button');
-        loadMoreBtn.textContent = t('task.load_more') || '加载更多';
+        loadMoreBtn.textContent = t('task.load_more');
         loadMoreBtn.style.cssText = 'width:100%;padding:10px;margin-top:10px;cursor:pointer;border:1px solid #555;border-radius:6px;background:transparent;color:inherit;';
         loadMoreBtn.onclick = async () => {
             loadMoreBtn.disabled = true;
-            loadMoreBtn.textContent = t('common.loading') || '加载中...';
+            loadMoreBtn.textContent = t('common.loading');
             try {
                 const result = await loadMoreData(nextPage, pageSize);
                 if (result && result.length > 0) {
                     nextPage++;
-                    loadMoreBtn.textContent = t('task.load_more') || '加载更多';
+                    loadMoreBtn.textContent = t('task.load_more');
                 } else {
-                    loadMoreBtn.textContent = t('common.no_more') || '没有更多了';
+                    loadMoreBtn.textContent = t('common.no_more');
                     loadMoreBtn.style.cursor = 'default';
                     loadMoreBtn.onclick = null;
                 }
             } catch (err) {
                 console.error("手动加载更多失败:", err);
-                loadMoreBtn.textContent = t('task.load_failed') || '加载失败，点击重试';
+                loadMoreBtn.textContent = t('task.load_failed');
             }
             loadMoreBtn.disabled = false;
         };
@@ -804,6 +886,8 @@ function _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyw
     }
     
     // 计算数据总量（考虑搜索过滤，创作者Tab有keyword时不进行本地过滤，因为后端已过滤）
+    // 📌 口径必须与 loadSidebarContent 内的 _applySearchScope 一致（先过滤再计数）；
+    // 本函数是模块级、拿不到那个闭包，故保留等价实现，改动其一务必同步另一处
     const getTotalDataCount = () => {
         if (!keyword) return state.allData.length;
         // 创作者Tab后端搜索已过滤，直接返回全部数据

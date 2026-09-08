@@ -125,7 +125,7 @@ export function buildSidebarDOM() {
             <option value="downloads">${noTr(t('market.downloads'))}</option>
             <option value="likes">${noTr(t('market.like'))}</option>
             <option value="favorites">${noTr(t('market.favorites'))}</option>
-            <option value="tips">💰 ${noTr(t('market.tips_ranking') || '近期打赏榜')}</option>
+            <option value="tips">💰 ${noTr(t('market.tips_ranking'))}</option>
             <option value="views">${noTr(t('market.views'))}</option>
             <option value="daily_views">${noTr(t('market.daily_views'))}</option>
             <option value="rating">${noTr(t('market.rating'))}</option>
@@ -156,7 +156,7 @@ export function buildSidebarDOM() {
             <option value="tips">${noTr(t('post.sort_tips'))}</option>
             <option value="views">${noTr(t('post.sort_views'))}</option>
             <option value="daily_views">${noTr(t('post.sort_daily_views'))}</option>
-            <option value="rating">${noTr(t('post.sort_rating') || t('market.rating'))}</option>
+            <option value="rating">${noTr(t('post.sort_rating'))}</option>
         </select>
         <!-- 🧩 提示词排序控件（专用） -->
         <select id="prompts-sort-select" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
@@ -300,13 +300,13 @@ export function buildSidebarDOM() {
     // 🔴 修复：编辑时先获取详情API数据，确保 has_private_token 等字段完整（列表缓存可能缺少该字段）
     _onSidebarWindow("comfy-route-edit-publish", async (e) => {
         // 📱 Web 模式中央兜底：发布族功能仅本地 ComfyUI 可用
-        if (IS_WEB_MODE) return showToast("⚠️ 网页版暂不支持发布/编辑功能", "warning");
+        if (IS_WEB_MODE) return showToast(t('web.publish_not_supported'), "warning");
         const { itemData, currentUser } = e.detail;
 
         // 先展示加载状态，避免用户感知延迟
         const loadingView = document.createElement("div");
         loadingView.style.cssText = "display:flex;flex-direction:column;align-items:center;justify-content:center;height:400px;color:#888;font-size:14px;";
-        loadingView.innerHTML = `<div style=\"font-size:24px;margin-bottom:10px;\">⏳</div><div>${t('common.loading') || '加载中...'}</div>`;
+        loadingView.innerHTML = `<div style=\"font-size:24px;margin-bottom:10px;\">⏳</div><div>${t('common.loading')}</div>`;
         showInlineView(loadingView);
 
         // 从详情API获取完整数据（确保 has_private_token、netdisk_password 等字段不缺失）
@@ -331,7 +331,7 @@ export function buildSidebarDOM() {
 
     // 监听进入任务编辑页面的请求
     _onSidebarWindow("comfy-route-edit-task", (e) => {
-        if (IS_WEB_MODE) return showToast("⚠️ 网页版暂不支持发布/编辑功能", "warning");
+        if (IS_WEB_MODE) return showToast(t('web.publish_not_supported'), "warning");
         const { taskData, currentUser } = e.detail;
         try {
             const view = createPublishTaskView(currentUser, taskData);
@@ -343,7 +343,7 @@ export function buildSidebarDOM() {
 
     // 监听进入帖子编辑页面的请求
     _onSidebarWindow("comfy-route-edit-post", (e) => {
-        if (IS_WEB_MODE) return showToast("⚠️ 网页版暂不支持发布/编辑功能", "warning");
+        if (IS_WEB_MODE) return showToast(t('web.publish_not_supported'), "warning");
         const { postData, currentUser } = e.detail;
         const view = createPublishPostView(currentUser, postData);
         showInlineView(view);
@@ -351,7 +351,7 @@ export function buildSidebarDOM() {
 
     // 监听进入提示词编辑页面的请求
     _onSidebarWindow("comfy-route-edit-prompt", (e) => {
-        if (IS_WEB_MODE) return showToast("⚠️ 网页版暂不支持发布/编辑功能", "warning");
+        if (IS_WEB_MODE) return showToast(t('web.publish_not_supported'), "warning");
         const { promptData, currentUser } = e.detail;
         const view = createPublishPromptView(currentUser, promptData);
         showInlineView(view);

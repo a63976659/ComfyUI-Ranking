@@ -2,7 +2,7 @@
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
-import { removeCache } from "../components/性能优化工具.js";
+import { removeCache, removeCacheByPrefix } from "../components/性能优化工具.js";
 import { TYPE_RULES } from "./发布内容组件.js";  // 📋 三榜发布表单声明式规则（与 UI 联动同源）
 
 /**
@@ -27,9 +27,12 @@ function clearItemCacheByType(type) {
     }
     
     // 清除 API 缓存
-    removeCache('api_/api/items');
-    removeCache(`api_/api/items?type=${type.replace('recommend_', '')}`);
-    removeCache('api_/api/creators');  // 创作者列表也需要刷新
+    // 🔧 修复：API 层缓存键总是带完整查询串（api_/api/items?type=tool&sort=time&limit=200），
+    // 而 removeCache 是精确键删除，原先这几个调用一个也命中不到（no-op），发布成功后
+    // request() 仍会从缓存直接返回旧列表、看不到刚发布的内容。改用前缀删除，
+    // 一次覆盖全部 type/sort/limit 组合（原先按 type 单独删的那行已被本前缀覆盖，属冗余）
+    removeCacheByPrefix('api_/api/items');
+    removeCacheByPrefix('api_/api/creators');  // 创作者列表也需要刷新
     
     // 清除侧边栏数据引擎缓存（只清除对应类型）
     const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];

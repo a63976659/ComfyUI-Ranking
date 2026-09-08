@@ -54,8 +54,10 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
         }
     }
     
+    // 🔒 XSS防护：他人查看时 bannerUrl 直接来自云端（用户可自行填写），
+    // 写入 CSS url() 前剔除引号与括号，避免突破属性（与创作者卡片、个人设置表单同一写法）
     const bannerStyle = bannerImageUrl 
-        ? `background-image: url(${bannerImageUrl}); background-size: cover; background-position: center;`
+        ? `background-image: url(${String(bannerImageUrl).replace(/['"()\\]/g, '')}); background-size: cover; background-position: center;`
         : `background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);`;
 
     // 设置视图时返回简化的返回按钮（与个人资料页按钮样式一致，但不显示背景图）
@@ -114,7 +116,7 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                 
                 <!-- 用户信息区域 -->
                 <div style="display: flex; align-items: flex-start; gap: 15px; position: relative;">
-                    <img src="${userData.avatarDataUrl || userData.avatar || PLACEHOLDERS.AVATAR}" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid #4CAF50; object-fit: cover; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
+                    <img src="${escapeHtml(userData.avatarDataUrl || userData.avatar || PLACEHOLDERS.AVATAR)}" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid #4CAF50; object-fit: cover; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
                     <div style="flex: 1; padding-right: 150px;">
                         <div style="font-size: 20px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; text-shadow: 0 2px 4px rgba(0,0,0,0.6);">
                             ${escapeHtml(userData.name)}

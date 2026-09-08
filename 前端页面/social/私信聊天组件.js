@@ -26,12 +26,14 @@ const formatRelativeTime = (timestamp) => {
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
-    if (minutes < 1) return t('chat.time_just_now') || '刚刚';
-    if (minutes < 60) return `${minutes}${t('chat.time_min_ago') || '分钟前'}`;
-    if (hours < 24) return `${hours}${t('chat.time_hour_ago') || '小时前'}`;
-    if (days < 7) return `${days}${t('chat.time_day_ago') || '天前'}`;
+    if (minutes < 1) return t('chat.time_just_now');
+    if (minutes < 60) return `${minutes}${t('chat.time_min_ago')}`;
+    if (hours < 24) return `${hours}${t('chat.time_hour_ago')}`;
+    if (days < 7) return `${days}${t('chat.time_day_ago')}`;
     const date = new Date(msgTime);
-    return `${date.getMonth() + 1}${t('chat.date_month') || '月'}${date.getDate()}${t('chat.date_day') || '日'} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
+    // 🔧 去掉 || '月' / || '日' 兜底：这两个词条的英文值是刻意留空的（中文 9月8日 → 英文 9/8），
+    // 加了兜底反而会把中文量词引回英文界面（同文件下方的 chat.chatting_suffix 同理）
+    return `${date.getMonth() + 1}${t('chat.date_month')}${date.getDate()}${t('chat.date_day')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
 };
 // 🚀 P1-5: 超过5分钟则显示时间分隔符
 const TIME_GAP_THRESHOLD = 5 * 60; // 秒
@@ -109,7 +111,7 @@ export function openChatModal(currentUser, targetAccount = null) {
         resize: "none", maxHeight: "100px", minHeight: "40px", overflow: "auto",
         lineHeight: "1.4", boxSizing: "border-box"
     });
-    inputField.placeholder = t('chat.input_placeholder') || '输入消息...';
+    inputField.placeholder = t('chat.input_placeholder');
     // 🚀 P1-2: 自适应高度
     const adjustHeight = () => {
         inputField.style.height = "auto";
@@ -194,7 +196,7 @@ export function openChatModal(currentUser, targetAccount = null) {
             }
             
             chatItem.innerHTML = `
-                <img src="${avatar}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1px solid #555; flex-shrink: 0;">
+                <img src="${escapeHtml(avatar)}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1px solid #555; flex-shrink: 0;">
                 <div style="flex: 1; min-width: 0;">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div style="font-weight: bold; font-size: 13px; color: #fff;">${escapeHtml(name)}</div>
@@ -233,7 +235,7 @@ export function openChatModal(currentUser, targetAccount = null) {
         } catch(e) {
             // 🚀 P1-7: loadChatList 错误处理
             console.error('[私信] 加载对话列表失败:', e);
-            showToast(t('chat.load_list_failed') || '加载对话列表失败', 'error');
+            showToast(t('chat.load_list_failed'), 'error');
         }
     };
 
@@ -254,7 +256,7 @@ export function openChatModal(currentUser, targetAccount = null) {
                 textAlign: "center", padding: "10px", cursor: "pointer",
                 color: "#888", fontSize: "12px", transition: "0.2s"
             });
-            loadMoreBtn.textContent = t('chat.load_more') || `加载更早的消息（剩余${startIdx}条）`;
+            loadMoreBtn.textContent = t('chat.load_more');
             loadMoreBtn.onmouseover = () => { loadMoreBtn.style.color = "#2196F3"; };
             loadMoreBtn.onmouseout = () => { loadMoreBtn.style.color = "#888"; };
             loadMoreBtn.onclick = () => {
@@ -378,9 +380,9 @@ export function openChatModal(currentUser, targetAccount = null) {
         localStorage.setItem(getLastChatKey(currentUser.account), JSON.stringify(currentTargetInfo));
 
         chatHeader.innerHTML = `
-            <img id="chat-target-avatar" src="${avatar}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 1px solid #555; cursor: pointer; margin-right: 10px; transition: 0.2s;" title="${t('chat.view_profile') || '点击查看个人资料'}">
+            <img id="chat-target-avatar" src="${escapeHtml(avatar)}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 1px solid #555; cursor: pointer; margin-right: 10px; transition: 0.2s;" title="${t('chat.view_profile')}">
             <div style="flex: 1;">
-                <div style="font-weight: bold; font-size: 14px; color: #fff;">${t('chat.chatting_with') || '与'} ${escapeHtml(displayName)} ${t('chat.chatting_suffix') || '聊天'}</div>
+                <div style="font-weight: bold; font-size: 14px; color: #fff;">${t('chat.chatting_with')} ${escapeHtml(displayName)} ${t('chat.chatting_suffix')}</div>
                 <div style="font-size: 11px; color: #888;">@${escapeHtml(targetAccount)}</div>
             </div>
         `;
@@ -442,11 +444,11 @@ export function openChatModal(currentUser, targetAccount = null) {
         } catch(e) {
             // 🚀 P1-7: loadChatHistory 错误处理
             console.error('[私信] 加载消息失败:', e);
-            showToast(t('chat.load_history_failed') || '加载消息记录失败', 'error');
+            showToast(t('chat.load_history_failed'), 'error');
             messagesArea.innerHTML = `<div style="text-align:center; padding:40px; color:#888;">
-                <div style="margin-bottom:10px;">${t('chat.load_failed_hint') || '消息加载失败'}</div>
+                <div style="margin-bottom:10px;">${t('chat.load_failed_hint')}</div>
                 <button id="btn-retry-chat" style="padding:6px 16px; border-radius:4px; border:1px solid #555; background:var(--comfy-input-bg); color:#fff; cursor:pointer;">
-                    ${t('chat.retry') || '重试'}
+                    ${t('chat.retry')}
                 </button>
             </div>`;
             const retryBtn = messagesArea.querySelector('#btn-retry-chat');
@@ -455,11 +457,11 @@ export function openChatModal(currentUser, targetAccount = null) {
 
         // 🚀 绑定顶部清空消息按钮事件
         clearBtnTop.onclick = async () => {
-            if (await showConfirm(t('chat.confirm_clear') || '确定要清空与该用户的本地聊天记录吗？')) {
+            if (await showConfirm(t('chat.confirm_clear'))) {
                 localStorage.setItem(clearKey, Date.now().toString());
                 localStorage.setItem(cacheKey, "[]");
                 renderMsgs([], avatar);
-                showToast(t('chat.cleared') || '消息已清空', "success");
+                showToast(t('chat.cleared'), "success");
             }
         };
     }
@@ -469,7 +471,7 @@ export function openChatModal(currentUser, targetAccount = null) {
         const txt = inputField.value.trim();
         if (!txt) return;
         if (txt.length > MAX_MSG_LENGTH) {
-            showToast(t('chat.msg_too_long') || `消息不能超过${MAX_MSG_LENGTH}字`, "warning");
+            showToast(t('chat.msg_too_long'), "warning");
             return;
         }
         if (!currentChatTarget) return;
@@ -481,8 +483,8 @@ export function openChatModal(currentUser, targetAccount = null) {
             clearDraft(); // 🚀 P1-4: 发送成功后清除草稿
             loadChatHistory(currentChatTarget, currentTargetInfo?.name, currentTargetInfo?.avatar); 
             loadChatList(); 
-        } catch(e) { showToast(t('chat.send_failed') || `发送失败: ${e.message}`, "error"); }
-        sendBtn.disabled = false; sendBtn.innerText = t('common.send') || "发送";
+        } catch(e) { showToast(t('chat.send_failed', { msg: e.message }), "error"); }
+        sendBtn.disabled = false; sendBtn.innerText = t('common.send');
     };
     
     // 🚀 P1-2: Enter 发送，Shift+Enter 换行

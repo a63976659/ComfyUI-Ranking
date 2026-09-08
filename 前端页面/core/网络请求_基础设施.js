@@ -14,6 +14,9 @@ import { API, CACHE } from "./全局配置.js";
 import { logoutAndClearUserData, isOnline } from "./状态管理.js";
 import { CACHE_CONFIG, CACHE_INVALIDATION_MAP, invalidateRelatedCache, _getCacheTTL, getCache, setCache } from "./网络请求_缓存管理.js";
 import { unproxyImages } from "./网络请求_图片代理.js";
+// 🔧 直接引入 i18n 叶子模块（而非 用户体验增强.js）：本文件处于依赖链最上游，
+// 引入带 DOM 初始化副作用的增强层可能造成启动时序问题；国际化模块无副作用、零循环依赖
+import { t } from "../components/用户体验_国际化.js";
 
 // 🚀 动态时序导入：proxyImages 通过动态 import() 获取，避免模块初始化时序问题
 let _proxyImages = null;
@@ -104,11 +107,16 @@ const requestCancelManager = {
     cancelAll(componentId) {
         const controllers = this._controllers.get(componentId);
         if (controllers) {
+            const count = controllers.size;
             for (const controller of controllers) {
                 controller.abort();
             }
             controllers.clear();
-            console.log(`🚫 已取消组件 [${componentId}] 的所有请求`);
+            // 🔧 仅在实际撤销了请求时打日志：本方法会被搜索框的每一次输入触发，
+            // 绝大多数时候并没有在途请求，无条件打印会刷出大量无意义日志
+            if (count > 0) {
+                console.log(`🚫 已取消组件 [${componentId}] 的 ${count} 个在途请求`);
+            }
         }
     },
     
@@ -232,7 +240,9 @@ async function request(endpoint, options = {}) {
             const proxyFn2 = await getProxyImages();
             return proxyFn2(value);
         }
-        throw new Error('网络已断开，且无本地缓存');
+        // 🔧 修复：原为硬编码中文，而本错误会被 12+ 处调用方直接 showToast(err.message) 弹给用户，
+        // 导致英文界面下仍弹中文提示；现改走词典
+        throw new Error(t('feedback.offline_no_cache'));
     }
     
     // ⚡ P1性能优化：请求去重（相同GET请求只发一次）
@@ -251,9 +261,26 @@ async function request(endpoint, options = {}) {
         fetchOptions.body = options.body;
     }
 
-    // 🚀 P1优化：重试配置
-    const maxRetries = options.retries ?? (method === "GET" ? 2 : 0);  // GET 默认重试 2 次
-    const retryDelay = options.retryDelay ?? 1000;  // 初始延迟 1 秒
+    // 🚀 P1优化：重试与超时预算
+    // 🔧 修复：重试次数/间隔此前硬编码在本文件（2 / 1000），使 全局配置.js 的
+    // API.MAX_RETRIES、API.RETRY_DELAY 成为死配置，现统一读取配置中心
+    // 🐢 弱网预算分级：列表/搜索类 GET 有本地缓存兜底，失败上限适当收紧，
+    // 避免弱网下用户长时间盯骨架屏；按去掉查询串的路径全匹配，
+    // 不会误伤 /api/items/{id}、/api/creators/{account}/details 等详情请求
+    const endpointPath = endpoint.split("?")[0];
+    let defaultTimeout = API.TIMEOUT;
+    let defaultRetries = method === "GET" ? API.MAX_RETRIES : 0;  // 非 GET 不重试
+    if (method === "GET") {
+        if (endpointPath === "/api/creators/search") {
+            defaultTimeout = API.SEARCH_TIMEOUT;
+            defaultRetries = API.SEARCH_RETRIES;
+        } else if (endpointPath === "/api/items" || endpointPath === "/api/creators") {
+            defaultRetries = API.LIST_RETRIES;
+        }
+    }
+    const requestTimeout = options.timeout || defaultTimeout;
+    const maxRetries = options.retries ?? defaultRetries;
+    const retryDelay = options.retryDelay ?? API.RETRY_DELAY;  // 指数退避基数
     
     // ⚡ P1性能优化：封装请求 Promise（支持去重 + 重试）
     const requestPromise = (async () => {
@@ -269,12 +296,20 @@ async function request(endpoint, options = {}) {
                     
             // 🚀 P4优化：使用请求取消管理器（支持超时 + 组件级取消）
             const controller = requestCancelManager.create(componentId);
-            const timeoutId = setTimeout(() => controller.abort(), options.timeout || API.TIMEOUT);
             const currentFetchOptions = { ...fetchOptions, signal: controller.signal };
+            // 🔧 修复：超时计时器改到真正发出 fetch 时才启动。原实现在入队前就 setTimeout，
+            // 并发满 6 个时排队等待会白烧超时预算，排队时长超过超时值会导致 fetch 尚未发出就被 abort
+            let timeoutId = null;
+            // 🔍 区分「超时中止」与「调用方主动撤销」：两者抛出的都是 AbortError，
+            // 但前者应该重试、后者绝不能重试（详见下方 catch 的主动取消分支）
+            let timedOut = false;
                     
             try {
                 // 🚀 P3优化：使用请求队列限制并发
-                const response = await requestQueue.add(() => fetch(url, currentFetchOptions));
+                const response = await requestQueue.add(() => {
+                    timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, requestTimeout);
+                    return fetch(url, currentFetchOptions);
+                });
                 clearTimeout(timeoutId);  // 清除超时计时器
                 requestCancelManager.remove(componentId, controller);  // 🚀 P4: 移除已完成的 controller
                 let responseData = await response.json().catch(() => ({}));
@@ -334,6 +369,20 @@ async function request(endpoint, options = {}) {
                 return responseData;
             } catch (error) {
                 clearTimeout(timeoutId);  // 清除超时计时器
+                // 🔍 失败/超时同样摘除 controller：成功路径在上方已 remove，这里不补的话，
+                // 取消分组里会堆积已失效的 controller，使 cancelAll 的在途计数虚高
+                requestCancelManager.remove(componentId, controller);
+                
+                // 🔍 主动撤销（组件级取消）与超时都表现为 AbortError，但语义完全相反：
+                // 超时该重试；主动撤销是调用方明确表示「这次结果我不要了」，绝不能重试，
+                // 否则会白烧一轮超时预算（搜索场景下用户每敲一次键都可能触发一次撤销）。
+                // 直接抛出而不走循环后的「过期缓存兜底」，避免把作废请求的结果上屏
+                if (error.name === 'AbortError' && !timedOut) {
+                    const cancelErr = new Error(t('feedback.request_cancelled'));
+                    cancelErr.name = 'RequestCancelledError';
+                    cancelErr.isCancelled = true;
+                    throw cancelErr;
+                }
                 
                 // 🔧 P1优化：可重试的错误类型
                 const isRetryable = (
@@ -379,9 +428,12 @@ async function request(endpoint, options = {}) {
     }
     
     // 确保请求完成后清除去重记录
+    // 🔧 补 .catch 空处理：finally 会派生出一个新的 Promise，而它从未被返回也无人接收，
+    // 一旦请求失败（含主动撤销）就会在控制台抛 Uncaught (in promise)。
+    // 原始 requestPromise 仍在下方正常返回给调用方处理，此处只是吞掉这份重复的拒绝
     requestPromise.finally(() => {
         pendingRequests.delete(cacheKey);
-    });
+    }).catch(() => {});
     
     return requestPromise;
 }

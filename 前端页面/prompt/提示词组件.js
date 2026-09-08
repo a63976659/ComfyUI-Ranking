@@ -94,11 +94,12 @@ function _renderEmptyState() {
  */
 function _generateAvatarHtml(avatar, name, size) {
     const initial = (name || 'U')[0].toUpperCase();
+    // 🔒 XSS防护：avatar / name 均来自他人可修改的资料（昵称首字母可能是 < ），写入 HTML 前必须转义
     if (avatar) {
-        return `<img class="swr-avatar" src="${avatar}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
+        return `<img class="swr-avatar" src="${escapeHtml(avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
     }
     const fontSize = Math.max(9, Math.round(size * 0.5));
-    return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${initial}</div>`;
+    return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${escapeHtml(initial)}</div>`;
 }
 
 /**

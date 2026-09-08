@@ -3,7 +3,8 @@ import { showToast, showConfirm, createInstallProgress } from "../components/UI�
 import { api } from "../core/网络请求API.js";
 import { requestSSE, request } from "../core/网络请求_基础设施.js";
 import { openUserProfileModal } from "../profile/个人中心视图.js";
-import { API, CACHE, IS_WEB_MODE } from "../core/全局配置.js";
+import { API, CACHE, IS_WEB_MODE, escapeHtml } from "../core/全局配置.js";
+import { t } from "../components/用户体验增强.js";
 
 // 📱 Web 模式兼容：ComfyUI 的 app 对象仅存在于本地环境，改为受保护动态导入
 // （Web 模式不暴露安装/下载入口，不会走到此路径；万一走到也不抛错）
@@ -17,7 +18,7 @@ async function _loadGraphToCanvas(graphData) {
         return false;
     }
 }
-import { removeCache } from "../components/性能优化工具.js";
+import { removeCache, removeCacheByPrefix } from "../components/性能优化工具.js";
 
 // ==========================================
 // 📦 已获取资源记录管理
@@ -27,8 +28,10 @@ import { removeCache } from "../components/性能优化工具.js";
  * 🗑️ 清除使用量相关缓存
  */
 function clearUsesCache() {
-    removeCache('api_/api/items');
-    removeCache('api_/api/creators');
+    // 🔧 修复：API 层缓存键带完整查询串，removeCache 精确删除命中不到（no-op），
+    // 安装后使用量/下载数仍会从旧缓存返回，改用前缀删除
+    removeCacheByPrefix('api_/api/items');
+    removeCacheByPrefix('api_/api/creators');
     const tabs = ['tools', 'apps', 'recommends', 'creators'];
     const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
     for (const tab of tabs) {
@@ -199,7 +202,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
 
         // 📱 Web 模式：不支持下载/安装。免费（含作者本人）或已购买 → 仅提醒电脑端安装；未购买 → 放行到下方纯购买流程
         if (IS_WEB_MODE) {
-            if (isFree) return showToast("请在电脑端进行安装", "warning");
+            if (isFree) return showToast(t('web.install_on_desktop'), "warning");
             let webOwned = false;
             try {
                 const st = await api.getPurchaseStatus(currentUser.account, itemData.id);
@@ -207,7 +210,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             } catch (e) {
                 console.warn('购买状态查询失败，继续购买流程', e);
             }
-            if (webOwned) return showToast("请在电脑端进行安装", "warning");
+            if (webOwned) return showToast(t('item.owned_purchased'), "warning");
         }
 
         // 记录是否已经拥有，决定是否涨销量
@@ -267,7 +270,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 clearTimeout(valTimeout);
                 const valData = await valRes.json();
                 if (!valRes.ok || valData.error) {
-                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 拦截提示: ${valData.error || '无法访问源地址'}</span>`;
+                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 拦截提示: ${escapeHtml(valData.error || '无法访问源地址')}</span>`;
                     return; // 发现死链，强行阻断用户付款
                 }
             } catch(e) {
@@ -280,7 +283,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
 
             // 已购买用户跳过购买确认弹窗，直接进入后续流程
             if (!alreadyOwned) {
-                const confirmPay = await showConfirm(`该资源标价为 <strong style="color:#FF9800;">${itemData.price} 积分</strong>。<br><br>确认获取吗？<br><span style="font-size:12px;color:#aaa;">(注：一次购买永久免费，如果已购买过系统将直接放行，不会重复扣款)</span>`);
+                const confirmPay = await showConfirm(`该资源标价为 <strong style="color:#FF9800;">${itemData.price} 积分</strong>。<br><br>确认获取吗？<br><span style="font-size:12px;color:#aaa;">(注：一次购买永久免费，如果已购买过系统将直接放行，不会重复扣款)</span>`, { html: true });
                 if (!confirmPay) {
                     inlineStatusBox.style.display = "none";
                     return;
@@ -329,7 +332,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 }
                 return; // 直接退出函数，不会走到下方的安装流程
             } else {
-                inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 获取失败: ${err.message}</span>`;
+                inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 获取失败: ${escapeHtml(err.message)}</span>`;
                 showToast("获取失败：" + err.message, "error");
                 return;
             }
@@ -339,9 +342,9 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
         if (IS_WEB_MODE) {
             inlineStatusBox.style.display = "block";
             inlineStatusBox.innerHTML = alreadyOwned
-                ? `<span style="color: #4CAF50;">✅ 您已购买过此资源，请在电脑端进行安装。</span>`
-                : `<span style="color: #4CAF50;">✅ 购买成功！请在电脑端进行安装。</span>`;
-            showToast("请在电脑端进行安装", "info");
+                ? `<span style="color: #4CAF50;">✅ ${escapeHtml(t('item.owned_purchased'))}</span>`
+                : `<span style="color: #4CAF50;">✅ ${escapeHtml(t('web.purchase_success_desktop'))}</span>`;
+            showToast(t('web.install_on_desktop'), "info");
             return;
         }
 
@@ -449,8 +452,16 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         if (data.error) {
                             const isLinkError = data.error.includes('不是有效的 Git');
                             inlineStatusBox.innerHTML = isLinkError
-                                ? `<span style="color: #F44336;">❌ ${data.error}</span><br><button onclick="window.open('${itemData.link}', '_blank')" style="margin-top:8px;padding:6px 14px;background:#2563eb;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;">🔗 前往资源原始页面</button>`
-                                : `<span style="color: #F44336;">❌ 安装失败: ${data.error}</span>`;
+                                ? `<span style="color: #F44336;">❌ ${escapeHtml(data.error)}</span><br><button id="btn-open-source-link" style="margin-top:8px;padding:6px 14px;background:#2563eb;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;">🔗 前往资源原始页面</button>`
+                                : `<span style="color: #F44336;">❌ 安装失败: ${escapeHtml(data.error)}</span>`;
+                            // 🔒 XSS防护：链接改为 DOM 事件绑定（内联 onclick 里的引号即使转义，
+                            // 也会被浏览器先还原再交给 JS 解析，依然能被注入；本文件其他分支均用此写法）
+                            if (isLinkError) {
+                                const btnOpenSource = inlineStatusBox.querySelector('#btn-open-source-link');
+                                if (btnOpenSource) {
+                                    btnOpenSource.onclick = () => window.open(itemData.link, '_blank');
+                                }
+                            }
                             showToast(`插件 [${itemData.title}] 安装失败: ${data.error}`, "error");
                         } else {
                             // 根据后端返回的 message 判断是否为自更新场景
@@ -517,7 +528,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     btnUse.style.background = "#4CAF50";
                 } else {
                     progress.error(result.message);
-                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${result.message}</span>`;
+                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${escapeHtml(result.message)}</span>`;
                     showToast(`工作流加载失败：${result.message}`, "error");
                 }
             } catch(err) {
@@ -533,7 +544,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     });
                     if (!res.ok) {
                         const errText = await res.text().catch(() => '未知服务端错误');
-                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败 (${res.status})：${errText}</span>`;
+                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败 (${res.status})：${escapeHtml(errText)}</span>`;
                         return;
                     }
                     let data;
@@ -541,11 +552,11 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         data = await res.json();
                     } catch (parseErr) {
                         inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 响应解析失败，请重试</span>`;
-                        showToast(t('common.parse_error') || '响应解析失败', "error");
+                        showToast(t('common.parse_error'), "error");
                         return;
                     }
                     if (data.error) {
-                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${data.error}</span>`;
+                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${escapeHtml(data.error)}</span>`;
                         showToast(`工作流加载失败：${data.error}`, "error");
                     } else {
                         await _loadGraphToCanvas(data.data);
@@ -567,7 +578,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     }
                 } catch(err2) {
                     console.error('❌ 应用下载失败:', err2);
-                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务：${err2.message || '网络错误'}</span>`;
+                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务：${escapeHtml(err2.message || '网络错误')}</span>`;
                 }
             }
         } else {

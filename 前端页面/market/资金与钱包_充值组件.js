@@ -149,7 +149,7 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
                 return showToast(t('wallet.recharge.invalid_amount'), "warning");
             }
             if (customVal > 10000) {
-                return showToast(t('wallet.recharge.max_amount_exceeded') || "单次充值金额不得超过10000元", "warning");
+                return showToast(t('wallet.recharge.max_amount_exceeded'), "warning");
             }
             finalPoints = customVal;
             finalPrice = customVal;
@@ -167,7 +167,7 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
         });
         if (!confirmed) return;
 
-        _setButtonLoading(btnCreateOrder, true, t('wallet.recharge.processing') || "处理中...", t('wallet.recharge.get_qr'));
+        _setButtonLoading(btnCreateOrder, true, t('wallet.recharge.processing'), t('wallet.recharge.get_qr'));
         qrContainer.style.display = "block";
         qrLoading.style.display = "block";
         qrImage.style.display = "none";
@@ -201,7 +201,7 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
                 if (pollCount >= MAX_POLL_COUNT) {
                     clearInterval(pollingInterval);
                     pollingInterval = null;
-                    showToast(t('wallet.recharge.timeout') || '支付查询超时，如已支付请稍后刷新查看余额', "warning");
+                    showToast(t('wallet.recharge.timeout'), "warning");
                     return;
                 }
                 try {
@@ -244,7 +244,7 @@ qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${e
             qrLoading.innerText = t('wallet.recharge.order_failed') + error.message;
             qrLoading.style.color = "#F44336";
         } finally {
-            _setButtonLoading(btnCreateOrder, false, t('wallet.recharge.processing') || "处理中...", t('wallet.recharge.get_qr'));
+            _setButtonLoading(btnCreateOrder, false, t('wallet.recharge.processing'), t('wallet.recharge.get_qr'));
         }
     };
 

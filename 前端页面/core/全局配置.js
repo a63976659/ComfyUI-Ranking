@@ -18,7 +18,7 @@
 // 🌐 API 配置
 // ==========================================
 
-/** @type {{ BASE_URL: string, TIMEOUT: number, MAX_RETRIES: number, RETRY_DELAY: number }} */
+/** @type {{ BASE_URL: string, TIMEOUT: number, MAX_RETRIES: number, RETRY_DELAY: number, LIST_RETRIES: number, SEARCH_TIMEOUT: number, SEARCH_RETRIES: number, SEARCH_COMPONENT_ID: string }} */
 export const API = {
     // 云端 API 基础地址
     BASE_URL: "https://zhiwei666-comfyui-ranking-api.hf.space",
@@ -26,11 +26,29 @@ export const API = {
     // 请求超时时间（毫秒）
     TIMEOUT: 30000,
     
-    // 重试次数
-    MAX_RETRIES: 3,
+    // GET 请求重试次数（实际尝试 MAX_RETRIES + 1 次）
+    // 🔧 修复：此前本值为 3 且全库无人读取，真正的重试次数硬编码在 网络请求_基础设施.js 中为 2，
+    // 现改为由基础设施读取本配置；取值 2 以保持既有的「共 3 次尝试」行为不变
+    MAX_RETRIES: 2,
     
-    // 重试间隔（毫秒）
-    RETRY_DELAY: 1000
+    // 重试间隔（毫秒，指数退避基数：1s、2s、4s…）
+    RETRY_DELAY: 1000,
+    
+    // 🐢 弱网预算分级（仅作用于 GET，由 网络请求_基础设施.js 按 endpoint 路径精确匹配）
+    // 默认预算下弱网一次列表请求最长要烧 3×30s + 1s + 2s = 93s，期间用户只能盯骨架屏。
+    // 列表类：首屏已可由本地缓存先行上屏（见 侧边栏数据引擎.js），且列表往往是会话的第一个请求、
+    // 可能撞上 HF Space 冷启动（本项目无预热机制），故只砍掉一次冗余重试、保留 30s 单次超时，
+    // 93s → 61s，冷启动仍有机会在前两次尝试内完成
+    LIST_RETRIES: 1,
+    // 搜索类：必然发生在列表已加载之后（空间已被唤醒），可放心收紧，93s → 10s×2 + 1s = 21s
+    SEARCH_TIMEOUT: 10000,
+    SEARCH_RETRIES: 1,
+    
+    // 🔍 创作者搜索请求的取消分组 ID
+    // 用户在搜索框继续输入时，侧边栏数据引擎.js 据此撤销上一次仍在途的搜索请求。
+    // 不撤销的话，作废请求会持续占用并发额度（最多 6 个）与超时预算，
+    // 把最新那次搜索挤到后面排队。仅搜索请求归入本分组，不影响其它任何请求
+    SEARCH_COMPONENT_ID: "sidebar-search"
 };
 
 
@@ -425,6 +443,28 @@ const PROFILE_CACHE_PREFIX = "ComfyCommunity_ProfileCache_";
 const _pendingProfileRequests = new Map();  // 防止 N+1 并发请求
 const PENDING_TIMEOUT = 30000;  // 挂起请求超时清理时间（毫秒）
 
+// ==========================================
+// 🔒 HTML 转义（底层公共工具）
+// ==========================================
+// 放在本文件（零依赖的底层模块）而非 components/互动工具函数.js，是因为
+// UI交互提示组件.js 与 打赏等级工具.js 都需要它，而互动工具函数.js 反向依赖这两者
+// （导入 showToast、re-export renderTipBoardHTML），从那里导入会形成循环依赖。
+// 互动工具函数.js 仍以 re-export 方式对外暴露同名函数，既有调用方无需改动。
+
+/**
+ * HTML转义（统一版：各组件局部副本已归一到此）
+ * @param {*} str - 原始字符串（非字符串会先强制转换，兼容数字等入参）
+ * @returns {string} 转义后的字符串
+ */
+export function escapeHtml(str) {
+    if (str === null || str === undefined || str === "") return "";
+    return String(str).replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;")
+              .replace(/'/g, "&#039;");
+}
+
 /** 统一字段映射：将后端 avatarDataUrl 映射为前端 avatar */
 function _mapAvatarField(profile) {
     if (profile && profile.avatarDataUrl && !profile.avatar) {
@@ -540,12 +580,14 @@ export function renderAvatarWithSWR(options) {
     }
     
     // 生成初始 HTML（无头像时显示首字母背景）
+    // 🔒 XSS防护：avatar/name/initial 均来自用户可修改的资料（昵称首字母可能是 < ），
+    // 写入 HTML 前必须转义；上方 SWR 刷新路径用的是 .src / .textContent，本身就是安全的。
     const initial = (name || account || 'U')[0].toUpperCase();
     const avatarHtml = avatar 
-        ? `<img class="swr-avatar" src="${avatar}" style="width: ${avatarSize}px; height: ${avatarSize}px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #333;">` 
-        : `<div class="swr-avatar" style="width: ${avatarSize}px; height: ${avatarSize}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${Math.floor(avatarSize * 0.5)}px; font-weight: bold; flex-shrink: 0;">${initial}</div>`;
+        ? `<img class="swr-avatar" src="${escapeHtml(avatar)}" style="width: ${avatarSize}px; height: ${avatarSize}px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #333;">` 
+        : `<div class="swr-avatar" style="width: ${avatarSize}px; height: ${avatarSize}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${Math.floor(avatarSize * 0.5)}px; font-weight: bold; flex-shrink: 0;">${escapeHtml(initial)}</div>`;
     
-    return `<span id="${containerId}" style="display: inline-flex; align-items: center; gap: 6px;">${avatarHtml}<span class="swr-name">${name}</span></span>`;
+    return `<span id="${escapeHtml(containerId)}" style="display: inline-flex; align-items: center; gap: 6px;">${avatarHtml}<span class="swr-name">${escapeHtml(name)}</span></span>`;
 }
 
 

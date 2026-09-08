@@ -200,7 +200,7 @@ export function maskAmount(amount, hide = false) {
 // ==========================================
 // 缓存实现已统一迁移到 ../core/网络请求_缓存管理.js
 // 此处保持向后兼容重导出，调用方无需修改 import 路径
-export { setCache, getCache, getCacheWithMeta, removeCache, clearAllCache, CACHE_TTL, getRecommendedTTL, setSmartCache } from '../core/网络请求_缓存管理.js';
+export { setCache, getCache, getCacheWithMeta, removeCache, removeCacheByPrefix, clearAllCache, CACHE_TTL, getRecommendedTTL, setSmartCache } from '../core/网络请求_缓存管理.js';
 
 
 // ==========================================

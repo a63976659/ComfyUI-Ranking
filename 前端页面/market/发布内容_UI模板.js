@@ -1,4 +1,5 @@
 // 前端页面/market/发布内容_UI模板.js
+import { escapeHtml } from "../core/全局配置.js";
 
 export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExistingToken, editItemData, t) {
     const safeData = editItemData || {};
@@ -10,7 +11,7 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
             <button id="btn-back" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
                 ⬅ ${t('common.back')}
             </button>
-            <span style="font-size: 16px; font-weight: bold; color: #fff;">${viewTitle}</span>
+            <span style="font-size: 16px; font-weight: bold; color: #fff;">${escapeHtml(viewTitle)}</span>
         </div>
 
         <div style="display: flex; gap: 10px; margin-bottom: 5px;">
@@ -135,6 +136,6 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
             </div>
         </div>
 
-        <button id="btn-submit-publish" style="width: 100%; padding: 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 15px; transition: 0.3s; margin-bottom: 20px;">${submitBtnText}</button>
+        <button id="btn-submit-publish" style="width: 100%; padding: 12px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 15px; transition: 0.3s; margin-bottom: 20px;">${escapeHtml(submitBtnText)}</button>
     `;
 }

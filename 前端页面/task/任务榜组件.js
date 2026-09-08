@@ -559,7 +559,8 @@ function createTaskCard(task) {
         
         // 渲染头像（始终使用 img 标签）
         const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
-        const avatarHtml = `<img class="swr-avatar" src="${avatarSrc}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: var(--comfy-input-bg);">`;
+        // 🔒 XSS防护：头像 URL 来自他人可修改的资料，写入 HTML 属性前必须转义
+        const avatarHtml = `<img class="swr-avatar" src="${escapeHtml(avatarSrc)}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: var(--comfy-input-bg);">`;
         
         authorContainer.innerHTML = `${avatarHtml}<span class="swr-name">${escapeHtml(name)}</span>`;
         
