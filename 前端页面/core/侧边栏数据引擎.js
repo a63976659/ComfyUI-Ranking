@@ -537,6 +537,15 @@ export async function loadSidebarContent({
                     // 防竞态检查2：网络请求完成后再次验证
                     if (savedToken !== getRenderToken()) return;
                     
+                    // 🛡️ 空响应防护：云端返回空列表时不回写缓存、也不清屏重渲染。
+                    // 本分支由「缓存过期」触发，是切 Tab 时最常走到的路径，若不拦，
+                    // 下方 state.allData = newData + contentArea.innerHTML = "" 会把
+                    // 已上屏的本地数据连画面带缓存一起清空（见 _isEmptyOverwrite 说明）
+                    if (_isEmptyOverwrite(newData, state.allData, cachedData)) {
+                        console.warn(`🛡️ ${savedTab}_${savedSort} 云端返回空列表，保留本地数据，跳过缓存回写`);
+                        return;
+                    }
+                    
                     // 只有token匹配时才同时更新state.allData和setCache
                     if (_shouldUpdateData(state.allData, newData)) {
                         console.log(`✅ ${savedTab}_${savedSort} 检测到新数据，执行静默更新`);
@@ -679,18 +688,28 @@ export async function loadSidebarContent({
             }
         }
         
-        // 存入缓存（📴 创作者数据同样持久化到 localStorage，保证重启后离线可展示；搜索结果不存入缓存）
+        // 存入缓存（📴 创作者数据同样持久化到 localStorage，保证重启后离线仍可展示；搜索结果不存入缓存）
         const isCreatorSearch = tab === "creators" && keyword;
-        if (!isCreatorSearch) {
+        // 🛡️ 空响应防护：创作者搜索命中 0 条是有效答案（下方要渲染「没有搜索到相关内容」），
+        // 必须排除在防护之外，否则会把空搜索结果误判成云端故障、改渲染全量列表
+        const isEmptyOverwrite = !isCreatorSearch && _isEmptyOverwrite(realData, cachedData, state.allData);
+        if (isEmptyOverwrite) {
+            console.warn(`🛡️ ${tab}_${sort} 云端返回空列表，保留本地数据，不覆盖缓存`);
+        } else if (!isCreatorSearch) {
             setCache(cacheKey, realData, getCacheExpireTime(), true);
         }
         
         // 创作者非搜索数据存入 sessionStorage（用于离线降级）
-        if (tab === "creators" && !isCreatorSearch) {
+        if (tab === "creators" && !isCreatorSearch && !isEmptyOverwrite) {
             saveCreatorsToSessionStorage(realData);
         }
         
         state.isFullyLoaded = true;
+        
+        // 🛡️ 空响应且本地数据已上屏：保持当前画面，不用空列表清屏（与缓存同口径不回写）
+        if (isEmptyOverwrite && renderedInstant) {
+            return;
+        }
         
         // 🚀 缓存先行场景：网络数据与已上屏的本地数据无实质差异时不重渲染，避免清屏重画
         // 打断用户已经滚动的阅读位置（与上方后台静默刷新同口径）。缓存已在上面回写权威新数据，
@@ -941,6 +960,26 @@ function _showEndIndicator(contentArea) {
     contentArea.appendChild(endIndicator);
 }
 
+
+/**
+ * 🛡️ 空响应防护：本次云端返回是否属于「请求成功但列表为空」，且本地已有非空数据
+ *
+ * 背景：网络失败本身从不清理本地数据（重试耗尽只置云端冷却并回退过期缓存，见技术文档
+ * 04 章 4.2.2），但云端偶发返回 HTTP 200 + data:[] 会——例如 Space 冷启动时 HF Dataset
+ * 尚未加载完。此时 realData/newData 为 []，照原样回写缓存就把断网降级的唯一数据来源清掉了。
+ *
+ * 只拦「新数据为空 且 本地已有非空数据」这一种组合：本地本来就是空的（首次使用、刚清过
+ * 缓存、云端确实一条都没有）时返回 false，照常写入，不改变任何正常流程。
+ * 调用方须自行排除搜索结果场景——搜索命中 0 条是有效答案，不是云端故障。
+ *
+ * @param {Array} newData - 本次从云端取回的数据
+ * @param {...(Array|null|undefined)} localData - 本地已有数据（缓存副本 / 内存 state.allData）
+ * @returns {boolean} true = 属于会覆盖本地好数据的空响应，应跳过回写与重渲染
+ */
+function _isEmptyOverwrite(newData, ...localData) {
+    if (Array.isArray(newData) && newData.length > 0) return false;
+    return localData.some(d => Array.isArray(d) && d.length > 0);
+}
 
 /** 判断是否需要更新数据 —— 对比ID顺序和关键字段 */
 function _shouldUpdateData(oldData, newData) {

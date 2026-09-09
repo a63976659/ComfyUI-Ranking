@@ -8,7 +8,8 @@
 //   - 所有需要共享状态的组件
 //   - 顶部导航组件.js (用户登录状态)
 //   - 侧边栏主程序.js (当前视图状态)
-//   - 网络请求_基础设施.js / 网络请求_图片代理.js (调用 isOnline() 决定是否走缓存回退)
+//   - 网络请求_基础设施.js (调用 isOnline() / isCloudReachable() 决定是否走缓存回退，并回写 markCloudDown/markCloudUp)
+//   - 网络请求_图片代理.js (仅调用 isOnline()：媒体链路的云端不可达已由本地插件层 api_cache.py 的熔断兜住，见技术文档 02 章 2.4.1.1)
 // ==========================================
 // 🏗️ P2架构优化：轻量级状态管理
 // 🏗️ P2质量优化：JSDoc 类型注释
@@ -20,7 +21,7 @@
  * @typedef {import('./类型定义.js').WalletData} WalletData
  */
 
-import { CACHE } from "./全局配置.js";
+import { API, CACHE } from "./全局配置.js";
 import { clearSensitiveCache, clearAllCache } from "../components/性能优化工具.js";
 
 
@@ -54,9 +55,12 @@ const state = {
         users: new Map()
     },
     
-    // 网络状态（全项目唯一数据源，见下方「🌐 网络状态管理」段落）
+    // 网络状态（全项目唯一数据源，见下方「🌐 网络状态管理」与「☁️ 云端可达性」两个段落）
     network: {
-        isOnline: navigator.onLine
+        isOnline: navigator.onLine,
+        // 云端不可达冷却的截止时间戳（0 = 云端可达）。与 isOnline 刻意分开：
+        // 前者答「云端服务器能不能连上」，后者只答「本机网卡通不通」
+        cloudDownUntil: 0
     }
 };
 
@@ -438,6 +442,9 @@ export function isLoading() {
 // 这类多份状态不同步的分裂表现：
 //   - 网络请求_基础设施.js —— 离线 GET 直返缓存、重试耗尽回退过期缓存
 //   - 网络请求_图片代理.js —— 离线时不构造远程直链，保持相对路径原样
+//
+// ⚠️ isOnline() 只能回答「本机网卡通不通」。云端单独不可达（HF Space 宕机/冷启动、
+// DNS 污染、被墙）时它仍为 true，因此另设下方「☁️ 云端可达性」作为第二个共享数据源。
 
 /**
  * 更新网络状态（仅供内部 online/offline 监听调用）
@@ -450,6 +457,9 @@ export function setNetworkStatus(online) {
     if (wasOnline !== online) {
         console.log(online ? '🌐 网络已恢复' : '📴 网络已断开');
         eventBus.emit(EVENTS.NETWORK_CHANGE, { online });
+        // 🔗 本机网卡一旦真正断开，云端必然不可达，直接打上冷却，
+        // 免得每个界面还要各自烧一遍重试预算才能得出同一个结论
+        if (!online) markCloudDown('本机网络已断开');
     }
 }
 
@@ -457,7 +467,7 @@ export function setNetworkStatus(online) {
  * 检查是否在线
  * 
  * 注意：navigator.onLine 仅反映本机网络接口状态，不代表云端服务可达；
- * 云端不可达（502 / DNS 污染 / 证书失败）由 request() 的重试耗尽兜底负责。
+ * 云端可达性请一律改问 isCloudReachable()（见下方段落）。
  * @returns {boolean}
  */
 export function isOnline() {
@@ -468,6 +478,51 @@ export function isOnline() {
 if (typeof window !== "undefined") {
     window.addEventListener("online", () => setNetworkStatus(true));
     window.addEventListener("offline", () => setNetworkStatus(false));
+}
+
+
+// ==========================================
+// ☁️ 云端可达性（全项目共享，与 isOnline() 并列的第二个网络数据源）
+// ==========================================
+// 🏗️ 解决的问题：本机有网但云端连不上时，isOnline() 永远返回 true，
+// 「离线直返缓存」的快速通道永远不触发，于是每个界面、每轮消息轮询都要从头
+// 烧一遍完整重试预算（列表约 61s、其余 GET 约 93s），而全局并发额度只有 6 个，
+// 挂死的后台请求会把前台请求全部挤到排队 —— 表现为「切哪个界面都要等」。
+//
+// 口径（三条，改动前务必看清）：
+//   - 只有 GET 受冷却约束。POST/PUT/DELETE 是用户主动操作（登录、发布、购买、点赞），
+//     一律照常发出，绝不允许被冷却拦下
+//   - 被动探测：冷却期内不额外发任何探测请求；冷却一过，下一个真实请求充当探针
+//   - 任意一次成功响应（含非 GET）立即清零，不必等到冷却自然结束
+
+/**
+ * 云端当前是否可达（冷却已过期或从未进入冷却即为可达）
+ * @returns {boolean}
+ */
+export function isCloudReachable() {
+    return Date.now() >= state.network.cloudDownUntil;
+}
+
+/**
+ * 标记云端不可达，进入冷却
+ * @param {string} [reason] - 仅用于日志定位（如失败的 endpoint）
+ */
+export function markCloudDown(reason = '') {
+    const wasReachable = isCloudReachable();
+    state.network.cloudDownUntil = Date.now() + API.CLOUD_DOWN_COOLDOWN;
+    // 只在「可达 → 不可达」的跃迁时打一条日志：冷却期内的重复失败不再刷屏
+    if (wasReachable) {
+        console.warn(`☁️ 云端不可达，${API.CLOUD_DOWN_COOLDOWN / 1000} 秒内不再联网${reason ? `（${reason}）` : ''}`);
+    }
+}
+
+/**
+ * 标记云端已恢复（任意一次成功响应调用），立即清零冷却
+ */
+export function markCloudUp() {
+    if (state.network.cloudDownUntil === 0) return;
+    state.network.cloudDownUntil = 0;
+    console.log('☁️ 云端已恢复，重新联网');
 }
 
 
@@ -570,6 +625,9 @@ export default {
     // 网络
     isOnline,
     setNetworkStatus,
+    isCloudReachable,
+    markCloudDown,
+    markCloudUp,
     
     // 缓存
     setCacheData,

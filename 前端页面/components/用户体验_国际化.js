@@ -615,6 +615,9 @@ const translations = {
         'feedback.cache_fallback': '⚠️ 网络连接失败，展示的是缓存数据',
         // 🔧 新增：以下三条原为散落在各组件里的硬编码中文，现收口到词典以支持多语言
         'feedback.offline_no_cache': '网络已断开，且无本地缓存',
+        // ☁️ 云端不可达冷却期内、且本地无缓存可兜底时抛出（详见 网络请求_基础设施.js）。
+        // 与上条刻意分开：本机明明有网时说「网络已断开」会把用户误导去查自己的路由器
+        'feedback.cloud_unreachable_no_cache': '云端服务暂时连不上，本地也没有可显示的内容',
         'feedback.search_local_result': '⚠️ 网络不可用，显示本地搜索结果',
         // 🔍 搜索请求被新关键词取代时抛出的错误消息（详见 网络请求_基础设施.js 的主动取消分支）
         'feedback.request_cancelled': '请求已取消',
@@ -2026,6 +2029,7 @@ const translations = {
         'feedback.retry_suffix': ', please try again',
         'feedback.cache_fallback': '⚠️ Network failed, showing cached data',
         'feedback.offline_no_cache': 'Network disconnected, and no local cache available',
+        'feedback.cloud_unreachable_no_cache': 'Cloud service is unreachable, and there is no local content to show',
         'feedback.search_local_result': '⚠️ Network unavailable, showing local search results',
         'feedback.request_cancelled': 'Request cancelled',
         'common.processing': 'Processing',

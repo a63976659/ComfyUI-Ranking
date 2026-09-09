@@ -18,7 +18,7 @@
 // 🌐 API 配置
 // ==========================================
 
-/** @type {{ BASE_URL: string, TIMEOUT: number, MAX_RETRIES: number, RETRY_DELAY: number, LIST_RETRIES: number, SEARCH_TIMEOUT: number, SEARCH_RETRIES: number, SEARCH_COMPONENT_ID: string }} */
+/** @type {{ BASE_URL: string, TIMEOUT: number, MAX_RETRIES: number, RETRY_DELAY: number, LIST_RETRIES: number, SEARCH_TIMEOUT: number, SEARCH_RETRIES: number, BACKGROUND_TIMEOUT: number, BACKGROUND_RETRIES: number, CLOUD_DOWN_COOLDOWN: number, SEARCH_COMPONENT_ID: string }} */
 export const API = {
     // 云端 API 基础地址
     BASE_URL: "https://zhiwei666-comfyui-ranking-api.hf.space",
@@ -43,6 +43,22 @@ export const API = {
     // 搜索类：必然发生在列表已加载之后（空间已被唤醒），可放心收紧，93s → 10s×2 + 1s = 21s
     SEARCH_TIMEOUT: 10000,
     SEARCH_RETRIES: 1,
+
+    // 🐢 后台补新预算（仅作用于 GET，由 网络请求_基础设施.js 按「本地是否已有可兜底数据」判定）
+    // 七大列表视图都是「本地数据先上屏 → 再发请求补新」，此时界面上已经有内容，
+    // 这次请求纯属后台行为；它每多挂 1 秒就多占 1 个并发额度（全局仅 6 个），
+    // 云端不通时会把前台请求（详情页、点赞、轮询）全部挤到排队，表现为「切哪个界面都要等」。
+    // 故一旦本地已有该请求的缓存（含过期），单次超时压到 10s 且不再重试，最坏耗时 10s
+    BACKGROUND_TIMEOUT: 10000,
+    BACKGROUND_RETRIES: 0,
+
+    // ☁️ 云端不可达冷却（消费方见 状态管理.js 的「云端可达性」段落）
+    // navigator.onLine 只反映本机网卡，云端单独不可达（HF Space 宕机/冷启动、DNS 污染、被墙）
+    // 时它仍为 true，于是每个界面、每次轮询都要从头烧一遍完整重试预算，且互不共享失败结论。
+    // 首次确证云端不可达后进入冷却：冷却期内所有 GET 一律不联网（有缓存直接返回、无缓存立即失败），
+    // 并发额度全部让给前台。被动探测——冷却一过，下一个真实请求充当探针；
+    // 期间任意一次成功响应（含 POST/PUT/DELETE）立即清零，不需等到冷却结束
+    CLOUD_DOWN_COOLDOWN: 60 * 1000,
     
     // 🔍 创作者搜索请求的取消分组 ID
     // 用户在搜索框继续输入时，侧边栏数据引擎.js 据此撤销上一次仍在途的搜索请求。

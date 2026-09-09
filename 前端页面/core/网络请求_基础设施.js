@@ -11,7 +11,7 @@
 
 import { removeCache, getCacheWithMeta } from "../components/性能优化工具.js";
 import { API, CACHE } from "./全局配置.js";
-import { logoutAndClearUserData, isOnline } from "./状态管理.js";
+import { logoutAndClearUserData, isOnline, isCloudReachable, markCloudDown, markCloudUp } from "./状态管理.js";
 import { CACHE_CONFIG, CACHE_INVALIDATION_MAP, invalidateRelatedCache, _getCacheTTL, getCache, setCache } from "./网络请求_缓存管理.js";
 import { unproxyImages } from "./网络请求_图片代理.js";
 // 🔧 直接引入 i18n 叶子模块（而非 用户体验增强.js）：本文件处于依赖链最上游，
@@ -232,17 +232,29 @@ async function request(endpoint, options = {}) {
         }
     }
     
+    // 📴 本地兜底数据（含过期缓存）——一次读取，供下面三处复用：
+    //   ① 离线/云端不可达时直接返回它；② 判定本次 GET 是否属于「后台补新」（走短预算）；
+    //   ③ 重试耗尽后的最终回退仍按原口径自行重读一次（期间可能有并发请求写入更新的数据）
+    const fallbackMeta = (method === "GET")
+        ? getCacheWithMeta(cacheKey, true)  // 忽略过期
+        : { value: null, expired: false, found: false };
+    
     // 🚀 P3优化：离线模式支持（网络状态取自 状态管理.js 的 isOnline()）
-    if (!isOnline() && method === "GET") {
-        const { value, expired, found } = getCacheWithMeta(cacheKey, true);  // 忽略过期
-        if (found) {
-            console.log(`📴 离线模式：返回${expired ? '过期' : ''}缓存 (${endpoint})`);
+    // ☁️ 云端不可达冷却与本机断网同等对待：两者的结论都是「这次联网注定拿不到东西」，
+    // 区别只在判据——前者看 navigator.onLine（本机网卡通不通），后者看上一次请求的
+    // 失败结论是否还在冷却期内。没有这层的话，HF Space 单独连不上时 isOnline() 恒为 true，
+    // 本分支永远不触发，于是每个界面、每轮 30 秒的消息轮询都要各自烧满 61~93 秒重试预算，
+    // 而全局并发额度只有 6 个，挂死的后台请求会把前台请求全部挤到排队
+    if (method === "GET" && (!isOnline() || !isCloudReachable())) {
+        if (fallbackMeta.found) {
+            console.log(`📴 ${isOnline() ? '☁️ 云端不可达' : '离线模式'}：返回${fallbackMeta.expired ? '过期' : ''}缓存 (${endpoint})`);
             const proxyFn2 = await getProxyImages();
-            return proxyFn2(value);
+            return proxyFn2(fallbackMeta.value);
         }
         // 🔧 修复：原为硬编码中文，而本错误会被 12+ 处调用方直接 showToast(err.message) 弹给用户，
-        // 导致英文界面下仍弹中文提示；现改走词典
-        throw new Error(t('feedback.offline_no_cache'));
+        // 导致英文界面下仍弹中文提示；现改走词典。云端不可达与本机断网分开用词，
+        // 否则本机明明有网的用户会被「网络已断开」误导去查自己的路由器
+        throw new Error(isOnline() ? t('feedback.cloud_unreachable_no_cache') : t('feedback.offline_no_cache'));
     }
     
     // ⚡ P1性能优化：请求去重（相同GET请求只发一次）
@@ -278,6 +290,16 @@ async function request(endpoint, options = {}) {
             defaultRetries = API.LIST_RETRIES;
         }
     }
+    // 🐢 后台补新短预算：本地已有该请求的缓存，说明列表视图已经把内容渲染上屏了
+    // （七大列表都是「本地数据先上屏 → 再发请求补新」），这次请求纯属后台行为，
+    // 失败要快——它每多挂 1 秒就多占 1 个并发额度（全局仅 6 个）。用 Math.min 只收不放，
+    // 不会把搜索类已经收紧过的 10s 预算又放宽回去。
+    // noCache 请求不参与：调用方明确要权威新数据（余额、安装前的资源详情、广告配置），
+    // 把它的超时砍短会把「慢但能成功」变成「快速失败」，违背调用方意图
+    if (method === "GET" && !options.noCache && fallbackMeta.found) {
+        defaultTimeout = Math.min(defaultTimeout, API.BACKGROUND_TIMEOUT);
+        defaultRetries = Math.min(defaultRetries, API.BACKGROUND_RETRIES);
+    }
     const requestTimeout = options.timeout || defaultTimeout;
     const maxRetries = options.retries ?? defaultRetries;
     const retryDelay = options.retryDelay ?? API.RETRY_DELAY;  // 指数退避基数
@@ -285,10 +307,16 @@ async function request(endpoint, options = {}) {
     // ⚡ P1性能优化：封装请求 Promise（支持去重 + 重试）
     const requestPromise = (async () => {
         let lastError = null;
+        // ☁️ 本次失败是否属于「网络层不可达」（超时 / 连不上），用于循环结束后决定是否打冷却。
+        // 5xx 不置位：服务端已经应答说明云端可达，若也打冷却会让一个坏接口把全站 GET 拖下水
+        let networkLevelFailure = false;
         
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             // 🚀 P1优化：指数退避延迟
             if (attempt > 0) {
+                // ☁️ 冷却已生效就停止重试：另一个并发请求可能刚刚确证云端不可达，
+                // 继续重试只是白烧一轮超时预算、白占一个并发额度，直接跳去下方缓存兜底
+                if (method === "GET" && !isCloudReachable()) break;
                 const delay = retryDelay * Math.pow(2, attempt - 1);  // 1s, 2s, 4s...
                 console.log(`🔄 请求重试 (${attempt}/${maxRetries})...`);
                 await new Promise(r => setTimeout(r, delay));
@@ -348,6 +376,10 @@ async function request(endpoint, options = {}) {
                     continue;  // 5xx 错误重试
                 }
 
+                // ☁️ 拿到了正常应答即证明云端可达，立即清零冷却（不必等它自然过期）。
+                // 非 GET 的成功同样算数——写操作是冷却期内唯一还在联网的请求，天然是探针
+                markCloudUp();
+
                 // 🚀 P1优化：精确清除相关缓存（替代暴力清空）
                 if (["POST", "PUT", "DELETE"].includes(method)) {
                     invalidateRelatedCache(endpoint, method);
@@ -394,9 +426,18 @@ async function request(endpoint, options = {}) {
                     // 🔧 修复：重试耗尽时不再直接 throw（否则循环后的「过期缓存兜底」
                     // 分支永远不可达，断网时无法无缝切换本地数据）。记录友好错误后跳出循环，
                     // 让 GET 请求走过期缓存回退；无缓存时仍以该友好错误抛出。
-                    lastError = error.name === 'AbortError'
+                    const isTimeout = error.name === 'AbortError';
+                    lastError = isTimeout
                         ? new Error('网络请求超时，请检查网络连接')
                         : new Error('网络连接失败，请检查网络');
+                    networkLevelFailure = true;
+                    // ☁️ 连接层失败（被墙 / DNS 污染 / 拒绝连接 / 证书错误）几乎不会是偶发抖动，
+                    // 打上冷却后其它界面与轮询就不用再各自烧一遍预算。但单次失败不足以定论，
+                    // 故分两种口径：已配重试时要求第二次尝试仍失败才定论（连接层失败是毫秒级的，
+                    // 多等一轮只多花约 1 秒，却能挡住偶发抖动误伤 60 秒）；
+                    // 未配重试时（后台补新短预算，界面已用缓存上屏）误判零代价，立即定论。
+                    // 超时则可能是 HF Space 冷启动（慢但能成功），不在此定论，耗尽后由下方统一处理
+                    if (!isTimeout && (attempt >= 1 || maxRetries === 0)) markCloudDown(endpoint);
                     if (attempt < maxRetries) continue;  // 重试
                     break;  // 重试耗尽 → 跳到过期缓存兜底
                 }
@@ -408,6 +449,10 @@ async function request(endpoint, options = {}) {
                 throw error;
             }
         }
+        
+        // ☁️ 所有尝试都因网络层原因失败（超时耗尽重试也走这里）→ 打上冷却，
+        // 接下来 API.CLOUD_DOWN_COOLDOWN 内的 GET 全部就地走缓存，不再重复等待
+        if (networkLevelFailure) markCloudDown(endpoint);
         
         // 所有重试都失败，尝试回退到过期缓存
         if (method === "GET") {
