@@ -115,7 +115,7 @@ function sortDataLocally(data, tab, sort) {
             default: sorted.sort((a, b) => (b.created_at || 0) - (a.created_at || 0)); break; // time
         }
     } else {
-        // 工具/应用/推荐排序（与后端 get_items 一致）
+        // 工具/Skill/应用/推荐排序（与后端 get_items 一致）
         switch (sort) {
             case "downloads": sorted.sort((a, b) => (b.uses || 0) - (a.uses || 0)); break;
             case "likes": sorted.sort((a, b) => (b.likes || 0) - (a.likes || 0)); break;
@@ -400,7 +400,7 @@ export async function loadSidebarContent({
         const cards = [];
         let targetCard = null;  // 用于保存需要展开的目标卡片
         
-        if (tab === "tools" || tab === "apps" || tab === "recommends") {
+        if (tab === "tools" || tab === "skills" || tab === "apps" || tab === "recommends") {
             displayData.forEach(data => {
                 const card = createItemCard(data, currentUser);
                 cards.push(card);
@@ -523,8 +523,8 @@ export async function loadSidebarContent({
                 
                 try {
                     let newData;
-                    if (savedTab === "tools" || savedTab === "apps" || savedTab === "recommends") {
-                        const itemType = savedTab === "tools" ? "tool" : (savedTab === "apps" ? "app" : "recommend");
+                    if (savedTab === "tools" || savedTab === "skills" || savedTab === "apps" || savedTab === "recommends") {
+                        const itemType = savedTab === "tools" ? "tool" : (savedTab === "skills" ? "skill" : (savedTab === "apps" ? "app" : "recommend"));
                         const response = await api.getItems(itemType, savedSort, 200);
                         newData = proxyImages(response.data || []);
                     } else if (savedTab === "creators") {
@@ -640,7 +640,7 @@ export async function loadSidebarContent({
             state.allData = sortedData;
             state.isFullyLoaded = true;
             state.isSearchResult = false;
-            // 🔧 先过滤再切片（tools/apps/recommends 带 keyword 时同样会进入本分支）
+            // 🔧 先过滤再切片（tools/skills/apps/recommends 带 keyword 时同样会进入本分支）
             const scopedInstant = _applySearchScope(sortedData);
             renderBatch(scopedInstant.slice(0, pageSize), false);
             if (scopedInstant.length > pageSize) {
@@ -661,8 +661,8 @@ export async function loadSidebarContent({
     try {
         let response, realData;
         
-        if (tab === "tools" || tab === "apps" || tab === "recommends") {
-            const itemType = tab === "tools" ? "tool" : (tab === "apps" ? "app" : "recommend");
+        if (tab === "tools" || tab === "skills" || tab === "apps" || tab === "recommends") {
+            const itemType = tab === "tools" ? "tool" : (tab === "skills" ? "skill" : (tab === "apps" ? "app" : "recommend"));
             response = await api.getItems(itemType, sort, 200);  // 获取较多数据
             realData = response.data || [];
             realData = proxyImages(realData);  // 确保图片走本地缓存代理
@@ -721,7 +721,7 @@ export async function loadSidebarContent({
         // 更新状态
         state.allData = realData;
         
-        // 渲染首屏（先过滤再切片：tools/apps/recommends 的 keyword 是本地搜索，
+        // 渲染首屏（先过滤再切片：tools/skills/apps/recommends 的 keyword 是本地搜索，
         // realData 是未过滤的全量数据，原实现在前 20 条里过滤会漏掉靠后的匹配项）
         const scopedReal = _applySearchScope(realData);
         renderBatch(scopedReal.slice(0, pageSize), false);
@@ -761,7 +761,7 @@ export async function loadSidebarContent({
         if (hasCacheData && cachedData && !(tab === "creators" && keyword)) {
             console.warn(`📴 网络失败，降级显示${isCacheExpired ? '过期' : ''}缓存`);
             state.allData = cachedData;
-            // 🔧 先过滤再切片：本分支已排除 creators+keyword，但 tools/apps/recommends
+            // 🔧 先过滤再切片：本分支已排除 creators+keyword，但 tools/skills/apps/recommends
             // 带 keyword 时会进来；renderBatch 不再自行过滤，此处必须显式过滤
             const scopedCached = _applySearchScope(cachedData);
             renderBatch(scopedCached.slice(0, pageSize), false);

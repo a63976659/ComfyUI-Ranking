@@ -494,6 +494,7 @@ export function applyViewportAnimations(container, cards, animationType, isFirst
 export function getAnimationTypeForTab(tabId) {
     const animationMap = {
         'tools': 'cascade',      // 工具榜
+        'skills': 'cascade',     // Skill榜
         'apps': 'cascade',       // 应用榜
         'recommends': 'cascade', // 推荐榜
         'creators': 'fan',       // 创作者榜

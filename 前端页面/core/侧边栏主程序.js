@@ -108,6 +108,7 @@ export function buildSidebarDOM() {
     // 🌐 多语言支持：Tab 名称使用翻译函数
     const tabs = [
         { id: "tools", label: t('nav.tools') },
+        { id: "skills", label: t('nav.skills') },
         { id: "apps", label: t('nav.apps') },
         { id: "recommends", label: t('nav.recommends') },
         { id: "creators", label: t('nav.creators') },
@@ -365,8 +366,9 @@ export function buildSidebarDOM() {
         // 1. 根据 itemType 确定 Tab
         let targetTab;
         if (itemType === "tool") targetTab = "tools";
+        else if (itemType === "skill") targetTab = "skills";
         else if (itemType === "app") targetTab = "apps";
-        else if (itemType === "recommend") targetTab = "recommends";
+        else if (itemType.startsWith("recommend")) targetTab = "recommends";
         else targetTab = "tools"; // 兜底
         
         // 【问题2修复】如果已经在目标 Tab，先尝试在当前 DOM 中查找卡片
@@ -475,26 +477,27 @@ export function buildSidebarDOM() {
             const view = createPublishPromptView(currentUser);
             showInlineView(view);
         } else {
-            // 工具/应用/推荐 -> 打开发布内容界面，并自动设置对应类型
+            // 工具/Skill/应用/推荐 -> 打开发布内容界面，并自动设置对应类型
             const publishView = createPublishView(currentUser, 
                 () => hideInlineView(), 
                 () => { hideInlineView(); triggerLoad(true); },
                 null,  // editItemData
-                currentTab  // initialType: tools/apps/recommends
+                currentTab  // initialType: tools/skills/apps/recommends
             );
             showInlineView(publishView);
         }
     };
 
-    // Tab 颜色配置：每个 Tab 不同的强调色
+    // Tab 颜色配置：按色环渐变顺序排列（绿→青→蓝→紫→粉→红→橙→黄），相邻 Tab 色相平滑过渡
     const tabColors = {
-        tools: { active: "#4CAF50", inactive: "#6BBF6B" },      // 工具 - 绿色
-        apps: { active: "#2196F3", inactive: "#64B5F6" },       // 应用 - 蓝色
-        recommends: { active: "#FF9800", inactive: "#FFB74D" }, // 推荐榜 - 橙色
-        creators: { active: "#E91E63", inactive: "#F06292" },   // 创作者 - 粉色
-        tasks: { active: "#FF5722", inactive: "#FF8A65" },      // 任务榜 - 深橙色
-        posts: { active: "#9C27B0", inactive: "#BA68C8" },      // 讨论区 - 紫色
-        prompts: { active: "#00BCD4", inactive: "#4DD0E1" }     // 提示词 - 青色
+        tools: { active: "#4CAF50", inactive: "#81C784" },      // 插件榜 - 绿（渐变起点）
+        skills: { active: "#00BCD4", inactive: "#4DD0E1" },     // Skill - 青
+        apps: { active: "#2196F3", inactive: "#64B5F6" },       // 工作流 - 蓝
+        recommends: { active: "#7C4DFF", inactive: "#B388FF" }, // 推荐榜 - 紫
+        creators: { active: "#E91E63", inactive: "#F06292" },   // 创作者 - 粉
+        tasks: { active: "#F44336", inactive: "#E57373" },      // 任务榜 - 红
+        posts: { active: "#FF9800", inactive: "#FFB74D" },      // 讨论区 - 橙
+        prompts: { active: "#FFC107", inactive: "#FFD54F" }     // 提示词 - 黄（渐变终点）
     };
 
     // 文字阴影效果：多层阴影确保任何背景下都清晰可见

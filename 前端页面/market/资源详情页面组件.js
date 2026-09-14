@@ -217,8 +217,8 @@ function burnLocalFiles(itemId) {
     removeCacheByPrefix('api_/api/items');
     removeCacheByPrefix('api_/api/creators');
     
-    // 清除工具/应用/推荐列表缓存（使用标准 ListCache 格式）
-    const tabs = ['tools', 'apps', 'recommends'];
+    // 清除工具/Skill/应用/推荐列表缓存（使用标准 ListCache 格式）
+    const tabs = ['tools', 'skills', 'apps', 'recommends'];
     const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
     for (const tab of tabs) {
         for (const sort of sorts) {

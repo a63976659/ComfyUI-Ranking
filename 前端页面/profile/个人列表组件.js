@@ -191,14 +191,15 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             const timeoutMs = 5000;
             const fetchPromise = Promise.all([
                 api.getItems("tool", "time", 200),
+                api.getItems("skill", "time", 200),
                 api.getItems("app", "time", 200)
             ]);
             const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs));
             const result = await Promise.race([fetchPromise, timeoutPromise]);
 
             if (result) {
-                const [toolsRes, appsRes] = result;
-                cloudItems = [...(toolsRes?.data || []), ...(appsRes?.data || [])];
+                const [toolsRes, skillsRes, appsRes] = result;
+                cloudItems = [...(toolsRes?.data || []), ...(skillsRes?.data || []), ...(appsRes?.data || [])];
             }
 
             const cloudMap = {};
@@ -511,13 +512,14 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
         }
 
         try {
-            const [toolsRes, appsRes, postsRes, promptsRes] = await Promise.all([
+            const [toolsRes, skillsRes, appsRes, postsRes, promptsRes] = await Promise.all([
                 api.getItems("tool", "time", 100),
+                api.getItems("skill", "time", 100),
                 api.getItems("app", "time", 100),
                 api.getPosts(1, 200, "latest"),
                 api.getPrompts(null, null, 1, 200, "latest")
             ]);
-            const allItems = [...(toolsRes.data || []), ...(appsRes.data || [])];
+            const allItems = [...(toolsRes.data || []), ...(skillsRes.data || []), ...(appsRes.data || [])];
             const allPosts = postsRes.data || [];
             const allPrompts = promptsRes.data || [];
             const collectedItems = allItems.filter(item => item.favorited_by && item.favorited_by.includes(userData.account));
@@ -553,8 +555,8 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
     }
 
     try {
-        const [toolsRes, appsRes] = await Promise.all([ api.getItems("tool", "time", 100), api.getItems("app", "time", 100) ]);
-        const allItems = [...(toolsRes.data || []), ...(appsRes.data || [])];
+        const [toolsRes, skillsRes, appsRes] = await Promise.all([ api.getItems("tool", "time", 100), api.getItems("skill", "time", 100), api.getItems("app", "time", 100) ]);
+        const allItems = [...(toolsRes.data || []), ...(skillsRes.data || []), ...(appsRes.data || [])];
         let filteredItems = [];
 
         if (tabId === "published") filteredItems = allItems.filter(item => item.author === userData.account);

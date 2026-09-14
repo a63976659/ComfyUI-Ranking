@@ -186,6 +186,28 @@ async def _run_git_clone(url, target, env, timeout=1200):
     return proc.returncode, stdout, stderr
 
 
+async def _get_git_head_short(target_path: str):
+    """读取已克隆仓库当前 HEAD 的 commit 短 hash（前 7 位）
+
+    用途：安装成功后把"真实安装的版本"回传前端，作为本地版本戳（LocalVer）。
+    与云端 versions.json 的 sha[:7] 格式严格对齐，保证卡片更新徽章比对准确。
+    失败（无 .git / 未装 git / 异常）时返回 None，由前端兜底为 latest_version。
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", target_path, "rev-parse", "HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        if proc.returncode == 0:
+            head = (stdout or b"").decode("utf-8", errors="ignore").strip()
+            return head[:7] or None
+    except Exception:
+        pass
+    return None
+
+
 async def install_tool_handler(request):
     # NOTE: 与 install_tool_stream_handler 共享核心安装逻辑（URL校验、双链路容灾、Git克隆），如需修改请同步
     if not _is_local_request(request):
@@ -241,7 +263,8 @@ async def install_tool_handler(request):
             if is_self:
                 _write_update_pending_marker(clone_target_path, staging_path)
                 return web.json_response({"status": "success", "message": "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！"})
-            return web.json_response({"status": "success"})
+            installed_version = await _get_git_head_short(actual_clone_target)
+            return web.json_response({"status": "success", "installed_version": installed_version})
 
         print(f"⚠️ 镜像源不可用或发生冲突，系统正在自动无缝回退至直连: {item_url}")
 
@@ -256,7 +279,8 @@ async def install_tool_handler(request):
             if is_self:
                 _write_update_pending_marker(clone_target_path, staging_path)
                 return web.json_response({"status": "success", "message": "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！"})
-            return web.json_response({"status": "success"})
+            installed_version = await _get_git_head_short(actual_clone_target)
+            return web.json_response({"status": "success", "installed_version": installed_version})
 
         # 两条链路都失败了的最终兜底（并清理残缺目录，避免残留半成品）
         if os.path.exists(actual_clone_target):
@@ -305,12 +329,14 @@ async def install_private_tool_handler(request):
         
         # ZIP 下载（最多重试3次）
         max_retries = 3
+        installed_ver = None  # 🔖 云端回传的实际版本戳（X-Installed-Version），供前端写 LocalVer
         
         for attempt in range(max_retries):
             try:
                 req = urllib.request.Request(proxy_api_url, data=payload, headers=headers)
                 print(f"[ComfyUI-Ranking] 🔒 正在向云端发起私有资产鉴权与加密拉取: {item_id}" + (f"（第{attempt+1}次尝试）" if attempt > 0 else ""))
                 response = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=600))
+                installed_ver = response.headers.get('X-Installed-Version') or None
                 try:
                     content_length = int(response.headers.get('Content-Length', 0))
                     
@@ -388,7 +414,7 @@ async def install_private_tool_handler(request):
             return web.json_response({"error": str(e)}, status=500)
         
         print(f"[ComfyUI-Ranking] 🎉 私有插件 {target_dir_name} 静默更新/安装完成！无 .git 目录残留。")
-        return web.json_response({"status": "success"})
+        return web.json_response({"status": "success", "installed_version": installed_ver})
         
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode('utf-8', errors='ignore')
@@ -431,10 +457,12 @@ async def install_tool_stream_handler(request):
     )
     await resp.prepare(request)
 
-    async def send_progress(stage, progress, message, status=None):
+    async def send_progress(stage, progress, message, status=None, **extra):
         event = {"stage": stage, "progress": progress, "message": message}
         if status:
             event["status"] = status
+        if extra:
+            event.update(extra)
         await resp.write(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode('utf-8'))
 
     try:
@@ -531,7 +559,8 @@ async def install_tool_stream_handler(request):
                 _write_update_pending_marker(clone_target_path, staging_path)
                 await send_progress("complete", 100, "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！", "success")
             else:
-                await send_progress("complete", 100, "✅ 安装成功！", "success")
+                installed_version = await _get_git_head_short(actual_clone_target)
+                await send_progress("complete", 100, "✅ 安装成功！", "success", installed_version=installed_version)
 
         except subprocess.CalledProcessError as e1:
             await send_progress("git_fallback", 55, "镜像失败，切换直连源...")
@@ -579,7 +608,8 @@ async def install_tool_stream_handler(request):
                 _write_update_pending_marker(clone_target_path, staging_path)
                 await send_progress("complete", 100, "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！", "success")
             else:
-                await send_progress("complete", 100, "✅ 安装成功！", "success")
+                installed_version = await _get_git_head_short(actual_clone_target)
+                await send_progress("complete", 100, "✅ 安装成功！", "success", installed_version=installed_version)
 
     except FileNotFoundError:
         await send_progress("error", -1, "系统中未检测到 Git，请先安装 Git 环境才能下载插件！", "error")
@@ -616,10 +646,12 @@ async def install_private_tool_stream_handler(request):
     )
     await resp.prepare(request)
 
-    async def send_progress(stage, progress, message, status=None):
+    async def send_progress(stage, progress, message, status=None, **extra):
         event = {"stage": stage, "progress": progress, "message": message}
         if status:
             event["status"] = status
+        if extra:
+            event.update(extra)
         await resp.write(f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode('utf-8'))
 
     tmp_path = None
@@ -647,6 +679,7 @@ async def install_private_tool_stream_handler(request):
         
         # ZIP 下载（最多重试3次）
         max_retries = 3
+        installed_ver = None  # 🔖 云端回传的实际版本戳（X-Installed-Version），供前端写 LocalVer
         
         for attempt in range(max_retries):
             try:
@@ -654,6 +687,7 @@ async def install_private_tool_stream_handler(request):
                 await send_progress("downloading", 30, "从云端下载资源包..." + (f"（第{attempt+1}次尝试）" if attempt > 0 else ""))
                 # 🚀 修复：同步 urlopen 改为线程执行，避免阻塞事件循环导致心跳失效
                 response = await asyncio.to_thread(lambda: urllib.request.urlopen(req, timeout=600))
+                installed_ver = response.headers.get('X-Installed-Version') or None
                 try:
                     content_length = int(response.headers.get('Content-Length', 0))
                     
@@ -777,7 +811,7 @@ async def install_private_tool_stream_handler(request):
             return resp
         await send_progress("installing", 90, "写入目标目录... 完成")
 
-        await send_progress("complete", 100, "✅ 安装成功！", "success")
+        await send_progress("complete", 100, "✅ 安装成功！", "success", installed_version=installed_ver)
 
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode('utf-8', errors='ignore')

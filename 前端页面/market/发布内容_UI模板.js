@@ -19,6 +19,7 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
                 <label style="display: block; margin-bottom: 5px;">${t('publish.main_category')} <span style="color: #F44336;">*</span></label>
                 <select id="pub-type" class="form-input">
                     <option value="tool">🧰 ${t('publish.type_tool')}</option>
+                    <option value="skill">⚡ ${t('publish.type_skill')}</option>
                     <option value="app">📦 ${t('publish.type_app')}</option>
                     <option value="recommend">🌟 ${t('publish.type_recommend')}</option>
                 </select>
@@ -27,6 +28,7 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
                 <label style="display: block; margin-bottom: 5px;">${t('publish.recommend_form')} <span style="color: #F44336;">*</span></label>
                 <select id="pub-recommend-type" class="form-input">
                     <option value="recommend_tool">🧰 ${t('publish.recommend_as_tool')}</option>
+                    <option value="recommend_skill">⚡ ${t('publish.recommend_as_skill')}</option>
                     <option value="recommend_app">📦 ${t('publish.recommend_as_app')}</option>
                     <option value="recommend_link">🔗 ${t('publish.recommend_as_link')}</option>
                 </select>

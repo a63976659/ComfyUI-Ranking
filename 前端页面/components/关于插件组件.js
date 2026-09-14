@@ -158,7 +158,62 @@ export function createAboutView(versionString, stageLabel) {
         </div>
     `);
 
-    // ===== 4. 用户价值区 =====
+    // ===== 4. 使用指南区 =====
+    const guideSection = createCardSection("📖 " + t('about.guide_title'), `
+        <div style="display: flex; flex-direction: column; gap: 12px; padding-left: 4px;">
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">1.</span>
+                <div>
+                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_install_title')}</div>
+                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_install_desc')}</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">2.</span>
+                <div>
+                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_path_title')}</div>
+                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_path_desc')}</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">3.</span>
+                <div>
+                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_update_title')}</div>
+                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_update_desc')}</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">4.</span>
+                <div>
+                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_publish_title')}</div>
+                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_publish_desc')}</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">5.</span>
+                <div>
+                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_buy_title')}</div>
+                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_buy_desc')}</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">6.</span>
+                <div>
+                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_refund_title')}</div>
+                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_refund_desc')}</div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">7.</span>
+                <div>
+                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_withdraw_title')}</div>
+                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_withdraw_desc')}</div>
+                </div>
+            </div>
+        </div>
+    `);
+
+    // ===== 5. 用户价值区 =====
     const userValueSection = createCardSection("👤 " + t('about.benefits_title'), `
         <div style="display: flex; flex-direction: column; gap: 10px; padding-left: 4px;">
             <div style="display: flex; align-items: flex-start; gap: 8px;">
@@ -184,7 +239,7 @@ export function createAboutView(versionString, stageLabel) {
         </div>
     `);
 
-    // ===== 5. 注意事项区 =====
+    // ===== 6. 注意事项区 =====
     const warningSection = document.createElement("div");
     Object.assign(warningSection.style, {
         background: "rgba(240, 160, 48, 0.05)",
@@ -209,7 +264,7 @@ export function createAboutView(versionString, stageLabel) {
         </div>
     `;
 
-    // ===== 6. 关于作者区 =====
+    // ===== 7. 关于作者区 =====
     const authorSection = document.createElement("div");
     Object.assign(authorSection.style, { ...CARD_BASE_STYLE, textAlign: "center" });
     authorSection.innerHTML = `
@@ -261,6 +316,7 @@ export function createAboutView(versionString, stageLabel) {
     container.appendChild(heroSection);
     container.appendChild(advantageSection);
     container.appendChild(featureSection);
+    container.appendChild(guideSection);
     container.appendChild(userValueSection);
     container.appendChild(warningSection);
     container.appendChild(authorSection);

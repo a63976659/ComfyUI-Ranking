@@ -10,10 +10,14 @@ import { escapeHtml } from "../core/全局配置.js";
 // 📌 模块级常量
 // ==========================================
 
-// 📋 三榜发布表单声明式规则：tool 插件榜 / app 工作流 / recommend 推荐榜
+// 📋 四榜发布表单声明式规则：tool 插件榜 / skill Skill榜 / app 工作流 / recommend 推荐榜
 // UI 显隐、联动、校验统一读取此配置，避免类型分支散落多处
 export const TYPE_RULES = {
     tool: {
+        recommendForm: false, resType: { selectable: ['link', 'netdisk'] },
+        privateRepoWhenLink: true, price: true, refund: true, originalRequired: true
+    },
+    skill: {
         recommendForm: false, resType: { selectable: ['link', 'netdisk'] },
         privateRepoWhenLink: true, price: true, refund: true, originalRequired: true
     },
@@ -24,7 +28,7 @@ export const TYPE_RULES = {
     recommend: {
         recommendForm: true, resType: { lockedByForm: true },
         privateRepoWhenLink: false, price: false, refund: false, originalRequired: false,
-        formToResType: { recommend_tool: 'link', recommend_app: 'json', recommend_link: 'netdisk' }
+        formToResType: { recommend_tool: 'link', recommend_skill: 'link', recommend_app: 'json', recommend_link: 'netdisk' }
     }
 };
 
@@ -305,8 +309,8 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
                     inputNetdiskPassword.value = editItemData.netdisk_password;
                 }
             } else if (editItemData.link && editItemData.link.includes("huggingface.co")) {
-                if (editItemData.type === "tool") {
-                    // 🔧 缺陷修复：tool 类型禁用 json 资源，HF 云端文件链接直接按外部链接回显，
+                if (editItemData.type === "tool" || editItemData.type === "skill") {
+                    // 🔧 缺陷修复：tool/skill 类型禁用 json 资源，HF 云端文件链接直接按外部链接回显，
                     // 否则联动回退 link 后链接输入框为空，保存必然校验失败
                     resTypeSelect.value = "link";
                     inputLink.value = editItemData.link;
@@ -432,6 +436,8 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     if (!isEditMode && initialType) {
         if (initialType === "tool" || initialType === "tools") {
             typeSelect.value = "tool";
+        } else if (initialType === "skill" || initialType === "skills") {
+            typeSelect.value = "skill";
         } else if (initialType === "app" || initialType === "apps") {
             typeSelect.value = "app";
         } else if (initialType === "recommend" || initialType === "recommends") {

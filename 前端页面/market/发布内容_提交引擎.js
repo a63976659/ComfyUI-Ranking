@@ -3,11 +3,11 @@ import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { removeCache, removeCacheByPrefix } from "../components/性能优化工具.js";
-import { TYPE_RULES } from "./发布内容组件.js";  // 📋 三榜发布表单声明式规则（与 UI 联动同源）
+import { TYPE_RULES } from "./发布内容组件.js";  // 📋 四榜发布表单声明式规则（与 UI 联动同源）
 
 /**
  * 📋 获取指定主类型的提交规则（校验与字段组装统一读取，与 UI 显隐同源）
- * @param {string} mainType - 主类型: tool/app/recommend
+ * @param {string} mainType - 主类型: tool/skill/app/recommend
  */
 function getSubmitRules(mainType) {
     return TYPE_RULES[mainType] || TYPE_RULES.tool;
@@ -15,13 +15,15 @@ function getSubmitRules(mainType) {
 
 /**
  * 🟢 根据发布类型清除对应缓存（精确清除，不影响其他页面）
- * @param {string} type - 发布类型: tool/app/recommend/recommend_tool/recommend_app/recommend_link
+ * @param {string} type - 发布类型: tool/skill/app/recommend/recommend_tool/recommend_skill/recommend_app/recommend_link
  */
 function clearItemCacheByType(type) {
     // 确定当前类型对应的 tab
     let tab = 'recommends';
     if (type === 'tool' || type === 'recommend_tool') {
         tab = 'tools';
+    } else if (type === 'skill' || type === 'recommend_skill') {
+        tab = 'skills';
     } else if (type === 'app' || type === 'recommend_app') {
         tab = 'apps';
     }
@@ -298,7 +300,7 @@ export async function handlePublishSubmit(params) {
 
     if (!title || !shortDesc) return showToast(t('publish.name_desc_required'), "warning");
     if (type === "recommend_link" && !finalLink) return showToast(t('publish.link_required'), "warning");
-    if ((type === "tool" || type === "recommend_tool") && !isJsonUpload && !isNetdisk && !finalLink) return showToast(t('publish.git_required'), "warning");
+    if ((type === "tool" || type === "skill" || type === "recommend_tool" || type === "recommend_skill") && !isJsonUpload && !isNetdisk && !finalLink) return showToast(t('publish.git_required'), "warning");
     if (isJsonUpload && !jsonFile && !finalLink) return showToast(t('publish.json_required'), "warning");
     if (isNetdisk && !finalLink) return showToast(t('publish.netdisk_required'), "warning");  // ☁️
     
@@ -320,7 +322,7 @@ export async function handlePublishSubmit(params) {
     try {
         if (isJsonUpload && jsonFile) {
             submitBtn.innerHTML = `⏳ ${t('publish.uploading_secure')}`;
-            const uploadType = type.includes("app") ? "app" : (type.includes("tool") ? "tool" : "recommend");
+            const uploadType = type.includes("app") ? "app" : (type.includes("tool") || type === "skill" ? "tool" : "recommend");
             const jsonUploadRes = await api.uploadFile(jsonFile, uploadType);
             finalLink = jsonUploadRes.url; 
         }
@@ -362,7 +364,7 @@ export async function handlePublishSubmit(params) {
             is_original: isOriginal  // 🎨 标记为原创作品
         };
 
-        // 💸 仅 tool/app 类型提交 allow_refund 字段
+        // 💸 仅 tool/skill/app 类型提交 allow_refund 字段
         if (allowRefund !== null) {
             submitData.allow_refund = allowRefund;
         }

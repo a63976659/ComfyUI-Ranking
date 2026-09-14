@@ -279,6 +279,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
                     </div>
                     <div style="display: flex; gap: 15px; font-size: 12px; color: #ccc; justify-content: center; border-top: 1px solid var(--border-color, #333); padding-top: 8px;">
                         <span data-stat="toolsCount" style="color: #2196F3;">🛠️ ${t('creator.output.tools')}: <strong>${creatorData.toolsCount}</strong> ${t('creator.output.unit')}</span>
+                        <span data-stat="skillsCount" style="color: #7C4DFF;">⚡ ${t('creator.output.skills')}: <strong>${creatorData.skillsCount || 0}</strong> ${t('creator.output.unit')}</span>
                         <span data-stat="appsCount" style="color: #9C27B0;">📦 ${t('creator.output.apps')}: <strong>${creatorData.appsCount}</strong> ${t('creator.output.unit')}</span>
                     </div>
                 </div>
@@ -413,7 +414,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
             chartDom.innerHTML = ""; 
             chartInstance = echarts.init(chartDom, 'dark', { backgroundColor: 'transparent' });
             
-            const data = trendData || { months: [], tools: [], apps: [], recommends: [] };
+            const data = trendData || { months: [], tools: [], skills: [], apps: [], recommends: [] };
 
             chartInstance.setOption({
                 tooltip: { trigger: 'axis', textStyle: { fontSize: 11 } },
@@ -422,8 +423,8 @@ export function createCreatorCard(creatorData, currentUser = null) {
                 yAxis: { type: 'value', splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888', fontSize: 10 }, minInterval: 1 },
                 series: [
                     { name: t('creator.chart.series.tools'), type: 'line', data: data.tools, smooth: true, itemStyle: { color: '#4CAF50' }, lineStyle: { width: 2, type: 'dashed' } },
+                    { name: t('creator.chart.series.skills'), type: 'line', data: data.skills || [], smooth: true, itemStyle: { color: '#7C4DFF' }, lineStyle: { width: 2, type: 'dashed' } },
                     { name: t('creator.chart.series.apps'), type: 'line', data: data.apps, smooth: true, itemStyle: { color: '#2196F3' }, lineStyle: { width: 2, type: 'dashed' } },
-                    // 【核心修改】：添加第 3 根趋势折线 —— 推荐资源的点击与获取量
                     { name: t('creator.chart.series.recommends'), type: 'line', data: data.recommends, smooth: true, itemStyle: { color: '#FF9800' }, lineStyle: { width: 2, type: 'dashed' } }
                 ]
             });

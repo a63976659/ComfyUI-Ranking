@@ -1,7 +1,5 @@
 // 前端页面/social/通知中心组件.js
 import { api } from "../core/网络请求API.js";
-import { request } from "../core/网络请求_基础设施.js";
-import { openChatModal } from "./私信聊天组件.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { CACHE, PLACEHOLDERS } from "../core/全局配置.js";
@@ -89,37 +87,35 @@ export async function openNotificationCenter(currentUser, bellBtn) {
 
     const renderMsgList = (msgs) => {
         listArea.innerHTML = "";
-        if (msgs.length === 0) {
+        // 🔔 私信提醒已迁移至聊天入口(✉️红点)、插件更新提醒已迁移至卡片徽章(🔄)，
+        //    通知中心不再展示这两类（含存量历史数据），避免同一提醒重复出现
+        const visibleMsgs = msgs.filter(m => m.type !== "private" && m.type !== "plugin_update");
+        if (visibleMsgs.length === 0) {
             listArea.innerHTML = `<div style='text-align:center; padding: 30px; color:#666;'>${t('notif.no_messages')}</div>`;
             return;
         }
         
         let html = "";
-        msgs.forEach(msg => {
+        visibleMsgs.forEach(msg => {
             const isUnread = !msg.is_read;
             // 【核心新增】：判断是否为系统公告
             const isSystem = msg.type === "system";
             const isAnonymous = msg.from_user === "anonymous";
             
             // 系统公告使用尊贵的橙色/金色 UI 边框，普通消息使用默认颜色
-            // 插件更新通知使用蓝色主题
             let bg = isUnread ? "rgba(76, 175, 80, 0.1)" : "var(--comfy-input-bg)";
             let border = isUnread ? "1px solid #4CAF50" : "1px solid #444";
             
             if (isSystem) {
                 bg = isUnread ? "rgba(255, 152, 0, 0.15)" : "rgba(255, 152, 0, 0.05)";
                 border = isUnread ? "1px solid #FF9800" : "1px solid #886020";
-            } else if (msg.type === "plugin_update") {
-                bg = isUnread ? "rgba(33, 150, 243, 0.15)" : "rgba(33, 150, 243, 0.05)";
-                border = isUnread ? "1px solid #2196F3" : "1px solid #1a5a8a";
             }
             
             // 生成标题链接
             const titleLink = makeTitleLink(msg.target_item_id, msg.target_item_title);
             
             let actionText = "";
-            if (msg.type === "private") actionText = t('notif.private_msg');
-            else if (msg.type === "follow") actionText = t('notif.followed_you');
+            if (msg.type === "follow") actionText = t('notif.followed_you');
             else if (msg.type === "like") actionText = `${t('notif.liked')} ${titleLink}`;
             else if (msg.type === "favorite") actionText = `${t('notif.favorited')} ${titleLink}`;
             else if (msg.type === "comment") actionText = `${t('notif.commented_on')} ${titleLink}：<br><span style="color:#ccc;">${escapeHtml(msg.content)}</span>`;
@@ -139,19 +135,14 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             else if (msg.type === "dispute_resolved") actionText = `<span style="color:#9C27B0;">🔨</span> ${escapeHtml(msg.content) || t('notif.dispute_resolved')}`;
             // 【核心新增】：系统公告的正文排版，保留原格式的换行
             else if (isSystem) actionText = `<div style="margin-top: 6px; color: #eee; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(msg.content)}</div>`;
-            // 【核心新增】：插件更新通知 - 保持现有模板不变
-            else if (msg.type === "plugin_update") actionText = `${t('notif.plugin_update')} <span style="color:#2196F3;">[${escapeHtml(msg.target_item_title)}]</span>，${t('notif.click_to_view')}`;
             
             const timeStr = new Date(msg.created_at * 1000).toLocaleString();
             
             // 【核心新增】：如果是系统消息，增加 📢 标签并改变标题颜色
-            // 插件更新通知使用 📦 图标
             // 匿名打赏和系统通知的用户名不显示为链接
             let nameLabel;
             if (isSystem) {
                 nameLabel = `<strong style="color: #FF9800; font-size: 15px;">📢 [${t('notif.system_announcement')}] ${escapeHtml(msg.from_name)}</strong>`;
-            } else if (msg.type === "plugin_update") {
-                nameLabel = `<strong style="color: #2196F3; font-size: 15px;">📦 [${t('notif.plugin_update_title')}] ${escapeHtml(msg.from_name)}</strong>`;
             } else if (isAnonymous) {
                 nameLabel = `<strong style="color: #fff;">${escapeHtml(msg.from_name || msg.from_user)}</strong>`;
             } else {
@@ -215,12 +206,6 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                 // 【核心新增】：系统公告点击不跳转，只触发消除红点
                 if (type === "system") return; 
                 
-                // 📦 插件更新通知：切换到对应Tab并展开卡片
-                if (type === "plugin_update" && itemId) {
-                    _navigateToItemView(itemId);
-                    return;
-                }
-                
                 // 📝 任务榜通知：跳转到任务详情
                 if (type.startsWith("task_") && itemId) {
                     _navigateToTaskDetail(itemId, currentUser);
@@ -246,12 +231,6 @@ export async function openNotificationCenter(currentUser, bellBtn) {
                     return;
                 }
 
-                // 私信：打开对话
-                if (type === "private") {
-                    openChatModal(currentUser, acc);
-                    return;
-                }
-                
                 // 其他：跳转发送者资料页（兜底）
                 if (acc && acc !== 'anonymous') openOtherUserProfileModal(acc, currentUser);
             };
@@ -304,8 +283,8 @@ export async function openNotificationCenter(currentUser, bellBtn) {
 export async function loadUnreadCount(currentUser, bellBtn) {
     if (!currentUser) { bellBtn.querySelector("#unread-badge").style.display = "none"; return; }
     try {
-        // 🔥 修复：使用 count_only=true 参数，只获取未读数，不标记已读
-        const res = await request(`/api/messages/${currentUser.account}?count_only=true`);
+        // 🔥 修复：复用 api.getUnreadCount（内部走 count_only=true），只获取未读数、不标记已读
+        const res = await api.getUnreadCount(currentUser.account);
         const unreadCount = res.unread_count || 0;
         const badge = bellBtn.querySelector("#unread-badge");
         if (unreadCount > 0) {

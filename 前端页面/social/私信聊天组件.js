@@ -70,6 +70,9 @@ export function openChatModal(currentUser, targetAccount = null) {
     const cleanup = () => {
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
         saveDraft();
+        // 🔔 关闭聊天时通知顶部导航刷新 ✉️ 未读红点：
+        //    打开会话已把收到的消息标记为已读，未读数随之下降，需即时回写红点
+        window.dispatchEvent(new CustomEvent("comfy-chat-unread-changed"));
     };
 
     topHeader.querySelector("#btn-back-chat").onclick = () => {
@@ -500,8 +503,11 @@ export function openChatModal(currentUser, targetAccount = null) {
         if (!CACHE.MESSAGE_POLL || !CACHE.MESSAGE_POLL.ENABLED) return;
         pollTimer = setInterval(async () => {
             try {
-                const res = await api.getUnreadCount(currentUser.account);
-                if (res && res.data && res.data.unread_count > 0) {
+                // 🔔 私信未读以会话列表为准：铃铛的 getUnreadCount(count_only) 已不再计入 private，
+                //    聊天内轮询改用 getChatList 汇总各会话未读，语义正确且不受铃铛过滤影响
+                const res = await api.getChatList(currentUser.account);
+                const list = res.data || [];
+                if (list.some(c => (c.unread_count || 0) > 0)) {
                     loadChatList();
                     // 如果当前有打开的对话，也刷新消息
                     if (currentChatTarget) {
@@ -550,4 +556,29 @@ export function openChatModal(currentUser, targetAccount = null) {
     }, 0);
 
     window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: container } }));
+}
+
+// 🔔 聊天未读红点：汇总 chats.json 各会话未读数，驱动顶部导航 ✉️ 按钮的红点。
+//    私信提醒已从铃铛(🔔)迁移至此——铃铛未读数不再计入 private，避免同一提醒重复出现。
+//    与 loadUnreadCount(通知中心) 保持一致的写法：从传入按钮内查询徽标元素并回写。
+export async function loadChatUnreadCount(currentUser, chatBtn) {
+    const badge = chatBtn ? chatBtn.querySelector("#chat-unread-badge") : null;
+    if (!currentUser) { if (badge) badge.style.display = "none"; return 0; }
+    try {
+        const res = await api.getChatList(currentUser.account);
+        const list = res.data || [];
+        const total = list.reduce((sum, c) => sum + (c.unread_count || 0), 0);
+        if (badge) {
+            if (total > 0) {
+                badge.innerText = total > 99 ? "99+" : total;
+                badge.style.display = "flex";
+            } else {
+                badge.style.display = "none";
+            }
+        }
+        return total;
+    } catch(e) {
+        if (badge) badge.style.display = "none";
+        return 0;
+    }
 }

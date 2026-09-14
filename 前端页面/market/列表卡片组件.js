@@ -193,8 +193,8 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
         detailView.appendChild(originalBadge);
     }
 
-    // 支持退款标识（仅工具和应用类型显示，且允许退款时）
-    if (itemData.allow_refund !== false && (itemData.type === 'tool' || itemData.type === 'app')) {
+    // 支持退款标识（仅工具、Skill和应用类型显示，且允许退款时）
+    if (itemData.allow_refund !== false && (itemData.type === 'tool' || itemData.type === 'skill' || itemData.type === 'app')) {
         const refundBadge = document.createElement("div");
         Object.assign(refundBadge.style, {
             display: "inline-flex", alignItems: "center", gap: "6px",

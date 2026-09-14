@@ -80,7 +80,7 @@
 /**
  * @typedef {Object} ItemData
  * @property {string} id - 内容ID
- * @property {string} type - 类型：tool/app/recommend
+ * @property {string} type - 类型：tool/skill/app/recommend
  * @property {string} title - 标题
  * @property {string} shortDesc - 简短描述
  * @property {string} fullDesc - 详细描述

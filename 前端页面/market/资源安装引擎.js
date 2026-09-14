@@ -32,7 +32,7 @@ function clearUsesCache() {
     // 安装后使用量/下载数仍会从旧缓存返回，改用前缀删除
     removeCacheByPrefix('api_/api/items');
     removeCacheByPrefix('api_/api/creators');
-    const tabs = ['tools', 'apps', 'recommends', 'creators'];
+    const tabs = ['tools', 'skills', 'apps', 'recommends', 'creators'];
     const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
     for (const tab of tabs) {
         for (const sort of sorts) {
@@ -197,7 +197,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
         if (!currentUser) return showToast("⚠️ 请先登录您的社区账号后再获取！", "warning");
 
         const isFree = !itemData.price || itemData.price <= 0 || currentUser.account === itemData.author;
-        const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool';
+        const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool' || itemData.type === 'skill' || itemData.type === 'recommend_skill';
         const isApp = itemData.type === 'app' || itemData.type === 'recommend_app';
 
         // 📱 Web 模式：不支持下载/安装。免费（含作者本人）或已购买 → 仅提醒电脑端安装；未购买 → 放行到下方纯购买流程
@@ -417,8 +417,11 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         }
 
                         // 🚀 安装成功后，盖上本地版本戳
-                        if (itemData.latest_version) {
-                            localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
+                        // 优先用本地引擎回传的真实安装 commit（installed_version），兜底云端 latest_version；
+                        // 二者皆空才跳过——避免版本戳缺失导致卡片更新徽章永不触发
+                        const _installedVer = result.installed_version || itemData.latest_version;
+                        if (_installedVer) {
+                            localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, _installedVer);
                         }
 
                         // 记录使用量（后端自动去重）
@@ -474,8 +477,9 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                                 showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
                             }
 
-                            if (itemData.latest_version) {
-                                localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
+                            const _installedVer = data.installed_version || itemData.latest_version;
+                            if (_installedVer) {
+                                localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, _installedVer);
                             }
 
                             try {

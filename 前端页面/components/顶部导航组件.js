@@ -1,7 +1,7 @@
 // 前端页面/components/顶部导航组件.js
 import { createAuthView } from "../auth/用户注册登录组件.js";
 import { openUserProfileModal } from "../profile/个人中心视图.js";
-import { openChatModal } from "../social/私信聊天组件.js";
+import { openChatModal, loadChatUnreadCount } from "../social/私信聊天组件.js";
 import { api } from "../core/网络请求API.js"; 
 import { showToast } from "./UI交互提示组件.js";
 import { showAboutInfo } from "./关于插件组件.js";
@@ -29,7 +29,9 @@ function _registerNavWindowListeners() {
         { event: "comfy-user-logout", handler: () => { if (_navInstance) _navInstance.onLogout(); } },
         // 🔧 修复：凭证失效（401）时除停止轮询外，同步重置导航登录态（原实现未重置，头像按钮仍显示已登录）
         { event: "comfy-ranking-auth-expired", handler: () => { stopMessagePolling(); if (_navInstance) _navInstance.onLogout(); } },
-        { event: "storage", handler: (event) => { if (_navInstance) _navInstance.onStorage(event); } }
+        { event: "storage", handler: (event) => { if (_navInstance) _navInstance.onStorage(event); } },
+        // 🔔 聊天关闭后刷新 ✉️ 未读红点（打开会话已标记已读，未读数下降，需即时回写）
+        { event: "comfy-chat-unread-changed", handler: () => { if (_navInstance) _navInstance.onChatUnreadChanged(); } }
     ];
     for (const { event, handler } of _navWindowHandlers) window.addEventListener(event, handler);
 }
@@ -80,8 +82,9 @@ export function createTopNav() {
     Object.assign(userActionBtn.style, { padding: "6px 12px", backgroundColor: "#333", color: "#fff", border: "1px solid #555", borderRadius: "4px", cursor: "pointer", fontSize: "12px", transition: "background 0.2s" });
 
     const chatEntryBtn = document.createElement("button");
-    Object.assign(chatEntryBtn.style, { background: "transparent", border: "none", color: "#aaa", cursor: "pointer", fontSize: "18px", marginRight: "10px", transition: "0.2s" });
-    chatEntryBtn.innerHTML = `✉️`;
+    Object.assign(chatEntryBtn.style, { background: "transparent", border: "none", color: "#aaa", cursor: "pointer", fontSize: "18px", marginRight: "10px", transition: "0.2s", position: "relative" });
+    // 🔔 私信未读红点：与铃铛 #unread-badge 同款样式，数据源为 chats.json 各会话未读汇总
+    chatEntryBtn.innerHTML = `✉️<span id="chat-unread-badge" style="display:none; position:absolute; top:-4px; right:-8px; background:#F44336; color:white; font-size:10px; font-weight:bold; padding:2px 5px; border-radius:10px; line-height:1;">0</span>`;
     chatEntryBtn.title = t('social.chat');
 
     const bellBtn = document.createElement("button");
@@ -119,9 +122,10 @@ export function createTopNav() {
             userActionBtn.style.borderColor = "#2196F3";
             userActionBtn.onclick = () => openUserProfileModal(currentUser);
             loadUnreadCount(currentUser, bellBtn);
+            loadChatUnreadCount(currentUser, chatEntryBtn);
             
             // 🚀 新增：启动消息定时轮询
-            startMessagePolling(currentUser, bellBtn);
+            startMessagePolling(currentUser, bellBtn, chatEntryBtn);
         } else {
             // 🚀 新增：停止轮询
             stopMessagePolling();
@@ -130,6 +134,7 @@ export function createTopNav() {
             userActionBtn.style.backgroundColor = "#333";
             userActionBtn.style.borderColor = "#555";
             bellBtn.querySelector("#unread-badge").style.display = "none";
+            chatEntryBtn.querySelector("#chat-unread-badge").style.display = "none";
             
             userActionBtn.onclick = () => {
                 const view = createAuthView(async (formData) => {
@@ -240,7 +245,8 @@ export function createTopNav() {
     // 🔧 P1修复：注册为当前活跃实例，模块级监听将路由到本实例的回调
     _navInstance = {
         onLogout: () => { currentUser = null; updateUserButtonState(); },
-        onStorage: handleCrossTabStorage
+        onStorage: handleCrossTabStorage,
+        onChatUnreadChanged: () => loadChatUnreadCount(currentUser, chatEntryBtn)
     };
     _registerNavWindowListeners();
 
@@ -263,7 +269,7 @@ export function createTopNav() {
 }
 
 // 🚀 新增：启动消息定时轮询
-function startMessagePolling(currentUser, bellBtn) {
+function startMessagePolling(currentUser, bellBtn, chatEntryBtn) {
     if (!CACHE.MESSAGE_POLL.ENABLED) return;
     if (isPollingActive) return;  // 🔧 P3优化：防止重复启动
     
@@ -279,7 +285,9 @@ function startMessagePolling(currentUser, bellBtn) {
             return;
         }
         try {
+            // 🔔 铃铛未读（点赞/评论/购买/任务/系统公告等）与 ✉️ 私信未读分别刷新
             await loadUnreadCount(currentUser, bellBtn);
+            await loadChatUnreadCount(currentUser, chatEntryBtn);
         } catch (e) {
             // 静默失败，不影响用户体验
         }
