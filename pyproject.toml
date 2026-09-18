@@ -1,7 +1,7 @@
 [project]
 name = "ComfyUI-Ranking"
 description = "ComfyUI-Ranking精选社区，一个排行榜工具"
-version = "2.1.1"
+version = "2.7.0"
 license = { file = "LICENSE" }
 dependencies = []
 
