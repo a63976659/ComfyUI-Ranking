@@ -151,7 +151,8 @@ const requestQueue = {
     running: 0,
     pending: [],
     
-    async add(fn) {
+    async add(fn, signal) {
+        signal.throwIfAborted();
         // 如果还有槽位，直接执行
         if (this.running < this.maxConcurrent) {
             this.running++;
@@ -165,13 +166,22 @@ const requestQueue = {
         
         // 否则加入队列等待
         return new Promise((resolve, reject) => {
-            this.pending.push(async () => {
+            const onAbort = () => {
+                const index = this.pending.indexOf(run);
+                if (index !== -1) this.pending.splice(index, 1);
+                reject(signal.reason);
+            };
+            const run = async () => {
+                signal.removeEventListener('abort', onAbort);
                 try {
+                    signal.throwIfAborted();
                     resolve(await fn());
                 } catch (e) {
                     reject(e);
                 }
-            });
+            };
+            this.pending.push(run);
+            signal.addEventListener('abort', onAbort, { once: true });
         });
     },
     
@@ -296,7 +306,8 @@ async function request(endpoint, options = {}) {
     // 不会把搜索类已经收紧过的 10s 预算又放宽回去。
     // noCache 请求不参与：调用方明确要权威新数据（余额、安装前的资源详情、广告配置），
     // 把它的超时砍短会把「慢但能成功」变成「快速失败」，违背调用方意图
-    if (method === "GET" && !options.noCache && fallbackMeta.found) {
+    const useCacheBudget = method === "GET" && !options.noCache && fallbackMeta.found;
+    if (useCacheBudget) {
         defaultTimeout = Math.min(defaultTimeout, API.BACKGROUND_TIMEOUT);
         defaultRetries = Math.min(defaultRetries, API.BACKGROUND_RETRIES);
     }
@@ -325,22 +336,41 @@ async function request(endpoint, options = {}) {
             // 🚀 P4优化：使用请求取消管理器（支持超时 + 组件级取消）
             const controller = requestCancelManager.create(componentId);
             const currentFetchOptions = { ...fetchOptions, signal: controller.signal };
-            // 🔧 修复：超时计时器改到真正发出 fetch 时才启动。原实现在入队前就 setTimeout，
-            // 并发满 6 个时排队等待会白烧超时预算，排队时长超过超时值会导致 fetch 尚未发出就被 abort
             let timeoutId = null;
-            // 🔍 区分「超时中止」与「调用方主动撤销」：两者抛出的都是 AbortError，
-            // 但前者应该重试、后者绝不能重试（详见下方 catch 的主动取消分支）
             let timedOut = false;
+            let fetchStarted = false;
+            let transportFailed = false;
+            const onTimeout = () => { timedOut = true; controller.abort(); };
+            // 已有缓存时排队也计入预算，避免被无缓存的慢请求无限拖住。
+            if (useCacheBudget) timeoutId = setTimeout(onTimeout, requestTimeout);
                     
             try {
-                // 🚀 P3优化：使用请求队列限制并发
-                const response = await requestQueue.add(() => {
-                    timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, requestTimeout);
-                    return fetch(url, currentFetchOptions);
-                });
-                clearTimeout(timeoutId);  // 清除超时计时器
-                requestCancelManager.remove(componentId, controller);  // 🚀 P4: 移除已完成的 controller
-                let responseData = await response.json().catch(() => ({}));
+                const result = await requestQueue.add(async () => {
+                    if (!useCacheBudget) timeoutId = setTimeout(onTimeout, requestTimeout);
+                    fetchStarted = true;
+                    try {
+                        const response = await fetch(url, currentFetchOptions);
+                        let data;
+                        try {
+                            data = response.status === 204 ? {} : await response.json();
+                        } catch (error) {
+                            // 错误响应的正文不可读时仍按 HTTP 状态处理，不能用缓存掩盖 401/403。
+                            if (!response.ok && (error instanceof SyntaxError || error instanceof TypeError || (timedOut && error.name === 'AbortError'))) {
+                                data = {};
+                            } else {
+                                throw error;
+                            }
+                        }
+                        return { response, data };
+                    } catch (error) {
+                        transportFailed = error instanceof TypeError;
+                        throw error;
+                    }
+                }, controller.signal);
+                clearTimeout(timeoutId);
+                requestCancelManager.remove(componentId, controller);
+                const { response } = result;
+                let responseData = result.data;
 
                 if (!response.ok) {
                     let errorMsg = `请求失败 (${response.status})`;
@@ -418,8 +448,8 @@ async function request(endpoint, options = {}) {
                 
                 // 🔧 P1优化：可重试的错误类型
                 const isRetryable = (
-                    error.name === 'AbortError' ||  // 超时
-                    (error instanceof TypeError && error.message.includes('fetch'))  // 网络错误
+                    error.name === 'AbortError' ||
+                    transportFailed
                 );
                 
                 if (isRetryable) {
@@ -430,7 +460,7 @@ async function request(endpoint, options = {}) {
                     lastError = isTimeout
                         ? new Error('网络请求超时，请检查网络连接')
                         : new Error('网络连接失败，请检查网络');
-                    networkLevelFailure = true;
+                    if (fetchStarted) networkLevelFailure = true;
                     // ☁️ 连接层失败（被墙 / DNS 污染 / 拒绝连接 / 证书错误）几乎不会是偶发抖动，
                     // 打上冷却后其它界面与轮询就不用再各自烧一遍预算。但单次失败不足以定论，
                     // 故分两种口径：已配重试时要求第二次尝试仍失败才定论（连接层失败是毫秒级的，

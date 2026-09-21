@@ -120,8 +120,7 @@ export function getCache(key) {
             _updateLRU(fk);
             return cached.value;
         }
-        // 过期，清除（走 _deleteMemoryEntry 同步摘除 LRU 顺序数组，避免幽灵键挤占名额）
-        _deleteMemoryEntry(fk);
+        // 仅内存缓存也需要保留过期副本，供弱网回退使用。
     }
     
     // 降级到 localStorage
@@ -164,8 +163,7 @@ export function getCacheWithMeta(key, ignoreExpiry = false) {
             _updateLRU(fk);
             return { value: cached.value, expired, found: true };
         }
-        // 过期且不忽略，清除（同上：必须同步维护 memoryCacheOrder）
-        _deleteMemoryEntry(fk);
+        // 新鲜度检查不删除数据；淘汰仍由 LRU 和显式失效负责。
     }
     
     // 降级到 localStorage
@@ -181,8 +179,7 @@ export function getCacheWithMeta(key, ignoreExpiry = false) {
                 _updateLRU(fk);
                 return { value: cached.value, expired, found: true };
             }
-            // 🔧 修复：与 getCache 一致，过期条目保留不删（供离线兜底），仅返回未命中；
-            // 内存中的过期副本已在上方删除，下次可重新从 storage 回填
+            // 与内存层一致，保留过期条目供离线兜底。
         }
     } catch (e) {
         console.warn("⚠️ 缓存读取失败:", key);
