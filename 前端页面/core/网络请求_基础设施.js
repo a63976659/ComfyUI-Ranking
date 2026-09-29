@@ -401,6 +401,17 @@ async function request(endpoint, options = {}) {
                         }
                         throw new Error(errorMsg);
                     }
+
+                    // Hugging Face Space / 网关不可用通常以 502、503 或 504 响应，
+                    // 这类响应证明请求到达了代理层，但云端当前无法提供服务。
+                    // 与超时/连接失败一样共享冷却，避免切换榜单时每个 endpoint
+                    // 都重复访问一次；普通 500 仍只视为单接口服务端错误。
+                    if ([502, 503, 504].includes(response.status)) {
+                        lastError = new Error(errorMsg);
+                        networkLevelFailure = true;
+                        markCloudDown(endpoint);
+                        break;
+                    }
                     
                     lastError = new Error(errorMsg);
                     continue;  // 5xx 错误重试

@@ -26,24 +26,45 @@ let bannerContainer = null;
 
 // 本地缓存配置
 const BANNER_CACHE_KEY = "ComfyRanking_BannerConfig";
-const BANNER_CACHE_TTL = 60 * 60 * 1000; // 1小时缓存
+let bannerSyncGeneration = 0;
 
 /**
  * 读取本地广告配置缓存（非破坏性，不删除过期数据）
- * @returns {{ data: Object|null, fresh: boolean }} data 为缓存内容（无缓存为 null），fresh 表示是否仍在 TTL 内
+ * @returns {Object|null} data 为缓存内容，无缓存时为 null
  */
 function readBannerCache() {
     try {
         const cached = localStorage.getItem(BANNER_CACHE_KEY);
         if (cached) {
-            const { data, timestamp } = JSON.parse(cached);
-            return { data: data || null, fresh: Date.now() - timestamp < BANNER_CACHE_TTL };
+            const { data } = JSON.parse(cached);
+            return data || null;
         }
     } catch (parseErr) {
         // 缓存数据损坏，清除
         localStorage.removeItem(BANNER_CACHE_KEY);
     }
-    return { data: null, fresh: false };
+    return null;
+}
+
+/** 确认新配置引用的图片均可下载后，再允许替换当前横幅。 */
+function preloadImage(url) {
+    if (!url) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = resolve;
+        image.onerror = () => reject(new Error(`广告图片下载失败: ${url}`));
+        image.src = url;
+    });
+}
+
+async function prepareBannerConfig(data) {
+    if (!data) return { ...BANNER_CONFIG };
+    const config = { ...BANNER_CONFIG, ...data };
+    await Promise.all([
+        preloadImage(config.bannerImage),
+        preloadImage(config.detailImage)
+    ]);
+    return config;
 }
 
 /**
@@ -51,25 +72,32 @@ function readBannerCache() {
  * 成功后更新缓存并刷新 DOM；失败时保留当前已展示的内容
  */
 async function syncBannerInBackground() {
+    const generation = ++bannerSyncGeneration;
     try {
-        const res = await api.getPublicBannerConfig();
+        // 绕过请求层缓存，确保拿到的确实是后台新配置。
+        const res = await api.getPublicBannerConfig({ noCache: true });
         if (res && res.status === "success") {
+            const nextConfig = await prepareBannerConfig(res.data);
+            // 图片加载期间可能又发起了一次刷新，只让最新请求提交结果。
+            if (generation !== bannerSyncGeneration) return;
             if (res.data) {
-                // 只缓存有效配置，不缓存 null（禁用后再启用可立即生效）
-                localStorage.setItem(BANNER_CACHE_KEY, JSON.stringify({
-                    data: res.data,
-                    timestamp: Date.now()
-                }));
-                activeConfig = { ...BANNER_CONFIG, ...res.data };
+                try {
+                    localStorage.setItem(BANNER_CACHE_KEY, JSON.stringify({
+                        data: res.data,
+                        timestamp: Date.now()
+                    }));
+                } catch (storageError) {
+                    console.warn("新广告配置无法写入本地缓存，仍显示已下载的新内容:", storageError);
+                }
             } else {
-                // 广告已禁用，清除旧缓存避免显示过期内容
+                // 服务端明确返回无配置，作为成功的新结果清除旧配置。
                 localStorage.removeItem(BANNER_CACHE_KEY);
-                activeConfig = { ...BANNER_CONFIG };
             }
+            activeConfig = nextConfig;
             updateBannerDOM();
         }
     } catch (e) {
-        // 网络失败：保留当前展示内容（首屏已由缓存或默认值渲染）
+        // 网络失败或图片下载失败：不写缓存、不替换当前已显示的缓存横幅。
         console.warn("后台更新广告配置失败（保留当前内容）:", e);
     }
 }
@@ -100,15 +128,13 @@ export function createTopBanner() {
     // ⚡ 完全不阻塞首屏：先读本地缓存（过期也立即使用）并立即渲染，
     // 网络请求一律退到后台静默同步，保证断网/云端不通时横幅不受影响
     // （与插件榜/提示词等榜单的缓存优先策略一致）
-    const { data: cachedData, fresh } = readBannerCache();
+    const cachedData = readBannerCache();
     if (cachedData) {
         activeConfig = { ...BANNER_CONFIG, ...cachedData };
         updateBannerDOM();
     }
-    // 缓存新鲜则无需请求；过期或无缓存时后台静默同步
-    if (!fresh) {
-        syncBannerInBackground();
-    }
+    // 始终在后台尝试获取新配置；当前缓存先显示，成功且图片下载完成后再整体替换。
+    syncBannerInBackground();
 
     return container;
 }
@@ -156,25 +182,8 @@ function updateBannerDOM() {
  * 刷新顶部广告横幅（重新加载配置并更新DOM）
  */
 export async function refreshBanner() {
-    // 清除自定义缓存
-    localStorage.removeItem(BANNER_CACHE_KEY);
-    try {
-        // 绕过请求级缓存，强制从服务器获取最新配置
-        const res = await api.getPublicBannerConfig({ noCache: true });
-        if (res && res.status === "success" && res.data) {
-            activeConfig = { ...BANNER_CONFIG, ...res.data };
-            // 更新本地缓存
-            localStorage.setItem(BANNER_CACHE_KEY, JSON.stringify({
-                data: res.data,
-                timestamp: Date.now()
-            }));
-        } else {
-            activeConfig = { ...BANNER_CONFIG };
-        }
-    } catch (e) {
-        console.warn("刷新广告配置失败", e);
-    }
-    updateBannerDOM();
+    // 手动刷新也保留当前缓存横幅，直到新配置和图片都准备好。
+    await syncBannerInBackground();
 }
 
 /**
