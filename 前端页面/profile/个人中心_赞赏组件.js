@@ -1,198 +1,155 @@
-// 前端页面/profile/个人中心_赞赏组件.js
-// ==========================================
-// 🎁 打赏弹窗组件
-// ==========================================
-// 作用：提供打赏弹窗界面和交互逻辑
-// 关联文件：
-//   - 打赏等级工具.js (等级计算与显示)
-//   - 网络请求API.js (发送打赏请求)
-//   - 全局弹窗管理器.js (弹窗管理)
-// ==========================================
-
-import { api } from "../core/网络请求API.js";
+// 赞赏弹窗：原账号/父页面范围，新余额与提交锁；已提交POST不自动重放。
+import { api, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
+import { API, CACHE, TIP_LEVELS } from "../core/全局配置.js";
+import { getUser, eventBus, EVENTS } from "../core/状态管理.js";
+import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { openUserProfileModal } from "./个人中心视图.js";
-import { isMaxTipLevel, renderTipLevelHTML, getTipLevelDescription, calculateTipLevel } from "../components/打赏等级工具.js";
+import { renderTipLevelHTML, getTipLevelDescription, calculateTipLevel } from "../components/打赏等级工具.js";
+import { t } from "../components/用户体验增强.js";
 
-// 最高等级积分上限（9个太阳 = 22500积分）
-const MAX_TIP_POINTS = 22500;
+const active = new Map();
+let sequence = 0;
+const validBalance = value => Number.isSafeInteger(value) && value >= 0;
+const validAmount = value => Number.isSafeInteger(value) && value > 0 && value <= TIP_LEVELS.MAX_POINTS;
+const element = (tag, className, text) => {
+    const node = document.createElement(tag); node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+};
 
-/** 校验打赏金额，返回错误消息或null */
-function _validateTipAmount(amount) {
-    if (!amount || amount <= 0) return "打赏金额必须大于 0";
-    if (amount > MAX_TIP_POINTS) return `单次打赏上限为 ${MAX_TIP_POINTS} 积分`;
-    return null;
-}
-
-/** 余额不足时引导充值 */
-async function _promptRechargeIfNeeded(currentUser) {
-    if (await showConfirm("您的积分余额不足，是否立刻前往个人中心充值？")) {
-        globalModal.closeTopModal();
-        openUserProfileModal(currentUser);
-    }
-}
-
-/**
- * 打开打赏弹窗
- * @param {object} currentUser - 当前登录用户
- * @param {object} targetUser - 目标用户（被打赏者）
- * @param {function} onSuccess - 成功回调
- * @param {string} itemId - 可选，关联的内容ID
- */
-export async function openTipModal(currentUser, targetUser, onSuccess, itemId = null) {
-    // ==========================================
-    // 刷新钱包余额，避免使用缓存的旧值
-    // ==========================================
+/** 原四参数调用保持；options.isCurrent可提供原父页面检查。 */
+export async function openTipModal(currentUser, targetUser, onSuccess, itemId = null, options = {}) {
+    const account = currentUser?.account, target = targetUser?.account;
+    const matches = captureRequestSession(), parentCurrent = options.isCurrent || (() => true);
+    const sessionMatches = () => matches() && getUser()?.account === account;
+    if (!account) { showToast(t('feedback.login_required'), "warning"); return; }
+    if (!sessionMatches() || !parentCurrent() || typeof target !== "string" || !target.trim()) return;
+    if (account === target) { showToast(t('creator.cannot_tip_self'), "warning"); return; }
+    const key = JSON.stringify([account, target, itemId]);
+    if (active.has(key)) return;
+    const id = `tip-${++sequence}`, componentId = `tip-wallet-${sequence}`;
+    let loading = true, modal, observer, submitted = false, confirming = false;
+    const confirmationController = new AbortController();
+    const container = element("div", "tip-dialog");
+    const scope = createTaskViewScope({
+        sessionMatches,
+        connected: () => parentCurrent() && (loading || !!modal?.isConnected),
+        subscribe: notify => subscribeTaskSessionChanges(notify, { target: window, eventBus, events: EVENTS,
+            userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN }),
+        cancelReads: () => requestCancelManager.cancelAll(componentId), invalidate: () => {}
+    });
+    active.set(key, scope);
+    scope.addCleanup(() => {
+        observer?.disconnect(); confirmationController.abort();
+        globalModal.closeModal(modal); container.replaceChildren();
+        if (active.get(key) === scope) active.delete(key);
+    });
+    observer = new MutationObserver(() => { scope.isCurrent(); });
+    observer.observe(document.body, { childList: true, subtree: true });
+    container._cleanup = () => scope.dispose();
+    const readOptions = { componentId, noCache: true, timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES };
+    let balance;
     try {
-        const walletRes = await api.getWallet(currentUser.account, { noCache: true });
-        if (walletRes && walletRes.status === "success") {
-            currentUser.balance = walletRes.balance || 0;
-        }
-    } catch (err) {
-        console.warn("刷新钱包余额失败，使用缓存值:", err);
-        // 失败时继续使用缓存值，不阻断打赏流程
+        const response = await api.getWallet(account, readOptions);
+        if (!scope.isCurrent()) return;
+        if (response?.status !== "success" || !validBalance(response.balance)) throw new Error();
+        balance = response.balance;
+    } catch (_) {
+        if (scope.isCurrent()) showToast(t('common.error'), "error");
+        scope.dispose(); return;
     }
-
-    // ==========================================
-    // 检查目标用户是否已满级
-    // ==========================================
-    // 如果是打赏具体内容，从内容的 tip_board 检查
-    // 如果是打赏用户，从用户的 tip_board 检查
-    // 后续版本实现：查询当前用户对目标的累计打赏金额（tip_board 已包含累计数据，待新增专用查询接口）
-    
-    const container = document.createElement("div");
-    container.style.color = "#eee";
-    
-    // 当前用户余额（使用刷新后的值）
-    const userBalance = currentUser.balance || 0;
-    
-    container.innerHTML = `
-        <div style="margin-bottom: 15px; background: rgba(255,152,0,0.1); padding: 10px; border-radius: 4px; border: 1px solid #FF9800;">
-            当前余额: <strong style="color:#FF9800;">${userBalance}</strong> 积分
-        </div>
-        
-        <div style="margin-bottom: 12px;">
-            <label style="display:block; margin-bottom:5px; color:#ccc;">输入打赏金额</label>
-            <input type="number" id="tip-amount" min="10" max="${MAX_TIP_POINTS}" step="10" value="100" 
-                   style="width:100%; padding:10px; background:var(--comfy-input-bg); border:1px solid #555; color:#FF9800; font-weight:bold; font-size:16px; border-radius:4px; box-sizing:border-box;">
-        </div>
-        
-        <!-- 🚀 新增：等级预览区域 -->
-        <div id="tip-level-preview" style="margin-bottom: 15px; background: var(--comfy-menu-bg); padding: 10px; border-radius: 4px; border: 1px dashed #444;">
-            <div style="font-size: 11px; color: #888; margin-bottom: 6px;">打赏后等级预览</div>
-            <div id="preview-level" style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
-                ${renderTipLevelHTML(100, false)}
-                <span style="color:#888;">支持者</span>
-            </div>
-        </div>
-        
-        <!-- 等级规则说明 -->
-        <div style="margin-bottom: 15px; font-size: 11px; color: #666; line-height: 1.6;">
-            <div>📊 等级规则：</div>
-            <div style="padding-left: 10px;">
-                • 1-100 积分 = 1⭐ 星星，101-200 积分 = 2⭐ 星星，以此类推<br>
-                • 每 5 星星 = 1🌙 月亮 (500积分)<br>
-                • 每 5 月亮 = 1☀️ 太阳 (2500积分)<br>
-                • 最高等级：9☀️ 太阳 (22500积分)
-            </div>
-        </div>
-        
-        <div style="margin-bottom: 20px;">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; color:#aaa;">
-                <input type="checkbox" id="tip-anonymous"> 匿名打赏 (隐藏我的名字)
-            </label>
-        </div>
-        
-        <button id="btn-submit-tip" style="width:100%; padding:12px; background:#FF9800; color:#fff; border:none; border-radius:6px; font-weight:bold; font-size:15px; cursor:pointer; box-shadow: 0 4px 10px rgba(255,152,0,0.3); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">
-            确 认 打 赏
-        </button>
-    `;
-
-    // ==========================================
-    // 绑定金额输入事件，实时更新等级预览
-    // ==========================================
-    const amountInput = container.querySelector("#tip-amount");
-    const previewLevel = container.querySelector("#preview-level");
-    
+    const balanceRow = element("div", "tip-dialog__balance", `${t('wallet.current_balance')}: ${balance} ${t('wallet.credits')}`);
+    const amountLabel = element("label", "tip-dialog__label", t('tip.amount_label'));
+    const amountInput = element("input", "tip-dialog__input");
+    amountInput.id = `${id}-amount`; amountLabel.htmlFor = amountInput.id;
+    amountInput.type = "number"; amountInput.min = "1"; amountInput.max = String(TIP_LEVELS.MAX_POINTS);
+    amountInput.step = "1"; amountInput.value = String(TIP_LEVELS.POINTS_PER_STAR);
+    const preview = element("div", "tip-dialog__preview");
+    preview.append(element("div", "tip-dialog__muted", t('tip.level_preview')));
+    const previewLevel = element("div", "tip-dialog__level"); preview.append(previewLevel);
+    const rules = element("div", "tip-dialog__rules"); rules.append(element("div", "", t('tip.rules_title')));
+    const ruleList = element("ul", "");
+    for (const text of [t('tip.rule_star', { points: TIP_LEVELS.POINTS_PER_STAR }),
+        t('tip.rule_moon', { stars: TIP_LEVELS.STARS_PER_MOON }),
+        t('tip.rule_sun', { moons: TIP_LEVELS.MOONS_PER_SUN }),
+        t('tip.rule_max', { suns: TIP_LEVELS.MAX_SUNS, points: TIP_LEVELS.MAX_POINTS })]) ruleList.append(element("li", "", text));
+    rules.append(ruleList);
+    const anonymousLabel = element("label", "tip-dialog__anonymous");
+    const anonymousInput = element("input", ""); anonymousInput.type = "checkbox";
+    anonymousLabel.append(anonymousInput, document.createTextNode(t('tip.anonymous')));
+    const status = element("div", "tip-dialog__status"); status.hidden = true; status.setAttribute("role", "alert");
+    const submit = element("button", "tip-dialog__submit", t('tip.confirm')); submit.type = "button";
+    container.append(balanceRow, amountLabel, amountInput, preview, rules, anonymousLabel, status, submit);
+    const amountValue = () => amountInput.value.trim() ? Number(amountInput.value) : NaN;
     const updatePreview = () => {
-        const amount = parseInt(amountInput.value) || 0;
-        const validationError = _validateTipAmount(amount);
-        if (validationError) {
-            previewLevel.innerHTML = amount > MAX_TIP_POINTS
-                ? `<span style="color:#F44336;">⚠️ 超过单次上限 ${MAX_TIP_POINTS} 积分</span>`
-                : `<span style="color:#666;">请输入有效金额</span>`;
+        if (!scope.isCurrent()) return;
+        const amount = amountValue(); previewLevel.replaceChildren();
+        if (!validAmount(amount)) {
+            previewLevel.textContent = amount > TIP_LEVELS.MAX_POINTS ? t('tip.amount_limit', { max: TIP_LEVELS.MAX_POINTS }) : t('tip.integer_amount');
             return;
         }
-        
-        const levelHtml = renderTipLevelHTML(amount, false);
-        const description = getTipLevelDescription(amount);
-        const level = calculateTipLevel(amount);
-        
-        if (level.isMaxLevel) {
-            previewLevel.innerHTML = `${levelHtml} <span style="color:#FFD700; font-weight:bold;">👑 至尊赞助者</span>`;
-        } else {
-            previewLevel.innerHTML = `${levelHtml} <span style="color:#aaa;">${description}</span>`;
-        }
+        const badge = element("span", ""); badge.innerHTML = renderTipLevelHTML(amount, false);
+        previewLevel.append(badge, element("span", "", getTipLevelDescription(amount)));
     };
-    
     amountInput.addEventListener("input", updatePreview);
-    
-    // ==========================================
-    // 绑定提交按钮事件
-    // ==========================================
-    const btn = container.querySelector("#btn-submit-tip");
-    btn.onclick = async () => {
-        const amount = parseInt(amountInput.value);
-        const isAnon = container.querySelector("#tip-anonymous").checked;
-
-        // 基本校验
-        const validationError = _validateTipAmount(amount);
-        if (validationError) return showToast(validationError, "warning");
-        
-        // 本地前置余额校验
-        if (userBalance < amount) {
-            await _promptRechargeIfNeeded(currentUser);
+    submit.onclick = async () => {
+        if (!scope.isCurrent() || submitted || confirming) return;
+        const amount = amountValue(), isAnonymous = anonymousInput.checked;
+        if (!validAmount(amount)) {
+            showToast(amount > TIP_LEVELS.MAX_POINTS ? t('tip.amount_limit', { max: TIP_LEVELS.MAX_POINTS }) : t('tip.integer_amount'), "warning"); return;
+        }
+        if (balance < amount) {
+            confirming = true;
+            try {
+                const go = await showConfirm(t('tip.balance_short_recharge'), { signal: confirmationController.signal });
+                if (!go || !scope.isCurrent()) return;
+                globalModal.closeModal(modal);
+                if (sessionMatches() && parentCurrent()) await openUserProfileModal(currentUser);
+            } catch (_) { if (sessionMatches() && parentCurrent()) showToast(t('common.error'), "error"); }
+            finally { confirming = false; }
             return;
         }
-
-        btn.disabled = true;
-        btn.innerText = "处理中...";
-        
+        submitted = true; submit.disabled = amountInput.disabled = anonymousInput.disabled = true;
+        submit.textContent = t('common.processing'); container.setAttribute("aria-busy", "true");
+        let response;
         try {
-            const res = await api.tipUser(currentUser.account, targetUser.account, amount, isAnon, itemId);
-            
-            const level = calculateTipLevel(amount);
-            showToast(level.isMaxLevel ? "🎉 恭喜您成为至尊赞助者！已达最高等级。" : "🎉 打赏成功！感谢您的慷慨支持。", "success");
-            
-            // 🐛 Bug修复：打赏成功后主动刷新余额，避免依赖缓存旧数据
-            let freshBalance = res.balance;
+            response = await api.tipUser(account, target, amount, isAnonymous, itemId);
+            if (!scope.isCurrent()) return;
+            if (response?.status !== "success") throw new Error();
+        } catch (_) {
+            if (scope.isCurrent()) {
+                container.setAttribute("aria-busy", "false");
+                status.hidden = false; status.textContent = t('tip.unknown_result');
+                submit.textContent = t('tip.confirm');
+            }
+            return;
+        }
+        let freshBalance = validBalance(response.balance) ? response.balance : undefined;
+        if (freshBalance === undefined) {
             try {
-                const freshWallet = await api.getWallet(currentUser.account, { noCache: true });
-                if (freshWallet && freshWallet.status === "success") {
-                    freshBalance = freshWallet.balance;
-                }
-            } catch (walletErr) {
-                console.warn("打赏后刷新余额失败，使用tipUser响应中的balance:", walletErr);
-            }
-            currentUser.balance = freshBalance;
-            
-            // 派发全局余额更新事件，通知其他组件同步
-            window.dispatchEvent(new CustomEvent('comfy-wallet-update', { detail: { balance: freshBalance } }));
-            
-            globalModal.closeTopModal();
-            if (onSuccess) onSuccess(freshBalance);
-        } catch (err) {
-            // 余额不足引导充值
-            if (err.message && err.message.includes("余额不足")) {
-                await _promptRechargeIfNeeded(currentUser);
-            } else {
-                showToast(err.message, "error");
-            }
-            btn.disabled = false;
-            btn.innerText = "确 认 打 赏";
+                const wallet = await api.getWallet(account, readOptions);
+                if (!scope.isCurrent()) return;
+                if (wallet?.status === "success" && validBalance(wallet.balance)) freshBalance = wallet.balance;
+            } catch (_) { /* 资金已经提交，补充读取失败不改写成功。 */ }
+        }
+        if (!scope.isCurrent()) return;
+        if (freshBalance !== undefined) currentUser.balance = freshBalance;
+        const level = calculateTipLevel(amount);
+        showToast(t(level.isMaxLevel ? 'tip.supreme_sponsor_success' : 'tip.success_thanks'), "success");
+        if (freshBalance === undefined) showToast(t('tip.balance_refresh_failed'), "warning");
+        globalModal.closeModal(modal);
+        if (!sessionMatches() || !parentCurrent()) return;
+        if (freshBalance !== undefined) {
+            try { window.dispatchEvent(new CustomEvent('comfy-wallet-update', { detail: { account, balance: freshBalance } })); }
+            catch (_) { /* 派生界面故障不重放打赏。 */ }
+            if (!sessionMatches() || !parentCurrent()) return;
+            try { await onSuccess?.(freshBalance); } catch (_) { console.warn('赞赏成功，视图更新失败'); }
         }
     };
-
-    globalModal.openModal(`🎁 赞赏 ${targetUser.name || targetUser.account}`, container, { width: "340px" });
+    updatePreview();
+    modal = globalModal.openModal(t('tip.dialog_title', { name: targetUser.name || target }), container, { width: "340px" });
+    loading = false;
+    return modal;
 }

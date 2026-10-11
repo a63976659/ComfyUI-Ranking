@@ -1,5 +1,5 @@
 // 前端页面/profile/个人中心视图.js
-import { api } from "../core/网络请求API.js";
+import { api, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
 import { openChatModal } from "../social/私信聊天组件.js";
 import { createSettingsForm } from "./个人设置表单组件.js";
 import { renderProfileListContent } from "./个人列表组件.js";
@@ -9,99 +9,72 @@ import { t } from "../components/用户体验增强.js";
 // 资金模块 (充值/提现)
 // ==========================================
 import { openRechargeModal } from "../market/资金与钱包_充值组件.js";
-import { openWithdrawModal } from "../market/资金与钱包_提现组件.js"; 
-import { buildProfileHTML } from "./个人中心_UI模板.js";   
-import { openTipModal } from "./个人中心_赞赏组件.js";     
-import { getBannerCacheKey, getCurrentAccount, IS_WEB_MODE } from "../core/全局配置.js";
-import { logoutAndClearUserData } from "../core/状态管理.js";
+import { openWithdrawModal } from "../market/资金与钱包_提现组件.js";
+import { buildProfileHTML } from "./个人中心_UI模板.js";
+import { openTipModal } from "./个人中心_赞赏组件.js";
+import { getBannerCacheKey, getCurrentAccount, IS_WEB_MODE, CACHE, UI, API, getCachedProfile, setCachedProfile } from "../core/全局配置.js";
+import { logoutAndClearUserData, eventBus, EVENTS } from "../core/状态管理.js";
 
+
+import { createTaskViewScope, subscribeTaskSessionChanges } from '../task/任务视图生命周期.js';
+import { endProfileListView } from './个人列表缓存.js';
+import { normalizeProfileData, normalizeWalletData, mergeStoredProfile } from './个人资料工具.js';
+
+let profileSequence = 0;
+let profileNavigation = 0;
+const safeGet = key => { try { return localStorage.getItem(key); } catch (_) { return null; } };
+const safeSet = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} };
+function sessionStorages() {
+    return ['localStorage', 'sessionStorage'].map(name => { try { return window[name]; } catch (_) { return null; } });
+}
 
 // ==========================================
 // 🖼️ 个人资料卡背景图云端同步
 // ==========================================
 // 作用：当本地无缓存但云端有背景图时，下载并缓存到本地
-async function syncBannerCache(account, bannerUrl) {
-    if (!bannerUrl || !account) return;
-    
-    const cacheKey = getBannerCacheKey(account);
-    const localCache = localStorage.getItem(cacheKey);
-    
-    // 本地已有缓存，无需同步
-    if (localCache) return;
-    
+async function syncBannerCache(account, bannerUrl, scope, apply) {
+    if (!bannerUrl || !scope.isCurrent() || safeGet(getBannerCacheKey(account))) return;
+    const controller = new AbortController();
+    const release = scope.addCleanup(() => controller.abort());
+    const timer = setTimeout(() => controller.abort(), API.BACKGROUND_TIMEOUT);
     try {
-        // 处理代理 URL（云端 URL 可能需要通过本地代理访问）
-        let fetchUrl = bannerUrl;
-        if (bannerUrl.startsWith('http') && !bannerUrl.includes('/community_hub/image')) {
-            // 📱 Web 模式：同源/直链可直接 fetch，无需本地代理中转
-            if (!IS_WEB_MODE) fetchUrl = `/community_hub/image?url=${encodeURIComponent(bannerUrl)}`;
-        }
-        
-        const response = await fetch(fetchUrl);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        
+        let fetchUrl;
+        const url = new URL(bannerUrl, window.location.href);
+        if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return;
+        fetchUrl = !IS_WEB_MODE && url.origin !== window.location.origin
+            ? `/community_hub/image?url=${encodeURIComponent(url.href)}` : url.href;
+        const response = await fetch(fetchUrl, { signal: controller.signal });
+        if (!response.ok || !scope.isCurrent()) return;
         const blob = await response.blob();
-        
-        // ✅ 大图不存localStorage（超过512KB的图片转Base64后会轻松超过配额）
-        if (blob.size > 512 * 1024) {
-            // 大图改用 sessionStorage 临时缓存（关闭标签页即释放），或直接使用 blob URL
-            const blobUrl = URL.createObjectURL(blob);
-            window.dispatchEvent(new CustomEvent("comfy-banner-synced", { detail: { account, blobUrl } }));
-            return;
+        if (!scope.isCurrent() || !/^image\/(png|jpeg|webp|gif)$/.test(blob.type)) return;
+        if (blob.size <= UI.PROFILE_BANNER_CACHE_BYTES) {
+            const data = await new Promise(resolve => {
+                const reader = new FileReader();
+                const off = scope.addCleanup(() => { reader.abort(); resolve(null); });
+                reader.onload = () => { off(); resolve(reader.result); };
+                reader.onerror = reader.onabort = () => { off(); resolve(null); };
+                reader.readAsDataURL(blob);
+            });
+            if (!scope.isCurrent() || typeof data !== 'string') return;
+            safeSet(getBannerCacheKey(account), data);
         }
-        
-        // 转换为 Base64 并存储（仅小图）
-        const reader = new FileReader();
-        reader.onload = () => {
-            try {
-                localStorage.setItem(cacheKey, reader.result);
-                window.dispatchEvent(new CustomEvent("comfy-banner-synced", { detail: { account } }));
-            } catch (storageErr) {
-                // 配额溢出：先清理其他用户的旧 banner 缓存后重试
-                if (storageErr.name === "QuotaExceededError") {
-                    try {
-                        const keysToRemove = [];
-                        for (let i = 0; i < localStorage.length; i++) {
-                            const key = localStorage.key(i);
-                            if (key && key.startsWith("ComfyRanking_ProfileBannerCache_") && key !== cacheKey) {
-                                keysToRemove.push(key);
-                            }
-                        }
-                        keysToRemove.forEach(k => localStorage.removeItem(k));
-                        localStorage.setItem(cacheKey, reader.result);
-                        window.dispatchEvent(new CustomEvent("comfy-banner-synced", { detail: { account } }));
-                        return;
-                    } catch (_) { /* 仍然失败，降级 */ }
-                    // 最终降级：使用 blob URL（不占 localStorage）
-                    const blobUrl = URL.createObjectURL(blob);
-                    window.dispatchEvent(new CustomEvent("comfy-banner-synced", { detail: { account, blobUrl } }));
-                }
-            }
-        };
-        reader.onerror = () => console.warn("背景图读取失败");
-        reader.readAsDataURL(blob);
-    } catch (err) {
-        console.warn(`背景图下载失败: ${err.message}`);
-    }
+        if (!scope.isCurrent()) return;
+        const blobUrl = URL.createObjectURL(blob);
+        scope.addCleanup(() => URL.revokeObjectURL(blobUrl));
+        apply(blobUrl);
+    } catch (_) { /* 背景同步失败保留当前背景，不影响资料。 */ }
+    finally { clearTimeout(timer); release(); }
 }
 
-// ==========================================
-// 🔗 公共辅助：拉取用户资料+钱包数据
-// ==========================================
-async function _fetchProfileAndWallet(account, { logErrors = false } = {}) {
-    const [profileRes, walletRes] = await Promise.all([
-        api.getUserProfile(account).catch(err => {
-            if (logErrors) console.warn(`⚠️ getUserProfile(${account}) 失败:`, err.message || err);
-            return { data: {} };
-        }),
-        api.getWallet(account).catch(err => {
-            if (logErrors) console.warn(`⚠️ getWallet(${account}) 失败:`, err.message || err);
-            return {};
-        })
-    ]);
-    const freshData = { ...profileRes.data, ...walletRes };
-    Object.keys(freshData).forEach(key => freshData[key] == null && delete freshData[key]);
-    return freshData;
+async function _fetchProfileAndWallet(account, { own = false, options = {} } = {}) {
+    const profileRequest = api.getUserProfile(account, options).then(response => {
+        if (response?.status !== 'success') throw new Error('Invalid profile response');
+        return normalizeProfileData(response.data, account, own);
+    });
+    if (!own) return profileRequest;
+    const [profile, wallet] = await Promise.allSettled([profileRequest, api.getWallet(account, options)]);
+    return { ...(profile.status === 'fulfilled' ? profile.value : {}),
+        ...(wallet.status === 'fulfilled' ? normalizeWalletData(wallet.value) : {}) };
 }
 
 /** 统一设置 Tab 按钮点击事件 */
@@ -112,37 +85,54 @@ function _setupTabButton(container, selector, tabId, onSwitch) {
 
 export function showUserProfile(initialUserData, currentUser = null, isMe = true) {
     const container = document.createElement("div");
-    Object.assign(container.style, { 
-        display: "flex", flexDirection: "column", gap: "15px", color: "#eee", 
+    Object.assign(container.style, {
+        display: "flex", flexDirection: "column", gap: "15px", color: "#eee",
         // 🔧 自适应高度：flex 填充剩余空间，内容超出时在容器内部滚动（与主界面保持一致）
         fontSize: "14px", padding: "15px", flex: "1", minHeight: "0", boxSizing: "border-box", overflowY: "auto",
         background: "var(--comfy-menu-bg)"
     });
 
     let isSettingsView = false;
-    let activeTab = localStorage.getItem(`Profile_ActiveTab_${isMe}`) || "published";
-    let userData = initialUserData;
-
-    // 🖼️ 监听背景图同步完成事件，自动刷新显示
-    const bannerSyncHandler = (e) => {
-        if (isMe && e.detail?.account === userData.account && !isSettingsView) {
-            console.log(`✨ 背景图同步完成，刷新界面`);
-            render();
-        }
+    let activeTab = safeGet(`Profile_ActiveTab_${isMe}`) || "published";
+    let userData = normalizeProfileData(initialUserData, initialUserData.account, isMe);
+    let constructing = true;
+    let renderGeneration = 0;
+    let logoutPending = false;
+    const componentId = `profile-detail-${++profileSequence}`;
+    const releaseChild = () => {
+        const list = container.querySelector('#profile-list-container');
+        if (list) endProfileListView(list);
+        container.querySelector('.ranking-settings-form')?._cleanup?.();
     };
-    window.addEventListener("comfy-banner-synced", bannerSyncHandler);
-    
-    // 组件销毁时移除事件监听
-    const observer = new MutationObserver(() => {
-        if (!document.body.contains(container)) {
-            window.removeEventListener("comfy-banner-synced", bannerSyncHandler);
-            observer.disconnect();
+    const scope = createTaskViewScope({
+        sessionMatches: captureRequestSession(), connected: () => constructing || container.isConnected,
+        subscribe: notify => subscribeTaskSessionChanges(notify, { target: window, eventBus, events: EVENTS,
+            userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN }),
+        cancelReads: () => requestCancelManager.cancelAll(componentId),
+        invalidate: () => {
+            releaseChild(); userData = { account: initialUserData.account };
+            container.replaceChildren();
+            const back = document.createElement('button'); back.type = 'button';
+            back.className = 'about-back'; back.textContent = t('common.back');
+            back.onclick = () => window.dispatchEvent(new CustomEvent('comfy-route-back'));
+            const status = document.createElement('div'); status.setAttribute('role', 'status');
+            status.textContent = t('auth.session_changed'); container.append(back, status);
         }
     });
+    container._profileScope = scope;
+    container._profileReadOptions = { componentId, timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES };
+    container._cleanup = () => { releaseChild(); scope.dispose(); container.replaceChildren(); };
+    // 独立挂载者也能释放；正常侧栏路由在移除前调用 _cleanup。
+    const observer = new MutationObserver(() => { if (!container.isConnected) container._cleanup(); });
     observer.observe(document.body, { childList: true, subtree: true });
+    scope.addCleanup(() => { observer.disconnect(); releaseChild(); });
 
     function render() {
-        container.innerHTML = ""; 
+        if (!scope.isCurrent()) return;
+        releaseChild();
+        const generation = ++renderGeneration;
+        const current = () => scope.isCurrent() && renderGeneration === generation;
+        container.innerHTML = "";
 
         let isFollowing = false;
         if (currentUser && userData.followers) { isFollowing = userData.followers.includes(currentUser.account); }
@@ -169,13 +159,15 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
         if (isSettingsView && isMe) {
             const settingsContainer = createSettingsForm(
                 userData,
-                () => { isSettingsView = false; render(); }, 
-                (newUserData) => { 
-                    userData = newUserData;
+                () => { if (!current()) return; isSettingsView = false; render(); },
+                (newUserData) => {
+                    if (!current()) return;
+                    userData = normalizeProfileData(newUserData, userData.account, true);
                     if (container.updateData) container.updateData(userData);
                     isSettingsView = false;
                     render();
-                }
+                },
+                { isCurrent: current }
             );
             container.appendChild(settingsContainer);
             container.querySelector("#btn-back-profile").onclick = () => { isSettingsView = false; render(); };
@@ -184,81 +176,100 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
 
             if (isMe) {
                 container.querySelector("#btn-wallet").onclick = () => {
-                    openRechargeModal(currentUser, (newBalance) => { userData.balance = newBalance; render(); });
+                    if (!current()) return;
+                    openRechargeModal(currentUser, (newBalance) => { if (!current()) return; userData.balance = newBalance; render(); });
                 };
                 container.querySelector("#btn-withdraw").onclick = async () => {
+                    if (!current()) return;
+                    const button = container.querySelector('#btn-withdraw');
+                    if (button.disabled) return;
+                    button.disabled = true;
                     // 点击提现按钮前先刷新钱包数据
                     try {
-                        const freshWallet = await api.getWallet(currentUser.account);
-                        Object.assign(currentUser, freshWallet);
+                        const freshWallet = await api.getWallet(currentUser.account, { componentId });
+                        if (!current()) return;
+                        Object.assign(currentUser, normalizeWalletData(freshWallet));
                     } catch (err) {
-                        console.warn("刷新钱包数据失败:", err);
+                        if (!current()) return;
+                        console.warn("刷新钱包数据失败");
                     }
-                    openWithdrawModal(currentUser, async () => { 
+                    if (!current()) return;
+                    button.disabled = false;
+                    openWithdrawModal(currentUser, async () => {
+                        if (!current()) return;
                         // 提现成功后重新拉取用户数据刷新余额
                         try {
-                            const walletRes = await api.getWallet(currentUser.account);
+                            const walletResponse = await api.getWallet(currentUser.account, { componentId });
+                            if (!current()) return;
+                            const walletRes = normalizeWalletData(walletResponse);
                             userData.balance = walletRes.balance ?? userData.balance;
                             userData.earn_balance = walletRes.earn_balance ?? userData.earn_balance;
                             userData.tip_balance = walletRes.tip_balance ?? userData.tip_balance;
                             userData.total_withdrawn = walletRes.total_withdrawn ?? userData.total_withdrawn;
                         } catch (err) {
-                            console.warn("提现后刷新钱包数据失败:", err);
+                            if (!current()) return;
+                            console.warn("提现后刷新钱包数据失败");
                         }
-                        render(); 
+                        render();
                     });
                 };
 
                 container.querySelector("#btn-open-settings").onclick = () => { isSettingsView = true; render(); };
                 container.querySelector("#btn-logout").onclick = async () => {
-                    if (await showConfirm(t('confirm.logout'))) {
-                        // 获取当前账号（清除前获取）
-                        const currentAccount = getCurrentAccount();
-
-                        // 1. 完整清理：账号级 Profile 缓存、私有数据缓存、全量数据缓存、
-                        //    内存敏感数据与 Token/User/版本戳（与 401 强制登出共用同一函数）
+                    if (!current() || logoutPending) return;
+                    const currentAccount = getCurrentAccount();
+                    logoutPending = true;
+                    try {
+                        if (!await showConfirm(t('confirm.logout')) || !scope.isCurrent()
+                            || getCurrentAccount() !== currentAccount) return;
                         logoutAndClearUserData(currentAccount);
-
-                        // 2. 触发事件
                         window.dispatchEvent(new CustomEvent("comfy-route-back"));
                         window.dispatchEvent(new CustomEvent("comfy-user-logout"));
                         showToast(t('feedback.logged_out'), "info");
+                    } finally {
+                        logoutPending = false;
                     }
                 };
             } else {
                 const btnTip = container.querySelector("#btn-tip-user");
                 if (btnTip) {
                     btnTip.onclick = async () => {
+                        if (!current()) return;
                         if (!currentUser) return showToast(t('feedback.login_required_tip'), "warning");
                         await openTipModal(currentUser, userData, (newBalance) => {
+                            if (!current()) return;
                             currentUser.balance = newBalance;
-                            openOtherUserProfileModal(userData.account, currentUser); 
-                        });
+                            openOtherUserProfileModal(userData.account, currentUser);
+                        }, null, { isCurrent: current });
                     };
                 }
 
                 const btnFollow = container.querySelector("#btn-follow-user");
                 if (btnFollow) {
                     btnFollow.onclick = async () => {
+                        if (!current()) return;
                         if (!currentUser) return showToast(t('feedback.login_required'), "warning");
                         btnFollow.innerHTML = `⏳ ${t('common.processing')}...`; btnFollow.disabled = true;
                         try {
                             const newStatus = !isFollowing;
-                            await api.toggleFollow(currentUser.account, userData.account, newStatus);
+                            const response = await api.toggleFollow(currentUser.account, userData.account, newStatus);
+                            if (!current()) return;
+                            if (response?.status !== 'success') throw new Error('Invalid follow response');
                             isFollowing = newStatus;
-                            
+
                             if (!userData.followers) userData.followers = [];
-                            if (isFollowing) { if (!userData.followers.includes(currentUser.account)) userData.followers.push(currentUser.account); } 
+                            if (isFollowing) { if (!userData.followers.includes(currentUser.account)) userData.followers.push(currentUser.account); }
                             else { userData.followers = userData.followers.filter(a => a !== currentUser.account); }
-                            render(); 
-                        } catch (err) { showToast(t('feedback.operation_failed') + err.message, "error"); btnFollow.innerHTML = isFollowing ? `✔️ ${t('social.followed')}` : `➕ ${t('social.follow')}`; } 
-                        finally { btnFollow.disabled = false; }
+                            render();
+                        } catch (_) { if (!current()) return; showToast(t('feedback.operation_failed'), "error"); btnFollow.innerHTML = isFollowing ? `✔️ ${t('social.followed')}` : `➕ ${t('social.follow')}`; }
+                        finally { if (current()) btnFollow.disabled = false; }
                     };
                 }
 
                 const btnSendMsg = container.querySelector("#btn-send-msg");
                 if (btnSendMsg) {
                     btnSendMsg.onclick = () => {
+                        if (!current()) return;
                         if (!currentUser) return showToast(t('feedback.login_required'), "warning");
                         openChatModal(currentUser, userData.account);
                     };
@@ -267,92 +278,93 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
 
             container.querySelectorAll(".profile-tab-btn").forEach(btn => {
                 btn.onclick = (e) => {
-                    activeTab = e.target.getAttribute("data-id");
-                    localStorage.setItem(`Profile_ActiveTab_${isMe}`, activeTab); 
+                    if (!current()) return;
+                    activeTab = e.currentTarget.getAttribute("data-id");
+                    safeSet(`Profile_ActiveTab_${isMe}`, activeTab);
                     render();
                 };
             });
 
             // 粉丝/关注数点击跳转对应列表
-            const _switchTab = (tabId) => { activeTab = tabId; localStorage.setItem(`Profile_ActiveTab_${isMe}`, tabId); render(); };
+            const _switchTab = (tabId) => { if (!current()) return; activeTab = tabId; safeSet(`Profile_ActiveTab_${isMe}`, tabId); render(); };
             _setupTabButton(container, "#btn-followers", "followers", _switchTab);
             _setupTabButton(container, "#btn-following", "following", _switchTab);
 
             const listDOM = container.querySelector("#profile-list-container");
+            listDOM._profileSessionCurrent = current;
+            listDOM._profileAddCleanup = cleanup => scope.addCleanup(cleanup);
             renderProfileListContent(activeTab, listDOM, userData, currentUser, openOtherUserProfileModal);
         }
     }
 
     container.updateData = function(newUserData) {
-        const safeNewData = { ...newUserData };
+        if (!scope.isCurrent() || !newUserData || typeof newUserData !== 'object' || Array.isArray(newUserData)) return;
+        const safeNewData = normalizeProfileData({ ...userData, ...newUserData }, userData.account, isMe);
         Object.keys(safeNewData).forEach(key => safeNewData[key] == null && delete safeNewData[key]);
         const mergedData = { ...userData, ...safeNewData };
-        if (JSON.stringify(userData) !== JSON.stringify(mergedData)) { 
-            userData = mergedData; 
-            if (!isSettingsView) { render(); } 
+        if (JSON.stringify(userData) !== JSON.stringify(mergedData)) {
+            userData = mergedData;
+            if (!isSettingsView) { render(); }
         }
     };
 
     render();
+    constructing = false;
     return container;
 }
 
 export function openUserProfileModal(userData) {
+    ++profileNavigation;
     const view = showUserProfile(userData, userData, true);
     window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-
-    // 同步拉取云端 JSON 资料表与 SQL 金融账本
-    _fetchProfileAndWallet(userData.account).then(freshData => {
-        const storage = localStorage.getItem("ComfyCommunity_User") ? localStorage : sessionStorage;
-        try {
-            const savedStr = storage.getItem("ComfyCommunity_User");
-            if (savedStr) {
-                const savedObj = JSON.parse(savedStr);
-                savedObj.user = { ...savedObj.user, ...freshData };
-                storage.setItem("ComfyCommunity_User", JSON.stringify(savedObj));
-            }
-        } catch(e){}
-        
-        // 🖼️ 同步个人资料卡背景图：云端有但本地无缓存时自动下载
-        if (freshData.bannerUrl) {
-            syncBannerCache(userData.account, freshData.bannerUrl);
-        }
-        
-        // 立即更新界面，显示云端背景图（通过代理 URL）
-        if (view.updateData) view.updateData(freshData);
-    }).catch(err => console.warn("后台更新本人资料失败", err));
+    _fetchProfileAndWallet(userData.account, { own: true, options: view._profileReadOptions }).then(freshData => {
+        if (!view._profileScope.isCurrent()) return;
+        mergeStoredProfile(userData.account, freshData, sessionStorages(), CACHE.LEGACY_KEYS.USER);
+        view.updateData(freshData);
+        if (freshData.bannerUrl) syncBannerCache(userData.account, freshData.bannerUrl, view._profileScope,
+            blobUrl => view.updateData({ bannerUrl: blobUrl }));
+    }).catch(() => { if (view._profileScope.isCurrent()) console.warn('后台更新本人资料失败'); });
 }
 
 export async function openOtherUserProfileModal(targetAccount, currentUser) {
-    if (currentUser && currentUser.account === targetAccount) { return openUserProfileModal(currentUser); }
-    
-    const cacheKey = `ComfyCommunity_ProfileCache_${targetAccount}`;
-    const cachedStr = localStorage.getItem(cacheKey);
+    if (currentUser && currentUser.account === targetAccount) return openUserProfileModal(currentUser);
+    const generation = ++profileNavigation;
+    const sessionMatches = captureRequestSession();
+    const componentId = `profile-open-${++profileSequence}`;
     let activeContainer = null;
-
-    if (cachedStr) {
+    const cached = getCachedProfile(targetAccount);
+    if (cached) {
         try {
-            const cachedData = JSON.parse(cachedStr);
-            activeContainer = showUserProfile(cachedData, currentUser, false);
-            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: activeContainer } }));
-        } catch (e) {}
+            activeContainer = showUserProfile({ ...cached, account: targetAccount }, currentUser, false);
+            window.dispatchEvent(new CustomEvent('comfy-route-view', { detail: { view: activeContainer } }));
+        } catch (_) {}
     }
-
+    let obsolete = false;
+    const cancel = () => { obsolete = true; requestCancelManager.cancelAll(componentId); };
+    const onRouteView = event => { if (event.detail?.view !== activeContainer) cancel(); };
+    window.addEventListener('comfy-route-back', cancel);
+    window.addEventListener('comfy-route-view', onRouteView);
+    const unsubscribe = subscribeTaskSessionChanges(force => { if (force || !sessionMatches()) cancel(); }, {
+        target: window, eventBus, events: EVENTS, userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN
+    });
+    const current = () => !obsolete && generation === profileNavigation && sessionMatches()
+        && (!activeContainer || activeContainer._profileScope.isCurrent());
     try {
-        const freshData = await _fetchProfileAndWallet(targetAccount, { logErrors: true });
-        
-        // 如果 getUserProfile 失败（data 为空），用 targetAccount 兜底确保能渲染
-        if (!freshData.account) freshData.account = targetAccount;
-        
-        try { localStorage.setItem(cacheKey, JSON.stringify(freshData)); } catch(e) { /* localStorage 满时忽略 */ }
-        
-        if (activeContainer) { if (activeContainer.updateData) activeContainer.updateData(freshData); } 
+        const freshData = await _fetchProfileAndWallet(targetAccount, {
+            options: activeContainer?._profileReadOptions || { componentId }
+        });
+        if (!current()) return;
+        setCachedProfile(targetAccount, freshData);
+        if (activeContainer) activeContainer.updateData(freshData);
         else {
-            const profileElement = showUserProfile(freshData, currentUser, false);
-            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: profileElement } }));
+            activeContainer = showUserProfile(freshData, currentUser, false);
+            window.dispatchEvent(new CustomEvent('comfy-route-view', { detail: { view: activeContainer } }));
         }
-    } catch (err) {
-        console.error(`❌ openOtherUserProfileModal(${targetAccount}) 异常:`, err);
-        if (!activeContainer) showToast(t('feedback.user_fetch_failed'), "error");
+    } catch (_) {
+        if (current() && !activeContainer) showToast(t('feedback.user_fetch_failed'), 'error');
+    } finally {
+        unsubscribe();
+        window.removeEventListener('comfy-route-back', cancel);
+        window.removeEventListener('comfy-route-view', onRouteView);
     }
 }

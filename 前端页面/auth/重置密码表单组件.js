@@ -1,29 +1,30 @@
+import { createAuthFormScope } from "./认证表单生命周期.js";
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 
-const INPUT_STYLE = 'width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;';
-
 export function renderResetForm(container, switchView, onSuccessCallback, prefill = null) {
     container.innerHTML = `
-        <div style="margin-bottom: 10px;"><label style="display: block; margin-bottom: 5px;">${t('auth.current_account')} <span style="color: #F44336;">*</span></label><input type="text" id="reset-account" placeholder="${t('auth.enter_account')}" style="${INPUT_STYLE}"></div>
-        
-        <div style="margin-bottom: 10px; padding: 10px; background: rgba(33, 150, 243, 0.1); border: 1px dashed #2196F3; border-radius: 4px;">
-            <label style="display: block; margin-bottom: 5px; color: #2196F3; font-weight: bold;">${t('auth.security_verify')} (${t('auth.bound_email')}) <span style="color: #F44336;">*</span></label>
-            <div style="display: flex; gap: 8px;">
-                <input type="text" id="reset-verify" placeholder="${t('auth.enter_bound_email')}" style="flex: 1; padding: 8px; background: #222; border: 1px solid #2196F3; color: #fff; border-radius: 4px; box-sizing: border-box;">
-                <button id="btn-send-code" style="padding: 0 15px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; white-space: nowrap; transition: 0.2s;">${t('auth.get_code')}</button>
-            </div>
-            <input type="text" id="reset-code" placeholder="${t('auth.enter_6_digit_code')}" maxlength="6" style="width: 100%; margin-top: 10px; padding: 8px; background: #222; border: 1px dashed #2196F3; color: #fff; border-radius: 4px; box-sizing: border-box;">
+        <div class="auth-form">
+            <div class="auth-form__field"><label for="reset-account">${t('auth.current_account')} <span class="auth-form__required" aria-hidden="true">*</span></label><input type="text" id="reset-account" class="auth-form__input" name="username" autocomplete="username" required></div>
+            <fieldset class="auth-form__security">
+                <legend>${t('auth.security_verify')}</legend>
+                <label for="reset-verify">${t('auth.bound_email')} <span class="auth-form__required" aria-hidden="true">*</span></label>
+                <div class="auth-form__code-row">
+                    <input type="email" id="reset-verify" name="email" autocomplete="email" required placeholder="${t('auth.enter_bound_email')}" class="auth-form__input">
+                    <button type="button" id="btn-send-code" class="auth-form__button">${t('auth.get_code')}</button>
+                </div>
+                <label for="reset-code">${t('auth.verification_code')} <span class="auth-form__required" aria-hidden="true">*</span></label>
+                <input type="text" id="reset-code" name="verification-code" autocomplete="one-time-code" inputmode="numeric" required placeholder="${t('auth.enter_6_digit_code')}" maxlength="6" class="auth-form__input">
+            </fieldset>
+            <div class="auth-form__field"><label for="reset-old-password">${t('auth.old_password')} (${t('auth.old_password_tip')})</label><input type="password" id="reset-old-password" class="auth-form__input" name="old-password" autocomplete="current-password" placeholder="${t('auth.old_password_placeholder')}"></div>
+            <div class="auth-form__field"><label for="reset-new-password">${t('auth.new_password')} (≥6${t('common.chars')}) <span class="auth-form__required" aria-hidden="true">*</span></label><input type="password" id="reset-new-password" class="auth-form__input" name="new-password" autocomplete="new-password" required></div>
+            <div class="auth-form__field"><label for="reset-confirm-password">${t('auth.confirm_new_password')} <span class="auth-form__required" aria-hidden="true">*</span></label><input type="password" id="reset-confirm-password" class="auth-form__input" name="confirm-password" autocomplete="new-password" required></div>
+            <button type="button" id="btn-submit-reset" class="auth-form__button auth-form__primary">${t('auth.change_password')}</button>
+            <div class="auth-form__footer"><button type="button" id="toggle-to-login" class="auth-form__link">${t('auth.back_to_login')}</button></div>
         </div>
-
-        <div style="margin-bottom: 10px;"><label style="display: block; margin-bottom: 5px;">${t('auth.old_password')} (${t('auth.old_password_tip')}) </label><input type="password" id="reset-old-password" placeholder="${t('auth.old_password_placeholder')}" style="${INPUT_STYLE}"></div>
-        <div style="margin-bottom: 10px;"><label style="display: block; margin-bottom: 5px;">${t('auth.new_password')} (≥6${t('common.chars')}) <span style="color: #F44336;">*</span></label><input type="password" id="reset-new-password" style="${INPUT_STYLE}"></div>
-        <div style="margin-bottom: 15px;"><label style="display: block; margin-bottom: 5px;">${t('auth.confirm_new_password')} <span style="color: #F44336;">*</span></label><input type="password" id="reset-confirm-password" style="${INPUT_STYLE}"></div>
-        
-        <button id="btn-submit-reset" style="width: 100%; padding: 10px; background: #FF9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px;">${t('auth.change_password')}</button>
-        <div style="text-align: center; font-size: 12px;"><a href="#" id="toggle-to-login" style="color: #2196F3; text-decoration: none;">${t('auth.back_to_login')}</a></div>
     `;
+    const formScope = createAuthFormScope(container);
 
     container.querySelector("#toggle-to-login").onclick = (e) => { e.preventDefault(); switchView("login"); };
 
@@ -33,7 +34,7 @@ export function renderResetForm(container, switchView, onSuccessCallback, prefil
         if (prefill.email) container.querySelector("#reset-verify").value = prefill.email;
     }
     
-    function startCountdown(btn, duration, resetColor) {
+    function startCountdown(btn, duration) {
         let timeLeft = duration;
         btn.innerText = `${timeLeft}s ${t('auth.resend')}`;
         const timer = setInterval(() => {
@@ -41,7 +42,6 @@ export function renderResetForm(container, switchView, onSuccessCallback, prefil
             if (timeLeft <= 0) {
                 clearInterval(timer);
                 btn.disabled = false;
-                btn.style.background = resetColor;
                 btn.innerText = t('auth.get_code');
             } else {
                 btn.innerText = `${timeLeft}s ${t('auth.resend')}`;
@@ -55,10 +55,11 @@ export function renderResetForm(container, switchView, onSuccessCallback, prefil
     let countdownTimer = null;
 
     // 🔧 注册清理函数：视图切换时清除倒计时定时器，防止内存泄漏
-    container._onCleanup = () => { if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } };
+    formScope.addCleanup(() => { clearInterval(countdownTimer); countdownTimer = null; });
     
     btnSendCode.onclick = async (e) => {
         e.preventDefault();
+        if (!formScope.current() || btnSendCode.disabled) return;
         
         // 先抓取上方输入的账号，没填就不让发验证码
         const accountInput = container.querySelector("#reset-account").value.trim();
@@ -72,20 +73,21 @@ export function renderResetForm(container, switchView, onSuccessCallback, prefil
         const contactType = "email";
         
         btnSendCode.disabled = true;
-        btnSendCode.style.background = "#555";
         btnSendCode.innerText = t('auth.sending');
         
         try {
-            await api.sendVerifyCode(verifyInput, contactType, "reset", accountInput);
+            const response = await api.sendVerifyCode(verifyInput, contactType, "reset", accountInput);
+            if (!formScope.current()) return;
+            if (response?.status !== 'success') throw new Error('Invalid verification response');
             
             showToast(t('auth.code_sent'), "success");
             
-            countdownTimer = startCountdown(btnSendCode, 60, "#2196F3");
+            countdownTimer = startCountdown(btnSendCode, 60);
             
         } catch (err) {
-            showToast(err.message || t('feedback.error'), "error");
+            if (!formScope.current()) return;
+            showToast(t('feedback.error'), "error");
             btnSendCode.disabled = false;
-            btnSendCode.style.background = "#2196F3";
             btnSendCode.innerText = t('auth.get_code');
         }
     };

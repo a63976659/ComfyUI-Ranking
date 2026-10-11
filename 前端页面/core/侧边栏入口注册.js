@@ -15,58 +15,137 @@ let pendingLanguageRefresh = false;
 /**
  * 动态加载侧边栏功能模块并构建 DOM
  */
-async function ensureSidebarDOM() {
+async function ensureSidebarDOM(isCurrent = () => true) {
     const { buildSidebarDOM } = await import('./侧边栏主程序.js');
-    return buildSidebarDOM();
+    return isCurrent() ? buildSidebarDOM() : null;
 }
 
 app.registerExtension({
     name: "Comfy.CommunityLeaderboardSidebar",
     async setup(app) {
+        const { t, initI18n } = await import('../components/用户体验_国际化.js');
+        initI18n();
+        let registeredTab = null;
+        let initialSidebarLoad = null;
+        let renderRevision = 0;
+        let renderOwnerCurrent = () => false;
+        let languageRevision = 0;
+        let refreshTimer = null;
+        let refreshInProgress = false;
+        let refreshQueued = null;
+        const queueLanguageRefresh = request => {
+            if (refreshInProgress) {
+                refreshQueued = request;
+                return;
+            }
+            if (refreshTimer !== null) clearTimeout(refreshTimer);
+            const { target, previous, revision, navigationCurrent } = request;
+            refreshTimer = setTimeout(async () => {
+                refreshTimer = null;
+                refreshInProgress = true;
+                refreshQueued = null;
+                const isOwnerCurrent = () => pendingLanguageRefresh && revision === languageRevision
+                    && target === globalSidebarContainer && previous === globalSidebarDOM
+                    && target.isConnected && target.contains(previous);
+                const isCurrent = () => isOwnerCurrent() && navigationCurrent();
+                try {
+                    if (!isCurrent()) return;
+                    const next = await ensureSidebarDOM(isCurrent);
+                    if (!next || !isOwnerCurrent()) return;
+                    globalSidebarDOM = next;
+                    bindLanguageRefresh(next);
+                    target.replaceChildren(next);
+                    pendingLanguageRefresh = false;
+                } catch {
+                    if (isOwnerCurrent()) console.error('Sidebar language refresh failed');
+                } finally {
+                    refreshInProgress = false;
+                    const queued = refreshQueued;
+                    refreshQueued = null;
+                    if (queued && pendingLanguageRefresh) queueLanguageRefresh(queued);
+                }
+            }, 50);
+        };
+        const scheduleLanguageRefresh = () => {
+            if (!pendingLanguageRefresh || !globalSidebarContainer) return;
+            const previous = globalSidebarDOM;
+            queueLanguageRefresh({
+                target: globalSidebarContainer,
+                previous,
+                revision: languageRevision,
+                navigationCurrent: previous?._captureListNavigation?.() ?? (() => true)
+            });
+        };
+        const bindLanguageRefresh = root => {
+            root._onListReturn = () => {
+                if (root === globalSidebarDOM) scheduleLanguageRefresh();
+            };
+        };
         // 语言切换事件 - 标记需要刷新
         document.addEventListener('comfy-language-change', () => {
             pendingLanguageRefresh = true;
+            languageRevision++;
+            if (registeredTab) {
+                const title = t('nav.community');
+                const tabs = app.extensionManager?.getSidebarTabs?.();
+                const currentTab = Array.isArray(tabs)
+                    ? tabs.find(tab => tab.id === registeredTab.id) : null;
+                if (currentTab) currentTab.title = title;
+                registeredTab.title = title;
+            }
         });
         
         // 返回主界面时，如果有语言切换则刷新
-        window.addEventListener('comfy-route-back', async () => {
-            if (pendingLanguageRefresh && globalSidebarContainer) {
-                pendingLanguageRefresh = false;
-                setTimeout(async () => {
-                    try {
-                        globalSidebarDOM = await ensureSidebarDOM();
-                        globalSidebarContainer.innerHTML = '';
-                        globalSidebarContainer.appendChild(globalSidebarDOM);
-                    } catch (e) {
-                        console.error('侧边栏刷新失败:', e);
-                    }
-                }, 50);
-            }
-        });
+        window.addEventListener('comfy-route-back', scheduleLanguageRefresh);
 
         // 注册侧边栏 Tab
         if (app.extensionManager && app.extensionManager.registerSidebarTab) {
-            app.extensionManager.registerSidebarTab({
+            registeredTab = {
                 id: "comfyui-ranking-sidebar",
                 order: 20, // 侧边栏排序规则：数字小的排前面（由 NodeCraft AI 的侧边栏排序器统一排序）
-                title: "社区精选",
+                title: t('nav.community'),
                 icon: "pi pi-trophy",
                 type: "custom",
                 render: async (container) => {
-                    
+                    const revision = ++renderRevision;
+                    const connectedAtStart = container.isConnected;
                     globalSidebarContainer = container;
+                    const isCurrent = () => {
+                        const sidebar = app.extensionManager?.sidebarTab;
+                        const activeId = (sidebar?.value ?? sidebar)?.activeSidebarTabId;
+                        return revision === renderRevision && container === globalSidebarContainer
+                            && (!connectedAtStart || container.isConnected)
+                            && (!activeId || activeId === registeredTab.id);
+                    };
+                    renderOwnerCurrent = isCurrent;
+                    if (!isCurrent()) return;
                     try {
                         if (!globalSidebarDOM) {
-                            globalSidebarDOM = await ensureSidebarDOM();
+                            if (!initialSidebarLoad) {
+                                initialSidebarLoad = ensureSidebarDOM(() => renderOwnerCurrent())
+                                    .then(root => {
+                                        if (root) globalSidebarDOM = root;
+                                    })
+                                    .finally(() => { initialSidebarLoad = null; });
+                            }
+                            await initialSidebarLoad;
                         }
+                        if (!isCurrent() || !globalSidebarDOM) return;
+                        bindLanguageRefresh(globalSidebarDOM);
                         container.innerHTML = '';
                         container.appendChild(globalSidebarDOM);
-                    } catch (e) {
-                        console.error('侧边栏功能加载失败:', e);
-                        container.innerHTML = '<div style="text-align:center; padding:40px; color:#F44336;">⚠️ 加载失败，请刷新重试</div>';
+                    } catch {
+                        if (!isCurrent()) return;
+                        console.error('侧边栏功能加载失败');
+                        const failure = document.createElement("div");
+                        failure.setAttribute("role", "alert");
+                        failure.style.cssText = "text-align:center; padding:40px; color:#F44336;";
+                        failure.textContent = `⚠️ ${t('common.sidebar_load_failed')}`;
+                        container.replaceChildren(failure);
                     }
                 }
-            });
+            };
+            app.extensionManager.registerSidebarTab(registeredTab);
         }
     }
 });

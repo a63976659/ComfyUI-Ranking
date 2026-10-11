@@ -9,6 +9,14 @@
 
 import { request } from "./网络请求_基础设施.js";
 import { API } from "./全局配置.js";
+import { t } from "../components/用户体验_国际化.js";
+import { removeCache } from "./网络请求_缓存管理.js";
+
+function publicationHeaders(options) {
+    if (options?.publicationId === undefined) return undefined;
+    if (typeof options.publicationId !== 'string' || !/^[0-9a-f]{32}$/.test(options.publicationId)) throw new Error('Invalid publication identity');
+    return { 'Idempotency-Key': options.publicationId };
+}
 
 // ============== 业务 API 导出 ==============
 const api = {
@@ -42,35 +50,35 @@ const api = {
 
         // 4. 🚨 终极拦截门：如果到了这一步数据还是没找齐，直接弹窗指认"内鬼"！
         if (!payload.account || !payload.new_password || !payload.verifyContact || !payload.code) {
-            const errorStr = JSON.stringify(payload, null, 2);
-            console.warn(`🚨 发现前端传参严重丢失！系统拼命搜刮后只拿到了这些数据: ${errorStr} 请立即检查【顶部导航组件.js】的第 82 行！必须把完整的表单数据传给 API，例如: api.resetPassword({account, password, email, code})`);
-            throw new Error("被前端参数拦截装甲阻断：数据不完整");
+            console.warn("密码重置请求缺少必要字段");
+            throw new Error(t('auth.form_data_incomplete'));
         }
 
         return request("/api/users/reset_password", { method: "POST", body: payload }); 
     },
 
-    async getUserProfile(account) { return request(`/api/users/${account}`); },
+    async getUserProfile(account, options = {}) { return request(`/api/users/${account}`, options); },
     async updateUserProfile(account, data) { return request(`/api/users/${account}`, { method: "PUT", body: data }); },
+    async updateUserSettings(account, data) { return request(`/api/users/${account}/settings`, { method: "PUT", body: data }); },
     async updatePrivacy(account, privacy) { return request(`/api/users/${account}/privacy`, { method: "PUT", body: privacy }); },
     async toggleFollow(userId, targetAccount, isActive) { return request("/api/users/follow", { method: "POST", body: { user_id: userId, target_account: targetAccount, is_active: isActive } }); },
-    async getCreators(sort, limit) { return request(`/api/creators?sort=${sort}&limit=${limit}`); },
+    async getCreators(sort, limit, options = {}) { return request(`/api/creators?sort=${sort}&limit=${limit}`, options); },
     // 🔍 带上取消分组 ID：用户继续输入时，上一次仍在途的搜索请求可被 requestCancelManager 撤销，
     // 不再占用并发额度与超时预算（调用时机见 侧边栏数据引擎.js 的创作者搜索分支）
-    async searchCreators(keyword, sort, limit = 50) { return request(`/api/creators/search?keyword=${encodeURIComponent(keyword)}&sort=${sort}&limit=${limit}`, { componentId: API.SEARCH_COMPONENT_ID }); },
-    async getCreatorDetails(account) { return request(`/api/creators/${account}/details`); },
+    async searchCreators(keyword, sort, limit = 50, options = {}) { return request(`/api/creators/search?keyword=${encodeURIComponent(keyword)}&sort=${sort}&limit=${limit}`, { componentId: API.SEARCH_COMPONENT_ID, ...options }); },
+    async getCreatorDetails(account, options = {}) { return request(`/api/creators/${account}/details`, options); },
     async uploadFile(file, fileType, timeout = 120000) {
         const formData = new FormData();
         formData.append("file", file);
         formData.append("file_type", fileType);
-        return request("/api/upload", { method: "POST", body: formData, timeout, retries: 2 });
+        return request("/api/upload", { method: "POST", body: formData, timeout, retries: 0 });
     },
     async publishItem(data) { return request("/api/items", { method: "POST", body: data }); },
     // NOTE: author 未 encodeURIComponent，与 assignee/account 等编码不一致；
     // 但 account 通常为纯字母数字，不影响功能，暂不改动以避免破坏线上缓存匹配
     async updateItem(itemId, author, data) { return request(`/api/items/${itemId}?author=${author}`, { method: "PUT", body: data }); },
-    async getItems(type, sort, limit) { return request(`/api/items?type=${type}&sort=${sort}&limit=${limit}`); },
-    async getItemById(itemId) { return request(`/api/items/${itemId}`); },
+    async getItems(type, sort, limit, options = {}) { return request(`/api/items?type=${type}&sort=${sort}&limit=${limit}`, options); },
+    async getItemById(itemId, options = {}) { return request(`/api/items/${itemId}`, options); },
     async deleteItem(itemId) { return request(`/api/items/${itemId}`, { method: "DELETE" }); },
     async recordItemUse(itemId) { return request(`/api/items/${itemId}/use`, { method: "POST" }); },
     async recordItemView(itemId) { return request(`/api/items/${itemId}/view`, { method: "POST" }); },
@@ -93,13 +101,18 @@ const api = {
     async toggleInteraction(itemId, userId, actionType, isActive) { return request("/api/interactions/toggle", { method: "POST", body: { item_id: itemId, user_id: userId, action_type: actionType, is_active: isActive } }); },
     async postComment(itemId, author, content, replyTo = null, parentId = null) { return request("/api/comments", { method: "POST", body: { item_id: itemId, author, content, reply_to_user: replyTo, parent_id: parentId } }); },
     async deleteComment(itemId, commentId) { return request(`/api/comments/${itemId}/${commentId}`, { method: "DELETE" }); },
-    async getMessages(account) { return request(`/api/messages/${account}`); },
+    async getMessages(account, options = {}) { return request(`/api/messages/${account}`, options); },
     // 🔥 新增：轻量级获取未读消息数量（不标记已读，用于轮询红点）
     async getUnreadCount(account) { return request(`/api/messages/${account}?count_only=true`); },
     async markMessagesRead(account) { return request(`/api/messages/${account}/read`, { method: "POST" }); },
-    async sendPrivateMessage(sender, receiver, content) { return request("/api/messages/private", { method: "POST", body: { sender, receiver, content } }); },
-    async getChatList(account) { return request(`/api/chats/${account}`); },
-    async getChatHistory(account, targetAccount) { return request(`/api/chats/${account}/${targetAccount}`); },
+    async sendPrivateMessage(sender, receiver, content, clientRequestId) {
+        const path = clientRequestId === undefined ? "/api/messages/private" : "/api/messages/private/idempotent";
+        const body = { sender, receiver, content };
+        if (clientRequestId !== undefined) body.client_request_id = clientRequestId;
+        return request(path, { method: "POST", body, retries: 0 });
+    },
+    async getChatList(account, options = {}) { return request(`/api/chats/${account}`, options); },
+    async getChatHistory(account, targetAccount, options = {}) { return request(`/api/chats/${account}/${targetAccount}`, options); },
     async getWallet(account, options = {}) { return request(`/api/wallet/${account}`, options); },
 
     // 🛒 获取用户购买记录（从云端 ownerships 表）
@@ -139,33 +152,35 @@ const api = {
             body: { sender_account: senderAccount, target_account: targetAccount, amount: amount, is_anonymous: isAnonymous, item_id: itemId } 
         }); 
     }, 
-    async purchaseItem(account, itemId) {
+    async purchaseItem(account, itemId, expectedPrice) {
         // 🐛 Bug修复：防御性校验，防止 itemId 为空导致请求 /purchase/undefined
         if (!itemId) {
             console.warn('⚠️ purchaseItem: itemId 为空，已拦截无效请求');
             return { success: false, error: 'itemId 不能为空' };
         }
-        return request("/api/wallet/purchase", { method: "POST", body: { account: account, item_id: itemId } });
+        const body = { account, item_id: itemId };
+        if (expectedPrice !== undefined) body.expected_price = expectedPrice;
+        return request("/api/wallet/purchase", { method: "POST", body });
     },
     async submitWithdraw(data) { return request("/api/wallet/withdraw", { method: "POST", body: data }); },
 
     // ==========================================
     // 💬 讨论区 API
     // ==========================================
-    async getPosts(page = 1, limit = 20, sort = "latest") {
-        return request(`/api/posts?page=${page}&limit=${limit}&sort=${sort}`);
+    async getPosts(page = 1, limit = 20, sort = "latest", options = {}) {
+        return request(`/api/posts?page=${page}&limit=${limit}&sort=${sort}`, options);
     },
-    async getPostDetail(postId) { 
-        return request(`/api/posts/${postId}`); 
+    async getPostDetail(postId, options = {}) {
+        return request(`/api/posts/${postId}`, options);
     },
-    async createPost(data) { 
-        return request("/api/posts", { method: "POST", body: data }); 
+    async createPost(data, options = {}) {
+        return request("/api/posts", { method: "POST", body: data, headers: publicationHeaders(options) });
     },
     async updatePost(postId, data) { 
-        return request(`/api/posts/${postId}`, { method: "PUT", body: data }); 
+        return request(`/api/posts/${postId}`, { method: "PUT", body: data });
     },
     async deletePost(postId) { 
-        return request(`/api/posts/${postId}`, { method: "DELETE" }); 
+        return request(`/api/posts/${postId}`, { method: "DELETE" });
     },
     async togglePostLike(postId) { 
         return request(`/api/posts/${postId}/like`, { method: "POST" }); 
@@ -176,8 +191,8 @@ const api = {
     async tipPost(postId, amount, isAnon = false) { 
         return request(`/api/posts/${postId}/tip?amount=${amount}&is_anon=${isAnon}`, { method: "POST" }); 
     },
-    async getPostComments(postId) { 
-        return request(`/api/posts/${postId}/comments`); 
+    async getPostComments(postId, options = {}) {
+        return request(`/api/posts/${postId}/comments`, options);
     },
     async addPostComment(postId, content) { 
         return request(`/api/posts/${postId}/comments?content=${encodeURIComponent(content)}`, { method: "POST" }); 
@@ -189,17 +204,17 @@ const api = {
     // ==========================================
     // ✨ 提示词市场 API
     // ==========================================
-    async getPrompts(promptType = null, category = null, page = 1, limit = 20, sort = "latest") {
+    async getPrompts(promptType = null, category = null, page = 1, limit = 20, sort = "latest", options = {}) {
         let url = `/api/prompts?page=${page}&limit=${limit}&sort=${sort}`;
         if (promptType) url += `&prompt_type=${promptType}`;
         if (category) url += `&category=${encodeURIComponent(category)}`;
-        return request(url);
+        return request(url, options);
     },
-    async getPromptDetail(promptId) {
-        return request(`/api/prompts/${promptId}`);
+    async getPromptDetail(promptId, options = {}) {
+        return request(`/api/prompts/${promptId}`, options);
     },
-    async createPrompt(data) {
-        return request("/api/prompts", { method: "POST", body: data });
+    async createPrompt(data, options = {}) {
+        return request("/api/prompts", { method: "POST", body: data, headers: publicationHeaders(options) });
     },
     async updatePrompt(promptId, data) {
         return request(`/api/prompts/${promptId}`, { method: "PUT", body: data });
@@ -216,8 +231,8 @@ const api = {
     async tipPrompt(promptId, amount, isAnon = false) {
         return request(`/api/prompts/${promptId}/tip?amount=${amount}&is_anon=${isAnon}`, { method: "POST" });
     },
-    async getPromptComments(promptId) {
-        return request(`/api/prompts/${promptId}/comments`);
+    async getPromptComments(promptId, options = {}) {
+        return request(`/api/prompts/${promptId}/comments`, options);
     },
     async addPromptComment(promptId, content) {
         return request(`/api/prompts/${promptId}/comments?content=${encodeURIComponent(content)}`, { method: "POST" });
@@ -225,13 +240,15 @@ const api = {
     async recordPromptView(promptId) {
         return request(`/api/prompts/${promptId}/view`, { method: "POST" });
     },
-    async purchasePrompt(promptId) {
+    async purchasePrompt(promptId, expectedPrice) {
         // 🐛 防御性校验，防止 promptId 为空导致请求 /purchase/undefined
         if (!promptId) {
             console.warn('⚠️ purchasePrompt: promptId 为空，已拦截无效请求');
             return { success: false, error: 'promptId 不能为空' };
         }
-        return request(`/api/prompts/${promptId}/purchase`, { method: "POST" });
+        const options = { method: "POST" };
+        if (expectedPrice !== undefined) options.body = { expected_price: expectedPrice };
+        return request(`/api/prompts/${promptId}/purchase`, options);
     },
     async getMyPrompts() {
         return request("/api/my-prompts");
@@ -248,13 +265,14 @@ const api = {
     // ==========================================
     // 📝 任务榜 API
     // ==========================================
-    async getTasks(page = 1, limit = 20, status = null, sort = "latest") {
+    async getTasks(page = 1, limit = 20, status = null, sort = "latest", options = {}) {
         let url = `/api/tasks?page=${page}&limit=${limit}&sort=${sort}`;
         if (status) url += `&status=${status}`;
-        return request(url);
+        return request(url, options);
     },
-    async getTaskDetail(taskId) {
-        return request(`/api/tasks/${taskId}`);
+    async getTaskDetail(taskId, options = {}) {
+        removeCache(`api_/api/tasks/${taskId}`);
+        return request(`/api/tasks/${taskId}`, { ...options, noStore: true });
     },
     async createTask(data) {
         return request("/api/tasks", { method: "POST", body: data });
@@ -307,8 +325,8 @@ const api = {
     async tipTask(taskId, amount, isAnon = false) {
         return request(`/api/tasks/${taskId}/tip?amount=${amount}&is_anon=${isAnon}`, { method: "POST" });
     },
-    async getTaskComments(taskId) {
-        return request(`/api/tasks/${taskId}/comments`);
+    async getTaskComments(taskId, options = {}) {
+        return request(`/api/tasks/${taskId}/comments`, options);
     },
     async addTaskComment(taskId, content) {
         return request(`/api/tasks/${taskId}/comments?content=${encodeURIComponent(content)}`, { method: "POST" });
@@ -317,8 +335,8 @@ const api = {
     // ==========================================
     // ⚖️ 申诉仲裁 API
     // ==========================================
-    async getDisputeDetail(disputeId) {
-        return request(`/api/disputes/${disputeId}`);
+    async getDisputeDetail(disputeId, options = {}) {
+        return request(`/api/disputes/${disputeId}`, options);
     },
     async respondDispute(disputeId, response, evidence = null) {
         return request(`/api/disputes/${disputeId}/respond`, {
@@ -330,8 +348,8 @@ const api = {
     // ==========================================
     // 🔄 P7后悔模式：退款API
     // ==========================================
-    async getPurchaseStatus(account, itemId) {
-        return request(`/api/wallet/${account}/purchase/${itemId}`);
+    async getPurchaseStatus(account, itemId, options = {}) {
+        return request(`/api/wallet/${account}/purchase/${itemId}`, options);
     },
     async requestRefund(account, itemId) {
         return request(`/api/wallet/refund?account=${encodeURIComponent(account)}&item_id=${encodeURIComponent(itemId)}`, {

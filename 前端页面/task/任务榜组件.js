@@ -15,13 +15,15 @@
 //   - 性能优化工具.js (缓存/骨架屏)
 // ==========================================
 
-import { api } from "../core/网络请求API.js";
+import { createCardNavigationScope } from "../components/卡片导航生命周期.js";
+import { api, captureRequestSession } from "../core/网络请求API.js";
+import { getTaskApplicantCount } from "./任务数据工具.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { readListCache, writeListCache, createSkeleton, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
-import { applyViewportAnimations } from "../components/动画音效引擎.js";
+import { readListCache, writeListCache, requireListResponseData, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
+import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
-import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { API, CACHE, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 缓存配置
@@ -33,6 +35,7 @@ let currentUserCache = null;
 
 // 🔧 修复内存泄漏：保存当前筛选事件监听器引用，以便在重新创建时移除
 let currentFilterHandler = null;
+let activeViewCleanup = null;
 
 // 状态筛选选项
 const STATUS_FILTERS = [
@@ -74,10 +77,10 @@ function _filterTasksByKeyword(tasks, keyword) {
  */
 function _renderNoTasksView() {
     return `
-        <div style="text-align: center; padding: 60px 20px; color: #666;">
-            <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
-            <div style="font-size: 14px; margin-bottom: 8px;">${t('task.no_tasks')}</div>
-            <div style="font-size: 12px; color: #888;">${t('task.be_first')}</div>
+        <div class="task-board__empty">
+            <div class="task-board__empty-icon">📝</div>
+            <div class="task-board__empty-title">${t('task.no_tasks')}</div>
+            <div class="task-board__empty-hint">${t('task.be_first')}</div>
         </div>
     `;
 }
@@ -86,35 +89,26 @@ function _renderNoTasksView() {
  * 📝 创建任务榜视图
  */
 export function createTasksView(currentUser, keyword = "") {
+    if (activeViewCleanup) activeViewCleanup();
     currentUserCache = currentUser;
     const searchKeyword = keyword.toLowerCase();
     
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex",
-        flexDirection: "column",
-        gap: "0",
-        color: "#ccc",
-        fontSize: "14px",
-        padding: "0",
-        overflowY: "auto",
-        flex: "1",
-        boxSizing: "border-box"
-    });
+    container.className = "task-board";
     
     container.innerHTML = `
         <!-- 任务列表容器 -->
-        <div id="tasks-list" style="display: flex; flex-direction: column; gap: 12px; padding: 15px; overflow-y: auto; flex: 1;">
+        <div id="tasks-list" class="task-board__list">
             <!-- 加载占位 -->
-            <div id="tasks-loading" style="text-align: center; padding: 40px; color: #888;">
-                <div style="font-size: 24px; margin-bottom: 10px;">⏳</div>
+            <div id="tasks-loading" class="task-board__loading" role="status" aria-live="polite">
+                <div class="task-board__loading-icon" aria-hidden="true">⏳</div>
                 ${t('task.loading')}
             </div>
         </div>
         
         <!-- 加载更多 -->
-        <div id="load-more-wrapper" style="display: none; padding: 15px; text-align: center; border-top: 1px solid var(--border-color, #333);">
-            <button id="btn-load-more" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='var(--comfy-input-bg)'">
+        <div id="load-more-wrapper" class="task-board__load-more" style="display: none;">
+            <button id="btn-load-more" class="task-board__load-more-button" type="button">
                 ${t('task.load_more')}
             </button>
         </div>
@@ -125,21 +119,44 @@ export function createTasksView(currentUser, keyword = "") {
     const loadMoreWrapper = container.querySelector("#load-more-wrapper");
     const loadMoreBtn = container.querySelector("#btn-load-more");
     
-    let currentPage = 1;
     let currentStatus = "";
     let currentSort = "latest";
     let allTasksData = [];  // 全量数据缓存
     let isLoadingFromNetwork = false;
+    let listViewGeneration = 0;
+    let networkRequestGeneration = 0;
+    let disposed = false;
+    let firstPageReady = false;
+    const cardNavigation = createCardNavigationScope(window, () => !disposed, {
+        captureSession: captureRequestSession,
+        storageKeys: [CACHE.LEGACY_KEYS.TOKEN, CACHE.LEGACY_KEYS.USER]
+    });
     let paginator = null;
+    let searchPagePending = false;
+
+    const continueSearchPagination = () => {
+        if (disposed) return;
+        if (!searchKeyword || allTasksData.some(task => _filterTasksByKeyword([task], searchKeyword).length)) {
+            searchPagePending = false;
+            return;
+        }
+        if (isLoadingFromNetwork || !paginator) {
+            searchPagePending = true;
+            return;
+        }
+        searchPagePending = false;
+        paginator.load();
+    };
     
     // 🎯 监听外部筛选变化事件
     const handleFilterChange = (e) => {
+        if (disposed) return;
         const { status, sort } = e.detail;
+        listViewGeneration++;
         
         // 状态变化时，需要重新加载数据（因为后端按状态过滤）
         if (status !== undefined && status !== currentStatus) {
             currentStatus = status;
-            currentPage = 1;
             if (paginator) paginator.reset();
             loadTasks(1, false);
             return;
@@ -148,7 +165,6 @@ export function createTasksView(currentUser, keyword = "") {
         // 排序变化时，本地排序优先
         if (sort) {
             currentSort = sort;
-            currentPage = 1;
             if (paginator) paginator.reset();
             
             // 🚀 本地排序优先：已有数据时直接本地排序渲染
@@ -217,7 +233,12 @@ export function createTasksView(currentUser, keyword = "") {
     
     // 加载任务列表（支持缓存优先）
     const loadTasks = async (page = 1, append = false) => {
-        const cacheKey = getCacheKey();
+        if (disposed) return;
+        if (!append && page === 1) firstPageReady = false;
+        const viewGeneration = !append && page === 1 ? ++listViewGeneration : listViewGeneration;
+        const requestedStatus = currentStatus;
+        const requestedSort = currentSort;
+        const cacheKey = `${CACHE_KEY_PREFIX}_${requestedStatus}_${requestedSort}`;
         
         // ✅ 优先从本地缓存读取（含过期缓存：离线容灾，与插件榜/工作流/推荐榜策略一致）
         if (!append && page === 1) {
@@ -227,20 +248,30 @@ export function createTasksView(currentUser, keyword = "") {
                 allTasksData = proxyImages(cachedData);
                 renderTasksFromCache(allTasksData);
                 // 后台静默更新
-                silentRefresh();
+                silentRefresh().finally(continueSearchPagination);
                 return;
             }
         }
         
+        let requestGeneration = null;
         try {
             if (!append) {
                 showSkeleton();
             }
             
+            requestGeneration = ++networkRequestGeneration;
             isLoadingFromNetwork = true;
             
-            const res = await api.getTasks(page, PAGE_SIZE, currentStatus || null, currentSort);
-            const tasks = res.data || [];
+            const res = await api.getTasks(page, PAGE_SIZE, requestedStatus || null, requestedSort);
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration === networkRequestGeneration) {
+                    isLoadingFromNetwork = false;
+                    silentRefresh();
+                }
+                return;
+            }
+            const tasks = requireListResponseData(res);
+            if (page === 1) firstPageReady = true;
             const total = res.total || 0;
             isLoadingFromNetwork = false;
             
@@ -260,15 +291,21 @@ export function createTasksView(currentUser, keyword = "") {
             const displayTasks = _filterTasksByKeyword(tasks, searchKeyword);
             
             if (displayTasks.length === 0 && page === 1) {
-                tasksList.innerHTML = _renderNoTasksView();
-                loadMoreWrapper.style.display = "none";
+                if (searchKeyword) {
+                    tasksList.innerHTML = "";
+                    renderListSearchMessage(tasksList, total > PAGE_SIZE ? t('pagination.searching') : t('pagination.search_empty'));
+                } else {
+                    tasksList.innerHTML = _renderNoTasksView();
+                }
+                loadMoreWrapper.style.display = total > PAGE_SIZE ? "block" : "none";
+                if (searchKeyword && total > PAGE_SIZE) continueSearchPagination();
                 return;
             }
             
             // 渲染任务卡片
             const cards = [];
             displayTasks.forEach(task => {
-                const card = createTaskCard(task);
+                const card = createTaskCard(task, currentUser, () => !disposed, cardNavigation.capture);
                 cards.push(card);
                 tasksList.appendChild(card);
             });
@@ -281,16 +318,22 @@ export function createTasksView(currentUser, keyword = "") {
             
             // 显示/隐藏加载更多（基于过滤后的数据）
             const loadedCount = page * PAGE_SIZE;
-            const filteredTotal = searchKeyword ? displayTasks.length : total;
-            if (loadedCount < filteredTotal) {
+            if (loadedCount < total) {
                 loadMoreWrapper.style.display = "block";
             } else {
                 loadMoreWrapper.style.display = "none";
             }
             
         } catch (err) {
-            console.error("加载任务失败:", err);
+            if (disposed) return;
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration !== networkRequestGeneration) return;
+                isLoadingFromNetwork = false;
+                silentRefresh();
+                return;
+            }
             isLoadingFromNetwork = false;
+            console.error("加载任务失败");
             // 网络失败时尝试从缓存读取（包括过期缓存，离线容灾）
             if (!append) {
                 const cachedData = readListCache(cacheKey);
@@ -299,13 +342,9 @@ export function createTasksView(currentUser, keyword = "") {
                     allTasksData = proxyImages(cachedData);
                     renderTasksFromCache(allTasksData);
                     showToast(t('task.network_cache'), "warning");
+                    continueSearchPagination();
                 } else {
-                    tasksList.innerHTML = `
-                        <div style="text-align: center; padding: 40px; color: #F44336;">
-                            <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
-                            ${t('task.load_failed')}
-                        </div>
-                    `;
+                    renderListLoadError(tasksList, t('task.load_failed'), () => loadTasks(1, false), t);
                 }
             }
         }
@@ -313,14 +352,20 @@ export function createTasksView(currentUser, keyword = "") {
     
     // 从缓存渲染任务列表
     const renderTasksFromCache = (tasks) => {
+        firstPageReady = true;
         tasksList.innerHTML = "";
         
         // 🔍 搜索过滤
         const filteredTasks = _filterTasksByKeyword(tasks, searchKeyword);
         
         if (filteredTasks.length === 0) {
-            tasksList.innerHTML = _renderNoTasksView();
-            loadMoreWrapper.style.display = "none";
+            if (searchKeyword) {
+                renderListSearchMessage(tasksList, t('pagination.searching'));
+                loadMoreWrapper.style.display = "block";
+            } else {
+                tasksList.innerHTML = _renderNoTasksView();
+                loadMoreWrapper.style.display = "none";
+            }
             return;
         }
         
@@ -328,7 +373,7 @@ export function createTasksView(currentUser, keyword = "") {
         const firstPage = filteredTasks.slice(0, PAGE_SIZE);
         const cards = [];
         firstPage.forEach(task => {
-            const card = createTaskCard(task);
+            const card = createTaskCard(task, currentUser, () => !disposed, cardNavigation.capture);
             cards.push(card);
             tasksList.appendChild(card);
         });
@@ -349,30 +394,56 @@ export function createTasksView(currentUser, keyword = "") {
     
     // 后台静默更新
     const silentRefresh = async () => {
-        if (isLoadingFromNetwork) return;
-        
+        if (disposed || isLoadingFromNetwork) return;
+        const viewGeneration = listViewGeneration;
+        const requestedStatus = currentStatus;
+        const requestedSort = currentSort;
+        const cacheKey = `${CACHE_KEY_PREFIX}_${requestedStatus}_${requestedSort}`;
+        const requestGeneration = ++networkRequestGeneration;
         try {
             isLoadingFromNetwork = true;
-            const res = await api.getTasks(1, PAGE_SIZE, currentStatus || null, currentSort);
-            const tasks = res.data || [];
+            const res = await api.getTasks(1, PAGE_SIZE, requestedStatus || null, requestedSort, {
+                noCache: true,
+                timeout: API.BACKGROUND_TIMEOUT,
+                retries: API.BACKGROUND_RETRIES
+            });
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration === networkRequestGeneration) {
+                    isLoadingFromNetwork = false;
+                    silentRefresh();
+                }
+                return;
+            }
+            const tasks = requireListResponseData(res);
             isLoadingFromNetwork = false;
             
-            // 更新缓存
-            const cacheKey = getCacheKey();
-            writeListCache(cacheKey, tasks, getCacheTTL());
-            
-            // 对比新旧数据，有变化时重新渲染
-            if (_tasksDataChanged(allTasksData, tasks)) {
-                console.log(`✅ 任务榜 ${currentSort} 检测到新数据，执行静默更新`);
-                allTasksData = proxyImages(tasks);
-                renderTasksFromCache(allTasksData);
+            if (isEmptyListRefreshWithExistingData(tasks, allTasksData)) {
+                console.warn(`🛡️ 任务榜 ${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
-                allTasksData = tasks;
+                // 更新缓存
+                writeListCache(cacheKey, tasks, getCacheTTL());
+
+                // 对比新旧数据，有变化时重新渲染
+                if (_tasksDataChanged(allTasksData, tasks)) {
+                    console.log(`✅ 任务榜 ${currentSort} 检测到新数据，执行静默更新`);
+                    allTasksData = proxyImages(tasks);
+                    renderTasksFromCache(allTasksData);
+                } else {
+                    allTasksData = tasks;
+                }
             }
         } catch (err) {
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration === networkRequestGeneration) {
+                    isLoadingFromNetwork = false;
+                    silentRefresh();
+                }
+                return;
+            }
             isLoadingFromNetwork = false;
-            console.warn("后台更新失败:", err);
+            console.warn("后台更新任务失败（保留当前内容）");
         }
+        continueSearchPagination();
     };
     
     /** 对比任务数据是否有变化 */
@@ -386,15 +457,15 @@ export function createTasksView(currentUser, keyword = "") {
             for (const field of COMPARE_FIELDS) {
                 if ((oldData[i][field] || 0) !== (newData[i][field] || 0)) return true;
             }
-            if (((oldData[i].applicants || []).length) !== ((newData[i].applicants || []).length)) return true;
+            if (getTaskApplicantCount(oldData[i]) !== getTaskApplicantCount(newData[i])) return true;
         }
         return false;
     };
     
     // 加载更多（原有按钮，将被自动分页替代）
     loadMoreBtn.onclick = () => {
-        currentPage++;
-        loadTasks(currentPage, true);
+        if (disposed) return;
+        paginator?.load();
     };
     
     // 初始加载
@@ -402,16 +473,27 @@ export function createTasksView(currentUser, keyword = "") {
     
     // 🚀 初始化自动分页（延迟以确保 DOM 已挂载）
     requestAnimationFrame(() => {
+        if (disposed) return;
         setTimeout(() => {
+            if (disposed) return;
             const scrollContainer = container.closest('.sidebar-scroll-container') || container;
             paginator = createPaginationLoader({
                 container: scrollContainer,
-                loadMore: async (page, pageSize) => {
+                canLoad: () => !disposed && firstPageReady && !isLoadingFromNetwork,
+                autoFill: () => Boolean(searchKeyword) && !allTasksData.some(task => _filterTasksByKeyword([task], searchKeyword).length),
+                loadMore: async (page, pageSize, { isCurrent = () => true } = {}) => {
+                    if (disposed || !isCurrent()) return [];
                     try {
-                        isLoadingFromNetwork = true;
                         const res = await api.getTasks(page, pageSize, currentStatus || null, currentSort);
-                        const tasks = res.data || [];
-                        isLoadingFromNetwork = false;
+                        if (disposed || !isCurrent()) return [];
+                        const tasks = requireListResponseData(res);
+                        if (tasks.length === 0) {
+                            if (searchKeyword && !allTasksData.some(task => _filterTasksByKeyword([task], searchKeyword).length)) {
+                                renderListSearchMessage(tasksList, t('pagination.search_empty'));
+                            } else {
+                                tasksList.querySelector('.list-search-message')?.remove();
+                            }
+                        }
                         
                         if (tasks.length > 0) {
                             allTasksData = [...allTasksData, ...tasks];
@@ -420,7 +502,8 @@ export function createTasksView(currentUser, keyword = "") {
                             
                             const newCards = [];
                             displayTasks.forEach(task => {
-                                const card = createTaskCard(task);
+                                tasksList.querySelector('.list-search-message')?.remove();
+                                const card = createTaskCard(task, currentUser, () => !disposed, cardNavigation.capture);
                                 newCards.push(card);
                                 tasksList.appendChild(card);
                             });
@@ -436,117 +519,122 @@ export function createTasksView(currentUser, keyword = "") {
                         
                         return tasks;
                     } catch (err) {
-                        isLoadingFromNetwork = false;
-                        console.error("自动分页加载失败:", err);
+                        if (disposed || !isCurrent()) return [];
+                        console.error("自动分页加载任务失败");
+                        tasksList.querySelector('.list-search-message')?.remove();
                         return null;
                     }
                 },
                 pageSize: PAGE_SIZE,
-                threshold: 200
+                threshold: 200,
+                t
             });
             paginator.start();
             loadMoreWrapper.style.display = "none";
+            if (searchPagePending) continueSearchPagination();
         }, 0);
     });
     
     // 🧹 组件清理方法
     container._cleanup = () => {
-        if (paginator) {
-            paginator.stop();
-            paginator = null;
-        }
-        if (currentFilterHandler) {
-            window.removeEventListener("comfy-task-filter-change", currentFilterHandler);
-            currentFilterHandler = null;
-        }
+        if (disposed) return;
+        disposed = true;
+        cardNavigation.dispose();
+        if (activeViewCleanup === container._cleanup) activeViewCleanup = null;
+        listViewGeneration++;
+        networkRequestGeneration++;
+        stopViewportAnimations(tasksList);
+        const stoppedPaginator = paginator;
+        paginator = null;
+        try { stoppedPaginator?.stop(); } catch { console.warn("榜单分页器清理失败"); }
+        window.removeEventListener("comfy-task-filter-change", handleFilterChange);
+        if (currentFilterHandler === handleFilterChange) currentFilterHandler = null;
     };
     
+    activeViewCleanup = container._cleanup;
     return container;
 }
 
 /**
  * 🎴 创建单个任务卡片
  */
-function createTaskCard(task) {
+function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => true, captureNavigation = () => isCurrent) {
     const card = document.createElement("div");
-    Object.assign(card.style, {
-        background: "var(--comfy-menu-bg)",
-        borderRadius: "10px",
-        padding: "15px",
-        cursor: "pointer",
-        transition: "transform 0.2s, box-shadow 0.2s",
-        border: "1px solid var(--border-color, #333)"
-    });
+    card.className = "task-card";
+    card.setAttribute("role", "button");
+    card.tabIndex = 0;
     
     // 状态标签样式
     const statusStyles = {
-        open: { bg: "#4CAF50", textKey: "task.status_open" },
-        in_progress: { bg: "#2196F3", textKey: "task.status_in_progress" },
-        submitted: { bg: "#FF9800", textKey: "task.status_submitted" },
-        completed: { bg: "#9E9E9E", textKey: "task.status_completed" },
-        disputed: { bg: "#F44336", textKey: "task.status_disputed" },
-        cancelled: { bg: "#757575", textKey: "task.status_cancelled" },
-        expired: { bg: "#795548", textKey: "task.status_expired" }
+        open: { textKey: "task.status_open" },
+        in_progress: { textKey: "task.status_in_progress" },
+        submitted: { textKey: "task.status_submitted" },
+        completed: { textKey: "task.status_completed" },
+        disputed: { textKey: "task.status_disputed" },
+        cancelled: { textKey: "task.status_cancelled" },
+        expired: { textKey: "task.status_expired" }
     };
     
-    const status = statusStyles[task.status] || { bg: "#666", textKey: "task.status_unknown" };
+    const status = Object.prototype.hasOwnProperty.call(statusStyles, task.status)
+        ? statusStyles[task.status]
+        : { textKey: "task.status_unknown" };
     const statusText = t(status.textKey);
     const timeStr = formatTime(task.created_at);
     const deadline = formatDeadline(task.deadline);
     
     // 检查是否逾期（进行中但超过截止日期）
     const isOverdue = task.is_overdue || (task.status === "in_progress" && task.deadline && task.deadline < new Date().toISOString().slice(0, 10));
-    const overdueTag = isOverdue ? `<span style="background: #F44336; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px;">${t('task.overdue')}</span>` : "";
+    const overdueTag = isOverdue ? `<span class="task-card__overdue">${t('task.overdue')}</span>` : "";
     
     // 过期卡片样式
     if (task.status === "expired" || isOverdue) {
-        card.style.opacity = "0.7";
-        card.style.borderColor = "#F44336";
+        card.classList.add("task-card--stale");
     }
     
     card.innerHTML = `
         <!-- 顶部：状态 + 价格 -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <div style="display: flex; align-items: center;">
-                <span style="background: ${status.bg}; color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;">
+        <div class="task-card__header">
+            <div class="task-card__status-group">
+                <span class="task-card__status" data-task-status="${escapeHtml(task.status || 'unknown')}">
                     ${statusText}
                 </span>
                 ${overdueTag}
             </div>
-            <span style="color: #FF9800; font-size: 16px; font-weight: bold;">
-                💰 ${task.total_price} ${t('task.points')}
+            <span class="task-card__price">
+                💰 ${escapeHtml(task.total_price)} ${t('task.points')}
             </span>
         </div>
         
         <!-- 标题 -->
-        <div style="font-size: 15px; font-weight: 500; color: #fff; margin-bottom: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4;">
+        <div class="task-card__title">
             ${escapeHtml(task.title)}
         </div>
         
         <!-- 描述 -->
-        <div style="font-size: 12px; color: #999; margin-bottom: 10px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.5;">
+        <div class="task-card__description">
             ${escapeHtml(task.description)}
         </div>
         
         <!-- 底部信息 -->
-        <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: #888; padding-top: 10px; border-top: 1px solid var(--border-color, #333);">
+        <div class="task-card__footer">
             <!-- 发布者（SWR 缓存头像） -->
-            <div id="task-author-${task.id}" style="display: flex; align-items: center; gap: 6px;"></div>
+            <div class="task-card__author"></div>
             
             <!-- 截止日期 + 申请人数 + 访问量 + 点赞 + 收藏 -->
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <span>⏰ ${deadline}</span>
-                ${task.status === "open" ? `<span>👥 ${(task.applicants || []).length} ${t('task.applicants')}</span>` : ""}
-                <span>🔥 ${task.views || 0}</span>
-                <span>❤️ ${task.likes || 0}</span>
-                <span>🔖 ${task.favorites || 0}</span>
+            <div class="task-card__stats">
+                <span>⏰ ${escapeHtml(deadline)}</span>
+                ${task.status === "open" ? `<span>👥 ${escapeHtml(getTaskApplicantCount(task))} ${t('task.applicants')}</span>` : ""}
+                <span>🔥 ${escapeHtml(task.views || 0)}</span>
+                <span>❤️ ${escapeHtml(task.likes || 0)}</span>
+                <span>🔖 ${escapeHtml(task.favorites || 0)}</span>
             </div>
         </div>
     `;
     
     // 🚀 SWR 头像渲染：先从缓存读取，后台静默校对
     setTimeout(() => {
-        const authorContainer = card.querySelector(`#task-author-${task.id}`);
+        if (!isCurrent() || !card.isConnected) return;
+        const authorContainer = card.querySelector(".task-card__author");
         if (!authorContainer) return;
         
         const account = task.publisher;
@@ -560,12 +648,13 @@ function createTaskCard(task) {
         // 渲染头像（始终使用 img 标签）
         const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
         // 🔒 XSS防护：头像 URL 来自他人可修改的资料，写入 HTML 属性前必须转义
-        const avatarHtml = `<img class="swr-avatar" src="${escapeHtml(avatarSrc)}" style="width: 18px; height: 18px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: var(--comfy-input-bg);">`;
+        const avatarHtml = `<img class="swr-avatar task-card__avatar" alt="" src="${escapeHtml(avatarSrc)}">`;
         
         authorContainer.innerHTML = `${avatarHtml}<span class="swr-name">${escapeHtml(name)}</span>`;
         
         // 后台静默校对
         getProfileWithSWR(account, api.getUserProfile, (profile) => {
+            if (!isCurrent() || !card.isConnected) return;
             const avatarEl = authorContainer.querySelector('.swr-avatar');
             const nameEl = authorContainer.querySelector('.swr-name');
             if (avatarEl && profile.avatar) {
@@ -577,23 +666,33 @@ function createTaskCard(task) {
         });
     }, 0);
     
-    // 悬停效果
-    card.onmouseover = () => {
-        card.style.transform = "translateY(-2px)";
-        card.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
-    };
-    card.onmouseout = () => {
-        card.style.transform = "translateY(0)";
-        card.style.boxShadow = "none";
-    };
-    
-    // 点击进入详情
-    card.onclick = () => {
-        import("./任务详情组件.js").then(module => {
-            const view = module.createTaskDetailView(task.id, currentUserCache);
+    // 点击进入详情；捕获创建视图的用户和点击时的导航范围。
+    let opening = false;
+    card.onclick = async () => {
+        if (opening || !isCurrent() || !card.isConnected) return;
+        const isNavigationCurrent = captureNavigation();
+        if (!isNavigationCurrent()) { showToast(t('auth.reopen_list'), 'warning'); return; }
+        opening = true;
+        card.setAttribute('aria-busy', 'true');
+        try {
+            const module = await import("./任务详情组件.js");
+            if (!isNavigationCurrent() || !card.isConnected || !card.getClientRects().length) return;
+            const view = module.createTaskDetailView(task.id, currentUser);
+            if (!isNavigationCurrent() || !card.isConnected) { view._cleanup?.(); return; }
             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-        });
+        } catch {
+            if (isNavigationCurrent() && card.isConnected && card.getClientRects().length) showToast(t('task.load_failed'), 'error');
+        } finally {
+            opening = false;
+            card.removeAttribute('aria-busy');
+        }
     };
+    card.addEventListener("keydown", (event) => {
+        if (event.target === card && !event.repeat && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            card.click();
+        }
+    });
     
     return card;
 }

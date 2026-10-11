@@ -13,6 +13,16 @@
 
 import { getSettings } from "./全局设置组件.js";
 
+function prefersReducedMotion() {
+    try { return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true; }
+    catch { return false; }
+}
+
+export function scrollCardIntoView(card) {
+    const instant = !getSettings().enableAnimations || prefersReducedMotion();
+    card.scrollIntoView({ behavior: instant ? 'instant' : 'smooth', block: 'center' });
+}
+
 // ==========================================
 // 🔊 音效管理
 // ==========================================
@@ -360,7 +370,7 @@ function injectAnimationStyles() {
  */
 export function applyCardAnimation(card, animationType, index, totalVisible = 10, silent = false) {
     const settings = getSettings();
-    if (!settings.enableAnimations) return;
+    if (!settings.enableAnimations || prefersReducedMotion()) return;
     
     // 确保样式已注入
     injectAnimationStyles();
@@ -436,6 +446,12 @@ export function applyCardAnimation(card, animationType, index, totalVisible = 10
 // 容器 -> 观察器映射（同一视图的首次渲染与分页追加复用同一观察器）
 const _viewportObservers = new WeakMap();
 
+export function stopViewportAnimations(container) {
+    const observer = _viewportObservers.get(container);
+    _viewportObservers.delete(container);
+    observer?.disconnect();
+}
+
 /**
  * ✨ 视口感知卡片动画：
  * - 已在视口内的卡片立即依次错开播放载入动画
@@ -448,23 +464,23 @@ const _viewportObservers = new WeakMap();
  */
 export function applyViewportAnimations(container, cards, animationType, isFirstBatch = false) {
     const settings = getSettings();
-    if (!settings.enableAnimations) return;
+    if (!settings.enableAnimations || prefersReducedMotion()) {
+        stopViewportAnimations(container);
+        return;
+    }
 
     // 确保样式已注入
     injectAnimationStyles();
 
     // 视图重建：停止上一批残留卡片的补播观察
     if (isFirstBatch) {
-        const oldObserver = _viewportObservers.get(container);
-        if (oldObserver) {
-            oldObserver.disconnect();
-            _viewportObservers.delete(container);
-        }
+        stopViewportAnimations(container);
     }
 
     let observer = _viewportObservers.get(container);
     if (!observer) {
         observer = new IntersectionObserver((entries) => {
+            if (_viewportObservers.get(container) !== observer) return;
             // 本批进入视口的卡片，按文档顺序（从上到下）排列后错开播放
             const entering = entries
                 .filter(e => e.isIntersecting)

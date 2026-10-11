@@ -5,16 +5,22 @@ import { requestSSE, request } from "../core/网络请求_基础设施.js";
 import { openUserProfileModal } from "../profile/个人中心视图.js";
 import { API, CACHE, IS_WEB_MODE, escapeHtml } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
+import { createResourceOperationScope } from "./资源操作生命周期.js";
+import { isValidPurchaseStatus } from "./购买状态生命周期.js";
+import { saveAcquiredItem } from "./资源获取记录.js";
+export { getAcquiredItems } from "./资源获取记录.js";
 
 // 📱 Web 模式兼容：ComfyUI 的 app 对象仅存在于本地环境，改为受保护动态导入
 // （Web 模式不暴露安装/下载入口，不会走到此路径；万一走到也不抛错）
-async function _loadGraphToCanvas(graphData) {
+async function _loadGraphToCanvas(graphData, isCurrent) {
+    if (!isCurrent() || !graphData || typeof graphData !== "object" || Array.isArray(graphData) || Object.hasOwn(graphData, "error")) return false;
     try {
         const { app } = await import("../../../scripts/app.js");
-        app.loadGraphData(graphData);
+        if (!isCurrent()) return false;
+        await app.loadGraphData(graphData);
         return true;
     } catch (e) {
-        console.warn("当前环境不支持加载工作流到画布:", e);
+        console.warn("当前环境无法加载工作流到画布");
         return false;
     }
 }
@@ -47,7 +53,107 @@ function clearUsesCache() {
  * @returns {string} JWT Token（未登录时为空字符串）
  */
 function _getAuthToken() {
-    return localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token") || "";
+    try {
+        const localToken = localStorage.getItem("ComfyCommunity_Token");
+        if (localToken) return localToken;
+    } catch (error) {
+        console.warn('无法读取本地登录凭证存储');
+    }
+    try {
+        return sessionStorage.getItem("ComfyCommunity_Token") || "";
+    } catch (error) {
+        console.warn('无法读取会话登录凭证存储');
+        return "";
+    }
+}
+
+function _getInstallErrorMessage(result) {
+    if (result?.outcomeUnknown) return t('install.connection_uncertain');
+    const errorKeys = {
+        missing_params: 'install.error_missing_params',
+        invalid_repository: 'install.error_invalid_repository',
+        invalid_target: 'install.error_invalid_target',
+        git_missing: 'install.error_git_missing',
+        install_timeout: 'install.error_timeout',
+        install_queue_timeout: 'install.error_queue_timeout',
+        install_queue_full: 'install.error_queue_full',
+        git_clone_failed: 'install.error_git_clone',
+        insufficient_disk_space: 'install.error_disk_space',
+        remote_rejected: 'install.error_remote_rejected',
+        package_too_large: 'install.error_package_too_large',
+        repository_too_large: 'install.error_repository_too_large',
+        process_guard_unavailable: 'install.error_process_guard',
+        download_failed: 'install.error_download',
+        target_occupied: 'install.error_target_occupied',
+        permission_denied: 'install.error_permission_denied',
+        invalid_archive: 'install.error_invalid_archive',
+        install_failed: 'install.error_generic'
+    };
+    const errorKey = Object.hasOwn(errorKeys, result?.error_code) ? errorKeys[result.error_code] : "";
+    return errorKey ? t(errorKey) : t('install.error_generic');
+}
+
+/** 流式与旧式安装共用终态确认；旧式响应另核查HTTP状态。 */
+function _getInstallOutcome(data, response = null) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return "unknown";
+    if (Object.hasOwn(data, "outcomeUnknown") && data.outcomeUnknown !== false) return "unknown";
+    if (data.message !== undefined && typeof data.message !== "string") return "unknown";
+    if (data.status === "success") {
+        return (!response || response.ok) && !Object.hasOwn(data, "error") && !Object.hasOwn(data, "error_code")
+            ? "success" : "unknown";
+    }
+    if ((!response && data.status !== "error") || (data.status !== undefined && data.status !== "error")) return "unknown";
+    if (data.error_code !== undefined && (typeof data.error_code !== "string" || !data.error_code.trim())) return "unknown";
+    if (data.error !== undefined && (typeof data.error !== "string" || !data.error.trim())) return "unknown";
+    if (data.status === "error" || typeof data.error_code === "string") return "error";
+    // 无错误码的旧响应仅接受明确客户端拒绝或成功HTTP中的旧式error字段。
+    // 服务器/网关5xx本身不能证明磁盘发布没有发生。
+    if (typeof data.error === "string" && response && (response.ok || (response.status >= 400 && response.status < 500))) return "error";
+    return "unknown";
+}
+
+const INSTALL_STAGE_KEYS = {
+    queued: 'install.stage_queued',
+    validate: 'install.stage_validate',
+    auth: 'install.stage_auth',
+    cleanup: 'install.stage_cleanup',
+    git_mirror: 'install.stage_git_mirror',
+    git_cloning: 'install.stage_git_clone',
+    git_fallback: 'install.stage_git_fallback',
+    git_direct: 'install.stage_git_direct',
+    downloading: 'install.stage_downloading',
+    download_done: 'install.stage_download_done',
+    extracting: 'install.stage_extracting',
+    installing: 'install.stage_installing',
+    complete: 'install.stage_complete',
+    error: 'install.stage_failed'
+};
+
+const WORKFLOW_STAGE_KEYS = {
+    validate: 'workflow.stage_validate',
+    cache_check: 'workflow.stage_cache_check',
+    cache_hit: 'workflow.stage_cache_hit',
+    downloading: 'workflow.stage_downloading',
+    saving: 'workflow.stage_saving',
+    complete: 'workflow.stage_download_complete',
+    error: 'workflow.stage_failed'
+};
+
+function _getWorkflowErrorMessage(result) {
+    if (result?.outcomeUnknown) return t('workflow.connection_uncertain');
+    const errorKeys = {
+        invalid_request: 'workflow.error_invalid_request',
+        missing_params: 'workflow.error_missing_params',
+        invalid_app_id: 'workflow.error_invalid_id',
+        invalid_workflow_data: 'workflow.error_invalid_data',
+        auth_failed: 'workflow.error_auth',
+        remote_rejected: 'workflow.error_remote',
+        network_failed: 'workflow.error_network',
+        cloud_cooldown: 'workflow.error_cloud_cooldown',
+        download_failed: 'workflow.error_generic'
+    };
+    const errorKey = Object.hasOwn(errorKeys, result?.error_code) ? errorKeys[result.error_code] : "";
+    return errorKey ? t(errorKey) : t('workflow.error_generic');
 }
 
 /**
@@ -56,563 +162,778 @@ function _getAuthToken() {
  * @param {Object} itemData - 资源数据
  * @param {string} netdiskPassword - 网盘密码（为空则显示无密码版本）
  */
-function _renderNetdiskUI(inlineStatusBox, itemData, netdiskPassword) {
-    inlineStatusBox.innerHTML = '';
+function _getSafeExternalUrl(link) {
+    let parsedUrl;
+    try {
+        if (typeof link !== 'string' || !link.trim()) throw new Error('Missing resource link');
+        parsedUrl = new URL(link.trim());
+    } catch (_) {
+        showToast(t('netdisk.invalid_link'), 'error');
+        return null;
+    }
+    if (!['http:', 'https:'].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
+        showToast(t('netdisk.invalid_link'), 'error');
+        return null;
+    }
+    return parsedUrl.href;
+}
+
+function _openExternalResource(link, itemId, isCurrent) {
+    if (!isCurrent()) return;
+    const safeUrl = _getSafeExternalUrl(link);
+    if (!safeUrl) return;
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
+    api.recordItemUse(itemId).then(() => {
+        if (!isCurrent()) return;
+        clearUsesCache();
+        window.dispatchEvent(new CustomEvent('comfy-trigger-sidebar-reload', { detail: { force: true } }));
+    }).catch(() => {});
+}
+
+function _renderNetdiskUI(inlineStatusBox, itemData, netdiskPassword, isCurrent) {
+    if (!isCurrent()) return;
+    inlineStatusBox.replaceChildren();
     inlineStatusBox.style.display = 'block';
 
+    const container = document.createElement('div');
+    container.className = 'netdisk-card';
+    const summary = document.createElement('div');
+    summary.className = 'netdisk-card__summary';
+    summary.textContent = t(netdiskPassword ? 'netdisk.authorized_with_password' : 'netdisk.authorized_no_password');
+    container.appendChild(summary);
+
+    const panel = document.createElement('div');
+    panel.className = 'netdisk-card__panel';
+    const openButton = document.createElement('button');
+    openButton.type = 'button';
+    openButton.className = 'netdisk-card__open';
+    openButton.textContent = t('netdisk.open');
+    openButton.addEventListener('click', () => _openExternalResource(itemData.link, itemData.id, isCurrent));
+
+    let hint = null;
     if (netdiskPassword) {
-        // 🔒 XSS防护：使用DOM API安全构建网盘密码显示区域
-        const container = document.createElement('div');
-        container.innerHTML = `
-            <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，网盘资源信息如下：</div>
-            <div style="background: #1a1d2e; padding: 12px; border-radius: 6px; border: 1px solid #2d334a;">
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                    <span style="color: #2196F3;">🔗 网盘链接：</span>
-                    <button id="btn-netdisk-open-pwd-${itemData.id}" style="padding: 6px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px;">📂 打开网盘</button>
-                </div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="color: #FF9800;">🔐 提取码：</span>
-                    <code id="netdisk-pwd-code-${itemData.id}" style="background: var(--comfy-input-bg); padding: 4px 10px; border-radius: 4px; color: #FFD700; font-weight: bold; letter-spacing: 2px;"></code>
-                    <button id="btn-copy-pwd-${itemData.id}" style="padding: 4px 8px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">📋 复制</button>
-                </div>
-            </div>
-            <div style="margin-top: 8px; font-size: 11px; color: #888;">💡 提示：请复制提取码后前往网盘下载资源</div>
-        `;
-        inlineStatusBox.appendChild(container);
+        const row = document.createElement('div');
+        row.className = 'netdisk-card__row';
+        const codeLabel = document.createElement('span');
+        codeLabel.className = 'netdisk-card__label';
+        codeLabel.textContent = t('netdisk.code_label');
+        const code = document.createElement('code');
+        code.className = 'netdisk-card__code';
+        code.textContent = netdiskPassword;
+        const copyButton = document.createElement('button');
+        copyButton.type = 'button';
+        copyButton.className = 'netdisk-card__copy';
+        copyButton.textContent = t('netdisk.copy');
+        copyButton.addEventListener('click', async () => {
+            if (!isCurrent()) return;
+            try {
+                await navigator.clipboard.writeText(netdiskPassword);
+                if (isCurrent()) copyButton.textContent = t('common.copied');
+            } catch (error) {
+                if (isCurrent()) showToast(t('netdisk.copy_failed'), 'error');
+            }
+        });
+        row.append(codeLabel, code, copyButton);
+        panel.append(row);
 
-        // 安全设置密码文本（防止XSS）
-        const pwdCodeEl = container.querySelector(`#netdisk-pwd-code-${itemData.id}`);
-        if (pwdCodeEl) pwdCodeEl.textContent = netdiskPassword;
-
-        // 绑定复制按钮事件
-        const copyBtn = container.querySelector(`#btn-copy-pwd-${itemData.id}`);
-        if (copyBtn) {
-            copyBtn.onclick = () => {
-                navigator.clipboard.writeText(netdiskPassword);
-                copyBtn.textContent = '✅ 已复制';
-            };
-        }
-
-        // 绑定打开网盘按钮事件
-        const btnOpen = inlineStatusBox.querySelector(`#btn-netdisk-open-pwd-${itemData.id}`);
-        if (btnOpen) {
-            btnOpen.onclick = () => {
-                window.open(itemData.link, '_blank');
-                api.recordItemUse(itemData.id).then(() => {
-                    clearUsesCache();
-                    window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
-                }).catch(err => console.warn('📊 使用量记录失败:', err));
-            };
-        }
-    } else {
-        // 无密码网盘资源
-        inlineStatusBox.innerHTML = `
-            <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，请前往网盘下载：</div>
-            <button id="btn-netdisk-open-${itemData.id}" style="padding: 6px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px;">🔗 打开网盘链接</button>
-        `;
-        // 绑定打开网盘按钮事件
-        const btnOpen = inlineStatusBox.querySelector(`#btn-netdisk-open-${itemData.id}`);
-        if (btnOpen) {
-            btnOpen.onclick = () => {
-                window.open(itemData.link, '_blank');
-                api.recordItemUse(itemData.id).then(() => {
-                    clearUsesCache();
-                    window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
-                }).catch(err => console.warn('📊 使用量记录失败:', err));
-            };
-        }
+        hint = document.createElement('div');
+        hint.className = 'netdisk-card__hint';
+        hint.textContent = t('netdisk.download_hint');
     }
-}
 
-/**
- * 保存已获取的资源记录到本地
- * @param {Object} itemData - 资源数据
- */
-function saveAcquiredItem(itemData) {
-    try {
-        const key = CACHE.LOCAL_KEYS.ACQUIRED_ITEMS;
-        const existing = JSON.parse(localStorage.getItem(key) || "[]");
-        
-        // 检查是否已存在，如果存在则更新
-        const index = existing.findIndex(item => item.id === itemData.id);
-        const record = {
-            id: itemData.id,
-            title: itemData.title,
-            type: itemData.type,
-            author: itemData.author,
-            shortDesc: itemData.shortDesc || itemData.short_desc || '',
-            coverUrl: itemData.coverUrl || itemData.cover_url || '',  // 新增
-            coverBase64: itemData.coverBase64,
-            imageUrls: itemData.imageUrls || itemData.image_urls || [],  // 新增
-            link: itemData.link || itemData.github_url || '',
-            price: itemData.price || 0,
-            likes: itemData.likes || 0,  // 新增
-            uses: itemData.uses || 0,  // 新增
-            local_version: itemData.latest_version || itemData.local_version || itemData.version || '',
-            acquired_at: Date.now()
-        };
-        
-        if (index >= 0) {
-            existing[index] = record;
-        } else {
-            existing.unshift(record); // 新记录放在最前面
-        }
-        
-        localStorage.setItem(key, JSON.stringify(existing));
-    } catch (e) {
-        console.warn("保存已获取资源记录失败:", e);
-    }
-}
-
-/**
- * 获取所有已获取的资源记录
- * @returns {Array}
- */
-export function getAcquiredItems() {
-    try {
-        const key = CACHE.LOCAL_KEYS.ACQUIRED_ITEMS;
-        return JSON.parse(localStorage.getItem(key) || "[]");
-    } catch (e) {
-        return [];
-    }
+    panel.prepend(openButton);
+    container.appendChild(panel);
+    if (hint) container.appendChild(hint);
+    inlineStatusBox.appendChild(container);
 }
 
 /**
  * 检查资源是否已安装
  * @param {string} itemId - 资源ID
- * @returns {Object|null} { installed: boolean, hasUpdate: boolean, localVersion: string|null }
+ * @returns {{installed: boolean, hasUpdate: boolean, localVersion: string|null, storageAvailable: boolean}}
  */
 export function checkItemStatus(itemId, cloudVersion) {
-    const localVersion = localStorage.getItem(`ComfyCommunity_LocalVer_${itemId}`);
+    const versionStatus = getInstalledVersionStatus(itemId);
+    const localVersion = versionStatus.version;
     if (!localVersion) {
-        return { installed: false, hasUpdate: false, localVersion: null };
+        return { installed: versionStatus.installed === true, hasUpdate: false, localVersion: null, storageAvailable: versionStatus.available };
     }
     const hasUpdate = cloudVersion && localVersion !== cloudVersion;
-    return { installed: true, hasUpdate, localVersion };
+    return { installed: true, hasUpdate, localVersion, storageAvailable: versionStatus.available };
 }
 
-export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatusBox) {
+const failedInstalledVersionWrites = new Map();
+
+export function getInstalledVersionStatus(itemId) {
+    try {
+        const failedWrite = failedInstalledVersionWrites.has(itemId);
+        const recorded = failedWrite ? failedInstalledVersionWrites.get(itemId)
+            : localStorage.getItem(CACHE.LOCAL_KEYS.INSTALLED_VERSION_PREFIX + itemId);
+        const unconfirmed = recorded === CACHE.INSTALLED_VERSION_UNCONFIRMED;
+        return { version: unconfirmed ? null : recorded, installed: !!recorded, versionConfirmed: !!recorded && !unconfirmed, available: !failedWrite };
+    } catch (error) {
+        console.warn('无法读取本地安装版本标记');
+        return { version: null, installed: false, versionConfirmed: false, available: false };
+    }
+}
+
+export function saveInstalledVersion(itemId, version) {
+    if (!version) return true;
+    try {
+        localStorage.setItem(CACHE.LOCAL_KEYS.INSTALLED_VERSION_PREFIX + itemId, version);
+        failedInstalledVersionWrites.delete(itemId);
+        return true;
+    } catch (error) {
+        failedInstalledVersionWrites.set(itemId, version);
+        console.warn('无法保存本地安装版本标记');
+        return false;
+    }
+}
+
+function _recordToolInstalledVersion(itemId, result) {
+    const value = result?.installed_version;
+    const confirmed = typeof value === "string" && /^(?:[a-f0-9]{7}|[a-f0-9]{40})$/i.test(value.trim());
+    const version = confirmed ? value.trim().slice(0, 7).toLowerCase() : CACHE.INSTALLED_VERSION_UNCONFIRMED;
+    if (!saveInstalledVersion(itemId, version)) {
+        showToast(t('install.version_record_unavailable'), 'warning');
+    }
+    if (!confirmed) showToast(t('install.version_unconfirmed'), 'warning');
+}
+
+function _guessInstallTargetName(itemUrl) {
+    try {
+        const lastSegment = String(itemUrl).replace(/\/+$/, '').split('/').pop() || '';
+        const name = lastSegment.replace(/\.git$/i, '');
+        return /^[A-Za-z0-9_.-]+$/.test(name) && name !== '.' && name !== '..' && !name.includes('..')
+            ? name
+            : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+const activeOperations = new Map();
+let latestWalletRefresh = 0;
+
+export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatusBox, options = {}) {
+    btnUse.type = "button";
+    btnUse.classList.add("resource-install__button");
+    for (const property of ["background", "color", "border", "border-color"]) btnUse.style.removeProperty(property);
+    inlineStatusBox.classList.add("resource-install__status");
+    const account = currentUser?.account, token = _getAuthToken();
+    const scope = createResourceOperationScope(btnUse, inlineStatusBox, account, options);
+    const isCurrent = () => scope.isCurrent();
+    const confirm = (message, options = {}) => showConfirm(message, { ...options, signal: scope.confirmationSignal });
+    let phase = "idle", previousProgress, removeProgressCleanup = () => {};
+    const operationKey = JSON.stringify([account, String(itemData.id)]);
+    scope.addCleanup(() => { if (activeOperations.get(operationKey) === scope) activeOperations.delete(operationKey); });
+    const trackProgress = () => {
+        removeProgressCleanup(); previousProgress?.destroy();
+        previousProgress = createInstallProgress(inlineStatusBox);
+        const progress = previousProgress;
+        removeProgressCleanup = scope.addCleanup(() => progress.destroy());
+        return progress;
+    };
+    const releaseButton = () => {
+        if (phase !== "idle") return;
+        if (activeOperations.get(operationKey) === scope) activeOperations.delete(operationKey);
+        if (isCurrent()) { btnUse.disabled = false; btnUse.removeAttribute("aria-busy"); }
+    };
     btnUse.onclick = async (e) => {
         e.stopPropagation();
-        if (!currentUser) return showToast("⚠️ 请先登录您的社区账号后再获取！", "warning");
+        if (!isCurrent() || phase !== "idle" || activeOperations.has(operationKey)) return;
+        if (!account) return showToast(t('auth.login_required'), "warning");
+        activeOperations.set(operationKey, scope);
+        ++latestWalletRefresh;  // 新操作使先前余额补新失效。
+        phase = "preflight"; btnUse.disabled = true; btnUse.setAttribute("aria-busy", "true");
+        try {
+            const price = itemData.price ?? 0;
+            if (!Number.isSafeInteger(price) || price < 0 || !itemData.id) {
+                showToast(t('acquire.invalid_id'), "error"); return;
+            }
+            const isFree = price === 0 || account === itemData.author;
+            const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool' || itemData.type === 'skill' || itemData.type === 'recommend_skill';
+            const isApp = itemData.type === 'app' || itemData.type === 'recommend_app';
+            if (IS_WEB_MODE && isFree) return showToast(t('web.install_on_desktop'), "warning");
 
-        const isFree = !itemData.price || itemData.price <= 0 || currentUser.account === itemData.author;
-        const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool' || itemData.type === 'skill' || itemData.type === 'recommend_skill';
-        const isApp = itemData.type === 'app' || itemData.type === 'recommend_app';
-
-        // 📱 Web 模式：不支持下载/安装。免费（含作者本人）或已购买 → 仅提醒电脑端安装；未购买 → 放行到下方纯购买流程
-        if (IS_WEB_MODE) {
-            if (isFree) return showToast(t('web.install_on_desktop'), "warning");
-            let webOwned = false;
+            // 同一次新读取决定是否拥有；查询失败不能继续到付款。
+            let alreadyOwned = false;
             try {
-                const st = await api.getPurchaseStatus(currentUser.account, itemData.id);
-                webOwned = !!(st && st.owned);
-            } catch (e) {
-                console.warn('购买状态查询失败，继续购买流程', e);
-            }
-            if (webOwned) return showToast(t('item.owned_purchased'), "warning");
-        }
-
-        // 记录是否已经拥有，决定是否涨销量
-        let alreadyOwned = false;
-
-        // 已购买用户跳过余额检查
-        if (!isFree && currentUser && currentUser.account) {
-            try {
-                const purchaseStatus = await api.getPurchaseStatus(currentUser.account, itemData.id);
-                if (purchaseStatus && purchaseStatus.owned) {
-                    alreadyOwned = true;
-                }
-            } catch (e) {
-                console.warn('购买状态查询失败，继续正常流程', e);
-            }
-        }
-
-        // 【新增】：本地前置余额校验（购买前动态获取最新余额）
-        if (!isFree && !alreadyOwned) {
-            try {
-                const walletRes = await api.getWallet(currentUser.account);
-                if (walletRes && walletRes.status === "success") {
-                    currentUser.balance = walletRes.balance || 0;
-                }
-            } catch (e) {
-                console.warn("获取钱包余额失败:", e);
-            }
-            
-            if ((currentUser.balance || 0) < itemData.price) {
-                if (await showConfirm(`您的积分余额不足（当前：${currentUser.balance || 0}，需要：${itemData.price}）。是否前往个人中心充值？`)) {
-                    if (typeof globalModal !== 'undefined') globalModal.closeTopModal();
-                    // 【修复点】：直接调用函数唤起个人中心，解决白屏 Bug
-                    openUserProfileModal(currentUser);
-                }
-                return; // 余额不足，直接终止后续所有云端请求
-            }
-        }
-
-        // 防线 1：扣费前进行死链探测 (解决问题 1)
-        if (!isFree) {
-            inlineStatusBox.style.display = "block";
-            inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在检测云端资源有效性...</span>`;
-            
-            try {
-                // 直接向云端发起验证（含10秒超时控制）
-                const valController = new AbortController();
-                const valTimeout = setTimeout(() => valController.abort(), 10000);
-                const valRes = await fetch(`${API.BASE_URL}/api/validate_resource`, {
-                    method: "POST", headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({
-                        url: itemData.link,
-                        item_id: itemData.id,
-                        account: currentUser.account
-                    }),
-                    signal: valController.signal
-                });
-                clearTimeout(valTimeout);
-                const valData = await valRes.json();
-                if (!valRes.ok || valData.error) {
-                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 拦截提示: ${escapeHtml(valData.error || '无法访问源地址')}</span>`;
-                    return; // 发现死链，强行阻断用户付款
-                }
-            } catch(e) {
-                if (e.name === 'AbortError') {
-                    console.warn("[资源验证] 超时，跳过验证");
-                } else {
-                    console.warn("[资源验证] 网络异常，跳过验证:", e.message || e);
-                }
-            }
-
-            // 已购买用户跳过购买确认弹窗，直接进入后续流程
-            if (!alreadyOwned) {
-                const confirmPay = await showConfirm(`该资源标价为 <strong style="color:#FF9800;">${itemData.price} 积分</strong>。<br><br>确认获取吗？<br><span style="font-size:12px;color:#aaa;">(注：一次购买永久免费，如果已购买过系统将直接放行，不会重复扣款)</span>`, { html: true });
-                if (!confirmPay) {
-                    inlineStatusBox.style.display = "none";
+                const status = await api.getPurchaseStatus(account, itemData.id, scope.readOptions);
+                if (!isCurrent()) return;
+                if (!isValidPurchaseStatus(status)) throw new Error();
+                if (status.price_confirmation_supported !== true) {
+                    showToast(t('acquire.purchase_verification_unavailable'), "warning");
                     return;
                 }
-            }
-        } else {
-            inlineStatusBox.style.display = "block";
-        }
-
-        inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在校验购买状态与扣款安全...</span>`; 
-
-        // 防线 2：事务级扣费 (天然解决问题 3，意外中断不重扣)
-        let purchaseRes = null;  // ☁️ 保存购买响应（包含网盘密码）
-        // 🐛 Bug修复：防御性校验，防止 itemId 为空
-        if (!itemData.id) {
-            console.warn('⚠️ 资源安装: itemData.id 为空，已拦截无效请求');
-            inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 获取失败：资源ID无效</span>`;
-            return;
-        }
-        try {
-            purchaseRes = await api.purchaseItem(currentUser.account, itemData.id);
-            
-            // 【需求2修改核心】：如果返回 already_owned，改变提示
-            if (purchaseRes && purchaseRes.already_owned) {
-                alreadyOwned = true;
-                if (!isFree) showToast("您已购买过此商品，此次使用不会收费！", "info");
-            } else if (!isFree) {
-                showToast(`支付成功！已扣除 ${itemData.price} 积分。`, "success");
-            }
-
-            // 更新用户本地显示的余额缓存
-            try {
-                const profileRes = await api.getUserProfile(currentUser.account);
-                if (profileRes.data && profileRes.data.balance !== undefined) {
-                    currentUser.balance = profileRes.data.balance;
-                }
-            } catch(e) {}
-
-        } catch (err) {
-            // 【需求3修改核心】：捕获余额不足异常，阻断流程并引导充值
-            if (err.message && err.message.includes("余额不足")) {
-                inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 获取失败：积分余额不足。</span>`;
-                if (await showConfirm("您的积分余额不足，是否立刻前往个人中心充值？")) {
-                    // 【修复点】：直接调用函数唤起个人中心，解决白屏 Bug
-                    openUserProfileModal(currentUser);
-                }
-                return; // 直接退出函数，不会走到下方的安装流程
-            } else {
-                inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 获取失败: ${escapeHtml(err.message)}</span>`;
-                showToast("获取失败：" + err.message, "error");
+                alreadyOwned = status.owned;
+            } catch (_) {
+                if (isCurrent()) showToast(t('common.network_error_retry'), "error");
                 return;
             }
-        }
+            if (IS_WEB_MODE && alreadyOwned) return showToast(t('item.owned_purchased'), "warning");
 
-        // 📱 Web 模式：购买完成即止，不进入任何下载/安装/网盘交付分支
-        if (IS_WEB_MODE) {
-            inlineStatusBox.style.display = "block";
-            inlineStatusBox.innerHTML = alreadyOwned
-                ? `<span style="color: #4CAF50;">✅ ${escapeHtml(t('item.owned_purchased'))}</span>`
-                : `<span style="color: #4CAF50;">✅ ${escapeHtml(t('web.purchase_success_desktop'))}</span>`;
-            showToast(t('web.install_on_desktop'), "info");
-            return;
-        }
-
-        // ☁️ 优先处理网盘资源（不论是工具还是应用）
-        const isNetdisk = purchaseRes?.is_netdisk || itemData.is_netdisk;
-        const netdiskPassword = purchaseRes?.netdisk_password || itemData.netdisk_password;
-        
-        if (isNetdisk) {
-            // 网盘资源：显示链接和密码（recordItemUse 延迟到用户点击按钮后）
-            saveAcquiredItem(itemData);
-            _renderNetdiskUI(inlineStatusBox, itemData, netdiskPassword);
-            btnUse.innerHTML = `✅ 已获取`;
-            btnUse.style.background = "#4CAF50";
-            return;  // ← 提前返回，不进入 Git 安装流程
-        }
-
-        if (isTool) {
-            const installPromptText = isFree 
-                ? "✅ 授权通过！是否通过 Git 自动将此工具克隆安装到本地 <b>custom_nodes</b> 文件夹？" 
-                : "✅ 授权通过！是否开始静默下载并热覆盖到本地 <b>custom_nodes</b> 文件夹？";
-                
-            inlineStatusBox.innerHTML = `
-                <div style="color: #ccc; margin-bottom: 10px; font-size: 13px;">${installPromptText}</div>
-                <div style="display: flex; gap: 10px;">
-                    <button id="btn-confirm-install" style="padding: 6px 15px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">✔️ 同意并安装</button>
-                    <button id="btn-cancel-install" style="padding: 6px 15px; background: transparent; color: #aaa; border: 1px solid #555; border-radius: 4px; cursor: pointer;">✖ 取消</button>
-                </div>
-            `;
-            inlineStatusBox.querySelector('#btn-cancel-install').onclick = () => inlineStatusBox.style.display = "none";
-            inlineStatusBox.querySelector('#btn-confirm-install').onclick = async () => {
-                // 获取最新的 item 数据以确保路由决策准确
-                // noCache: true 绕过前端 GET 请求缓存（5min TTL），确保读取服务器最新 has_private_token 值
-                let freshHasPrivateToken = !!itemData.has_private_token;
-                let apiFetchFailed = false;
+            if (!isFree && !alreadyOwned) {
+                let balance;
                 try {
-                    const freshRes = await request(`/api/items/${itemData.id}`, { noCache: true });
-                    if (freshRes.status === "success" && freshRes.data) {
-                        freshHasPrivateToken = !!freshRes.data.has_private_token;
-                    }
-                } catch (e) {
-                    apiFetchFailed = true;
-                    console.warn("获取最新 item 数据失败，使用缓存值:", e);
+                    const wallet = await api.getWallet(account, scope.readOptions);
+                    if (!isCurrent()) return;
+                    if (wallet?.status !== "success" || !Number.isSafeInteger(wallet.balance) || wallet.balance < 0) throw new Error();
+                    balance = wallet.balance;
+                } catch (_) {
+                    if (isCurrent()) showToast(t('common.network_error_retry'), "error");
+                    return;
                 }
-                const hasPrivateToken = freshHasPrivateToken;
-                // 路由决策：仅当确认是免费+无私有Token时才走 git clone
-                // 如果 API 获取失败且缓存中无 has_private_token 信息，保守地走 ZIP 代理路径
-                const useGitClone = isFree && !hasPrivateToken && !apiFetchFailed;
-                const localApiEndpoint = useGitClone
-                    ? "/community_hub/install_tool"
-                    : "/community_hub/install_private_tool";
+                if (balance < price) {
+                    const recharge = await confirm(`${t('acquire.balance_short', { balance, price })} ${t('acquire.balance_recharge_prompt')}`);
+                    if (recharge && isCurrent()) await openUserProfileModal(currentUser);
+                    return;
+                }
+                if (itemData.is_netdisk === true) {
+                    if (!_getSafeExternalUrl(itemData.link)) return;
+                } else {
+                    inlineStatusBox.style.display = "block";
+                    inlineStatusBox.textContent = t('acquire.validation_running');
+                    const validationController = new AbortController();
+                    const removeValidationCleanup = scope.addCleanup(() => validationController.abort());
+                    const timeout = setTimeout(() => validationController.abort(), API.BACKGROUND_TIMEOUT);
+                    try {
+                        const response = await fetch(`${API.BASE_URL}/api/validate_resource`, {
+                            method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+                            body: JSON.stringify({ url: itemData.link, item_id: itemData.id, account }),
+                            signal: validationController.signal
+                        });
+                        if (!isCurrent()) return;
+                        const data = await response.json();
+                        if (!isCurrent()) return;
+                        if (!response.ok || data?.status !== "success" || data.error) throw new Error();
+                    } catch (_) {
+                        if (isCurrent()) inlineStatusBox.textContent = t('acquire.validation_blocked', { message: t('common.network_error_retry') });
+                        return;
+                    } finally { clearTimeout(timeout); removeValidationCleanup(); }
+                }
+                const confirmPay = await confirm(t('acquire.purchase_confirmation_html', { price }), { html: true });
+                if (!isCurrent()) return;
+                if (!confirmPay) { inlineStatusBox.style.display = "none"; return; }
+            }
+            if (!isCurrent()) return;
+            inlineStatusBox.style.display = "block";
+            inlineStatusBox.textContent = t('acquire.purchase_running');
+            let purchaseRes;
+            try {
+                purchaseRes = await api.purchaseItem(account, itemData.id, isFree ? 0 : price);
+                if (!isCurrent()) return;
+                if (purchaseRes?.status !== "success" || typeof purchaseRes.already_owned !== "boolean"
+                    || typeof purchaseRes.is_netdisk !== "boolean"
+                    || (purchaseRes.netdisk_password != null && typeof purchaseRes.netdisk_password !== "string")) throw new Error();
+            } catch (error) {
+                if (!isCurrent()) return;
+                inlineStatusBox.setAttribute("role", "alert");
+                if (["purchase_price_changed", "purchase_price_confirmation_required"].includes(error?.code)) {
+                    phase = "unknown"; btnUse.removeAttribute("aria-busy");
+                    inlineStatusBox.textContent = t('acquire.price_changed');
+                } else if (error?.status >= 400 && error.status < 500) {
+                    inlineStatusBox.textContent = t(error.status === 402 ? 'acquire.purchase_balance_short' : 'common.error');
+                } else {
+                    phase = "unknown"; btnUse.removeAttribute("aria-busy");
+                    inlineStatusBox.textContent = t('acquire.purchase_unknown');
+                }
+                return;
+            }
+            alreadyOwned = purchaseRes.already_owned;
+            if (!isFree) showToast(t(alreadyOwned ? 'acquire.already_owned_no_charge' : 'acquire.purchase_success', { price }), alreadyOwned ? "info" : "success");
+            // 权威余额来自 SQL 钱包；补新不阻塞已经确认的资源交付。
+            if (!isFree) {
+                const walletVersion = ++latestWalletRefresh;
+                api.getWallet(account, scope.readOptions).then(wallet => {
+                    if (walletVersion !== latestWalletRefresh || !isCurrent() || wallet?.status !== "success" || !Number.isSafeInteger(wallet.balance) || wallet.balance < 0) return;
+                    currentUser.balance = wallet.balance;
+                    window.dispatchEvent(new CustomEvent("comfy-wallet-update", { detail: { account, balance: wallet.balance } }));
+                }).catch(() => {});
+            }
+            if (!isCurrent()) return;
 
-                const progress = createInstallProgress(inlineStatusBox);
+            // 📱 Web 模式：购买完成即止，不进入任何下载/安装/网盘交付分支
+            if (IS_WEB_MODE) {
+                inlineStatusBox.style.display = "block";
+                inlineStatusBox.innerHTML = alreadyOwned
+                    ? `<span class="resource-install__message resource-install__message--success">✅ ${escapeHtml(t('item.owned_purchased'))}</span>`
+                    : `<span class="resource-install__message resource-install__message--success">✅ ${escapeHtml(t('web.purchase_success_desktop'))}</span>`;
+                showToast(t('web.install_on_desktop'), "info");
+                return;
+            }
 
+            // ☁️ 优先处理网盘资源（不论是工具还是应用）
+            const isNetdisk = purchaseRes.is_netdisk;
+            const netdiskPassword = purchaseRes.netdisk_password;
+
+            if (isNetdisk) {
+                // 网盘资源：显示链接和密码（recordItemUse 延迟到用户点击按钮后）
+                saveAcquiredItem(itemData);
+                _renderNetdiskUI(inlineStatusBox, itemData, netdiskPassword, isCurrent);
+                btnUse.innerHTML = `✅ ${escapeHtml(t('common.acquired'))}`;
+                btnUse.setAttribute("data-install-state", "success");
+                return;  // ← 提前返回，不进入 Git 安装流程
+            }
+
+            if (isTool) {
+                inlineStatusBox.style.display = "block";
+                inlineStatusBox.textContent = t('install.preview_loading');
+                let installPreview = null;
+                const previewController = new AbortController();
+                const removePreviewCleanup = scope.addCleanup(() => previewController.abort());
+                const previewTimeout = setTimeout(() => previewController.abort(), API.BACKGROUND_TIMEOUT);
                 try {
-                    // 发起 SSE 流式安装请求
+                    const previewResponse = await fetch("/community_hub/install_preview", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ url: itemData.link }), signal: previewController.signal
+                    });
+                    if (!isCurrent()) return;
+                    if (previewResponse.ok) {
+                        const previewData = await previewResponse.json();
+                        if (!isCurrent()) return;
+                        if (previewData.status === "success") installPreview = previewData;
+                    }
+                } catch (error) {
+                    if (!isCurrent()) return;
+                } finally { clearTimeout(previewTimeout); removePreviewCleanup(); }
+                if (!isCurrent()) return;
+                const guessedTargetName = _guessInstallTargetName(itemData.link);
+                const targetDisplay = installPreview?.target_display
+                    || (guessedTargetName ? `custom_nodes/${guessedTargetName}` : null);
+                const installPromptText = t(
+                    isFree ? 'install.confirm_git' : 'install.confirm_zip',
+                    { folder: targetDisplay || t('install.target_unknown') }
+                );
+                const targetStateText = installPreview
+                    ? (installPreview.self_update
+                        ? t('install.target_self_update')
+                        : (installPreview.already_exists
+                            ? t('install.target_exists')
+                            : t('install.target_new')))
+                    : t('install.preview_unavailable');
+                let localVersionText = '';
+                if (installPreview?.already_exists) {
+                    if (installPreview.current_git_version) {
+                        localVersionText = t('install.current_git_version', {
+                            version: installPreview.current_git_version
+                        });
+                    } else if (!isFree) {
+                        try {
+                            const recordedVersion = getInstalledVersionStatus(itemData.id).version;
+                            if (recordedVersion) {
+                                localVersionText = t('install.recorded_local_version', { version: recordedVersion });
+                            }
+                        } catch (error) {
+                            console.warn('无法读取本地已安装版本记录');
+                        }
+                    }
+                }
+
+                phase = "confirm";
+                inlineStatusBox.innerHTML = `
+                    <div class="resource-install__confirmation" role="group" aria-label="${escapeHtml(t('install.confirmation_region'))}">
+                        <div role="heading" aria-level="3" class="resource-install__heading">${escapeHtml(installPromptText)}</div>
+                        <div role="status" aria-live="polite" class="resource-install__preview">${escapeHtml(targetStateText)}</div>
+                        ${localVersionText ? `<div role="status" aria-live="polite" class="resource-install__preview">${escapeHtml(localVersionText)}</div>` : ''}
+                        <div class="resource-install__actions">
+                            <button id="btn-confirm-install" type="button" class="resource-install__button resource-install__button--confirm">${escapeHtml(t('install.confirm_button'))}</button>
+                            <button id="btn-cancel-install" type="button" class="resource-install__button">${escapeHtml(t('common.cancel'))}</button>
+                        </div>
+                    </div>
+                `;
+                const confirmInstallButton = inlineStatusBox.querySelector('#btn-confirm-install');
+                const cancelInstallButton = inlineStatusBox.querySelector('#btn-cancel-install');
+                let removeEscapeCleanup = () => {};
+                const removeInstallEscapeHandler = () => {
+                    inlineStatusBox.removeEventListener("keydown", handleInstallEscape); removeEscapeCleanup();
+                };
+                const cancelInstallPrompt = () => {
+                    if (!isCurrent() || phase !== "confirm") return;
+                    phase = "idle"; releaseButton();
+                    removeInstallEscapeHandler();
+                    inlineStatusBox.style.display = "none";
+                    btnUse.focus();
+                };
+                const handleInstallEscape = (event) => {
+                    if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelInstallPrompt();
+                    }
+                };
+                cancelInstallButton.onclick = cancelInstallPrompt;
+                inlineStatusBox.addEventListener("keydown", handleInstallEscape);
+                removeEscapeCleanup = scope.addCleanup(removeInstallEscapeHandler);
+                confirmInstallButton.focus();
+                confirmInstallButton.onclick = async () => {
+                    if (!isCurrent() || phase !== "confirm") return;
+                    phase = "install";
+                    try {
+                        removeInstallEscapeHandler();
+                        confirmInstallButton.disabled = true;
+                        cancelInstallButton.disabled = true;
+                        // 获取最新的 item 数据以确保路由决策准确
+                        // noCache: true 绕过前端 GET 请求缓存（5min TTL），确保读取服务器最新 has_private_token 值
+                        let freshHasPrivateToken = !!itemData.has_private_token;
+                        let apiFetchFailed = false;
+                        try {
+                            const freshRes = await request(`/api/items/${itemData.id}`, scope.readOptions);
+                            if (!isCurrent()) return;
+                            if (freshRes.status === "success" && freshRes.data) {
+                                freshHasPrivateToken = !!freshRes.data.has_private_token;
+                            }
+                        } catch (e) {
+                            apiFetchFailed = true;
+                            if (!isCurrent()) return;
+                        }
+                        if (!isCurrent()) return;
+                        const hasPrivateToken = freshHasPrivateToken;
+                        // 路由决策：仅当确认是免费+无私有Token时才走 git clone
+                        // 如果 API 获取失败且缓存中无 has_private_token 信息，保守地走 ZIP 代理路径
+                        const useGitClone = isFree && !hasPrivateToken && !apiFetchFailed;
+                        const localApiEndpoint = useGitClone
+                            ? "/community_hub/install_tool"
+                            : "/community_hub/install_private_tool";
+
+                        const progress = trackProgress();
+                        const cancelController = new AbortController();
+                        progress.addCancelButton(t('install.cancel_in_progress'), () => cancelController.abort());
+                        const diagnosticEvents = [];
+                        const installStartedAt = Date.now();
+
+                        try {
+                            // 发起 SSE 流式安装请求
+                            const result = await requestSSE(
+                                `${localApiEndpoint}_stream`,
+                                { url: itemData.link, id: itemData.id, account, token },
+                                (event) => {
+                                    if (!isCurrent()) return;
+                                    const elapsedSeconds = Math.floor((Date.now() - installStartedAt) / 1000);
+                                    const rawStage = typeof event.stage === "string" ? event.stage : "";
+                                    diagnosticEvents.push({
+                                        stageKey: Object.hasOwn(INSTALL_STAGE_KEYS, rawStage) ? INSTALL_STAGE_KEYS[rawStage] : "",
+                                        stage: /^[a-z0-9_]{1,40}$/i.test(rawStage) ? rawStage : "",
+                                        progress: Number.isFinite(event.progress) ? Math.max(0, Math.min(100, event.progress)) : null,
+                                        time: `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, "0")}`
+                                    });
+                                    if (diagnosticEvents.length > 50) diagnosticEvents.shift();
+                                    const stageKey = Object.hasOwn(INSTALL_STAGE_KEYS, rawStage) ? INSTALL_STAGE_KEYS[rawStage] : "";
+                                    progress.update(event.progress, event.status === "error"
+                                        ? _getInstallErrorMessage(event)
+                                        : t(stageKey || 'install.stage_installing'));
+                                },
+                                { signal: cancelController.signal }
+                            );
+
+                            if (!isCurrent()) return;
+                            if (result?.cancelRequested) {
+                                phase = "unknown"; btnUse.removeAttribute("aria-busy");
+                                const message = t('install.cancel_outcome_uncertain');
+                                progress.error(message);
+                                showToast(message, "warning");
+                                return;
+                            }
+
+                            const outcome = _getInstallOutcome(result);
+                            if (outcome === "unknown") {
+                                phase = "unknown"; btnUse.removeAttribute("aria-busy");
+                                const message = t('install.connection_uncertain');
+                                progress.error(message);
+                                progress.showDiagnostics(diagnosticEvents);
+                                showToast(message, "warning");
+                                return;
+                            }
+                            if (outcome === "success") {
+                                progress.complete(t('install.complete'));
+                                // 根据后端返回的 message 判断是否为自更新场景
+                                const isSelfUpdate = result.message && result.message.includes("重启") && result.message.includes("生效");
+                                if (isSelfUpdate) {
+                                    showToast(t('install.completed_update', { title: itemData.title }), "success");
+                                } else {
+                                    showToast(t('install.completed_restart', { title: itemData.title }), "success");
+                                }
+
+                                // 仅记录本次引擎证明的commit；榜单版本不能证明已经安装。
+                                if (!isSelfUpdate) _recordToolInstalledVersion(itemData.id, result);
+
+                                // 记录使用量（后端自动去重）
+                                try {
+                                    await api.recordItemUse(itemData.id);
+                                    if (!isCurrent()) return;
+                                    clearUsesCache();
+                                } catch (_) {}
+                                if (!isCurrent()) return;
+
+                                // 🚀 保存到已获取记录
+                                saveAcquiredItem(itemData);
+
+                                // 🚀 更新按钮状态
+                                btnUse.innerHTML = `✅ ${escapeHtml(t('common.installed'))}`;
+                                btnUse.setAttribute("data-install-state", "success");
+                            } else {
+                                if (result?.outcomeUnknown) { phase = "unknown"; btnUse.removeAttribute("aria-busy"); }
+                                const message = _getInstallErrorMessage(result);
+                                progress.error(message);
+                                progress.showDiagnostics(diagnosticEvents);
+                                showToast(t('install.failed_for_item', { title: itemData.title, message }), "error");
+                            }
+                        } catch(err) {
+                            if (!isCurrent()) return;
+                            if (!err?.fallbackSafe) {
+                                phase = "unknown"; btnUse.removeAttribute("aria-busy");
+                                const message = t('install.connection_uncertain');
+                                progress.error(message);
+                                progress.showDiagnostics(diagnosticEvents);
+                                showToast(message, "error");
+                                return;
+                            }
+                            // 降级到原接口
+                            progress.destroy();
+                            inlineStatusBox.innerHTML = `<span class="resource-install__message resource-install__message--info">⏳ ${escapeHtml(t('install.background_started'))}</span>`;
+
+                            try {
+                                const res = await fetch(localApiEndpoint, {
+                                    method: "POST", headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ url: itemData.link, id: itemData.id, account, token })
+                                });
+                                if (!isCurrent()) return;
+                                const data = await res.json();
+                                if (!isCurrent()) return;
+                                const outcome = _getInstallOutcome(data, res);
+                                if (outcome === "unknown") {
+                                    phase = "unknown"; btnUse.removeAttribute("aria-busy");
+                                    inlineStatusBox.textContent = t('install.connection_uncertain');
+                                    showToast(t('install.connection_uncertain'), "warning");
+                                    return;
+                                }
+                                if (outcome === "error") {
+                                    const isLinkError = data?.error_code === 'invalid_repository'
+                                        || (typeof data?.error === "string" && data.error.includes('不是有效的 Git'));
+                                    const safeMessage = isLinkError ? t('install.error_invalid_repository') : _getInstallErrorMessage(data);
+                                    inlineStatusBox.innerHTML = isLinkError
+                                        ? `<span class="resource-install__message resource-install__message--error">❌ ${escapeHtml(safeMessage)}</span><br><button id="btn-open-source-link" type="button" class="resource-install__button resource-install__source">🔗 ${escapeHtml(t('install.open_source'))}</button>`
+                                        : `<span class="resource-install__message resource-install__message--error">❌ ${escapeHtml(t('install.failed_for_item', { title: itemData.title, message: safeMessage }))}</span>`;
+                                    // 🔒 XSS防护：链接改为 DOM 事件绑定（内联 onclick 里的引号即使转义，
+                                    // 也会被浏览器先还原再交给 JS 解析，依然能被注入；本文件其他分支均用此写法）
+                                    if (isLinkError) {
+                                        const btnOpenSource = inlineStatusBox.querySelector('#btn-open-source-link');
+                                        if (btnOpenSource) {
+                                            btnOpenSource.onclick = () => {
+                                                if (!isCurrent()) return;
+                                                const safeUrl = _getSafeExternalUrl(itemData.link);
+                                                if (safeUrl) window.open(safeUrl, '_blank', 'noopener,noreferrer');
+                                            };
+                                        }
+                                    }
+                                    showToast(t('install.failed_for_item', { title: itemData.title, message: safeMessage }), "error");
+                                } else {
+                                    // 根据后端返回的 message 判断是否为自更新场景
+                                    const isSelfUpdate = data.message && data.message.includes("重启") && data.message.includes("生效");
+                                    if (isSelfUpdate) {
+                                        inlineStatusBox.innerHTML = `<div class="resource-install__message resource-install__message--success resource-install__complete">🔄 ${escapeHtml(t('install.stage_complete'))}</div><div class="resource-install__note">${escapeHtml(t('install.restart_to_apply'))}</div>`;
+                                        showToast(t('install.completed_update', { title: itemData.title }), "success");
+                                    } else {
+                                        inlineStatusBox.innerHTML = `<div class="resource-install__message resource-install__message--success resource-install__complete">🎉 ${escapeHtml(t('install.complete'))}</div><div class="resource-install__note">${escapeHtml(t('install.restart_to_load'))}</div>`;
+                                        showToast(t('install.completed_restart', { title: itemData.title }), "success");
+                                    }
+
+                                    if (!isSelfUpdate) _recordToolInstalledVersion(itemData.id, data);
+
+                                    try {
+                                        await api.recordItemUse(itemData.id);
+                                        if (!isCurrent()) return;
+                                        clearUsesCache();
+                                    } catch (_) {}
+                                    if (!isCurrent()) return;
+
+                                    saveAcquiredItem(itemData);
+
+                                    btnUse.innerHTML = `✅ ${escapeHtml(t('common.installed'))}`;
+                                    btnUse.setAttribute("data-install-state", "success");
+                                }
+                            } catch(err2) {
+                                if (!isCurrent()) return;
+                                phase = "unknown"; btnUse.removeAttribute("aria-busy");
+                                inlineStatusBox.innerHTML = `<span class="resource-install__message resource-install__message--error">❌ ${escapeHtml(t('install.connection_uncertain'))}</span>`;
+                            }
+                        }
+                    } catch (_) {
+                        if (isCurrent()) { phase = "unknown"; btnUse.removeAttribute("aria-busy"); inlineStatusBox.textContent = t('install.connection_uncertain'); }
+                    } finally { if (phase === "install") phase = "idle"; releaseButton(); }
+                };
+            } else if (isApp) {
+                const progress = trackProgress();
+
+                // 附带 account 凭证，解决问题 2 (一键鉴权加载)
+                try {
                     const result = await requestSSE(
-                        `${localApiEndpoint}_stream`,
-                        { url: itemData.link, id: itemData.id, account: currentUser.account, token: _getAuthToken() },
-                        (event) => progress.update(event.progress, event.message)
+                        "/community_hub/download_app_stream",
+                        { url: itemData.link, id: itemData.id, account, token },
+                        (event) => {
+                            if (!isCurrent()) return;
+                            const stageKey = typeof event.stage === "string" && Object.hasOwn(WORKFLOW_STAGE_KEYS, event.stage)
+                                ? WORKFLOW_STAGE_KEYS[event.stage]
+                                : "";
+                            const message = event.status === "error"
+                                ? _getWorkflowErrorMessage(event)
+                                : t(stageKey || 'workflow.stage_downloading');
+                            progress.update(event.progress, message);
+                        },
+                        { timeout: API.WORKFLOW_DOWNLOAD_TIMEOUT }
                     );
 
+                    if (!isCurrent()) return;
                     if (result.status === "success") {
-                        progress.complete(result.message);
-                        // 根据后端返回的 message 判断是否为自更新场景
-                        const isSelfUpdate = result.message && result.message.includes("重启") && result.message.includes("生效");
-                        if (isSelfUpdate) {
-                            showToast(`🔄 插件 [${itemData.title}] 新版本已就绪，重启 ComfyUI 即可生效！`, "success");
-                        } else {
-                            showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
+                        const graphLoaded = await _loadGraphToCanvas(result.data, isCurrent);
+                        if (!isCurrent()) return;
+                        if (!graphLoaded) {
+                            const message = t('workflow.canvas_load_failed');
+                            progress.error(message);
+                            showToast(message, "error");
+                            return;
                         }
+                        progress.complete(t('workflow.loaded_for_item', { title: itemData.title }));
+                        showToast(t('workflow.loaded_for_item', { title: itemData.title }), "success");
 
                         // 🚀 安装成功后，盖上本地版本戳
-                        // 优先用本地引擎回传的真实安装 commit（installed_version），兜底云端 latest_version；
-                        // 二者皆空才跳过——避免版本戳缺失导致卡片更新徽章永不触发
-                        const _installedVer = result.installed_version || itemData.latest_version;
-                        if (_installedVer) {
-                            localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, _installedVer);
+                        if (itemData.latest_version) {
+                            if (!saveInstalledVersion(itemData.id, itemData.latest_version)) {
+                                showToast(t('install.version_record_unavailable'), 'warning');
+                            }
                         }
 
                         // 记录使用量（后端自动去重）
-                        try {
-                            await api.recordItemUse(itemData.id);
+                        api.recordItemUse(itemData.id).then(() => {
+                            if (!isCurrent()) return;
                             clearUsesCache();
-                        } catch(err) { console.warn('📊 使用量记录失败:', err); }
+                        }).catch(() => {});
 
                         // 🚀 保存到已获取记录
                         saveAcquiredItem(itemData);
 
                         // 🚀 更新按钮状态
-                        btnUse.innerHTML = `✅ 已安装`;
-                        btnUse.style.background = "#4CAF50";
+                        btnUse.innerHTML = `✅ ${escapeHtml(t('common.downloaded'))}`;
+                        btnUse.setAttribute("data-install-state", "success");
                     } else {
-                        progress.error(result.message);
-                        showToast(`插件 [${itemData.title}] 安装失败: ${result.message}`, "error");
+                        if (result?.outcomeUnknown) { phase = "unknown"; btnUse.removeAttribute("aria-busy"); }
+                        const message = _getWorkflowErrorMessage(result);
+                        const localizedMessage = result.error_code
+                            ? message
+                            : t('workflow.failed', { message });
+                        progress.error(message);
+                        inlineStatusBox.innerHTML = `<span class="resource-install__message resource-install__message--error">❌ ${escapeHtml(localizedMessage)}</span>`;
+                        showToast(localizedMessage, "error");
                     }
                 } catch(err) {
+                    if (!isCurrent()) return;
+                    if (!err?.fallbackSafe) {
+                        phase = "unknown"; btnUse.removeAttribute("aria-busy");
+                        const message = t('workflow.connection_uncertain');
+                        progress.error(message);
+                        showToast(message, "error");
+                        return;
+                    }
                     // 降级到原接口
                     progress.destroy();
-                    inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 正在后台静默安装 (关闭侧边栏不影响进度)...</span>`;
+                    inlineStatusBox.innerHTML = `<span class="resource-install__message resource-install__message--info">⏳ ${escapeHtml(t('workflow.fallback_loading'))}</span>`;
 
                     try {
-                        const res = await fetch(localApiEndpoint, {
-                            method: "POST", headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account, token: _getAuthToken() })
+                        const res = await fetch("/community_hub/download_app", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ url: itemData.link, id: itemData.id, account, token })
                         });
-                        const data = await res.json();
+                        if (!isCurrent()) return;
+                        if (!res.ok) {
+                            const messageKey = [401, 403].includes(res.status)
+                                ? 'workflow.error_auth'
+                                : ([502, 503, 504].includes(res.status) ? 'workflow.error_network' : 'workflow.error_generic');
+                            inlineStatusBox.innerHTML = `<span class="resource-install__message resource-install__message--error">❌ ${escapeHtml(t('workflow.http_failed', { status: res.status, message: t(messageKey) }))}</span>`;
+                            return;
+                        }
+                        let data;
+                        try {
+                            data = await res.json();
+                            if (!isCurrent()) return;
+                        } catch (parseErr) {
+                            if (!isCurrent()) return;
+                            inlineStatusBox.innerHTML = `<span class="resource-install__message resource-install__message--error">❌ ${escapeHtml(t('workflow.parse_failed'))}</span>`;
+                            showToast(t('common.parse_error'), "error");
+                            return;
+                        }
+                        if (data?.status !== "success") {
+                            // 旧式响应的服务端原文可能未本地化，也可能包含上游诊断/链接信息；
+                            // 使用稳定双语类别提示，不把远端正文直接展示或写入诊断日志。
+                            const message = t('workflow.error_remote');
+                            inlineStatusBox.innerHTML = `<span class="resource-install__message resource-install__message--error">❌ ${escapeHtml(message)}</span>`;
+                            showToast(message, "error");
+                        } else {
+                            const graphLoaded = await _loadGraphToCanvas(data.data, isCurrent);
+                            if (!isCurrent()) return;
+                            if (!graphLoaded) {
+                                const message = t('workflow.canvas_load_failed');
+                                inlineStatusBox.textContent = message;
+                                showToast(message, "error");
+                                return;
+                            }
+                            inlineStatusBox.innerHTML = `<div class="resource-install__message resource-install__message--success resource-install__complete">✅ ${escapeHtml(t('workflow.loaded_for_item', { title: itemData.title }))}</div><div class="resource-install__note">${escapeHtml(t('workflow.loaded_warning'))}</div>`;
+                            showToast(t('workflow.loaded_for_item', { title: itemData.title }), "success");
 
-                        if (data.error) {
-                            const isLinkError = data.error.includes('不是有效的 Git');
-                            inlineStatusBox.innerHTML = isLinkError
-                                ? `<span style="color: #F44336;">❌ ${escapeHtml(data.error)}</span><br><button id="btn-open-source-link" style="margin-top:8px;padding:6px 14px;background:#2563eb;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;">🔗 前往资源原始页面</button>`
-                                : `<span style="color: #F44336;">❌ 安装失败: ${escapeHtml(data.error)}</span>`;
-                            // 🔒 XSS防护：链接改为 DOM 事件绑定（内联 onclick 里的引号即使转义，
-                            // 也会被浏览器先还原再交给 JS 解析，依然能被注入；本文件其他分支均用此写法）
-                            if (isLinkError) {
-                                const btnOpenSource = inlineStatusBox.querySelector('#btn-open-source-link');
-                                if (btnOpenSource) {
-                                    btnOpenSource.onclick = () => window.open(itemData.link, '_blank');
+                            if (itemData.latest_version) {
+                                if (!saveInstalledVersion(itemData.id, itemData.latest_version)) {
+                                    showToast(t('install.version_record_unavailable'), 'warning');
                                 }
                             }
-                            showToast(`插件 [${itemData.title}] 安装失败: ${data.error}`, "error");
-                        } else {
-                            // 根据后端返回的 message 判断是否为自更新场景
-                            const isSelfUpdate = data.message && data.message.includes("重启") && data.message.includes("生效");
-                            if (isSelfUpdate) {
-                                inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🔄 新版本已就绪！</div><div style="color: #aaa; margin-top: 5px;">重启 ComfyUI 即可生效。</div>`;
-                                showToast(`🔄 插件 [${itemData.title}] 新版本已就绪，重启 ComfyUI 即可生效！`, "success");
-                            } else {
-                                inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-size: 14px; font-weight: bold;">🎉 插件安装成功！</div><div style="color: #aaa; margin-top: 5px;">请重启 ComfyUI 以加载新节点。</div>`;
-                                showToast(`🎉 插件 [${itemData.title}] 安装成功！请重启 ComfyUI。`, "success");
-                            }
 
-                            const _installedVer = data.installed_version || itemData.latest_version;
-                            if (_installedVer) {
-                                localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, _installedVer);
-                            }
-
-                            try {
-                                await api.recordItemUse(itemData.id);
+                            api.recordItemUse(itemData.id).then(() => {
+                                if (!isCurrent()) return;
                                 clearUsesCache();
-                            } catch(err2) { console.warn('📊 使用量记录失败:', err2); }
+                            }).catch(() => {});
 
                             saveAcquiredItem(itemData);
 
-                            btnUse.innerHTML = `✅ 已安装`;
-                            btnUse.style.background = "#4CAF50";
+                            btnUse.innerHTML = `✅ ${escapeHtml(t('common.downloaded'))}`;
+                            btnUse.setAttribute("data-install-state", "success");
                         }
                     } catch(err2) {
-                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务。</span>`;
+                        if (!isCurrent()) return;
+                        phase = "unknown"; btnUse.removeAttribute("aria-busy");
+                        inlineStatusBox.innerHTML = `<span class="resource-install__message resource-install__message--error">❌ ${escapeHtml(t('workflow.local_connection_failed', { message: t('common.network_error_retry') }))}</span>`;
                     }
                 }
-            };
-        } else if (isApp) {
-            const progress = createInstallProgress(inlineStatusBox);
-
-            // 附带 account 凭证，解决问题 2 (一键鉴权加载)
-            try {
-                const result = await requestSSE(
-                    "/community_hub/download_app_stream",
-                    { url: itemData.link, id: itemData.id, account: currentUser.account, token: _getAuthToken() },
-                    (event) => progress.update(event.progress, event.message),
-                    { timeout: 120000 }  // 应用JSON下载2分钟足够
-                );
-
-                if (result.status === "success") {
-                    progress.complete(result.message);
-                    await _loadGraphToCanvas(result.data);
-                    showToast(`✅ 工作流 [${itemData.title}] 已成功加载到画布！`, "success");
-
-                    // 🚀 安装成功后，盖上本地版本戳
-                    if (itemData.latest_version) {
-                        localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
-                    }
-
-                    // 记录使用量（后端自动去重）
-                    api.recordItemUse(itemData.id).then(() => {
-                        clearUsesCache();
-                    }).catch(err => console.warn('📊 使用量记录失败:', err));
-
-                    // 🚀 保存到已获取记录
-                    saveAcquiredItem(itemData);
-
-                    // 🚀 更新按钮状态
-                    btnUse.innerHTML = `✅ 已下载`;
-                    btnUse.style.background = "#4CAF50";
-                } else {
-                    progress.error(result.message);
-                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${escapeHtml(result.message)}</span>`;
-                    showToast(`工作流加载失败：${result.message}`, "error");
-                }
-            } catch(err) {
-                // 降级到原接口
-                progress.destroy();
-                inlineStatusBox.innerHTML = `<span style="color: #2196F3;">⏳ 授权通过，正在安全鉴权并热加载入工作区...</span>`;
-
-                try {
-                    const res = await fetch("/community_hub/download_app", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ url: itemData.link, id: itemData.id, account: currentUser.account, token: _getAuthToken() })
-                    });
-                    if (!res.ok) {
-                        const errText = await res.text().catch(() => '未知服务端错误');
-                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败 (${res.status})：${escapeHtml(errText)}</span>`;
-                        return;
-                    }
-                    let data;
-                    try {
-                        data = await res.json();
-                    } catch (parseErr) {
-                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 响应解析失败，请重试</span>`;
-                        showToast(t('common.parse_error'), "error");
-                        return;
-                    }
-                    if (data.error) {
-                        inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 加载失败：${escapeHtml(data.error)}</span>`;
-                        showToast(`工作流加载失败：${data.error}`, "error");
-                    } else {
-                        await _loadGraphToCanvas(data.data);
-                        inlineStatusBox.innerHTML = `<div style="color: #4CAF50; font-weight: bold;">✅ 工作流已加载到画布！</div><div style="color: #888; margin-top: 4px;">由于本地节点差异可能出现飘红，请使用管理器补全节点。</div>`;
-                        showToast(`✅ 工作流 [${itemData.title}] 已成功加载到画布！`, "success");
-
-                        if (itemData.latest_version) {
-                            localStorage.setItem(`ComfyCommunity_LocalVer_${itemData.id}`, itemData.latest_version);
-                        }
-
-                        api.recordItemUse(itemData.id).then(() => {
-                            clearUsesCache();
-                        }).catch(err => console.warn('📊 使用量记录失败:', err));
-
-                        saveAcquiredItem(itemData);
-
-                        btnUse.innerHTML = `✅ 已下载`;
-                        btnUse.style.background = "#4CAF50";
-                    }
-                } catch(err2) {
-                    console.error('❌ 应用下载失败:', err2);
-                    inlineStatusBox.innerHTML = `<span style="color: #F44336;">❌ 无法连接到本地服务：${escapeHtml(err2.message || '网络错误')}</span>`;
-                }
-            }
-        } else {
-            // ☁️ 网盘链接或纯链接模式（recordItemUse 延迟到用户点击按钮后）
-            
-            // ☁️ 从购买响应中获取网盘信息（安全：只有购买成功后才返回）
-            const isNetdisk = purchaseRes?.is_netdisk || itemData.is_netdisk;
-            const netdiskPassword = purchaseRes?.netdisk_password || itemData.netdisk_password;
-            
-            // ☁️ 网盘资源：购买后显示密码
-            if (isNetdisk) {
-                _renderNetdiskUI(inlineStatusBox, itemData, netdiskPassword);
             } else {
-                // 纯链接模式
-                inlineStatusBox.innerHTML = `
-                    <div style="color: #4CAF50; font-weight: bold; margin-bottom: 10px;">✅ 授权通过，该资源需手动访问源地址获取：</div>
-                    <button id="btn-pure-link-${itemData.id}" style="padding: 6px 16px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 13px;">🔗 前往获取</button>
-                `;
-                // 绑定按钮点击事件
-                const btnOpen = inlineStatusBox.querySelector(`#btn-pure-link-${itemData.id}`);
-                if (btnOpen) {
-                    btnOpen.onclick = () => {
-                        window.open(itemData.link, '_blank');
-                        api.recordItemUse(itemData.id).then(() => {
-                            clearUsesCache();
-                            window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload", { detail: { force: true } }));
-                        }).catch(err => console.warn('📊 使用量记录失败:', err));
-                    };
+                // ☁️ 网盘链接或纯链接模式（recordItemUse 延迟到用户点击按钮后）
+
+                // ☁️ 从购买响应中获取网盘信息（安全：只有购买成功后才返回）
+                const isNetdisk = purchaseRes.is_netdisk;
+                const netdiskPassword = purchaseRes.netdisk_password;
+
+                // ☁️ 网盘资源：购买后显示密码
+                if (isNetdisk) {
+                    _renderNetdiskUI(inlineStatusBox, itemData, netdiskPassword, isCurrent);
+                } else {
+                    inlineStatusBox.replaceChildren();
+                    const card = document.createElement('div');
+                    card.className = 'netdisk-card';
+                    const summary = document.createElement('div');
+                    summary.className = 'netdisk-card__summary';
+                    summary.textContent = t('acquire.pure_link_authorized');
+                    const openButton = document.createElement('button');
+                    openButton.type = 'button';
+                    openButton.className = 'netdisk-card__open';
+                    openButton.textContent = t('netdisk.open');
+                    openButton.addEventListener('click', () => _openExternalResource(itemData.link, itemData.id, isCurrent));
+                    const panel = document.createElement('div');
+                    panel.className = 'netdisk-card__panel';
+                    panel.appendChild(openButton);
+                    card.append(summary, panel);
+                    inlineStatusBox.appendChild(card);
                 }
             }
-        }
+        } catch (_) {
+            if (isCurrent()) { inlineStatusBox.style.display = "block"; inlineStatusBox.textContent = t('common.error'); }
+        } finally { if (phase === "preflight") phase = "idle"; releaseButton(); }
     };
+    return scope;
 }

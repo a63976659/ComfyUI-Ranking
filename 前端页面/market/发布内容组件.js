@@ -1,5 +1,7 @@
+import { validateImageFile } from "./图片文件检查.js";
 // 前端页面/market/发布内容组件.js
 import { generatePublishHTML } from "./发布内容_UI模板.js";
+import { createPublishSubmissionScope } from "./发布提交生命周期.js";
 import { handlePublishSubmit } from "./发布内容_提交引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { showConfirm, showToast } from "../components/UI交互提示组件.js";
@@ -206,7 +208,9 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     // 1. 渲染分离出去的视图模板
     container.innerHTML = generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExistingToken, editItemData, t);
 
+    let submissionScope;
     container.querySelector("#btn-back").onclick = async () => {
+        if (!submissionScope?.isCurrent()) return;
         // 检查是否有已编辑内容
         const hasChanges = !!(
             container.querySelector("#pub-title")?.value?.trim() ||
@@ -222,12 +226,13 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
                     title: isEditMode ? t('publish.unsaved_changes_title') : t('publish.leave_confirm_title'),
                     confirmText: t('common.leave'),
                     cancelText: t('common.stay'),
-                    type: 'warning'
+                    type: 'warning', signal: submissionScope.confirmationSignal
                 }
             );
-            if (!confirmed) return;
+            if (!confirmed || !submissionScope.isCurrent()) return;
         }
 
+        submissionScope.dispose();
         if (onBackCallback) onBackCallback();
     };
 
@@ -449,36 +454,49 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     
     updateFormView();
 
-    // 🖼️ 多图上传处理
-    imagesInput.onchange = (e) => {
-        const rawFiles = Array.from(e.target.files).slice(0, 6);  // 最多6张
-        if (rawFiles.length === 0) return;
-
-        // GIF 文件大小校验：超过 50MB 的 GIF 立即排除
-        const GIF_MAX_SIZE = 50 * 1024 * 1024;
-        const files = rawFiles.filter(file => {
-            if (file.type === 'image/gif' && file.size > GIF_MAX_SIZE) {
-                const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
-                const msg = `"${file.name}" 文件过大（${sizeMB}MB），GIF最大允许50MB，已自动跳过`;
-                console.warn('[发布内容组件]', msg);
-                showToast(msg, "warning");
-                return false;
-            }
-            return true;
-        });
-        if (files.length === 0) return;
-
-        imageFiles = files;
-        imagesPreview.innerHTML = '';
-
-        files.forEach((file, idx) => {
-            const objectUrl = URL.createObjectURL(file);
-            imagesPreview.appendChild(_createImagePreviewWrapper(objectUrl, idx));
-        });
-        updateCoverMark(imagesPreview);
-        setupImageDragSort(imagesPreview, imageFiles);
+    // 文件头确认后才创建预览，迟到选择不覆盖后一次选择。
+    let previewGeneration = 0, previewPending = false, resumeDisabled = false;
+    const previewUrls = new Set();
+    const releasePreviews = () => {
+        for (const url of previewUrls) URL.revokeObjectURL(url);
+        previewUrls.clear();
     };
-    
+    imagesInput.onchange = async (e) => {
+        if (!submissionScope?.isCurrent()) return;
+        const rawFiles = Array.from(e.target.files).slice(0, 6);
+        if (!rawFiles.length) return;
+        const generation = ++previewGeneration;
+        if (!previewPending) resumeDisabled = submitBtn.disabled;
+        previewPending = true; submitBtn.disabled = true;
+        try {
+            const files = [];
+            for (const file of rawFiles) {
+                try { await validateImageFile(file); files.push(file); }
+                catch (_) {
+                    if (generation === previewGeneration && submissionScope.isCurrent()) showToast(t('common.operation_failed'), 'warning');
+                }
+                if (generation !== previewGeneration || !submissionScope.isCurrent()) return;
+            }
+            if (!files.length) return;
+            releasePreviews(); imageFiles = files; imagesPreview.replaceChildren();
+            for (const [index, file] of files.entries()) {
+                const url = URL.createObjectURL(file); previewUrls.add(url);
+                imagesPreview.appendChild(_createImagePreviewWrapper(url, index));
+            }
+            updateCoverMark(imagesPreview); setupImageDragSort(imagesPreview, imageFiles);
+        } catch (_) {
+            if (generation === previewGeneration && submissionScope.isCurrent()) {
+                releasePreviews(); imageFiles = []; imagesPreview.replaceChildren();
+                showToast(t('common.operation_failed'), 'warning');
+            }
+        } finally {
+            if (generation === previewGeneration) {
+                previewPending = false;
+                if (submissionScope.isCurrent()) submitBtn.disabled = resumeDisabled;
+            }
+        }
+    };
+
     inputJson.onchange = (e) => { jsonFile = e.target.files[0]; };
 
     // 🎨 原创勾选框逻辑：工具/应用类型强制确认弹窗
@@ -490,15 +508,18 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         const rules = TYPE_RULES[typeSelect.value];
         if (originalHintText) {
             if (rules?.originalRequired) {
-                originalHintText.innerHTML = `<span style="color: #FF9800;">⚠️ ${t('publish.original_required_hint')}</span>`;
+                originalHintText.textContent = `⚠️ ${t('publish.original_required_hint')}`;
+                originalHintText.classList.add('ranking-publish__original-required');
             } else {
                 originalHintText.textContent = t('publish.original_default_hint');
+                originalHintText.classList.remove('ranking-publish__original-required');
             }
         }
     };
     
     // 显示原创确认弹窗
     const showOriginalConfirmModal = (onConfirm, onCancel) => {
+        if (!submissionScope?.isCurrent()) return;
         const contentDiv = document.createElement("div");
         contentDiv.innerHTML = `
             <div style="line-height: 1.6; color: #ccc;">
@@ -519,20 +540,25 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
             </div>
         `;
         
-        globalModal.openModal(t('publish.original_confirm_title'), contentDiv, { width: "450px" });
+        const modal = globalModal.openModal(t('publish.original_confirm_title'), contentDiv, { width: "450px" });
+        const release = submissionScope.addCleanup(() => globalModal.closeModal(modal));
+        contentDiv._cleanup = release;
         
         contentDiv.querySelector("#btn-original-confirm").onclick = () => {
-            globalModal.closeTopModal();
+            if (!submissionScope.isCurrent()) return;
+            globalModal.closeModal(modal);
             onConfirm();
         };
         contentDiv.querySelector("#btn-original-cancel").onclick = () => {
-            globalModal.closeTopModal();
+            if (!submissionScope.isCurrent()) return;
+            globalModal.closeModal(modal);
             onCancel();
         };
     };
     
     // 监听原创勾选框变化
     isOriginalCheckbox.onchange = (e) => {
+        if (!submissionScope?.isCurrent()) return;
         const rules = TYPE_RULES[typeSelect.value];
         // 只有规则要求原创强制的类型才需要确认弹窗
         if (rules?.originalRequired && e.target.checked) {
@@ -552,7 +578,10 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
 
     // 4. 将提取的参数交接给分离出去的提交引擎
     const submitBtn = container.querySelector("#btn-submit-publish");
-    submitBtn.onclick = () => handlePublishSubmit({
+    submissionScope = createPublishSubmissionScope(container, submitBtn, currentUser?.account);
+    submissionScope.addCleanup(() => { ++previewGeneration; releasePreviews(); imageFiles = []; jsonFile = null; imagesPreview.replaceChildren(); });
+    submitBtn.onclick = () => previewPending ? undefined : handlePublishSubmit({
+        submissionScope,
         container, currentUser, isEditMode, editItemData, 
         imageFiles, jsonFile, onSuccessCallback, submitBtn, submitBtnText  // 🖼️ imageFiles 替换 coverFile
     });

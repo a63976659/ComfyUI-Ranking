@@ -10,23 +10,26 @@
 // ==========================================
 
 import { api, proxyImages } from "../core/网络请求API.js";
-import { IS_WEB_MODE } from "../core/全局配置.js";
+import { IS_WEB_MODE, getCachedProfile, setCachedProfile } from "../core/全局配置.js";
+import { normalizeProfileData } from "../profile/个人资料工具.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
-import { setupResourceInstall } from "./资源安装引擎.js";
+import { getInstalledVersionStatus, setupResourceInstall } from "./资源安装引擎.js";
 import { renderTipBoardHTML } from "../components/打赏等级工具.js";
 import { t } from "../components/用户体验增强.js";
-import { removeCache, removeCacheByPrefix } from "../components/性能优化工具.js";
-import { invalidateRelatedCache } from "../core/网络请求API.js";
+import { createPurchaseStatusScope, isValidPurchaseStatus } from "./购买状态生命周期.js";
+import { showResourceDeleteDialog } from "./资源删除组件.js";
+import { showResourceRefundDialog } from "./资源退款组件.js";
 import { showToast } from "../components/UI交互提示组件.js";
 // 🧹 P2归一：escapeHtml 局部副本已移除，改用统一版（转义更严格，防XSS语义不变）
 import { escapeHtml } from "../components/互动工具函数.js";
 
 // 🔄 P7后悔模式：渲染退款按钮
-async function renderRefundButton(container, itemData, currentUser) {
+async function renderRefundButton(container, itemData, currentUser, scope, purchaseStatus) {
     if (!currentUser) return;
     
     const refundArea = container.querySelector("#refund-area");
     if (!refundArea) return;
+    if (!scope.isCurrent()) return;
 
     // 💸 检查商品是否支持退款
     if (!itemData.allow_refund && itemData.allow_refund !== undefined) {
@@ -34,15 +37,19 @@ async function renderRefundButton(container, itemData, currentUser) {
         return;
     }
     
+    refundArea.style.display = "block";
     try {
-        const statusRes = await api.getPurchaseStatus(currentUser.account, itemData.id);
+        const statusRes = await purchaseStatus;
+        if (!scope.isCurrent()) return;
+        if (!isValidPurchaseStatus(statusRes)) throw new Error();
         if (!statusRes.owned) {
             refundArea.innerHTML = '';
             return;
         }
         
-        if (statusRes.can_refund) {
-            const hoursLeft = statusRes.refund_hours_left;
+        if (statusRes.can_refund && statusRes.allow_refund) {
+            const hoursLeft = Number(statusRes.refund_hours_left);
+            if (!Number.isFinite(hoursLeft) || hoursLeft < 0) throw new Error("Invalid refund hours");
             refundArea.innerHTML = `
                 <div style="margin-top: 12px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px dashed #FF9800; border-radius: 6px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
@@ -59,7 +66,9 @@ async function renderRefundButton(container, itemData, currentUser) {
                 </div>
             `;
             
-            refundArea.querySelector("#btn-refund").onclick = () => showRefundConfirm(itemData, currentUser, statusRes.price_paid);
+            refundArea.querySelector("#btn-refund").onclick = () => {
+                if (scope.isCurrent()) showRefundConfirm(itemData, currentUser, statusRes.price_paid, () => scope.isCurrent());
+            };
         } else {
             refundArea.innerHTML = `
                 <div style="margin-top: 12px; padding: 10px; background: rgba(76,175,80,0.1); border: 1px solid rgba(76,175,80,0.3); border-radius: 6px; font-size: 12px; color: #4CAF50;">
@@ -68,168 +77,18 @@ async function renderRefundButton(container, itemData, currentUser) {
             `;
         }
     } catch (e) {
-        console.warn("获取购买状态失败:", e);
+        if (!scope.isCurrent()) return;
+        refundArea.replaceChildren();
     }
 }
 
-/**
- * 通用确认弹窗
- * @param {Object} config - 弹窗配置
- * @param {string} config.title - 弹窗标题
- * @param {string} config.titleColor - 标题颜色
- * @param {string} config.infoHtml - 商品信息区域HTML
- * @param {string} config.warningHtml - 警告区域HTML
- * @param {string} config.warningBgColor - 警告区域背景色
- * @param {string} config.warningBorderColor - 警告区域边框色
- * @param {string} config.confirmText - 确认按钮文本
- * @param {string} config.confirmColor - 确认按钮颜色
- * @param {string} config.confirmHoverColor - 确认按钮悬停颜色
- * @param {string} config.processingText - 处理中文本
- * @param {Function} config.onConfirm - 确认回调 (overlay: HTMLElement) => Promise<void>
- */
-function _showConfirmOverlay({ title, titleColor, infoHtml, warningHtml, warningBgColor, warningBorderColor, confirmText, confirmColor, confirmHoverColor, processingText, onConfirm }) {
-    // 两个按钮的公共基础样式
-    const _btnBaseStyle = "color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: 0.2s;";
-
-    const overlay = document.createElement("div");
-    Object.assign(overlay.style, {
-        position: "fixed", top: "0", left: "0", right: "0", bottom: "0",
-        background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: "10000"
-    });
-
-    overlay.innerHTML = `
-        <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 420px; width: 90%; color: #fff; box-shadow: 0 8px 32px rgba(0,0,0,0.5);">
-            <div style="font-size: 18px; font-weight: bold; margin-bottom: 20px; color: ${titleColor}; display: flex; align-items: center; gap: 10px;">
-                ⚠️ ${escapeHtml(title)}
-            </div>
-
-            <div style="background: #2a2d3e; border-radius: 8px; padding: 15px; margin-bottom: 15px;">
-                ${infoHtml}
-            </div>
-
-            <div style="background: ${warningBgColor}; border: 1px solid ${warningBorderColor}; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-                <div style="font-size: 13px; color: #FF9800; line-height: 1.8;">
-                    ${warningHtml}
-                </div>
-            </div>
-
-            <div style="display: flex; gap: 12px; justify-content: flex-end;">
-                <button id="btn-cancel-confirm" style="background: #555; ${_btnBaseStyle}">
-                    ${t('common.cancel')}
-                </button>
-                <button id="btn-confirm-action" style="background: ${confirmColor}; font-weight: bold; ${_btnBaseStyle}">
-                    ${escapeHtml(confirmText)}
-                </button>
-            </div>
-        </div>
-    `;
-
-    document.body.appendChild(overlay);
-
-    const cancelBtn = overlay.querySelector("#btn-cancel-confirm");
-    cancelBtn.onmouseover = () => { cancelBtn.style.background = "#666"; };
-    cancelBtn.onmouseout  = () => { cancelBtn.style.background = "#555"; };
-    cancelBtn.onclick = () => overlay.remove();
-
-    const confirmBtn = overlay.querySelector("#btn-confirm-action");
-    confirmBtn.onmouseover = () => { confirmBtn.style.background = confirmHoverColor; };
-    confirmBtn.onmouseout  = () => { confirmBtn.style.background = confirmColor; };
-    confirmBtn.onclick = async () => {
-        confirmBtn.disabled = true;
-        confirmBtn.innerText = processingText;
-        await onConfirm(overlay);
-    };
-
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-}
-
-// 🔄 P7后悔模式：退款确认弹窗
-function showRefundConfirm(itemData, currentUser, pricePaid) {
-    _showConfirmOverlay({
-        title: t('item.confirm_refund_title'),
-        titleColor: "#FF5722",
-        infoHtml: `
-            <div style="font-size: 14px; margin-bottom: 10px;">${t('item.product')}${escapeHtml(itemData.title || t('item.untitled'))}</div>
-            <div style="font-size: 14px; color: #4CAF50;">${t('item.refund_amount')}<strong>${pricePaid}</strong> ${t('common.credits')}</div>
-        `,
-        warningHtml: `
-            <div>🚨 <strong>${t('item.refund_consequence')}：</strong></div>
-            <div style="margin-left: 20px; margin-top: 5px;">
-                • ${t('item.refund_consequence_1')}<br>
-                • ${t('item.refund_consequence_2')}<br>
-                • <strong style="color: #F44336;">${t('item.refund_consequence_3')}</strong>
-            </div>
-        `,
-        warningBgColor: "rgba(255,87,34,0.1)",
-        warningBorderColor: "rgba(255,87,34,0.3)",
-        confirmText: t('item.confirm_refund'),
-        confirmColor: "#FF5722",
-        confirmHoverColor: "#E64A19",
-        processingText: t('common.processing'),
-        onConfirm: async (overlay) => {
-            try {
-                const res = await api.requestRefund(currentUser.account, itemData.id);
-                if (res.status === "success") {
-                    // 🔄 P7后悔模式：清除本地缓存和文件
-                    burnLocalFiles(itemData.id);
-
-                    overlay.innerHTML = `
-                        <div style="background: #1e2233; border-radius: 12px; padding: 25px; max-width: 380px; width: 90%; color: #fff; text-align: center;">
-                            <div style="font-size: 48px; margin-bottom: 15px;">✅</div>
-                            <div style="font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #4CAF50;">${t('item.refund_success')}</div>
-                            <div style="font-size: 14px; color: #aaa; margin-bottom: 20px;">
-                                ${res.refund_amount} ${t('item.credits_refunded')}<br>
-                                <span style="color: #FF9800;">${t('item.ban_days_notice', { days: res.ban_days })}</span>
-                            </div>
-                            <button id="btn-close-refund" style="background: #4CAF50; color: #fff; border: none; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 14px;">
-                                ${t('common.got_it')}
-                            </button>
-                        </div>
-                    `;
-                    overlay.querySelector("#btn-close-refund").onclick = () => {
-                        overlay.remove();
-                        window.dispatchEvent(new CustomEvent("comfy-route-back"));
-                    };
-                } else {
-                    showToast(t('item.refund_failed_retry'), "error");
-                    overlay.remove();
-                }
-            } catch (e) {
-                showToast(t('item.refund_request_failed'), "error");
-                overlay.remove();
-            }
-        }
+// 卡片与详情页共用退款流程，成功关闭后返回列表。
+function showRefundConfirm(itemData, currentUser, pricePaid, isCurrent) {
+    return showResourceRefundDialog({
+        itemData, currentUser, pricePaid, isCurrent,
+        onClosed: () => window.dispatchEvent(new CustomEvent("comfy-route-back"))
     });
 }
-
-// 🔄 P7后悔模式：焚毁本地文件和缓存
-function burnLocalFiles(itemId) {
-    // 清除本地版本标记
-    localStorage.removeItem(`ComfyCommunity_LocalVer_${itemId}`);
-    
-    // 清除购买缓存
-    removeCache(`ItemOwnership_${itemId}`);
-    
-    // 清除列表缓存（强制下次刷新）
-    // 🔧 修复：API 层缓存键带完整查询串，removeCache 精确删除命中不到（no-op），
-    // 购买/下载后返回列表仍会看到旧数据，改用前缀删除
-    removeCacheByPrefix('api_/api/items');
-    removeCacheByPrefix('api_/api/creators');
-    
-    // 清除工具/Skill/应用/推荐列表缓存（使用标准 ListCache 格式）
-    const tabs = ['tools', 'skills', 'apps', 'recommends'];
-    const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
-    for (const tab of tabs) {
-        for (const sort of sorts) {
-            removeCache(`ListCache_${tab}_${sort}`);
-        }
-    }
-    
-    console.log(`🔥 已焚毁资源 ${itemId} 的本地数据`);
-}
-
-
 
 // ==========================================
 // 🗑️ 删除内容功能
@@ -243,61 +102,18 @@ function canDeleteItem(itemData, currentUser) {
     // 作者本人可以删除
     if (itemData.author === currentUser.account) return true;
     // 管理员可以删除
-    if (currentUser.is_admin) return true;
+    if (currentUser.is_admin === true) return true;
     return false;
 }
 
 /**
  * 显示删除确认弹窗
  */
-function showDeleteConfirm(itemData, currentUser, onSuccess) {
-    _showConfirmOverlay({
-        title: t('item.confirm_delete_title'),
-        titleColor: "#F44336",
-        infoHtml: `
-            <div style="font-size: 14px; margin-bottom: 10px;">${t('item.content_label')}${escapeHtml(itemData.title || t('item.untitled'))}</div>
-            <div style="font-size: 13px; color: #888;">${t('item.type_label')}${escapeHtml(itemData.type || t('item.type_unknown'))}</div>
-        `,
-        warningHtml: `
-            <div>🚨 <strong>${t('item.delete_consequence')}：</strong></div>
-            <div style="margin-left: 20px; margin-top: 5px;">
-                • ${t('item.delete_consequence_1')}<br>
-                • ${t('item.delete_consequence_2')}<br>
-                • ${t('item.delete_consequence_3')}
-            </div>
-        `,
-        warningBgColor: "rgba(244,67,54,0.1)",
-        warningBorderColor: "rgba(244,67,54,0.3)",
-        confirmText: t('item.confirm_delete'),
-        confirmColor: "#F44336",
-        confirmHoverColor: "#D32F2F",
-        processingText: t('item.deleting'),
-        onConfirm: async (overlay) => {
-            try {
-                const res = await api.deleteItem(itemData.id);
-                if (res.status === "success") {
-                    // 清除相关缓存
-                    invalidateRelatedCache(`/api/items/${itemData.id}`, "DELETE");
-
-                    overlay.remove();
-                    showToast(t('item.delete_success'), "success");
-
-                    // 返回列表页
-                    window.dispatchEvent(new CustomEvent("comfy-route-view", {
-                        detail: { view: "market", type: itemData.type || "tool" }
-                    }));
-
-                    if (onSuccess) onSuccess();
-                } else {
-                    showToast(t('item.delete_failed_retry'), "error");
-                    overlay.remove();
-                }
-            } catch (e) {
-                showToast(t('item.delete_request_failed'), "error");
-                overlay.remove();
-            }
-        }
-    });
+function showDeleteConfirm(itemData, currentUser, isCurrent) {
+    return showResourceDeleteDialog({ itemData, currentUser, isCurrent,
+        onDeleted: () => window.dispatchEvent(new CustomEvent('comfy-route-view', {
+            detail: { view: 'market', type: itemData.type || 'tool' }
+        })) });
 }
 
 export function createItemDetailView(itemData, currentUser) {
@@ -312,13 +128,11 @@ export function createItemDetailView(itemData, currentUser) {
         backgroundColor: "#13151c" 
     });
 
-    const authorCacheKey = `ComfyCommunity_ProfileCache_${itemData.author}`;
-    const cachedAuthorStr = localStorage.getItem(authorCacheKey);
-    let authorName = itemData.author;
-    if (cachedAuthorStr) { try { authorName = JSON.parse(cachedAuthorStr).name || itemData.author; } catch(e) {} }
+    const cachedAuthor = getCachedProfile(itemData.author);
+    const authorName = cachedAuthor?.name || itemData.author || t('common.unknown_user');
 
     // 🚀 使用统一工具渲染单品赞赏榜单（带星星/月亮/太阳等级）
-    const boardData = itemData.tip_board || [];
+    const boardData = Array.isArray(itemData.tip_board) ? itemData.tip_board.filter(entry => entry && typeof entry === "object" && !Array.isArray(entry)) : [];
     const boardHtml = renderTipBoardHTML(boardData, 10, t('item.no_tips_yet'), "normal");
 
     // 🗑️ 判断是否有权限删除
@@ -345,7 +159,7 @@ export function createItemDetailView(itemData, currentUser) {
                 ${deleteBtnHtml}
             </div>
         </div>
-        <div style="margin-top: 10px; color: #888;">感谢 砚影科技 的支持！</div>
+        <div style="margin-top: 10px; color: #888;">${escapeHtml(t('item.sponsor_thanks'))}</div>
             
         <!-- 🔄 P7后悔模式：退款区域 -->
         <div id="refund-area"></div>
@@ -357,7 +171,8 @@ export function createItemDetailView(itemData, currentUser) {
     `;
 
     // 🚀 核心逻辑：比对云端探测版本与本地安装版本
-    const localVersionHash = localStorage.getItem(`ComfyCommunity_LocalVer_${itemData.id}`);
+    const localVersionStatus = getInstalledVersionStatus(itemData.id);
+    const localVersionHash = localVersionStatus.version;
     const cloudVersionHash = itemData.latest_version;
     const isFree = !itemData.price || itemData.price <= 0 || (currentUser && currentUser.account === itemData.author);
     
@@ -369,13 +184,13 @@ export function createItemDetailView(itemData, currentUser) {
     let actionBtnHtml = '';
     if (IS_WEB_MODE) {
         // 📱 Web 模式：保留「立即获取」按钮但行为受限（未购买仅触发购买、已购买提示电脑端安装，见资源安装引擎）；不渲染重装/更新按钮
-        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: none; background: #2196F3; color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">⬇️ ${t('item.get_now')} <span style="font-size: 12px; font-weight: normal; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px;">${isFree ? t('item.free') : itemData.price + ' ' + t('common.credits')}</span></button>`;
-    } else if (!isUpdateAvailable && localVersionHash) {
-        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: none; background: #4CAF50; color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">✅ ${t('item.owned_reinstall')}</button>`;
+        actionBtnHtml = `<button type="button" id="btn-use-item" class="resource-install__button resource-install__entry" data-install-state="ready">⬇️ ${t('item.get_now')} <span class="resource-install__price">${isFree ? t('item.free') : escapeHtml(itemData.price) + ' ' + t('common.credits')}</span></button>`;
+    } else if (!isUpdateAvailable && localVersionStatus.installed) {
+        actionBtnHtml = `<button type="button" id="btn-use-item" class="resource-install__button resource-install__entry" data-install-state="success">✅ ${t('item.owned_reinstall')}</button>`;
     } else if (isUpdateAvailable) {
-        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: 1px solid #FF9800; background: rgba(255, 152, 0, 0.2); color: #FF9800; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);" onmouseover="this.style.background='#FF9800'; this.style.color='#fff'" onmouseout="this.style.background='rgba(255, 152, 0, 0.2)'; this.style.color='#FF9800'">♻️ ${t('item.update_available')}</button>`;
+        actionBtnHtml = `<button type="button" id="btn-use-item" class="resource-install__button resource-install__entry" data-install-state="update">♻️ ${t('item.update_available')}</button>`;
     } else {
-        actionBtnHtml = `<button id="btn-use-item" style="flex: 1; padding: 12px; border-radius: 6px; border: none; background: #2196F3; color: #fff; font-weight: bold; font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">⬇️ ${t('item.get_now')} <span style="font-size: 12px; font-weight: normal; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px;">${isFree ? t('item.free') : itemData.price + ' ' + t('common.credits')}</span></button>`;
+        actionBtnHtml = `<button type="button" id="btn-use-item" class="resource-install__button resource-install__entry" data-install-state="ready">⬇️ ${t('item.get_now')} <span class="resource-install__price">${isFree ? t('item.free') : escapeHtml(itemData.price) + ' ' + t('common.credits')}</span></button>`;
     }
 
     // 🚀 返回按钮位置可调整参数：margin-left 控制右移，margin-top 控制下移
@@ -401,27 +216,48 @@ export function createItemDetailView(itemData, currentUser) {
         </div>
     `;
 
+    // 按既有状态生成的安装入口必须实际挂载到详情页面。
+    container.insertAdjacentHTML("beforeend", actionBtnHtml);
+    const scope = createPurchaseStatusScope(container.querySelector("#refund-area"), currentUser?.account);
+    container._cleanup = () => scope.dispose();
+    scope.addCleanup(() => {
+        for (const id of ["btn-use-item", "btn-tip-item", "btn-delete-item"]) {
+            const button = container.querySelector(`#${id}`);
+            if (button) { button.onclick = null; button.remove(); }
+        }
+        container.querySelector("#inline-status-box")?.replaceChildren();
+    });
+
     // 🚀 创建安装状态容器
     const inlineStatusBox = document.createElement("div");
     inlineStatusBox.id = "inline-status-box";
     Object.assign(inlineStatusBox.style, { display: "none", marginTop: "15px", padding: "12px", background: "var(--comfy-menu-bg)", borderRadius: "6px", border: "1px solid var(--border-color, #333)", fontSize: "13px" });
     container.appendChild(inlineStatusBox);
+    if (!localVersionStatus.available) {
+        inlineStatusBox.style.display = "block";
+        inlineStatusBox.setAttribute("role", "status");
+        inlineStatusBox.textContent = t('install.version_status_unavailable');
+    }
 
-    container.querySelector("#btn-back-detail").onclick = () => window.dispatchEvent(new CustomEvent("comfy-route-back"));
+    container.querySelector("#btn-back-detail").onclick = () => {
+        scope.dispose();
+        window.dispatchEvent(new CustomEvent("comfy-route-back"));
+    };
     
     // 🚀 绑定安装/更新按钮事件
     const btnUseItem = container.querySelector("#btn-use-item");
     if (btnUseItem) {
-        setupResourceInstall(btnUseItem, itemData, currentUser, inlineStatusBox);
+        const installation = setupResourceInstall(btnUseItem, itemData, currentUser, inlineStatusBox,
+            { isCurrent: () => scope.isCurrent() });
+        scope.addCleanup(() => installation?.dispose());
     }
     
     // 🚀 绑定作品打赏按钮事件
     container.querySelector("#btn-tip-item").onclick = async () => {
+        if (!scope.isCurrent()) return;
         if (!currentUser) return showToast(t('feedback.login_required'), "warning");
-        await openTipModal(currentUser, { account: itemData.author }, (newBalance) => {
-            currentUser.balance = newBalance;
-            // 打赏成功后刷新局部或整体详情 (由框架重新渲染)
-        }, itemData.id);
+        await openTipModal(currentUser, { account: itemData.author }, undefined, itemData.id,
+            { isCurrent: () => scope.isCurrent() });
     };
 
     // 🗑️ 绑定删除按钮事件
@@ -429,40 +265,39 @@ export function createItemDetailView(itemData, currentUser) {
     if (btnDeleteItem) {
         btnDeleteItem.onclick = () => {
             if (!currentUser) return showToast(t('feedback.login_required'), "warning");
-            showDeleteConfirm(itemData, currentUser);
+            if (scope.isCurrent()) showDeleteConfirm(itemData, currentUser, () => scope.isCurrent());
         };
     }
 
     // 🐛 Bug修复：跳过系统页面的作者信息查询（如关于页面）
-    if (!itemData.isSystemPage) {
-        api.getUserProfile(itemData.author).then(res => {
-            const freshName = res.data.name || itemData.author;
-            const nameEl = container.querySelector("#detail-author-name");
-            if (nameEl) nameEl.innerText = freshName;
-            localStorage.setItem(authorCacheKey, JSON.stringify(res.data));
+    if (!itemData.isSystemPage && itemData.author && scope.isCurrent()) {
+        const originalNameEl = container.querySelector("#detail-author-name");
+        api.getUserProfile(itemData.author, scope.readOptions).then(res => {
+            if (!scope.isCurrent() || !originalNameEl?.isConnected || container.querySelector("#detail-author-name") !== originalNameEl) return;
+            if (res?.status !== 'success') return;
+            const profile = normalizeProfileData(res.data, itemData.author);
+            setCachedProfile(itemData.author, profile);
+            if (originalNameEl?.isConnected && container.querySelector("#detail-author-name") === originalNameEl) {
+                originalNameEl.textContent = profile.name || itemData.author;
+            }
         }).catch(() => {});
     }
 
-    // 🔄 P7后悔模式：异步加载退款按钮状态
-    renderRefundButton(container, itemData, currentUser);
-
-    // 🔄 云端购买状态兜底：本地无版本戳时，查询云端是否已购买
-    if (!localVersionHash && !isFree && currentUser) {
-        api.getPurchaseStatus(currentUser.account, itemData.id).then(res => {
-            const btnUseItem = container.querySelector("#btn-use-item");
-            if (!btnUseItem) return;
-            if (res.owned) {
-                // 📱 Web 模式无本地重装概念，文案改为「已购买」
-                btnUseItem.innerHTML = `✅ ${t(IS_WEB_MODE ? 'item.owned_purchased' : 'item.owned_reinstall')}`;
-                Object.assign(btnUseItem.style, {
-                    background: "#4CAF50",
-                    color: "#fff",
-                    border: "none"
-                });
-            }
-            // 未购买时保持默认的「立即获取使用」按钮
-        }).catch(err => {
-            console.warn("云端购买状态查询失败，fallback到本地逻辑:", err);
+    // 拥有文案和退款入口使用同一次、同账号的购买快照。
+    const needsOwnership = !localVersionHash && !isFree;
+    const needsRefund = itemData.allow_refund !== false;
+    if (currentUser && scope.isCurrent() && (needsOwnership || needsRefund)) {
+        const purchaseStatus = api.getPurchaseStatus(currentUser.account, itemData.id, scope.readOptions)
+            .then(response => {
+                if (!scope.isCurrent() || !isValidPurchaseStatus(response)) return null;
+                return response;
+            }).catch(() => null);
+        if (needsRefund) renderRefundButton(container, itemData, currentUser, scope, purchaseStatus);
+        if (needsOwnership) purchaseStatus.then(response => {
+            if (!scope.isCurrent() || !response?.owned || !btnUseItem?.isConnected
+                || container.querySelector("#btn-use-item") !== btnUseItem) return;
+            btnUseItem.textContent = `✅ ${t(IS_WEB_MODE ? 'item.owned_purchased' : 'item.owned_reinstall')}`;
+            btnUseItem.setAttribute("data-install-state", "success");
         });
     }
 

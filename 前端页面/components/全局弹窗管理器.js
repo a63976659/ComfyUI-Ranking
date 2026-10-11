@@ -1,138 +1,92 @@
-// 前端页面/components/全局弹窗管理器.js
+// 共用业务弹窗：与确认/重试提示复用同一个可访问性栈。
+import { setupDialogAccessibility } from "./UI交互提示组件.js";
+import { t } from "./用户体验增强.js";
+let modalSequence = 0;
 
 export class ModalManager {
     constructor() {
-        this.activeModals = []; // 用于存储当前打开的所有弹窗，实现层级管理
+        this.activeModals = [];
+        this.entries = new Map();
         this.overlay = null;
+        this.observer = null;
         this.initOverlay();
     }
 
-    // 初始化全局半透明遮罩层
     initOverlay() {
-        if (document.getElementById("community-hub-overlay")) return;
-
-        this.overlay = document.createElement("div");
-        this.overlay.id = "community-hub-overlay";
-        Object.assign(this.overlay.style, {
-            position: "fixed",
-            top: "0",
-            left: "0",
-            width: "100vw",
-            height: "100vh",
-            backgroundColor: "rgba(0, 0, 0, 0.7)",
-            zIndex: "9998", // 位于 ComfyUI 画布之上，但低于侧边栏和弹窗
-            display: "none",
-            backdropFilter: "blur(3px)" // 添加背景模糊效果
-        });
-
-        // 点击遮罩层时，关闭最顶层的一个弹窗
-        this.overlay.onclick = () => {
-            try { this.closeTopModal(); } catch(e) { console.warn('[ModalManager] closeTopModal error:', e); }
-        };
-
-        document.body.appendChild(this.overlay);
+        if (!document.getElementById('hub-theme-style')) {
+            const link = document.createElement('link');
+            link.id = 'hub-theme-style'; link.rel = 'stylesheet';
+            link.href = new URL('../styles/主题基础.css', import.meta.url).href;
+            document.head.appendChild(link);
+        }
+        this.overlay = document.getElementById('community-hub-overlay');
+        if (!this.overlay) {
+            this.overlay = document.createElement('div');
+            this.overlay.id = 'community-hub-overlay';
+            this.overlay.className = 'ranking-modal-overlay';
+            this.overlay.hidden = true;
+            document.body.appendChild(this.overlay);
+        }
+        this.overlay.onclick = () => this.closeTopModal();
     }
 
-    /**
-     * 打开一个新的弹窗
-     * @param {string} title 弹窗标题
-     * @param {HTMLElement} contentElement 包含实际内容的 DOM 元素
-     * @param {object} options 配置项 (如宽度)
-     */
-    openModal(title, contentElement, options = { width: "500px" }) {
-        const modalContainer = document.createElement("div");
-        Object.assign(modalContainer.style, {
-            position: "fixed",
-            top: "50%",
-            left: "50%",
-            transform: "translate(-50%, -50%)",
-            width: options.width,
-            backgroundColor: "var(--comfy-menu-bg)",
-            border: "1px solid #555",
-            borderRadius: "12px",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.8)",
-            zIndex: (9999 + this.activeModals.length).toString(), // 动态计算 z-index，实现层级覆盖
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden"
+    syncLayers() {
+        const top = this.activeModals.at(-1);
+        this.activeModals.forEach((modal, index) => {
+            modal.style.zIndex = String(9999 + index);
+            modal.inert = modal !== top;
+            if (modal === top) { modal.removeAttribute('aria-hidden'); modal.setAttribute('aria-modal', 'true'); }
+            else { modal.setAttribute('aria-hidden', 'true'); modal.removeAttribute('aria-modal'); }
         });
-
-        // 弹窗头部 (包含标题和关闭按钮)
-        const header = document.createElement("div");
-        Object.assign(header.style, {
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "15px 20px",
-            borderBottom: "1px solid #444",
-            backgroundColor: "var(--comfy-input-bg)",
-        });
-
-        const titleSpan = document.createElement("span");
-        titleSpan.innerText = title;
-        Object.assign(titleSpan.style, {
-            fontWeight: "bold",
-            fontSize: "16px",
-            color: "#fff"
-        });
-
-        const closeBtn = document.createElement("button");
-        closeBtn.innerHTML = "✖";
-        Object.assign(closeBtn.style, {
-            background: "transparent",
-            border: "none",
-            color: "#aaa",
-            cursor: "pointer",
-            fontSize: "14px"
-        });
-        // 绑定关闭当前弹窗事件，防止事件冒泡触发底层点击
-        closeBtn.onclick = (e) => {
-            e.stopPropagation();
-            this.closeModal(modalContainer);
-        };
-
-        header.appendChild(titleSpan);
-        header.appendChild(closeBtn);
-
-        // 弹窗内容区
-        const contentWrapper = document.createElement("div");
-        Object.assign(contentWrapper.style, {
-            padding: "20px",
-            maxHeight: "70vh", // 防止弹窗过高，限制最大高度
-            overflowY: "auto",
-            color: "#eee"
-        });
-        contentWrapper.appendChild(contentElement);
-
-        modalContainer.appendChild(header);
-        modalContainer.appendChild(contentWrapper);
-        document.body.appendChild(modalContainer);
-
-        // 记录状态并显示遮罩
-        this.activeModals.push(modalContainer);
-        this.overlay.style.display = "block";
+        this.overlay.hidden = !top;
     }
 
-    // 关闭指定的弹窗
-    closeModal(modalElement) {
-        if (!modalElement) return;
-        modalElement.remove();
-        this.activeModals = this.activeModals.filter(m => m !== modalElement);
-        
-        // 如果没有打开的弹窗了，隐藏遮罩层
-        if (this.activeModals.length === 0) {
-            this.overlay.style.display = "none";
+    openModal(title, contentElement, options = { width: '500px' }) {
+        const modal = document.createElement('div');
+        modal.className = 'ranking-modal';
+        modal.style.setProperty('--ranking-modal-width', options.width || '500px');
+        const header = document.createElement('div'); header.className = 'ranking-modal__header';
+        const titleNode = document.createElement('span'); titleNode.className = 'ranking-modal__title';
+        titleNode.id = `ranking-modal-title-${++modalSequence}`; titleNode.textContent = title;
+        const close = document.createElement('button'); close.type = 'button';
+        close.className = 'ranking-modal__close'; close.textContent = '✖';
+        close.setAttribute('aria-label', t('common.close'));
+        close.onclick = event => { event.stopPropagation(); this.closeModal(modal); };
+        header.append(titleNode, close);
+        const body = document.createElement('div'); body.className = 'ranking-modal__body'; body.appendChild(contentElement);
+        modal.append(header, body); document.body.appendChild(modal);
+        this.activeModals.push(modal); this.syncLayers();
+        const accessibility = setupDialogAccessibility(modal, titleNode.id, null, '.ranking-modal__close', () => this.closeModal(modal));
+        this.entries.set(modal, { content: contentElement, accessibility });
+        if (!this.observer) {
+            this.observer = new MutationObserver(() => {
+                for (const current of [...this.activeModals]) if (!current.isConnected) this.closeModal(current);
+            });
+            this.observer.observe(document.body, { childList: true, subtree: true });
+        }
+        return modal;
+    }
+
+    closeModal(modal) {
+        const entry = this.entries.get(modal);
+        if (!entry) return;
+        const wasTop = this.activeModals.at(-1) === modal;
+        const restore = wasTop && (modal.contains(document.activeElement) || document.activeElement === document.body);
+        this.entries.delete(modal);
+        entry.accessibility.cleanup();
+        try { entry.content._cleanup?.(); } catch (_) {}
+        modal.remove();
+        this.activeModals = this.activeModals.filter(current => current !== modal);
+        this.syncLayers();
+        if (!this.activeModals.length) { this.observer?.disconnect(); this.observer = null; }
+        if (restore) {
+            entry.accessibility.restoreFocus();
+            const top = this.activeModals.at(-1);
+            if (top && !top.contains(document.activeElement)) top.querySelector('.ranking-modal__close').focus();
         }
     }
 
-    // 关闭位于最顶层的弹窗 (通常用于点击遮罩层或按 ESC 键时触发)
-    closeTopModal() {
-        if (this.activeModals.length > 0) {
-            const topModal = this.activeModals[this.activeModals.length - 1];
-            this.closeModal(topModal);
-        }
-    }
+    closeTopModal() { this.closeModal(this.activeModals.at(-1)); }
 }
 
-// 导出一个全局单例，确保整个应用只实例化一次
 export const globalModal = new ModalManager();

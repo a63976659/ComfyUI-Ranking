@@ -6,64 +6,70 @@ import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 // 🧹 P2归一：escapeHtml 局部副本已移除，改用统一版
 import { escapeHtml } from "../components/互动工具函数.js";
 
-export function setupToggleButton(btnElement, initialState, initialCount, activeText, inactiveText, activeColor, apiCallback) {
-    let isActive = initialState;
-    let count = initialCount;
-    let isProcessing = false; 
+import { captureRequestSession } from "../core/网络请求_基础设施.js";
+import { getUser, eventBus, EVENTS } from "../core/状态管理.js";
+import { CACHE } from "../core/全局配置.js";
+import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
+import { isConfirmedCommentResponse, isConfirmedCommentDeletion, isDefiniteCommentRejection } from "./评论数据工具.js";
 
-    const updateUI = () => {
-        btnElement.innerText = `${isActive ? activeText : inactiveText} (${count})`;
-        btnElement.style.color = isActive ? activeColor : "#aaa";
-        btnElement.style.borderColor = isActive ? activeColor : "#555";
-    };
-
-    updateUI();
-
-    btnElement.onclick = async (e) => {
-        e.stopPropagation(); 
-        if (isProcessing) return;
-        
-        isActive = !isActive;
-        count += isActive ? 1 : -1;
-        updateUI();
-
-        isProcessing = true;
-        try {
-            await apiCallback(isActive); 
-        } catch (error) {
-            console.error("操作失败，状态回滚");
-            isActive = !isActive;
-            count += isActive ? 1 : -1;
-            updateUI();
-        } finally {
-            setTimeout(() => { isProcessing = false; }, 500); 
-        }
-    };
-}
+export { setupToggleButton } from "./互动按钮.js";
 
 // 🚀 核心修改：在参数末尾接收外部传进来的 onCountChange 回调函数
 // 🚀 P0安全修复：新增 contentAuthor 参数用于判断内容作者权限
 export function createCommentSection(itemId, commentsData, currentUser, onCountChange, contentAuthor = null) {
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex", flexDirection: "column", height: "100%", backgroundColor: "var(--comfy-menu-bg)", borderRadius: "4px"
-    });
+    container.className = "comment-section";
 
     const listArea = document.createElement("div");
-    Object.assign(listArea.style, { flex: "1", overflowY: "auto", padding: "10px", fontSize: "12px", color: "#ccc" });
+    listArea.className = "comment-section__list";
 
     const inputArea = document.createElement("div");
-    Object.assign(inputArea.style, { display: "flex", padding: "8px", borderTop: "1px solid var(--border-color, #333)", backgroundColor: "var(--comfy-input-bg)", gap: "8px" });
+    inputArea.className = "comment-section__composer";
 
-    let currentReplyTarget = null; 
+    let currentReplyTarget = null;
+    let sending = false, deleting = false, blocked = false, scope = null, constructing = true, observer;
+    let active = true, generation = 0, writePending = false;
+    const account = currentUser?.account || null;
+    const matches = captureRequestSession();
+    const sessionMatches = () => matches() && (getUser()?.account || null) === account;
+    const current = () => active && (scope ? scope.isCurrent() : sessionMatches()) && container.isConnected;
+    const profileCurrent = () => active && (scope ? scope.isCurrent() : sessionMatches()) && (constructing || container.isConnected);
 
     const inputField = document.createElement("input");
-    Object.assign(inputField.style, { flex: "1", padding: "6px 10px", borderRadius: "15px", border: "1px solid #555", backgroundColor: "var(--comfy-menu-bg)", color: "#fff", outline: "none" });
+    inputField.className = "comment-section__input";
     inputField.placeholder = t('social.say_something');
+    inputField.setAttribute('aria-label', inputField.placeholder);
 
     const submitBtn = document.createElement("button");
     submitBtn.innerText = t('common.send');
-    Object.assign(submitBtn.style, { padding: "4px 12px", borderRadius: "15px", border: "none", backgroundColor: "#4CAF50", color: "#fff", cursor: "pointer", fontWeight: "bold" });
+    submitBtn.className = "comment-section__send";
+    submitBtn.type = "button";
+
+    const notice = document.createElement('div');
+    notice.className = 'comment-section__empty';
+    notice.setAttribute('role', 'alert');
+    function setControls() {
+        const busy = sending || deleting;
+        submitBtn.disabled = busy || blocked;
+        inputField.readOnly = busy || blocked;
+        submitBtn.setAttribute('aria-busy', String(busy));
+        inputArea.setAttribute('aria-busy', String(busy));
+        listArea.querySelectorAll('.reply-btn,.delete-btn').forEach(button => { button.disabled = busy || blocked; });
+    }
+    function unconfirmed() {
+        blocked = true;
+        notice.textContent = t('social.comment_unconfirmed');
+        inputArea.append(notice);
+        setControls();
+        showToast(t('social.comment_unconfirmed'), 'warning');
+    }
+
+    function refreshRequired() {
+        blocked = true;
+        notice.textContent = t('social.comment_refresh_required');
+        inputArea.append(notice); setControls();
+        showToast(t('social.comment_refresh_required'), 'warning');
+    }
 
     // 🚀 核心新增：封装一个统计算法，每次发生数据变动时向外抛出真实的评论数量
     const triggerCountUpdate = () => {
@@ -82,24 +88,23 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
 
     function renderCommentItem(comment, isSubReply = false) {
         const itemDiv = document.createElement("div");
-        Object.assign(itemDiv.style, { display: "flex", gap: "8px", marginBottom: "12px", paddingLeft: isSubReply ? "35px" : "0px" });
+        itemDiv.className = "comment-section__item" + (isSubReply ? " comment-section__item--reply" : "");
 
         if (comment.isDeleted) {
             if (!comment.replies || comment.replies.length === 0) return null;
             itemDiv.innerHTML = `
-                <div style="width: ${isSubReply ? '24px' : '32px'}; height: ${isSubReply ? '24px' : '32px'}; border-radius: 50%; background: var(--comfy-input-bg); display: flex; align-items: center; justify-content: center; font-size: 10px; color: #555;">✖</div>
-                <div style="flex: 1; background: var(--comfy-input-bg); padding: 6px 10px; border-radius: 4px; color: #666; font-style: italic; border: 1px dashed #444;">${t('social.comment_deleted')}</div>
+                <div class="comment-section__avatar comment-section__deleted-icon" aria-hidden="true">✖</div>
+                <div class="comment-section__deleted">${t('social.comment_deleted')}</div>
             `;
         } else {
-            const avatarSize = isSubReply ? "24px" : "32px";
-            const replyLabel = comment.replyToUserName ? `<span style="color: #888;">${t('social.reply_to')} <span style="color: #2196F3;">@${escapeHtml(comment.replyToUserName)}</span>：</span>` : "";
+            const replyLabel = comment.replyToUserName ? `<span class="comment-section__reply-label">${t('social.reply_to')} <span class="comment-section__reply-name">@${escapeHtml(comment.replyToUserName)}</span>: </span>` : "";
             
             // 🚀 P0安全修复：权限判断 - 评论作者、内容作者或管理员可删除
             const isCommentAuthor = currentUser && currentUser.account === comment.author;
             const isContentAuthor = currentUser && contentAuthor && currentUser.account === contentAuthor;
             const isAdminUser = currentUser && isAdmin(currentUser.account);
             const canDelete = isCommentAuthor || isContentAuthor || isAdminUser;
-            const deleteBtnHtml = canDelete ? `<span class="delete-btn" style="color: #F44336; cursor: pointer; margin-left: 10px; font-size: 10px;">${t('common.delete')}</span>` : "";
+            const deleteBtnHtml = canDelete ? `<button type="button" class="delete-btn comment-section__action comment-section__action--delete">${t('common.delete')}</button>` : "";
 
             // 🚀 SWR 缓存优先获取头像
             const account = comment.author;
@@ -108,55 +113,81 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
 
             itemDiv.innerHTML = `
-                <img class="swr-avatar" src="${escapeHtml(avatarSrc)}" style="width: ${avatarSize}; height: ${avatarSize}; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">
-                <div style="flex: 1;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                        <span class="swr-name" style="color: #aaa; font-weight: bold; font-size: 11px;">${escapeHtml(comment.authorName || comment.author)}</span>
+                <img class="swr-avatar comment-section__avatar" src="${escapeHtml(avatarSrc)}" alt="">
+                <div class="comment-section__body">
+                    <div class="comment-section__header">
+                        <span class="swr-name comment-section__name">${escapeHtml(comment.authorName || comment.author)}</span>
                     </div>
-                    <div style="line-height: 1.4; word-break: break-all;">${replyLabel}${escapeHtml(comment.content)}</div>
-                    <div style="display: flex; gap: 15px; margin-top: 4px; font-size: 10px; color: #777;">
-                        <span class="reply-btn" style="cursor: pointer; color: #aaa;">${t('social.reply')}</span>${deleteBtnHtml}
+                    <div class="comment-section__content">${replyLabel}${escapeHtml(comment.content)}</div>
+                    <div class="comment-section__actions">
+                        <button type="button" class="reply-btn comment-section__action" ${sending ? "disabled" : ""}>${t('social.reply')}</button>${deleteBtnHtml}
                     </div>
                 </div>
             `;
 
             // 🚀 后台SWR校对头像
+            const profileGeneration = generation;
             getProfileWithSWR(account, api.getUserProfile, (profile) => {
                 const avatarEl = itemDiv.querySelector('.swr-avatar');
                 const nameEl = itemDiv.querySelector('.swr-name');
-                if (avatarEl && profile.avatar) {
+                if (profileGeneration !== generation || !profileCurrent() || !profile || typeof profile !== 'object' || Array.isArray(profile)
+                    || (profile.account != null && profile.account !== account)) return;
+                if (avatarEl && typeof profile.avatar === 'string' && profile.avatar) {
                     avatarEl.src = profile.avatar;
                 }
-                if (nameEl && profile.name) {
+                if (nameEl && typeof profile.name === 'string' && profile.name) {
                     nameEl.textContent = profile.name;
                 }
             });
 
             itemDiv.querySelector(".reply-btn").onclick = () => {
+                if (!current() || sending || deleting || blocked) return;
                 currentReplyTarget = { 
                     account: comment.author, name: comment.authorName || comment.author,
                     parentId: isSubReply ? comment.parentId : comment.id 
                 };
                 inputField.placeholder = `${t('social.reply_to')} @${currentReplyTarget.name}:`;
+                inputField.setAttribute('aria-label', inputField.placeholder);
                 inputField.focus();
             };
 
             if (canDelete) {
                 itemDiv.querySelector(".delete-btn").onclick = async () => {
-                    const confirmed = await showConfirm(t('social.delete_comment_confirm'), {
-                        title: t('social.delete_comment_title'),
-                        confirmText: t('common.confirm'),
-                        cancelText: t('common.cancel'),
-                        type: 'danger'
-                    });
-                    if (!confirmed) return;
+                    if (!current() || sending || deleting || blocked) return;
+                    const operationGeneration = generation;
+                    const startedWithFocus = container.contains(document.activeElement);
+                    deleting = true; setControls();
+                    let requested = false, confirmedWrite = false;
                     try {
-                        // 🚀 P0安全修复：删除评论不再传递author，后端从JWT中获取
-                        await api.deleteComment(itemId, comment.id);
+                        const confirmed = await showConfirm(t('social.delete_comment_confirm'), {
+                            title: t('social.delete_comment_title'), confirmText: t('common.confirm'),
+                            cancelText: t('common.cancel'), type: 'danger', signal: confirmationAbort.signal
+                        });
+                        if (!confirmed || !current() || operationGeneration !== generation) return;
+                        requested = true; writePending = true;
+                        const response = await api.deleteComment(itemId, comment.id);
+                        if (!current() || operationGeneration !== generation) return;
+                        if (!isConfirmedCommentDeletion(response)) { unconfirmed(); return; }
+                        confirmedWrite = true;
                         comment.isDeleted = true;
-                        renderList(); 
+                        const restoreFocus = startedWithFocus && (container.contains(document.activeElement) || document.activeElement === document.body);
+                        renderList();
+                        if (restoreFocus) inputField.focus();
                         triggerCountUpdate();
-                    } catch(e) { showToast(t('feedback.delete_failed') + t('feedback.retry_suffix'), "error"); }
+                    } catch (error) {
+                        if (!current() || operationGeneration !== generation) return;
+                        if (confirmedWrite) refreshRequired();
+                        else if (!requested || isDefiniteCommentRejection(error)) showToast(t('feedback.delete_failed') + t('feedback.retry_suffix'), 'error');
+                        else unconfirmed();
+                    } finally {
+                        if (current() && operationGeneration === generation) {
+                            deleting = false; writePending = false; setControls();
+                            if (startedWithFocus && document.activeElement === document.body) {
+                                const trigger = itemDiv.querySelector('.delete-btn');
+                                (trigger?.isConnected && !trigger.disabled ? trigger : inputField).focus();
+                            }
+                        }
+                    }
                 };
             }
         }
@@ -166,7 +197,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
     function renderList() {
         listArea.innerHTML = "";
         if (!commentsData || commentsData.length === 0) {
-            listArea.innerHTML = `<div style="text-align:center; padding: 20px; color:#666;">${t('social.no_comments')}</div>`;
+            listArea.innerHTML = `<div class="comment-section__empty">${t('social.no_comments')}</div>`;
             return;
         }
 
@@ -182,24 +213,41 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
                 });
             }
         });
+        if (!listArea.firstElementChild) {
+            listArea.innerHTML = `<div class="comment-section__empty">${t('social.no_comments')}</div>`;
+        }
+        setControls();
         listArea.scrollTop = listArea.scrollHeight;
     }
 
     submitBtn.onclick = async () => {
+        if (!current() || sending || deleting || blocked) return;
         if (!currentUser) return showToast(t('feedback.login_required'), "warning");
         const text = inputField.value.trim();
         if (!text) return;
 
-        submitBtn.disabled = true;
+        const operationGeneration = generation;
+        sending = true;
+        const submittedValue = inputField.value;
+        setControls();
+        let confirmedWrite = false;
         try {
             const parentId = currentReplyTarget ? currentReplyTarget.parentId : null;
             const replyToAcc = currentReplyTarget ? currentReplyTarget.account : null;
             
+            writePending = true;
             const res = await api.postComment(itemId, currentUser.account, text, replyToAcc, parentId);
+            if (!current() || operationGeneration !== generation) return;
+            if (!isConfirmedCommentResponse(res, account, replyToAcc)
+                || commentsData.some(c => c.id === res.data.id || (c.replies || []).some(r => r.id === res.data.id))) {
+                unconfirmed(); return;
+            }
+            confirmedWrite = true;
             const newComment = res.data;
             
             if (parentId) {
                 let targetParent = commentsData.find(c => c.id === parentId);
+                if (!targetParent) { refreshRequired(); return; }
                 if (targetParent) {
                     if (!targetParent.replies) targetParent.replies = [];
                     targetParent.replies.push(newComment);
@@ -208,16 +256,67 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
                 commentsData.push(newComment);
             }
             
-            inputField.value = ""; inputField.placeholder = t('social.say_something');
+            if (inputField.value === submittedValue) inputField.value = "";
+            inputField.placeholder = t('social.say_something');
+            inputField.setAttribute('aria-label', inputField.placeholder);
             currentReplyTarget = null;
             renderList();
             triggerCountUpdate();
-        } catch (e) {
-            showToast(`${t('feedback.send_failed')}，请重试`, "error");
+        } catch (error) {
+            if (!current() || operationGeneration !== generation) return;
+            if (confirmedWrite) refreshRequired();
+            else if (isDefiniteCommentRejection(error)) showToast(t('feedback.send_failed_retry'), 'error');
+            else unconfirmed();
         } finally {
-            submitBtn.disabled = false;
+            if (current() && operationGeneration === generation) { writePending = false; sending = false; setControls(); }
         }
     };
+
+    let confirmationAbort = new AbortController();
+    scope = createTaskViewScope({
+        sessionMatches, connected: () => constructing || container.isConnected,
+        subscribe: notify => subscribeTaskSessionChanges(notify, { target: window, eventBus, events: EVENTS,
+            userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN }),
+        cancelReads: () => {},
+        invalidate: () => { notice.textContent = t('auth.session_changed'); container.append(notice); }
+    });
+    scope.addCleanup(() => {
+        active = false; generation++;
+        observer?.disconnect(); confirmationAbort.abort();
+        inputField.value = ''; currentReplyTarget = null; commentsData = [];
+        blocked = true; sending = deleting = false; setControls(); container.replaceChildren();
+    });
+    container._setActive = value => {
+        const next = !!value;
+        if (next === active) return;
+        if (next && !scope.isCurrent()) return;
+        generation++;
+        active = next;
+        if (!next) {
+            if (writePending) {
+                blocked = true;
+                notice.textContent = t('social.comment_unconfirmed');
+                inputArea.append(notice);
+            }
+            confirmationAbort.abort();
+            inputField.value = ''; currentReplyTarget = null;
+            inputField.placeholder = t('social.say_something');
+            inputField.setAttribute('aria-label', inputField.placeholder);
+            sending = deleting = writePending = false;
+        } else confirmationAbort = new AbortController();
+        setControls();
+        if (!active) {
+            submitBtn.disabled = true; inputField.readOnly = true;
+            listArea.querySelectorAll('.reply-btn,.delete-btn').forEach(button => { button.disabled = true; });
+        }
+    };
+    container._cleanup = () => scope.dispose();
+    queueMicrotask(() => {
+        constructing = false;
+        if (!scope.isCurrent()) return;
+        observer = new MutationObserver(() => { if (!container.isConnected) scope.dispose(); });
+        observer.observe(document.body, { childList: true, subtree: true });
+    });
 
     inputArea.appendChild(inputField); inputArea.appendChild(submitBtn);
     container.appendChild(listArea); container.appendChild(inputArea);
@@ -235,357 +334,9 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
  * @param {Object} options.ratingData - 评分数据 { rating_avg, rating_count, rating_dist, rated_by }
  * @param {Object} options.currentUser - 当前用户 { account }，null 表示未登录
  * @param {string} options.authorAccount - 作品作者 account
- * @param {Function} options.onRate - 评分回调 async (score) => {}
+ * @param {Function} options.onRate - 评分回调 async (score, {isCurrent}) => response
+ * @param {Function} [options.isCurrent] - 原页面仍有效的检查
  * @param {boolean} options.compact - true=紧凑模式，false=完整模式
  * @returns {HTMLElement} 评分组件 DOM 元素
  */
-export function createRatingStars(options) {
-    const {
-        ratingData = {},
-        currentUser = null,
-        authorAccount = "",
-        onRate = null,
-        compact = false
-    } = options;
-
-    // 解构评分数据
-    let {
-        rating_avg = 0,
-        rating_count = 0,
-        rating_dist = {},
-        rated_by = {}
-    } = ratingData;
-
-    // 内部可变状态（用于乐观更新）
-    let displayAvg = typeof rating_avg === "number" && !isNaN(rating_avg) ? rating_avg : 0;
-    let displayCount = typeof rating_count === "number" && !isNaN(rating_count) ? rating_count : 0;
-    // 归一化 rated_by：后端存储可能是对象 {score, time}，前端统一为数字
-    let displayRatedBy = {};
-    for (const [account, value] of Object.entries(rated_by || {})) {
-        displayRatedBy[account] = typeof value === "number" ? value : (value?.score ?? 0);
-    }
-
-    const userAccount = currentUser?.account;
-    let userRating = userAccount ? (displayRatedBy[userAccount] || null) : null;
-
-    // 第6颗星条件
-    const hasSixthStar = !compact && rating_count >= 5 && ((rating_dist["5"] || 0) / rating_count) >= 0.9;
-
-    // 交互状态
-    let isSubmitting = false;
-    let hoverScore = 0;
-
-    // 🚀 P2-3: 提取渐变应用/清除辅助函数
-    const _applyGradient = (el, gradient) => {
-        if (gradient) {
-            el.style.background = gradient;
-            el.style.webkitBackgroundClip = "text";
-            el.style.backgroundClip = "text";
-            el.style.webkitTextFillColor = "transparent";
-        } else {
-            el.style.background = "";
-            el.style.webkitBackgroundClip = "";
-            el.style.backgroundClip = "";
-            el.style.webkitTextFillColor = "";
-        }
-    };
-
-    // 🚀 P2-1: 用户评分行公用样式
-    const USER_RATING_ROW_STYLE = { display: "flex", alignItems: "center", gap: "4px", fontSize: "12px", color: "#888" };
-
-    // 🚀 P2-2: 创建评分星星 span
-    const _createRatingStarsSpan = (rating) => {
-        const span = document.createElement("span");
-        span.textContent = "★".repeat(rating) + "☆".repeat(5 - rating);
-        span.style.color = "#FFD700";
-        span.style.fontSize = "14px";
-        return span;
-    };
-
-    // 尺寸配置
-    const starSize = compact ? "14px" : "20px";
-    const gap = "2px";
-
-    // 判断交互权限
-    const isLoggedOut = !currentUser;
-    const isSelf = currentUser && currentUser.account === authorAccount;
-    const canInteract = !compact && onRate && !isLoggedOut && !isSelf;
-
-    // ========== 根容器 ==========
-    const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "inline-flex",
-        flexDirection: "column",
-        gap: compact ? "0px" : "4px",
-        fontFamily: "inherit",
-        position: "relative"
-    });
-
-    // 注入第6颗星动画样式
-    if (hasSixthStar) {
-        const styleEl = document.createElement("style");
-        styleEl.textContent = `
-            @keyframes rating-star-glow {
-                0%, 100% { filter: drop-shadow(0 0 4px #FFD700) drop-shadow(0 0 8px #FFA500); }
-                50% { filter: drop-shadow(0 0 8px #FFD700) drop-shadow(0 0 16px #FFA500); }
-            }
-        `;
-        container.appendChild(styleEl);
-    }
-
-    // ========== 第一行：星星 + 分数 ==========
-    const row1 = document.createElement("div");
-    Object.assign(row1.style, {
-        display: "inline-flex",
-        alignItems: "center",
-        gap: gap
-    });
-
-    // 星星元素数组
-    const stars = [];
-
-    // 计算取整到0.5的平均值
-    const roundedAvg = Math.round(displayAvg * 2) / 2;
-
-    function getStarConfig(score, index) {
-        const filled = Math.min(Math.max(score - (index - 1), 0), 1);
-        if (filled >= 0.75) {
-            return { char: "★", color: "#FFD700", bg: null };
-        } else if (filled >= 0.25) {
-            return {
-                char: "★",
-                color: "transparent",
-                bg: "linear-gradient(90deg, #FFD700 50%, #555 50%)"
-            };
-        } else {
-            return { char: "☆", color: "#555", bg: null };
-        }
-    }
-
-    function applyStarStyle(starEl, config, isHovered = false) {
-        starEl.textContent = config.char;
-        starEl.style.color = config.color;
-        _applyGradient(starEl, config.bg);
-        starEl.style.transform = isHovered ? "scale(1.1)" : "scale(1)";
-    }
-
-    function updateStars(previewScore = 0) {
-        const targetScore = previewScore || roundedAvg;
-        stars.forEach((star, i) => {
-            const isHovered = previewScore > 0 && i + 1 <= previewScore;
-            const config = getStarConfig(targetScore, i + 1);
-            applyStarStyle(star, config, isHovered);
-        });
-    }
-
-    if (compact) {
-        // 紧凑模式：无评分时不显示，有评分时显示 ★ 分数
-        if (displayCount === 0) {
-            container.style.display = "none";
-            return container;
-        }
-        const iconStar = document.createElement("span");
-        iconStar.textContent = "★";
-        iconStar.style.color = "#FFD700";
-        iconStar.style.fontSize = starSize;
-        iconStar.style.lineHeight = "1";
-        row1.appendChild(iconStar);
-    } else {
-        // 完整模式：5颗基础星星
-        for (let i = 1; i <= 5; i++) {
-            const star = document.createElement("span");
-            Object.assign(star.style, {
-                fontSize: starSize,
-                cursor: canInteract ? "pointer" : "default",
-                transition: "transform 0.15s ease, color 0.15s ease",
-                display: "inline-block",
-                userSelect: "none",
-                lineHeight: "1"
-            });
-
-            if (canInteract) {
-                star.addEventListener("mouseenter", () => {
-                    if (isSubmitting) return;
-                    hoverScore = i;
-                    updateStars(hoverScore);
-                    showTooltip(`${i} ${t('rating.stars')}`);
-                });
-                star.addEventListener("click", async () => {
-                    if (isSubmitting) return;
-                    await submitRating(i);
-                });
-            }
-
-            stars.push(star);
-            row1.appendChild(star);
-        }
-
-        // 第6颗星彩蛋
-        if (hasSixthStar) {
-            const sixthStar = document.createElement("span");
-            sixthStar.textContent = "★";
-            Object.assign(sixthStar.style, {
-                fontSize: `calc(${starSize} * 1.15)`,
-                color: "#FFD700",
-                animation: "rating-star-glow 2s ease-in-out infinite",
-                marginLeft: "2px",
-                cursor: "help",
-                lineHeight: "1",
-                display: "inline-block"
-            });
-            sixthStar.title = t('rating.sixth_star_tip');
-            row1.appendChild(sixthStar);
-        }
-    }
-
-    // 分数文本
-    const scoreText = document.createElement("span");
-    scoreText.style.color = compact ? "#aaa" : "#ccc";
-    scoreText.style.fontSize = compact ? "12px" : "14px";
-    if (compact) {
-        scoreText.textContent = `${displayAvg.toFixed(1)}`;
-    } else {
-        scoreText.textContent = `${displayAvg.toFixed(1)} (${t('rating.count', { count: displayCount })})`;
-    }
-    row1.appendChild(scoreText);
-
-    container.appendChild(row1);
-
-    // ========== 第二行：用户评分（仅完整模式） ==========
-    let userRatingRow = null;
-    if (!compact && userRating) {
-        userRatingRow = document.createElement("div");
-        Object.assign(userRatingRow.style, USER_RATING_ROW_STYLE);
-
-        const label = document.createElement("span");
-        label.textContent = `${t('rating.your_score')}:`;
-        userRatingRow.appendChild(label);
-        userRatingRow.appendChild(_createRatingStarsSpan(userRating));
-        container.appendChild(userRatingRow);
-    }
-
-    // ========== Tooltip ==========
-    const tooltip = document.createElement("div");
-    Object.assign(tooltip.style, {
-        position: "absolute",
-        bottom: "calc(100% + 6px)",
-        left: "0",
-        padding: "4px 8px",
-        backgroundColor: "rgba(0,0,0,0.9)",
-        color: "#fff",
-        fontSize: "11px",
-        borderRadius: "4px",
-        whiteSpace: "nowrap",
-        pointerEvents: "none",
-        opacity: "0",
-        transition: "opacity 0.2s ease",
-        zIndex: "1000",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.3)"
-    });
-    container.appendChild(tooltip);
-
-    function showTooltip(text) {
-        tooltip.textContent = text;
-        tooltip.style.opacity = "1";
-    }
-    function hideTooltip() {
-        tooltip.style.opacity = "0";
-    }
-
-    // 非交互状态下的 tooltip 事件
-    if (!compact) {
-        if (isLoggedOut) {
-            row1.addEventListener("mouseenter", () => showTooltip(t('rating.login_required')));
-            row1.addEventListener("mouseleave", hideTooltip);
-        } else if (isSelf) {
-            row1.addEventListener("mouseenter", () => showTooltip(t('rating.self_forbidden')));
-            row1.addEventListener("mouseleave", hideTooltip);
-        } else if (canInteract) {
-            row1.addEventListener("mouseleave", () => {
-                hoverScore = 0;
-                updateStars(0);
-                hideTooltip();
-            });
-        }
-    }
-
-    // 提交评分
-    async function submitRating(score) {
-        if (!onRate) return;
-        isSubmitting = true;
-
-        // 保存旧状态用于回滚
-        const oldAvg = displayAvg;
-        const oldCount = displayCount;
-        const oldUserRating = userRating;
-
-        // 乐观更新
-        if (oldUserRating) {
-            displayAvg = (oldAvg * oldCount - oldUserRating + score) / oldCount;
-        } else {
-            displayCount = oldCount + 1;
-            displayAvg = (oldAvg * oldCount + score) / displayCount;
-        }
-        displayRatedBy[userAccount] = score;
-        userRating = score;
-
-        // 更新 UI
-        scoreText.textContent = `${displayAvg.toFixed(1)} (${t('rating.count', { count: displayCount })})`;
-        updateStars(0);
-        updateUserRatingRow();
-
-        // 🚀 P2-4: 提前导入一次，成功/失败分支共用
-        const { showToast } = await import('../components/UI交互提示组件.js');
-        try {
-            const res = await onRate(score);
-            if (!res || res.success === false) {
-                throw new Error('Rating failed');
-            }
-            showToast(t('rating.submit_success'), 'success');
-        } catch (err) {
-            console.error('评分失败:', err);
-            // 回滚
-            displayAvg = oldAvg;
-            displayCount = oldCount;
-            userRating = oldUserRating;
-            if (oldUserRating) {
-                displayRatedBy[userAccount] = oldUserRating;
-            } else {
-                delete displayRatedBy[userAccount];
-            }
-            scoreText.textContent = `${displayAvg.toFixed(1)} (${t('rating.count', { count: displayCount })})`;
-            updateStars(0);
-            updateUserRatingRow();
-            showToast(t('rating.submit_failed'), 'error');
-        } finally {
-            isSubmitting = false;
-            hoverScore = 0;
-            hideTooltip();
-        }
-    }
-
-    // 更新/创建用户评分行
-    function updateUserRatingRow() {
-        if (userRatingRow) {
-            userRatingRow.remove();
-            userRatingRow = null;
-        }
-        if (userRating && !compact) {
-            userRatingRow = document.createElement("div");
-            Object.assign(userRatingRow.style, USER_RATING_ROW_STYLE);
-
-            const label = document.createElement("span");
-            label.textContent = `${t('rating.your_score')}:`;
-            userRatingRow.appendChild(label);
-            userRatingRow.appendChild(_createRatingStarsSpan(userRating));
-            container.appendChild(userRatingRow);
-        }
-    }
-
-    // 初始化显示
-    if (!compact) {
-        updateStars(0);
-    }
-
-    return container;
-}
+export { createRatingStars, isValidRatingResponse } from "./评分组件.js";

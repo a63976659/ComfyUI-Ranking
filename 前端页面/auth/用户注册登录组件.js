@@ -2,50 +2,93 @@ import { renderLoginForm } from "./登录表单组件.js";
 import { renderRegisterForm } from "./注册表单组件.js";
 import { renderResetForm } from "./重置密码表单组件.js";
 import { renderRecoverForm } from "./找回账号表单组件.js";
+import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 
 export function createAuthView(onSuccessCallback) {
     const container = document.createElement("div");
-    // 🔧 自适应高度：flex 填充剩余空间，内容超出时在容器内部滚动（与主界面保持一致）
-    Object.assign(container.style, { 
-        display: "flex", flexDirection: "column", gap: "15px", color: "#ccc", 
-        fontSize: "14px", padding: "15px", flex: "1", minHeight: "0", boxSizing: "border-box", overflowY: "auto", 
-        background: "var(--comfy-menu-bg)"
-    });
-
+    let disposed = false, generation = 0, mounted = false, busy = false;
+    let observer, keyboardSubmit;
+    container.className = "auth-view";
     container.innerHTML = `
-        <button id="btn-back-auth" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin-bottom: 15px; width: fit-content; transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='var(--comfy-input-bg)'; this.style.borderColor='#555'">
-    ⬅ ${t('common.back')}
-</button>
-        <div style="text-align:center; font-weight:bold; font-size:16px; margin-bottom:10px; color:#fff;">🔐 ${t('auth.title')}</div>
+        <button type="button" id="btn-back-auth" class="auth-view__back">⬅ ${t('common.back')}</button>
+        <h2 class="auth-view__title">🔐 ${t('auth.title')}</h2>
         <div id="auth-form-container"></div>
     `;
     
     container.querySelector("#btn-back-auth").onclick = () => {
+        container._cleanup();
         window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
 
     const formContainer = container.querySelector("#auth-form-container");
 
+    const releaseForm = () => {
+        if (keyboardSubmit) formContainer.removeEventListener('keydown', keyboardSubmit);
+        keyboardSubmit = null;
+        formContainer.querySelectorAll('input, textarea').forEach(input => { input.value = ''; });
+        const cleanup = formContainer._onCleanup; formContainer._onCleanup = null;
+        try { cleanup?.(); } catch (_) {}
+    };
+    container._cleanup = () => {
+        if (disposed) return;
+        disposed = true; generation++; busy = false;
+        observer?.disconnect(); releaseForm();
+    };
     const switchView = (viewState, options = {}) => {
-        // 🔧 定时器清理：切换视图前执行上一个表单注册的清理函数（如验证码倒计时），防止内存泄漏
-        if (typeof formContainer._onCleanup === "function") {
-            formContainer._onCleanup();
-            formContainer._onCleanup = null;
-        }
+        if (disposed) return;
+        const restoreFocus = container.isConnected && formContainer.contains(document.activeElement);
+        releaseForm(); generation++; busy = false;
+        const currentGeneration = generation;
+        const current = () => !disposed && generation === currentGeneration && container.isConnected;
+        const submit = async formData => {
+            if (!current() || busy) return;
+            busy = true;
+            const button = formContainer.querySelector('button[id^="btn-submit"]');
+            if (button) { button.disabled = true; button.setAttribute('aria-busy', 'true'); }
+            try { await onSuccessCallback?.(formData, { isCurrent: current }); }
+            catch (_) { if (current()) showToast(t('common.error'), 'error'); }
+            finally {
+                if (current()) {
+                    busy = false;
+                    if (button) { button.disabled = false; button.setAttribute('aria-busy', 'false'); }
+                }
+            }
+        };
         formContainer.innerHTML = ""; 
         if (viewState === "login") {
-            renderLoginForm(formContainer, switchView, onSuccessCallback);
+            renderLoginForm(formContainer, switchView, submit);
         } else if (viewState === "register") {
-            renderRegisterForm(formContainer, switchView, onSuccessCallback);
+            renderRegisterForm(formContainer, switchView, submit);
         } else if (viewState === "reset") {
-            renderResetForm(formContainer, switchView, onSuccessCallback, options.prefill);
+            renderResetForm(formContainer, switchView, submit, options.prefill);
         } else if (viewState === "recover") {
             renderRecoverForm(formContainer, switchView);
         }
+        const submitButton = formContainer.querySelector('button[id^="btn-submit"]');
+        if (submitButton) {
+            keyboardSubmit = event => {
+                const input = event.target;
+                if (!current() || event.defaultPrevented || event.key !== 'Enter' || event.isComposing
+                    || event.keyCode === 229 || event.repeat || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey
+                    || !(input instanceof HTMLInputElement) || !['text', 'email', 'password'].includes(input.type)
+                    || input.disabled || input.readOnly || !formContainer.contains(input)) return;
+                event.preventDefault();
+                if (!submitButton.disabled && formContainer.contains(submitButton)) submitButton.click();
+            };
+            formContainer.addEventListener('keydown', keyboardSubmit);
+        }
+        if (restoreFocus && current()) {
+            formContainer.querySelector('input:not([disabled]), button:not([disabled])')?.focus();
+        }
     };
 
-    switchView("login"); 
+    switchView("login");
+    observer = new MutationObserver(() => {
+        if (container.isConnected) mounted = true;
+        else if (mounted) container._cleanup();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
     
     return container;
 }

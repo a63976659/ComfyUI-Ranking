@@ -9,7 +9,8 @@
 // 🔧 P3优化：事件监听器生命周期管理，防止内存泄漏
 // ==========================================
 
-import { escapeHtml } from "../core/全局配置.js";
+import { validateImageFile } from "../market/图片文件检查.js";
+import { IMAGE_PROCESS, escapeHtml } from "../core/全局配置.js";
 // 🔧 i18n：头部操作提示走词典（用户体验_国际化.js 是零依赖叶子模块，引入不成环）
 import { t } from "./用户体验_国际化.js";
 
@@ -35,8 +36,21 @@ function _isTouchDevice() {
  * @param {number} maxSizeMB - 最大输出大小（MB）
  * @returns {Promise<File|null>} - 裁剪后的文件或 null（取消）
  */
-export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片", maxSizeMB = 3) {
-    return new Promise((resolve) => {
+export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop.title'), maxSizeMB = 3, { signal } = {}) {
+    if (signal?.aborted) return null;
+    try { await validateImageFile(file, { signal }); }
+    catch (error) { if (signal?.aborted || error?.name === 'AbortError') return null; throw error; }
+    if (signal?.aborted) return null;
+    return new Promise((resolve, reject) => {
+        let isCleanedUp = false, bindTimer = null, activeCanvas = null;
+        let removalObserver = null, decodeTimer = null, encodeTimer = null;
+        const fail = () => {
+            if (isCleanedUp) return;
+            cleanup(false); reject(new Error('Crop processing unavailable'));
+        };
+        const onAbort = () => { cleanup(false); resolve(null); };
+        const previousFocus = document.activeElement;
+        const dialogId = `image-crop-dialog-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         // 创建遮罩层
         const overlay = document.createElement("div");
         Object.assign(overlay.style, {
@@ -47,6 +61,11 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
 
         // 创建弹窗容器
         const modal = document.createElement("div");
+        modal.setAttribute("role", "dialog");
+        modal.setAttribute("aria-modal", "true");
+        modal.setAttribute("aria-labelledby", `${dialogId}-title`);
+        modal.setAttribute("aria-describedby", `${dialogId}-hint`);
+        modal.setAttribute("tabindex", "-1");
         Object.assign(modal.style, {
             background: "var(--comfy-input-bg)", borderRadius: "12px", padding: "20px",
             maxWidth: "90vw", maxHeight: "90vh", display: "flex", flexDirection: "column",
@@ -66,8 +85,8 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
         // 📱 触控设备与鼠标设备的操作提示区分（移动端无滚轮/拖动概念）；文案走词典，随界面语言切换
         const gestureHint = _isTouchDevice() ? t('crop.gesture_hint_touch') : t('crop.gesture_hint_mouse');
         header.innerHTML = `
-            <span style="font-size: 16px; font-weight: bold; color: #fff;">✂️ ${escapeHtml(title)}</span>
-            <span style="font-size: 12px; color: #888;">${escapeHtml(t('crop.ratio_label'))} ${ratioText} | ${escapeHtml(gestureHint)}</span>
+            <span id="${dialogId}-title" role="heading" aria-level="2" style="font-size: 16px; font-weight: bold; color: #fff;">✂️ ${escapeHtml(title)}</span>
+            <span id="${dialogId}-hint" style="font-size: 12px; color: #888;">${escapeHtml(t('crop.ratio_label'))} ${ratioText} | ${escapeHtml(gestureHint)}</span>
         `;
 
         // 裁剪区域容器
@@ -114,10 +133,17 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
         // 加载图片
         const reader = new FileReader();
         reader.onload = (e) => {
-            img.src = e.target.result;
+            if (isCleanedUp) return;
             img.onload = () => {
+                if (isCleanedUp) return;
                 imgNaturalWidth = img.naturalWidth;
                 imgNaturalHeight = img.naturalHeight;
+                if (!Number.isSafeInteger(imgNaturalWidth) || !Number.isSafeInteger(imgNaturalHeight)
+                    || imgNaturalWidth <= 0 || imgNaturalHeight <= 0
+                    || Math.max(imgNaturalWidth, imgNaturalHeight) > IMAGE_PROCESS.MAX_SOURCE_EDGE
+                    || imgNaturalWidth * imgNaturalHeight > IMAGE_PROCESS.MAX_PIXELS) { fail(); return; }
+                clearTimeout(decodeTimer); decodeTimer = null;
+                modal.querySelector('#btn-crop-confirm').disabled = false;
 
                 // 计算初始缩放（确保图片填满裁剪区域）
                 const scaleX = containerWidth / imgNaturalWidth;
@@ -127,8 +153,9 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
                 // 居中显示
                 updateImagePosition();
             };
+            img.src = e.target.result;
         };
-        reader.readAsDataURL(file);
+        reader.onerror = fail; img.onerror = fail;
 
         // 更新图片位置
         function updateImagePosition() {
@@ -166,8 +193,28 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
         // 🔧 P3优化：ESC 键关闭
         function handleKeyDown(e) {
             if (e.key === 'Escape') {
+                e.preventDefault();
                 cleanup();
                 resolve(null);
+                return;
+            }
+            if (e.key !== 'Tab') return;
+            const focusable = Array.from(modal.querySelectorAll(
+                'button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])'
+            ));
+            if (!focusable.length) {
+                e.preventDefault();
+                modal.focus();
+                return;
+            }
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (e.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) {
+                e.preventDefault();
+                first.focus();
             }
         }
         document.addEventListener("keydown", handleKeyDown);
@@ -308,8 +355,8 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
             display: "flex", alignItems: "center", gap: "10px", marginTop: "15px", padding: "0 10px"
         });
         sliderContainer.innerHTML = `
-            <span style="color: #888; font-size: 12px;">🔍 缩放</span>
-            <input type="range" id="crop-scale-slider" min="100" max="500" value="100" 
+            <span style="color: #888; font-size: 12px;">🔍 ${escapeHtml(t('crop.zoom_label'))}</span>
+            <input type="range" id="crop-scale-slider" min="100" max="500" value="100" aria-label="${escapeHtml(t('crop.zoom_label'))}" aria-valuetext="100%"
                    style="flex: 1; accent-color: #4CAF50;">
             <span id="crop-scale-value" style="color: #4CAF50; font-size: 12px; min-width: 40px;">100%</span>
         `;
@@ -320,8 +367,8 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
             display: "flex", gap: "10px", marginTop: "15px", justifyContent: "flex-end"
         });
         buttonContainer.innerHTML = `
-            <button id="btn-crop-cancel" style="padding: 10px 20px; background: transparent; border: 1px solid #555; color: #ccc; border-radius: 6px; cursor: pointer; font-size: 13px;">取消</button>
-            <button id="btn-crop-confirm" style="padding: 10px 30px; background: #4CAF50; border: none; color: white; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold;">✂️ 确认裁剪并上传</button>
+            <button id="btn-crop-cancel" type="button" style="padding: 10px 20px; background: transparent; border: 1px solid #555; color: #ccc; border-radius: 6px; cursor: pointer; font-size: 13px;">${escapeHtml(t('common.cancel'))}</button>
+            <button id="btn-crop-confirm" type="button" disabled style="padding: 10px 30px; background: #4CAF50; border: none; color: white; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold;">✂️ ${escapeHtml(t('crop.confirm'))}</button>
         `;
 
         // 组装DOM
@@ -332,9 +379,12 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
         modal.appendChild(buttonContainer);
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
+        modal.querySelector("#btn-crop-cancel").focus();
 
         // 绑定缩放滑块事件
-        setTimeout(() => {
+        bindTimer = setTimeout(() => {
+            bindTimer = null;
+            if (isCleanedUp) return;
             const slider = modal.querySelector("#crop-scale-slider");
             const scaleValue = modal.querySelector("#crop-scale-value");
             
@@ -345,6 +395,7 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
                 
                 scale = minScale * (parseInt(slider.value) / 100);
                 scaleValue.textContent = `${slider.value}%`;
+                slider.setAttribute("aria-valuetext", `${slider.value}%`);
                 updateImagePosition();
             };
 
@@ -356,27 +407,41 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
 
             // 确认裁剪按钮
             modal.querySelector("#btn-crop-confirm").onclick = async () => {
+                if (isCleanedUp) return;
                 const btn = modal.querySelector("#btn-crop-confirm");
-                btn.textContent = "⏳ 处理中...";
+                if (btn.disabled) return;
+                btn.textContent = `⏳ ${t('crop.processing')}`;
                 btn.disabled = true;
 
+                encodeTimer = setTimeout(fail, IMAGE_PROCESS.TIMEOUT);
                 try {
                     const croppedFile = await cropAndCompress();
+                    if (isCleanedUp) return;
                     cleanup();
                     resolve(croppedFile);
                 } catch (err) {
-                    btn.textContent = "❌ 处理失败，重试";
+                    if (isCleanedUp) return;
+                    clearTimeout(encodeTimer); encodeTimer = null;
+                    btn.textContent = t('crop.process_failed');
                     btn.disabled = false;
-                    console.error("裁剪失败:", err);
+                    console.error("[RanKing] Crop processing failed");
                 }
             };
         }, 0);
 
         // 🔧 P3优化：统一清理函数，确保所有事件监听器被移除
-        let isCleanedUp = false;
-        function cleanup() {
+        function cleanup(restoreFocus = true) {
             if (isCleanedUp) return;  // 防止重复清理
             isCleanedUp = true;
+            const ownedFocus = modal.contains(document.activeElement);
+            clearTimeout(bindTimer); bindTimer = null;
+            clearTimeout(decodeTimer); clearTimeout(encodeTimer); decodeTimer = encodeTimer = null;
+            removalObserver?.disconnect(); removalObserver = null;
+            signal?.removeEventListener('abort', onAbort);
+            reader.onload = reader.onerror = null;
+            if (reader.readyState === FileReader.LOADING) { try { reader.abort(); } catch (_) { /* 继续释放其余所属资源 */ } }
+            img.onload = img.onerror = null; img.removeAttribute('src');
+            if (activeCanvas) { activeCanvas.width = activeCanvas.height = 0; activeCanvas = null; }
             document.removeEventListener("mousemove", handleMouseMove);
             document.removeEventListener("mouseup", handleMouseUp);
             document.removeEventListener("keydown", handleKeyDown);
@@ -385,6 +450,7 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
             cropContainer.removeEventListener("touchend", handleTouchEnd);
             cropContainer.removeEventListener("touchcancel", handleTouchEnd);
             overlay.remove();
+            if (restoreFocus && ownedFocus && previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
         }
 
         // 点击遮罩关闭
@@ -395,78 +461,103 @@ export function openImageCropper(file, aspectRatio = 16/9, title = "裁剪图片
             }
         };
 
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+        if (!isCleanedUp) {
+            removalObserver = new MutationObserver(() => { if (!overlay.isConnected || !modal.isConnected) onAbort(); });
+            removalObserver.observe(document.body, { childList: true, subtree: true });
+            if (!overlay.isConnected || !modal.isConnected) onAbort();
+        }
+        if (!isCleanedUp) {
+            decodeTimer = setTimeout(fail, IMAGE_PROCESS.TIMEOUT);
+            try { reader.readAsDataURL(file); } catch (_) { fail(); }
+        }
+
         // 裁剪并压缩
         async function cropAndCompress() {
-            const canvas = document.createElement("canvas");
-            const ctx = canvas.getContext("2d");
+            if (isCleanedUp) throw new Error('Crop closed');
+            const canvas = document.createElement("canvas"); activeCanvas = canvas;
+            try {
+                const ctx = canvas.getContext("2d");
 
-            // 输出尺寸（根据比例）
-            let outputWidth, outputHeight;
-            if (aspectRatio === 1) {
-                // 1:1 正方形（头像，512x512）
-                outputWidth = outputHeight = 512;
-            } else if (aspectRatio > 1) {
-                // 16:9 横向
-                outputWidth = Math.min(1920, containerWidth * 2);
-                outputHeight = outputWidth / aspectRatio;
-            } else {
-                // 9:16 纵向
-                outputHeight = Math.min(1920, containerHeight * 2);
-                outputWidth = outputHeight * aspectRatio;
+                // 输出尺寸（根据比例）
+                let outputWidth, outputHeight;
+                if (aspectRatio === 1) {
+                    // 1:1 正方形（头像，512x512）
+                    outputWidth = outputHeight = 512;
+                } else if (aspectRatio > 1) {
+                    // 16:9 横向
+                    outputWidth = Math.min(1920, containerWidth * 2);
+                    outputHeight = outputWidth / aspectRatio;
+                } else {
+                    // 9:16 纵向
+                    outputHeight = Math.min(1920, containerHeight * 2);
+                    outputWidth = outputHeight * aspectRatio;
+                }
+
+                canvas.width = outputWidth;
+                canvas.height = outputHeight;
+
+                // 计算裁剪区域在原图上的位置
+                const scaledWidth = imgNaturalWidth * scale;
+                const scaledHeight = imgNaturalHeight * scale;
+                const imgLeft = (containerWidth - scaledWidth) / 2 + offsetX;
+                const imgTop = (containerHeight - scaledHeight) / 2 + offsetY;
+
+                // 裁剪区域相对于缩放后图片的位置
+                const cropX = -imgLeft / scale;
+                const cropY = -imgTop / scale;
+                const cropW = containerWidth / scale;
+                const cropH = containerHeight / scale;
+
+                // 绘制到 canvas
+                ctx.drawImage(
+                    img,
+                    cropX, cropY, cropW, cropH,  // 源图裁剪区域
+                    0, 0, outputWidth, outputHeight  // 目标canvas
+                );
+
+                // 压缩并转换为 Blob
+                let quality = 0.92;
+                let blob = await canvasToBlob(canvas, quality);
+                if (isCleanedUp || !blob) throw new Error('Crop output unavailable');
+
+                // 如果超过限制大小，逐步降低质量
+                while (blob.size > maxSizeMB * 1024 * 1024 && quality > 0.3) {
+                    quality -= 0.1;
+                    blob = await canvasToBlob(canvas, quality);
+                    if (isCleanedUp || !blob) throw new Error('Crop output unavailable');
+                }
+
+                // 如果仍然超过限制，缩小尺寸
+                if (blob.size > maxSizeMB * 1024 * 1024) {
+                    const scaleFactor = Math.sqrt((maxSizeMB * 1024 * 1024) / blob.size) * 0.9;
+                    canvas.width = outputWidth * scaleFactor;
+                    canvas.height = outputHeight * scaleFactor;
+                    ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
+                    blob = await canvasToBlob(canvas, 0.85);
+                    if (isCleanedUp || !blob) throw new Error('Crop output unavailable');
+                }
+
+                if (!Number.isSafeInteger(blob.size) || blob.size <= 0 || blob.size > maxSizeMB * 1024 * 1024) {
+                    throw new Error('Crop output exceeds budget');
+                }
+                // 生成文件名
+                const baseName = file.name.replace(/\.[^/.]+$/, "");
+                const fileName = `${baseName}_cropped.jpg`;
+
+                return new File([blob], fileName, { type: "image/jpeg" });
+            } finally {
+                canvas.width = canvas.height = 0;
+                if (activeCanvas === canvas) activeCanvas = null;
             }
-
-            canvas.width = outputWidth;
-            canvas.height = outputHeight;
-
-            // 计算裁剪区域在原图上的位置
-            const scaledWidth = imgNaturalWidth * scale;
-            const scaledHeight = imgNaturalHeight * scale;
-            const imgLeft = (containerWidth - scaledWidth) / 2 + offsetX;
-            const imgTop = (containerHeight - scaledHeight) / 2 + offsetY;
-
-            // 裁剪区域相对于缩放后图片的位置
-            const cropX = -imgLeft / scale;
-            const cropY = -imgTop / scale;
-            const cropW = containerWidth / scale;
-            const cropH = containerHeight / scale;
-
-            // 绘制到 canvas
-            ctx.drawImage(
-                img,
-                cropX, cropY, cropW, cropH,  // 源图裁剪区域
-                0, 0, outputWidth, outputHeight  // 目标canvas
-            );
-
-            // 压缩并转换为 Blob
-            let quality = 0.92;
-            let blob = await canvasToBlob(canvas, quality);
-
-            // 如果超过限制大小，逐步降低质量
-            while (blob.size > maxSizeMB * 1024 * 1024 && quality > 0.3) {
-                quality -= 0.1;
-                blob = await canvasToBlob(canvas, quality);
-            }
-
-            // 如果仍然超过限制，缩小尺寸
-            if (blob.size > maxSizeMB * 1024 * 1024) {
-                const scaleFactor = Math.sqrt((maxSizeMB * 1024 * 1024) / blob.size) * 0.9;
-                canvas.width = outputWidth * scaleFactor;
-                canvas.height = outputHeight * scaleFactor;
-                ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
-                blob = await canvasToBlob(canvas, 0.85);
-            }
-
-            // 生成文件名
-            const baseName = file.name.replace(/\.[^/.]+$/, "");
-            const fileName = `${baseName}_cropped.jpg`;
-
-            return new File([blob], fileName, { type: "image/jpeg" });
         }
 
         // Canvas 转 Blob 辅助函数
         function canvasToBlob(canvas, quality) {
             return new Promise((resolve) => {
-                canvas.toBlob((blob) => resolve(blob), "image/jpeg", quality);
+                if (isCleanedUp) throw new Error('Crop closed');
+                canvas.toBlob((blob) => resolve(isCleanedUp ? null : blob), "image/jpeg", quality);
             });
         }
     });

@@ -10,7 +10,33 @@ import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { removeCache, removeCacheByPrefix } from "../components/性能优化工具.js";
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
-import { escapeHtml } from "../core/全局配置.js";
+import { escapeHtml, TASK_LIMITS, IMAGE_PROCESS } from "../core/全局配置.js";
+import { createPublishSubmissionScope } from "../market/发布提交生命周期.js";
+
+function readTaskDeadline(value) {
+    if (typeof value !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value)) return null;
+    const [year, month, day] = value.split('-').map(Number);
+    if (year < 1 || month < 1 || month > 12 || day < 1) return null;
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return day <= days[month - 1] ? value : null;
+}
+
+function localCalendarDate(date) {
+    return `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function readTaskPrice(value) {
+    const raw = String(value ?? '').trim();
+    if (!/^[0-9]+$/.test(raw)) return null;
+    const price = Number(raw);
+    return Number.isSafeInteger(price) && price <= TASK_LIMITS.MAX_PRICE ? price : null;
+}
+
+function readDepositRatio(value) {
+    const raw = String(value ?? '');
+    return TASK_LIMITS.DEPOSIT_RATIOS.find(ratio => String(ratio) === raw) ?? null;
+}
 
 /**
  * 🚀 清除任务列表缓存
@@ -34,19 +60,27 @@ function clearTaskListCache() {
 /**
  * 🖼️ 处理任务图片上传
  */
-async function _processTaskImages(selectedImages, publishBtn) {
+async function _processTaskImages(selectedImages, publishBtn, isCurrent = () => true) {
     const referenceImages = [];
     for (let i = 0; i < selectedImages.length; i++) {
+        if (!isCurrent()) return null;
         if (selectedImages[i].isExisting) {
             referenceImages.push(selectedImages[i].dataUrl);
         } else {
             publishBtn.textContent = `⏳ ${t('task.upload_progress', { current: i + 1, total: selectedImages.length })}...`;
             try {
                 const processedFile = await compressImageForUpload(selectedImages[i].file);
+                if (!isCurrent()) return null;
                 const res = await api.uploadFile(processedFile, "task");
+                if (!isCurrent()) return null;
+                if (res?.status !== 'success' || typeof res.url !== 'string' || !res.url.trim()) {
+                    throw new Error('Unconfirmed task image upload');
+                }
                 referenceImages.push(res.url);
             } catch (uploadErr) {
-                console.error("图片上传失败:", uploadErr);
+                if (!isCurrent()) return null;
+                console.error("任务图片上传失败");
+                throw uploadErr;
             }
         }
     }
@@ -76,33 +110,25 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
         background: "#121212"
     });
     
-    // 获取明天的日期作为最小截止日期
+    // 使用本地日历日期，不通过 UTC 转换选择器的日期。
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    const minDate = tomorrow.toISOString().split("T")[0];
-    
-    // 默认截止日期（7天后）或编辑模式下的原截止日期
-    let defaultDate;
-    if (isEditMode && editTaskData.deadline) {
-        const editDeadline = new Date(editTaskData.deadline);
-        defaultDate = editDeadline.toISOString().split("T")[0];
-    } else {
-        const defaultDeadline = new Date();
-        defaultDeadline.setDate(defaultDeadline.getDate() + 7);
-        defaultDate = defaultDeadline.toISOString().split("T")[0];
-    }
-    
+    const minDate = localCalendarDate(tomorrow);
+    const defaultDeadline = new Date();
+    defaultDeadline.setDate(defaultDeadline.getDate() + 7);
+    const defaultDate = isEditMode ? (readTaskDeadline(editTaskData.deadline) ?? '') : localCalendarDate(defaultDeadline);
+
     // 编辑模式下的字段值
     const editTitle = isEditMode ? (editTaskData.title || '') : '';
     const editDescription = isEditMode ? (editTaskData.description || '') : '';
     const editRefLink = isEditMode ? (editTaskData.reference_link || '') : '';
-    const editTotalPrice = isEditMode ? (editTaskData.total_price || '') : '';
+    const editTotalPrice = isEditMode ? (editTaskData.total_price ?? '') : '';
     const editDepositRatio = isEditMode ? (editTaskData.deposit_ratio || 30) : 30;
     
     container.innerHTML = `
         <!-- 顶部导航 -->
         <div style="display: flex; align-items: center; padding: 12px 15px; background: #1a1a1a; border-bottom: 1px solid var(--border-color, #333);">
-            <button id="btn-back" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px;" onmouseover="this.style.background='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'">
+            <button type="button" id="btn-back" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px;" onmouseover="this.style.background='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'">
                 ⬅ ${t('common.back')}
             </button>
             <span style="flex: 1; text-align: center; font-size: 15px; font-weight: bold; color: #fff;">📝 ${isEditMode ? t('task.edit_task') : t('task.publish')}</span>
@@ -114,19 +140,19 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             
             <!-- 任务标题 -->
             <div>
-                <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
-                    📌 ${t('task.task_title')} <span style="color: #F44336;">*</span>
+                <label for="task-title" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
+                    📌 ${t('task.task_title')} <span aria-hidden="true" style="color: #F44336;">*</span>
                 </label>
-                <input type="text" id="task-title" maxlength="50" placeholder="${t('task.title_placeholder')}" value="${escapeHtml(editTitle)}" 
+                <input type="text" id="task-title" required maxlength="50" placeholder="${t('task.title_placeholder')}" value="${escapeHtml(editTitle)}"
                        style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
             </div>
             
             <!-- 任务描述 -->
             <div>
-                <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
-                    📄 ${t('task.description')} <span style="color: #F44336;">*</span>
+                <label for="task-description" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
+                    📄 ${t('task.description')} <span aria-hidden="true" style="color: #F44336;">*</span>
                 </label>
-                <textarea id="task-description" rows="6" maxlength="2000" placeholder="${t('task.description_placeholder')}"
+                <textarea id="task-description" required aria-describedby="desc-count" rows="6" maxlength="2000" placeholder="${t('task.description_placeholder')}"
                           style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; resize: none; box-sizing: border-box; line-height: 1.5;">${escapeHtml(editDescription)}</textarea>
                 <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
                     <span id="desc-count">${editDescription.length}</span>/2000
@@ -135,23 +161,23 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             
             <!-- 参考图片 -->
             <div>
-                <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
+                <label for="ref-images" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
                     🖼️ ${t('task.reference_images_optional')}
                 </label>
                 <input type="file" id="ref-images" multiple accept="image/*" 
                        style="display: none;">
                 <div id="image-preview" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px;"></div>
-                <button id="btn-add-image" style="width: 100%; padding: 12px; background: var(--comfy-menu-bg); border: 1px dashed #555; border-radius: 8px; color: #888; cursor: pointer; font-size: 13px;">
+                <button type="button" id="btn-add-image" style="width: 100%; padding: 12px; background: var(--comfy-menu-bg); border: 1px dashed #555; border-radius: 8px; color: #888; cursor: pointer; font-size: 13px;">
                     + ${t('task.add_reference_image')}
                 </button>
             </div>
             
             <!-- 参考链接 -->
             <div>
-                <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
+                <label for="ref-link" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
                     🔗 ${t('task.reference_link_optional')}
                 </label>
-                <input type="url" id="ref-link" placeholder="https://..." value="${escapeHtml(editRefLink)}" 
+                <input type="url" id="ref-link" placeholder="https://..." value="${escapeHtml(editRefLink)}"
                        style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
             </div>
             
@@ -159,29 +185,26 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                 <!-- 总价格 -->
                 <div>
-                    <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
-                        💰 ${t('task.total_price')} <span style="color: #F44336;">*</span>
+                    <label for="total-price" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
+                        💰 ${t('task.total_price')} <span aria-hidden="true" style="color: #F44336;">*</span>
                     </label>
                     <div style="position: relative;">
-                        <input type="number" id="total-price" min="0" step="10" placeholder="100" value="${editTotalPrice}" ${isLockedStatus ? 'disabled' : ''}
+                        <input type="number" id="total-price" required aria-describedby="task-price-hint" min="0" max="${TASK_LIMITS.MAX_PRICE}" step="1" placeholder="100" value="${escapeHtml(editTotalPrice)}" ${isLockedStatus ? 'disabled' : ''}
                                style="width: 100%; padding: 10px 12px; padding-right: 40px; background: ${isLockedStatus ? 'var(--comfy-input-bg)' : 'var(--comfy-menu-bg)'}; border: 1px solid var(--border-color, #333); border-radius: 8px; color: ${isLockedStatus ? '#666' : '#FF9800'}; font-size: 16px; font-weight: bold; box-sizing: border-box; cursor: ${isLockedStatus ? 'not-allowed' : 'auto'};">
                         <span style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: #888; font-size: 12px;">${t('common.credits')}</span>
                     </div>
-                    <div style="font-size: 11px; color: #666; margin-top: 4px;">${isLockedStatus ? '⚠️ 任务进行中，价格不可修改' : t('task.min_10_credits')}</div>
+                    <div id="task-price-hint" style="font-size: 11px; color: #666; margin-top: 4px;">${isLockedStatus ? t('task.price_locked') : t('task.price_range', { max: TASK_LIMITS.MAX_PRICE })}</div>
                 </div>
                 
                 <!-- 订金比例 -->
                 <div>
-                    <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
-                        📊 ${t('task.deposit_ratio')} <span style="color: #F44336;">*</span>
+                    <label for="deposit-ratio" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
+                        📊 ${t('task.deposit_ratio')} <span aria-hidden="true" style="color: #F44336;">*</span>
                     </label>
-                    <select id="deposit-ratio" ${isLockedStatus ? 'disabled' : ''} style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? 'var(--comfy-input-bg)' : 'var(--comfy-menu-bg)'}; border: 1px solid var(--border-color, #333); border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; cursor: ${isLockedStatus ? 'not-allowed' : 'pointer'};">
-                        <option value="10" ${editDepositRatio == 10 ? 'selected' : ''}>10%</option>
-                        <option value="20" ${editDepositRatio == 20 ? 'selected' : ''}>20%</option>
-                        <option value="30" ${editDepositRatio == 30 ? 'selected' : ''}>30%</option>
-                        <option value="50" ${editDepositRatio == 50 ? 'selected' : ''}>50%</option>
+                    <select id="deposit-ratio" required aria-describedby="task-deposit-hint" ${isLockedStatus ? 'disabled' : ''} style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? 'var(--comfy-input-bg)' : 'var(--comfy-menu-bg)'}; border: 1px solid var(--border-color, #333); border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; cursor: ${isLockedStatus ? 'not-allowed' : 'pointer'};">
+                        ${TASK_LIMITS.DEPOSIT_RATIOS.map(ratio => `<option value="${ratio}" ${editDepositRatio == ratio ? 'selected' : ''}>${ratio}%</option>`).join('')}
                     </select>
-                    <div style="font-size: 11px; color: #666; margin-top: 4px;">${isLockedStatus ? '⚠️ 任务进行中，订金比例不可修改' : t('task.deposit_deducted_on_assign')}</div>
+                    <div id="task-deposit-hint" style="font-size: 11px; color: #666; margin-top: 4px;">${isLockedStatus ? t('task.deposit_locked') : t('task.deposit_deducted_on_assign')}</div>
                 </div>
             </div>
             
@@ -197,16 +220,16 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             
             <!-- 截止日期 -->
             <div>
-                <label style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
-                    ⏰ ${t('task.deadline')} <span style="color: #F44336;">*</span>
+                <label for="deadline" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
+                    ⏰ ${t('task.deadline')} <span aria-hidden="true" style="color: #F44336;">*</span>
                 </label>
-                <input type="date" id="deadline" min="${minDate}" value="${defaultDate}" ${isLockedStatus ? 'disabled' : ''}
+                <input type="date" id="deadline" required ${isLockedStatus ? 'aria-describedby="task-deadline-hint"' : ''} min="${minDate}" value="${defaultDate}" ${isLockedStatus ? 'disabled' : ''}
                        style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? 'var(--comfy-input-bg)' : 'var(--comfy-menu-bg)'}; border: 1px solid var(--border-color, #333); border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; box-sizing: border-box; cursor: ${isLockedStatus ? 'not-allowed' : 'auto'};">
-                ${isLockedStatus ? '<div style="font-size: 11px; color: #666; margin-top: 4px;">⚠️ 任务进行中，截止日期不可修改</div>' : ''}
+                ${isLockedStatus ? `<div id="task-deadline-hint" style="font-size: 11px; color: #666; margin-top: 4px;">${t('task.deadline_locked')}</div>` : ''}
             </div>
             
             <!-- 提交按钮 -->
-            <button id="btn-publish" style="margin-top: 10px; padding: 14px; background: linear-gradient(135deg, #FF9800, #F57C00); border: none; color: #fff; border-radius: 10px; cursor: pointer; font-size: 15px; font-weight: bold; box-shadow: 0 4px 12px rgba(255,152,0,0.3);">
+            <button type="button" id="btn-publish" style="margin-top: 10px; padding: 14px; background: linear-gradient(135deg, #FF9800, #F57C00); border: none; color: #fff; border-radius: 10px; cursor: pointer; font-size: 15px; font-weight: bold; box-shadow: 0 4px 12px rgba(255,152,0,0.3);">
                 🚀 ${isEditMode ? t('task.save_changes') : t('task.publish_task')}
             </button>
             
@@ -220,34 +243,51 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     // 🔌 绑定事件
     
     // 返回按钮
-    container.querySelector("#btn-back").onclick = async () => {
-        const hasChanges = !!(
-            container.querySelector("#task-title")?.value?.trim() ||
-            container.querySelector("#task-description")?.value?.trim() ||
-            container.querySelector("#image-preview")?.children?.length > 0 ||
-            container.querySelector("#ref-link")?.value?.trim()
-        );
-
-        if (hasChanges) {
-            const confirmed = await showConfirm(
-                isEditMode ? t('publish.unsaved_changes_desc') : t('publish.leave_confirm_desc'),
-                {
-                    title: isEditMode ? t('publish.unsaved_changes_title') : t('publish.leave_confirm_title'),
-                    confirmText: t('common.leave'),
-                    cancelText: t('common.stay'),
-                    type: 'warning'
-                }
+    let leaving = false;
+    const backButton = container.querySelector('#btn-back');
+    backButton.onclick = async () => {
+        if (!scope.isCurrent() || leaving) return;
+        leaving = true;
+        backButton.disabled = true;
+        backButton.setAttribute('aria-busy', 'true');
+        let navigated = false;
+        try {
+            const hasChanges = !!(
+                container.querySelector('#task-title')?.value?.trim() ||
+                container.querySelector('#task-description')?.value?.trim() ||
+                container.querySelector('#image-preview')?.children?.length > 0 || readers.size > 0 ||
+                container.querySelector('#ref-link')?.value?.trim()
             );
-            if (!confirmed) return;
+            if (hasChanges) {
+                const confirmed = await showConfirm(
+                    isEditMode ? t('publish.unsaved_changes_desc') : t('publish.leave_confirm_desc'),
+                    {
+                        title: isEditMode ? t('publish.unsaved_changes_title') : t('publish.leave_confirm_title'),
+                        confirmText: t('common.leave'), cancelText: t('common.stay'),
+                        type: 'warning', signal: scope.confirmationSignal
+                    }
+                );
+                if (!confirmed || !scope.isCurrent()) return;
+            }
+            navigated = true;
+            window.dispatchEvent(new CustomEvent('comfy-route-back'));
+        } catch {
+            if (!scope.isCurrent()) return;
+            console.warn('任务返回确认失败');
+            showToast(t('common.operation_failed'), 'error');
+        } finally {
+            if (!scope.isCurrent()) return;
+            leaving = navigated;
+            backButton.disabled = navigated;
+            backButton.removeAttribute('aria-busy');
         }
-
-        window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
-    
+
     // 描述字数统计
     const descInput = container.querySelector("#task-description");
     const descCount = container.querySelector("#desc-count");
     descInput.oninput = () => {
+        if (!scope.isCurrent()) return;
         descCount.textContent = descInput.value.length;
     };
     
@@ -258,9 +298,13 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     const summaryDeposit = container.querySelector("#summary-deposit");
     const summaryRemaining = container.querySelector("#summary-remaining");
     
-    const updatePriceSummary = () => {
-        const total = parseInt(totalPriceInput.value) || 0;
-        const ratio = parseInt(depositRatioSelect.value) || 30;
+    const renderPriceSummary = () => {
+        const total = readTaskPrice(totalPriceInput.value);
+        const ratio = readDepositRatio(depositRatioSelect.value);
+        if (total === null || ratio === null) {
+            summaryTotal.textContent = summaryDeposit.textContent = summaryRemaining.textContent = t('common.unknown');
+            return;
+        }
         const deposit = Math.floor(total * ratio / 100);
         const remaining = total - deposit;
         
@@ -269,6 +313,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
         summaryRemaining.textContent = remaining;
     };
     
+    const updatePriceSummary = () => { if (scope.isCurrent()) renderPriceSummary(); };
     totalPriceInput.oninput = updatePriceSummary;
     depositRatioSelect.onchange = updatePriceSummary;
     
@@ -277,9 +322,31 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     const imagePreview = container.querySelector("#image-preview");
     const btnAddImage = container.querySelector("#btn-add-image");
     let selectedImages = [];
+    const account = typeof currentUser === 'string' ? currentUser : currentUser?.account;
+    const publishBtn = container.querySelector('#btn-publish');
+    const scope = createPublishSubmissionScope(container, publishBtn, account);
+    const readers = new Set();
+    const readTimers = new Map();
+    let submitting = false;
+    scope.addCleanup(() => {
+        for (const timer of readTimers.values()) clearTimeout(timer);
+        readTimers.clear();
+        for (const reader of readers) { try { reader.abort(); } catch {} }
+        readers.clear(); selectedImages = [];
+        imagePreview.innerHTML = '';
+        container.querySelectorAll('input, textarea, select').forEach(input => {
+            input.value = ''; input.disabled = true;
+        });
+        container.querySelectorAll('button').forEach(button => { button.disabled = true; });
+        const status = document.createElement('p');
+        status.setAttribute('role', 'status');
+        status.textContent = t('auth.session_changed');
+        container.replaceChildren(status);
+    });
     
     btnAddImage.onclick = () => {
-        if (selectedImages.length >= 6) {
+        if (!scope.isCurrent() || submitting) return;
+        if (selectedImages.length + readers.size >= TASK_LIMITS.MAX_REFERENCE_IMAGES) {
             showToast(t('task.max_6_images'), "warning");
             return;
         }
@@ -287,49 +354,69 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     };
     
     refImagesInput.onchange = () => {
+        if (!scope.isCurrent() || submitting) return;
         const files = Array.from(refImagesInput.files);
-        const remaining = 6 - selectedImages.length;
-        const toAdd = files.slice(0, remaining);
-        
-        toAdd.forEach(file => {
-            if (!file.type.startsWith("image/")) return;
-            
+        refImagesInput.value = '';
+        for (const file of files) {
+            if (selectedImages.length + readers.size >= TASK_LIMITS.MAX_REFERENCE_IMAGES) {
+                showToast(t('task.max_6_images'), 'warning'); break;
+            }
+            if (typeof file.type !== 'string' || !file.type.startsWith('image/')) continue;
+            if (!Number.isSafeInteger(file.size) || file.size <= 0 || file.size > IMAGE_PROCESS.MAX_INPUT_BYTES) {
+                showToast(t('task.image_size_limit', { max: IMAGE_PROCESS.MAX_INPUT_BYTES / (1024 * 1024) }), 'warning');
+                continue;
+            }
             const reader = new FileReader();
-            reader.onload = (e) => {
-                selectedImages.push({
-                    file: file,
-                    dataUrl: e.target.result
-                });
+            readers.add(reader);
+            const finish = () => {
+                if (!readers.delete(reader)) return false;
+                clearTimeout(readTimers.get(reader)); readTimers.delete(reader);
+                return true;
+            };
+            const fail = () => {
+                if (!finish() || !scope.isCurrent()) return;
+                showToast(t('image.load_failed'), 'error');
+            };
+            reader.onload = e => {
+                if (!finish() || !scope.isCurrent()) return;
+                if (typeof e.target?.result !== 'string' || !e.target.result.startsWith('data:image/')) {
+                    showToast(t('image.load_failed'), 'error'); return;
+                }
+                selectedImages.push({ file, dataUrl: e.target.result });
                 renderImagePreview();
             };
-            reader.readAsDataURL(file);
-        });
-        
-        refImagesInput.value = "";
+            reader.onerror = reader.onabort = fail;
+            readTimers.set(reader, setTimeout(() => {
+                if (!readers.has(reader)) return;
+                fail(); try { reader.abort(); } catch {}
+            }, IMAGE_PROCESS.TIMEOUT));
+            try { reader.readAsDataURL(file); } catch { fail(); }
+        }
     };
     
     const renderImagePreview = () => {
         imagePreview.innerHTML = selectedImages.map((img, i) => `
             <div style="position: relative; padding-top: 100%; background: var(--comfy-menu-bg); border-radius: 8px; overflow: hidden;">
-                <img src="${escapeHtml(img.dataUrl)}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;">
-                <button class="btn-remove-img" data-index="${i}" style="position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; background: rgba(244,67,54,0.9); border: none; border-radius: 50%; color: #fff; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center;">×</button>
+                <img alt="${escapeHtml(t('task.reference_images'))} ${i + 1}" src="${escapeHtml(img.dataUrl)}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;">
+                <button type="button" aria-label="${escapeHtml(t('task.remove_reference_image', { index: i + 1 }))}" class="btn-remove-img" data-index="${i}" style="position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; background: rgba(244,67,54,0.9); border: none; border-radius: 50%; color: #fff; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center;">×</button>
             </div>
         `).join("");
         
         imagePreview.querySelectorAll(".btn-remove-img").forEach(btn => {
             btn.onclick = () => {
+                if (!scope.isCurrent() || submitting) return;
                 const index = parseInt(btn.dataset.index);
                 selectedImages.splice(index, 1);
                 renderImagePreview();
             };
         });
         
-        btnAddImage.style.display = selectedImages.length >= 6 ? "none" : "block";
+        btnAddImage.style.display = selectedImages.length >= TASK_LIMITS.MAX_REFERENCE_IMAGES ? "none" : "block";
     };
     
     // 编辑模式：加载已有的参考图片
-    if (isEditMode && editTaskData.reference_images && editTaskData.reference_images.length > 0) {
-        editTaskData.reference_images.forEach(url => {
+    if (isEditMode && Array.isArray(editTaskData.reference_images) && editTaskData.reference_images.length > 0) {
+        editTaskData.reference_images.filter(url => typeof url === 'string').slice(0, TASK_LIMITS.MAX_REFERENCE_IMAGES).forEach(url => {
             selectedImages.push({
                 file: null,
                 dataUrl: url,
@@ -341,22 +428,30 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     
     // 发布/保存按钮
     container.querySelector("#btn-publish").onclick = async () => {
+        if (!scope.isCurrent() || leaving) return;
+        if (readers.size > 0) { showToast(t('task.images_reading'), 'warning'); return; }
         const title = container.querySelector("#task-title").value.trim();
         const description = descInput.value.trim();
         const refLink = container.querySelector("#ref-link").value.trim();
-        const totalPrice = parseInt(totalPriceInput.value) || 0;
-        const depositRatio = parseInt(depositRatioSelect.value) || 30;
-        const deadline = container.querySelector("#deadline").value;
+        const totalPrice = readTaskPrice(totalPriceInput.value);
+        const depositRatio = readDepositRatio(depositRatioSelect.value);
+        const deadline = readTaskDeadline(container.querySelector("#deadline").value);
         
         // 验证
         const validations = [
             [!title, t('task.please_enter_title')],
             [!description, t('task.please_enter_description')],
-            [!isEditMode && totalPrice < 0, t('task.price_min_10')],
-            [!deadline, t('task.please_select_deadline')]
+            [!isLockedStatus && totalPrice === null, t('task.price_range', { max: TASK_LIMITS.MAX_PRICE })],
+            [!isLockedStatus && depositRatio === null, t('task.deposit_invalid')],
+            [!isLockedStatus && deadline === null, t('task.deadline_invalid')]
         ];
         const failed = validations.find(([cond]) => cond);
         if (failed) { showToast(failed[1], "warning"); return; }
+        if (!scope.begin()) return;
+        submitting = true;
+        refImagesInput.disabled = btnAddImage.disabled = true;
+        imagePreview.querySelectorAll('.btn-remove-img').forEach(button => { button.disabled = true; });
+        let saveAttempted = false, committed = false, outcomeUnknown = false;
         
         try {
             const publishBtn = container.querySelector("#btn-publish");
@@ -364,7 +459,9 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             publishBtn.textContent = `⏳ ${t('task.uploading_images')}...`;
             
             // 上传参考图片（只上传新选择的图片）
-            const referenceImages = await _processTaskImages(selectedImages, publishBtn);
+            const referenceImages = await _processTaskImages(selectedImages.slice(), publishBtn, scope.isCurrent);
+            if (!scope.isCurrent()) return;
+            if (!referenceImages) throw new Error('Task images unavailable');
             
             if (isEditMode) {
                 // 编辑模式：更新任务
@@ -384,14 +481,19 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                     updateData.deadline = deadline;
                 }
                 
-                await api.updateTask(editTaskData.id, updateData);
+                saveAttempted = true;
+                const result = await api.updateTask(editTaskData.id, updateData);
+                if (!scope.isCurrent()) return;
+                if (result?.status !== 'success') throw new Error('Unconfirmed task update');
+                committed = true;
                 
                 showToast(t('task.edit_success'), "success");
             } else {
                 // 新建模式：创建任务
                 publishBtn.textContent = `⏳ ${t('task.publishing')}...`;
                 
-                await api.createTask({
+                saveAttempted = true;
+                const result = await api.createTask({
                     title,
                     description,
                     referenceImages,
@@ -399,28 +501,43 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                     totalPrice,
                     depositRatio,
                     deadline,
-                    publisher: currentUser.account || currentUser
+                    publisher: account
                 });
+                if (!scope.isCurrent()) return;
+                if (result?.status !== 'success' || typeof result.data?.id !== 'string' || !result.data.id.trim()) {
+                    throw new Error('Unconfirmed task publication');
+                }
+                committed = true;
                 
                 showToast(t('task.publish_success'), "success");
             }
             
             // 🚀 清除任务列表缓存，确保返回列表时能看到更新
-            clearTaskListCache();
+            try { clearTaskListCache(); } catch { console.warn('任务发布后的缓存清理失败'); }
             // 🔄 触发列表刷新，确保新内容立即显示
             window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload"));
             
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
             
         } catch (err) {
-            console.error(isEditMode ? "修改任务失败:" : "发布任务失败:", err);
-            showToast(err.message || (isEditMode ? t('task.edit_failed') : t('task.publish_failed')), "error");
+            if (!scope.isCurrent() || committed) return;
+            console.error(isEditMode ? "修改任务失败" : "发布任务失败");
+            outcomeUnknown = saveAttempted && ![400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            showToast(t(outcomeUnknown ? 'publish.save_unconfirmed' : (isEditMode ? 'task.edit_failed' : 'task.publish_failed')),
+                outcomeUnknown ? 'warning' : 'error');
         } finally {
+            if (!scope.isCurrent()) return;
+            scope.finish(committed, outcomeUnknown);
+            submitting = committed || outcomeUnknown;
+            refImagesInput.disabled = btnAddImage.disabled = submitting;
+            imagePreview.querySelectorAll('.btn-remove-img').forEach(button => { button.disabled = submitting; });
             const publishBtn = container.querySelector("#btn-publish");
-            publishBtn.disabled = false;
-            publishBtn.textContent = `🚀 ${isEditMode ? t('task.save_changes') : t('task.publish_task')}`;
+            publishBtn.disabled = committed || outcomeUnknown;
+            publishBtn.textContent = outcomeUnknown ? t('publish.result_pending')
+                : `🚀 ${isEditMode ? t('task.save_changes') : t('task.publish_task')}`;
         }
     };
     
+    renderPriceSummary();
     return container;
 }

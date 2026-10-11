@@ -2,7 +2,7 @@
 // ==========================================
 // 🎬 自定义视频播放器组件
 // ==========================================
-// 功能：内嵌视频播放 + 全屏沉浸式播放，支持自定义控制栏、键盘快捷键
+// 功能：内嵌视频播放 + 全屏沉浸式播放，支持自定义控制栏
 // 接口：getVideoPlayerHTML / setupVideoPlayerEvents / cleanupVideoPlayer / openFullscreenVideo
 // ==========================================
 
@@ -676,56 +676,6 @@ export function setupVideoPlayerEvents(container) {
         });
     }
 
-    // 8. 键盘快捷键
-    const handleKeydown = (e) => {
-        if (document.activeElement !== player) return;
-        switch (e.key) {
-            case ' ':
-            case 'k':
-                e.preventDefault();
-                togglePlay();
-                break;
-            case 'ArrowLeft':
-                e.preventDefault();
-                video.currentTime = Math.max(0, video.currentTime - 5);
-                break;
-            case 'ArrowRight':
-                e.preventDefault();
-                video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
-                break;
-            case 'ArrowUp':
-                e.preventDefault();
-                video.volume = Math.min(1, video.volume + 0.1);
-                if (video.volume > 0) video.muted = false;
-                if (volumeSlider) volumeSlider.value = Math.round(video.volume * 100);
-                updateVolumeIcon();
-                break;
-            case 'ArrowDown':
-                e.preventDefault();
-                video.volume = Math.max(0, video.volume - 0.1);
-                if (volumeSlider) volumeSlider.value = Math.round(video.volume * 100);
-                updateVolumeIcon();
-                break;
-            case 'f':
-            case 'F':
-                e.preventDefault();
-                if (btnFullscreen) btnFullscreen.click();
-                break;
-            case 'm':
-            case 'M':
-                e.preventDefault();
-                video.muted = !video.muted;
-                updateVolumeIcon();
-                break;
-        }
-    };
-    player.addEventListener('keydown', handleKeydown);
-
-    // 点击播放器获取焦点
-    player.addEventListener('click', () => {
-        player.focus();
-    });
-
     // 9. 控制栏自动隐藏
     player.addEventListener('mousemove', resetHideTimer);
     player.addEventListener('mouseenter', resetHideTimer);
@@ -897,7 +847,7 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
         if (destroyed) return;
         destroyed = true;
         if (hideControlsTimer) clearTimeout(hideControlsTimer);
-        document.removeEventListener('keydown', handleKeydown);
+        overlay.removeEventListener('keydown', handleKeydown);
         document.removeEventListener('click', handleDocClickForSpeed);
         window.removeEventListener('mousemove', handleMouseMove);
         window.removeEventListener('mouseup', handleMouseUp);
@@ -1100,53 +1050,16 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
     // 关闭按钮
     closeBtn.addEventListener('click', () => destroy(video.currentTime));
 
-    // 键盘快捷键
-    const handleKeydown = (e) => {
-        switch (e.key) {
-            case 'Escape':
-                e.preventDefault();
-                destroy(video.currentTime);
-                break;
-            case ' ':
-            case 'k':
-                e.preventDefault();
-                togglePlay();
-                break;
-            case 'ArrowLeft':
-                e.preventDefault();
-                video.currentTime = Math.max(0, video.currentTime - 5);
-                break;
-            case 'ArrowRight':
-                e.preventDefault();
-                video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
-                break;
-            case 'ArrowUp':
-                e.preventDefault();
-                video.volume = Math.min(1, video.volume + 0.1);
-                if (video.volume > 0) video.muted = false;
-                volumeSlider.value = Math.round(video.volume * 100);
-                updateVolumeIcon();
-                break;
-            case 'ArrowDown':
-                e.preventDefault();
-                video.volume = Math.max(0, video.volume - 0.1);
-                volumeSlider.value = Math.round(video.volume * 100);
-                updateVolumeIcon();
-                break;
-            case 'f':
-            case 'F':
-                e.preventDefault();
-                destroy(video.currentTime);
-                break;
-            case 'm':
-            case 'M':
-                e.preventDefault();
-                video.muted = !video.muted;
-                updateVolumeIcon();
-                break;
-        }
+    const handleKeydown = event => {
+        if (event.defaultPrevented || event.isComposing || event.keyCode === 229
+                || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey
+                || event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        destroy(video.currentTime);
     };
-    document.addEventListener('keydown', handleKeydown);
+    overlay.addEventListener('keydown', handleKeydown);
+    closeBtn.focus();
 
     // 控制栏自动隐藏
     overlay.addEventListener('mousemove', resetHideTimer);

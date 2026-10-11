@@ -1,11 +1,10 @@
+import { createAuthFormScope } from "./认证表单生命周期.js";
 import { api } from "../core/网络请求API.js";
 import { regionData, getSortedCountries } from "./国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { openImageCropper } from "../components/图片裁剪组件.js";
 import { PLACEHOLDERS } from "../core/全局配置.js";
-
-const INPUT_STYLE = 'width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;';
 
 const DEFAULT_AVATAR = PLACEHOLDERS.AVATAR;
 
@@ -28,54 +27,48 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
     const countryOptions = sortedCountries.map(c => `<option value="${c}">${c}</option>`).join("");
     
     container.innerHTML = `
-        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.account')} (>5${t('common.chars')}) <span style="color: #F44336;">*</span></label><input type="text" id="reg-account" required style="${INPUT_STYLE}"></div>
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.display_name')} <span style="color: #F44336;">*</span></label><input type="text" id="reg-name" required style="${INPUT_STYLE}"></div>
-        </div>
-        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.set_password')} (≥6${t('common.chars')}) <span style="color: #F44336;">*</span></label><input type="password" id="reg-password" required style="${INPUT_STYLE}"></div>
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.confirm_password')} <span style="color: #F44336;">*</span></label><input type="password" id="reg-password-confirm" required style="${INPUT_STYLE}"></div>
-        </div>
-        
-        <div style="margin-bottom: 10px; padding: 10px; background: rgba(76, 175, 80, 0.1); border: 1px dashed #4CAF50; border-radius: 4px;">
-            <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;">
-                <div style="flex: 2; min-width: 180px;">
-                    <label style="display: block; margin-bottom: 5px; color: #4CAF50;">${t('auth.security_email')} (${t('auth.security_email_desc')}) <span style="color: #F44336;">*</span></label>
-                    <div style="display: flex; gap: 8px;">
-                        <input type="email" id="reg-email" required style="flex: 1; min-width: 0; padding: 8px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box;">
-                        <button id="btn-reg-send-code" style="flex-shrink: 0; padding: 0 12px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; white-space: nowrap;">${t('auth.get_code')}</button>
-                    </div>
-                </div>
-                <div style="flex: 1; min-width: 100px;">
-                    <label style="display: block; margin-bottom: 5px; color: #4CAF50; white-space: nowrap;">${t('auth.verification_code')} <span style="color: #F44336;">*</span></label>
-                    <input type="text" id="reg-code" placeholder="6${t('common.digits')}" maxlength="6" required style="width: 100%; padding: 8px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center;">
-                </div>
+        <div class="auth-form">
+            <div class="auth-form__grid">
+                <div class="auth-form__field"><label for="reg-account">${t('auth.account')} (>5${t('common.chars')}) <span class="auth-form__required" aria-hidden="true">*</span></label><input type="text" id="reg-account" class="auth-form__input" name="username" autocomplete="username" required></div>
+                <div class="auth-form__field"><label for="reg-name">${t('auth.display_name')} <span class="auth-form__required" aria-hidden="true">*</span></label><input type="text" id="reg-name" class="auth-form__input" name="nickname" autocomplete="nickname" required></div>
             </div>
-        </div>
-
-        <div style="margin-bottom: 10px; background: var(--comfy-input-bg); padding: 10px; border-radius: 4px; border: 1px dashed #555; display: flex; align-items: center; justify-content: space-between;">
-            <div>
-                <label style="display: block; margin-bottom: 5px;">${t('auth.avatar')}</label>
-                <div style="display: flex; align-items: center; gap: 10px;"><img id="avatar-preview" src="${DEFAULT_AVATAR}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #444;"><input type="file" id="reg-avatar" accept="image/*" style="font-size: 12px; color: #aaa; max-width: 150px;"></div>
-                <div id="avatar-error" style="color: #F44336; font-size: 12px; margin-top: 5px; display: none;">${t('auth.file_too_large')}</div>
+            <div class="auth-form__grid">
+                <div class="auth-form__field"><label for="reg-password">${t('auth.set_password')} (≥6${t('common.chars')}) <span class="auth-form__required" aria-hidden="true">*</span></label><input type="password" id="reg-password" class="auth-form__input" name="password" autocomplete="new-password" required></div>
+                <div class="auth-form__field"><label for="reg-password-confirm">${t('auth.confirm_password')} <span class="auth-form__required" aria-hidden="true">*</span></label><input type="password" id="reg-password-confirm" class="auth-form__input" name="confirm-password" autocomplete="new-password" required></div>
             </div>
-            <div><label style="display: block; margin-bottom: 5px;">${t('auth.gender')} <span style="color: #F44336;">*</span></label><select id="reg-gender" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;"><option value="male">${t('auth.male')}</option><option value="female">${t('auth.female')}</option></select></div>
-        </div>
-        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-            <div style="flex: 1;">
-                <label style="display: block; margin-bottom: 5px;">${t('auth.birthday')}</label>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <input type="date" id="reg-birthday" style="flex: 1; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">
-                    <span id="reg-age-display" style="color: #888; font-size: 12px; white-space: nowrap;"></span>
+            <fieldset class="auth-form__security">
+                <legend>${t('auth.security_verify')}</legend>
+                <label for="reg-email">${t('auth.security_email')} (${t('auth.security_email_desc')}) <span class="auth-form__required" aria-hidden="true">*</span></label>
+                <div class="auth-form__code-row">
+                    <input type="email" id="reg-email" name="email" autocomplete="email" required class="auth-form__input">
+                    <button type="button" id="btn-reg-send-code" class="auth-form__button">${t('auth.get_code')}</button>
                 </div>
+                <label for="reg-code">${t('auth.verification_code')} <span class="auth-form__required" aria-hidden="true">*</span></label>
+                <input type="text" id="reg-code" name="verification-code" autocomplete="one-time-code" inputmode="numeric" placeholder="6${t('common.digits')}" maxlength="6" required class="auth-form__input">
+            </fieldset>
+            <div class="auth-form__grid auth-form__profile">
+                <div class="auth-form__field">
+                    <label for="reg-avatar">${t('auth.avatar')}</label>
+                    <div class="auth-form__avatar-row"><img id="avatar-preview" src="${DEFAULT_AVATAR}" alt="" class="auth-form__avatar"><input type="file" id="reg-avatar" accept="image/*" class="auth-form__file"></div>
+                    <div id="avatar-error" class="auth-form__error" hidden>${t('auth.file_too_large')}</div>
+                </div>
+                <div class="auth-form__field"><label for="reg-gender">${t('auth.gender')} <span class="auth-form__required" aria-hidden="true">*</span></label><select id="reg-gender" required class="auth-form__input"><option value="male">${t('auth.male')}</option><option value="female">${t('auth.female')}</option></select></div>
             </div>
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.country')}</label><select id="reg-country" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;">${countryOptions}</select></div>
-            <div style="flex: 1;"><label style="display: block; margin-bottom: 5px;">${t('auth.region')}</label><select id="reg-region" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px;"></select></div>
+            <div class="auth-form__grid">
+                <div class="auth-form__field">
+                    <label for="reg-birthday">${t('auth.birthday')}</label>
+                    <input type="date" id="reg-birthday" name="bday" autocomplete="bday" class="auth-form__input">
+                    <span id="reg-age-display" class="auth-form__age"></span>
+                </div>
+                <div class="auth-form__field"><label for="reg-country">${t('auth.country')}</label><select id="reg-country" name="country-name" autocomplete="country-name" class="auth-form__input">${countryOptions}</select></div>
+                <div class="auth-form__field"><label for="reg-region">${t('auth.region')}</label><select id="reg-region" name="address-level1" autocomplete="address-level1" class="auth-form__input"></select></div>
+            </div>
+            <div class="auth-form__field"><label for="reg-intro">${t('auth.intro')} (${t('auth.intro_limit')})</label><textarea id="reg-intro" rows="2" maxlength="100" class="auth-form__input auth-form__textarea"></textarea></div>
+            <button type="button" id="btn-submit-register" class="auth-form__button auth-form__primary">${t('auth.register_submit')}</button>
+            <div class="auth-form__footer">${t('auth.has_account')} <button type="button" id="toggle-to-login" class="auth-form__link">${t('auth.back_to_login')}</button></div>
         </div>
-        <div style="margin-bottom: 20px;"><label style="display: block; margin-bottom: 5px;">${t('auth.intro')} (${t('auth.intro_limit')})</label><textarea id="reg-intro" rows="2" maxlength="100" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; resize: vertical;"></textarea></div>
-        <button id="btn-submit-register" style="width: 100%; padding: 10px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px;">${t('auth.register_submit')}</button>
-        <div style="text-align: center; font-size: 12px;">${t('auth.has_account')} <a href="#" id="toggle-to-login" style="color: #2196F3; text-decoration: none;">${t('auth.back_to_login')}</a></div>
     `;
+    const formScope = createAuthFormScope(container);
 
     const genderSelect = container.querySelector("#reg-gender");
     const avatarPreview = container.querySelector("#avatar-preview");
@@ -91,7 +84,6 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
         const age = calculateAge(birthdayInput.value);
         if (age !== null) {
             ageDisplay.textContent = `${age} ${t('auth.age_years')}`;
-            ageDisplay.style.color = "#4CAF50";
         } else {
             ageDisplay.textContent = "";
         }
@@ -104,41 +96,74 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
     countrySelect.onchange = updateRegionOptions;
     updateRegionOptions();
     
-    let selectedAvatarFile = null;
+    let selectedAvatarFile = null, avatarGeneration = 0, avatarReader = null, avatarCropController = null;
+    const stopAvatarReader = () => {
+        const reader = avatarReader; avatarReader = null;
+        if (!reader) return;
+        reader.onload = reader.onerror = null;
+        if (reader.readyState === FileReader.LOADING) reader.abort();
+    };
+    formScope.addCleanup(() => { avatarGeneration++; avatarCropController?.abort(); avatarCropController = null; stopAvatarReader(); selectedAvatarFile = null; });
     genderSelect.onchange = (e) => { if (!selectedAvatarFile) avatarPreview.src = DEFAULT_AVATAR; };
 
     avatarInput.onchange = async (e) => {
+        if (!formScope.current()) return;
         const file = e.target.files[0];
         if (!file) return;
+        const token = ++avatarGeneration;
+        const currentAvatar = () => formScope.current() && token === avatarGeneration;
+        stopAvatarReader();
+        avatarCropController?.abort();
+        const cropController = new AbortController(); avatarCropController = cropController;
         // 📱 移动端适配：手机拍照原图普遍超过 3MB，不再用原始大小拦截，
         // 统一先走 1:1 裁剪压缩管线（输出 ≤512×512 JPG），与个人设置头像链路一致；
         // 用户取消裁剪时静默还原默认头像预览。
         avatarInput.value = "";
         let croppedFile;
         try {
-            croppedFile = await openImageCropper(file, 1, t('auth.avatar'), 1);
+            croppedFile = await openImageCropper(file, 1, t('auth.avatar'), 1, { signal: cropController.signal });
         } catch (err) {
+            if (avatarCropController === cropController) avatarCropController = null;
+            if (!currentAvatar()) return;
             showToast(t('auth.file_too_large'), "warning");
             selectedAvatarFile = null;
             avatarPreview.src = DEFAULT_AVATAR;
             return;
         }
+        if (avatarCropController === cropController) avatarCropController = null;
+        if (!currentAvatar()) return;
         if (!croppedFile) {
             selectedAvatarFile = null;
             avatarPreview.src = DEFAULT_AVATAR;
             return;
         }
-        avatarError.style.display = "none"; 
-        selectedAvatarFile = croppedFile; 
-        const reader = new FileReader(); 
-        reader.onload = (event) => avatarPreview.src = event.target.result; 
-        reader.onerror = () => showToast(t('auth.file_too_large'), "warning");
-        reader.readAsDataURL(croppedFile);
+        const reader = new FileReader(); avatarReader = reader;
+        const releaseReader = () => {
+            reader.onload = reader.onerror = null;
+            if (avatarReader === reader) avatarReader = null;
+        };
+        reader.onload = (event) => {
+            const result = event.target.result;
+            if (currentAvatar() && typeof result === 'string' && result) {
+                avatarError.hidden = true;
+                selectedAvatarFile = croppedFile; avatarPreview.src = result;
+            }
+            releaseReader();
+        };
+        reader.onerror = () => {
+            if (currentAvatar()) showToast(t('auth.file_too_large'), "warning");
+            releaseReader();
+        };
+        try { reader.readAsDataURL(croppedFile); }
+        catch (_) {
+            releaseReader();
+            if (currentAvatar()) showToast(t('auth.file_too_large'), "warning");
+        }
     };
 
     container.querySelector("#toggle-to-login").onclick = (e) => { e.preventDefault(); switchView("login"); };
 
-    function startCountdown(btn, duration, resetColor) {
+    function startCountdown(btn, duration) {
         let timeLeft = duration;
         btn.innerText = `${timeLeft}s ${t('auth.resend')}`;
         const timer = setInterval(() => {
@@ -146,7 +171,6 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
             if (timeLeft <= 0) {
                 clearInterval(timer);
                 btn.disabled = false;
-                btn.style.background = resetColor;
                 btn.innerText = t('auth.get_code');
             } else {
                 btn.innerText = `${timeLeft}s ${t('auth.resend')}`;
@@ -158,28 +182,31 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
     // 发送注册验证码逻辑
     const btnRegSendCode = container.querySelector("#btn-reg-send-code");
     let regCountdownTimer = null;
+    formScope.addCleanup(() => { clearInterval(regCountdownTimer); regCountdownTimer = null; });
     
     btnRegSendCode.onclick = async (e) => {
         e.preventDefault();
+        if (!formScope.current() || btnRegSendCode.disabled) return;
         const emailInput = container.querySelector("#reg-email").value.trim();
         const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput);
         
         if (!isEmail) return showToast(t('auth.invalid_email'), "error");
         
         btnRegSendCode.disabled = true;
-        btnRegSendCode.style.background = "#555";
         btnRegSendCode.innerText = t('auth.sending');
         
         try {
-            await api.sendVerifyCode(emailInput, "email", "register");
+            const response = await api.sendVerifyCode(emailInput, "email", "register");
+            if (!formScope.current()) return;
+            if (response?.status !== 'success') throw new Error('Invalid verification response');
             showToast(t('auth.code_sent'), "success");
             
-            regCountdownTimer = startCountdown(btnRegSendCode, 60, "#4CAF50");
+            regCountdownTimer = startCountdown(btnRegSendCode, 60);
             
         } catch (err) {
-            showToast(err.message || t('feedback.error'), "error");
+            if (!formScope.current()) return;
+            showToast(t('feedback.error'), "error");
             btnRegSendCode.disabled = false;
-            btnRegSendCode.style.background = "#4CAF50";
             btnRegSendCode.innerText = t('auth.get_code');
         }
     };

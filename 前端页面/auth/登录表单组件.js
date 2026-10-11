@@ -1,24 +1,24 @@
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 
-const INPUT_STYLE = 'width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;';
-
 export function renderLoginForm(container, switchView, onSuccessCallback) {
     container.innerHTML = `
-        <div style="margin-bottom: 10px;"><label style="display: block; margin-bottom: 5px;">${t('auth.account')} <span style="color: #F44336;">*</span></label><input type="text" id="login-account" style="${INPUT_STYLE}"></div>
-        <div style="margin-bottom: 15px;"><label style="display: block; margin-bottom: 5px;">${t('auth.password')} <span style="color: #F44336;">*</span></label><input type="password" id="login-password" style="${INPUT_STYLE}"></div>
-        <div style="margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <input type="checkbox" id="login-remember" checked style="cursor: pointer;">
-                <label for="login-remember" style="font-size: 12px; color: #aaa; cursor: pointer;">${t('auth.remember_me')}</label>
+        <div class="auth-login">
+            <div class="auth-login__field"><label for="login-account">${t('auth.account')} <span class="auth-login__required" aria-hidden="true">*</span></label><input type="text" id="login-account" name="username" autocomplete="username" required class="auth-login__input"></div>
+            <div class="auth-login__field"><label for="login-password">${t('auth.password')} <span class="auth-login__required" aria-hidden="true">*</span></label><input type="password" id="login-password" name="password" autocomplete="current-password" required class="auth-login__input"></div>
+            <div class="auth-login__options">
+                <div class="auth-login__remember">
+                    <input type="checkbox" id="login-remember" checked>
+                    <label for="login-remember">${t('auth.remember_me')}</label>
+                </div>
+                <div class="auth-login__actions">
+                    <button type="button" id="toggle-to-recover" class="auth-login__link">🔎 ${t('auth.forgot_account')}</button>
+                    <button type="button" id="toggle-to-reset" class="auth-login__link">🔑 ${t('auth.forgot_password')}</button>
+                </div>
             </div>
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <a href="#" id="toggle-to-recover" style="color: #2196F3; text-decoration: underline; font-weight: bold; font-size: 12px; cursor: pointer; transition: opacity 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🔎 ${t('auth.forgot_account')}</a>
-                <a href="#" id="toggle-to-reset" style="color: #FF9800; text-decoration: underline; font-weight: bold; font-size: 12px; cursor: pointer; transition: opacity 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🔑 ${t('auth.forgot_password')}</a>
-            </div>
+            <button type="button" id="btn-submit-login" class="auth-login__submit">${t('auth.login')}</button>
+            <div class="auth-login__signup"><span>${t('auth.no_account')}</span> <button type="button" id="toggle-to-register" class="auth-login__link">${t('auth.register_now')}</button></div>
         </div>
-        <button id="btn-submit-login" style="width: 100%; padding: 10px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 10px;">${t('auth.login')}</button>
-        <div style="text-align: center; font-size: 12px;"><span>${t('auth.no_account')} <a href="#" id="toggle-to-register" style="color: #4CAF50; text-decoration: none; font-weight: bold;">${t('auth.register_now')}</a></span></div>
     `;
 
     container.querySelector("#toggle-to-register").onclick = (e) => { e.preventDefault(); switchView("register"); };

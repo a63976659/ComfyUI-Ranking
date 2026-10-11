@@ -1,352 +1,180 @@
-// 前端页面/components/关于插件组件.js
-import { api, request } from "../core/网络请求API.js";
+// 关于页面：纯文本内容、共享主题与受控的公开版本刷新。
+import { request } from "../core/网络请求API.js";
+import { UI } from "../core/全局配置.js";
+import { removeCacheByPrefix } from "../core/网络请求_缓存管理.js";
 import { t } from "./用户体验增强.js";
 
-// 🏷️ 版本配置缓存
 let cachedVersionConfig = null;
+let pendingVersionRequest = null;
+let versionGeneration = 0;
+let nextViewId = 0;
 
-// 清除版本配置缓存（管理员修改版本后调用）
+function normalizeVersion(config) {
+    if (!config || typeof config !== "object" || Array.isArray(config)) return null;
+    if (!["alpha", "beta", "rc", "stable"].includes(config.stage)) return null;
+    if (![config.major, config.minor, config.patch].every(value => Number.isSafeInteger(value) && value >= 0)) return null;
+    return { stage: config.stage, major: config.major, minor: config.minor, patch: config.patch };
+}
+
 export function clearVersionCache() {
+    versionGeneration++;
     cachedVersionConfig = null;
+    pendingVersionRequest = null;
+    removeCacheByPrefix('api_/api/public/project-version');
 }
 
-// 🎨 卡片基础样式常量（authorSection 与 createCardSection 共享）
-const CARD_BASE_STYLE = {
-    background: "rgba(255,255,255,0.03)",
-    border: "1px solid rgba(255,255,255,0.06)",
-    borderRadius: "10px",
-    padding: "16px"
-};
-
-// 获取版本配置
-async function getVersionConfig() {
-    if (cachedVersionConfig) return cachedVersionConfig;
-
-    try {
-        const res = await request('/api/public/project-version');
-        if (res?.data) {
-            cachedVersionConfig = res.data;
-            return cachedVersionConfig;
-        }
-    } catch (e) {
-        console.warn('获取版本配置失败:', e);
+export async function getVersionConfig() {
+    if (cachedVersionConfig) return { ...cachedVersionConfig };
+    if (!pendingVersionRequest) {
+        const generation = versionGeneration;
+        const pending = Promise.resolve().then(() => request('/api/public/project-version',
+            generation > 0 ? { noCache: true } : undefined)).then(res => {
+            const config = res?.status === "success" ? normalizeVersion(res.data) : null;
+            if (!config) throw new Error("Invalid project version");
+            if (generation !== versionGeneration) return cachedVersionConfig || UI.DEFAULT_PROJECT_VERSION;
+            cachedVersionConfig = Object.freeze(config);
+            return config;
+        }).catch(() => {
+            console.warn('公开版本信息无法刷新');
+            return { ...UI.DEFAULT_PROJECT_VERSION };
+        }).finally(() => {
+            if (pendingVersionRequest === pending) pendingVersionRequest = null;
+        });
+        pendingVersionRequest = pending;
     }
-
-    // 默认值
-    return { stage: 'beta', major: 2, minor: 0, patch: 0 };
+    return { ...await pendingVersionRequest };
 }
 
-// 生成版本字符串
-export function formatVersionString(config) {
-    const stageLabels = {
-        'alpha': t('about.stage_alpha'),
-        'beta': t('about.stage_beta'),
-        'rc': t('about.stage_rc'),
-        'stable': t('about.stage_stable')
-    };
-    const version = `V${config.major}.${config.minor}.${config.patch}`;
-    const stageLabel = stageLabels[config.stage] || config.stage;
-    return `${version} ${stageLabel}`;
-}
-
-// 获取阶段本地化名称
 export function getStageLabel(stage) {
-    const stageLabels = {
-        'alpha': t('about.stage_alpha'),
-        'beta': t('about.stage_beta'),
-        'rc': t('about.stage_rc'),
-        'stable': t('about.stage_stable')
-    };
-    return stageLabels[stage] || stage;
+    switch (stage) {
+        case "alpha": return t('about.stage_alpha');
+        case "beta": return t('about.stage_beta');
+        case "rc": return t('about.stage_rc');
+        case "stable": return t('about.stage_stable');
+        default: return t('about.stage_unknown');
+    }
 }
 
-// ==========================================
-// 🎨 创建关于页面独立视图
-// ==========================================
+export function formatVersionString(config) {
+    const version = normalizeVersion(config);
+    if (!version) return t('about.version_unknown');
+    return `V${version.major}.${version.minor}.${version.patch} ${getStageLabel(version.stage)}`;
+}
+
+function element(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+}
+
+function section(title, children) {
+    const node = element('section', 'about-section');
+    const heading = element('h2', 'about-section__title', title);
+    heading.id = `ranking-about-heading-${++nextViewId}`;
+    node.setAttribute('aria-labelledby', heading.id);
+    node.append(heading, ...children);
+    return node;
+}
+
+function grid(entries, ordered = false) {
+    const node = element(ordered ? 'ol' : 'ul', 'about-grid');
+    for (const [title, description, icon] of entries) {
+        const item = element('li', 'about-grid__item');
+        if (icon) {
+            const decoration = element('span', 'about-grid__icon', icon);
+            decoration.setAttribute('aria-hidden', 'true');
+            item.appendChild(decoration);
+        }
+        item.append(element('h3', 'about-item__title', title), element('p', 'about-description', description));
+        node.appendChild(item);
+    }
+    return node;
+}
+
 export function createAboutView(versionString, stageLabel) {
-    const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex",
-        flexDirection: "column",
-        flex: "1",
-        overflowY: "auto",
-        color: "#ccc",
-        fontSize: "14px",
-        padding: "16px",
-        boxSizing: "border-box",
-        gap: "16px",
-        background: "transparent"
-    });
-
-    // ===== 1. Hero 品牌区 =====
-    const heroSection = document.createElement("div");
-    Object.assign(heroSection.style, {
-        background: "linear-gradient(180deg, rgba(0, 212, 170, 0.15) 0%, transparent 100%)",
-        borderRadius: "10px",
-        padding: "28px 20px",
-        textAlign: "center",
-        border: "1px solid rgba(255,255,255,0.06)"
-    });
-    heroSection.innerHTML = `
-        <div style="font-size: 22px; font-weight: bold; color: #00d4aa; margin-bottom: 6px;">${t('about.title')}</div>
-        <div style="font-size: 14px; color: #888; margin-bottom: 12px; letter-spacing: 2px;">Community Hub</div>
-        <div style="display: inline-block; background: rgba(0, 212, 170, 0.12); color: #00d4aa; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold; margin-bottom: 12px; border: 1px solid rgba(0, 212, 170, 0.2);">${versionString}</div>
-        <div style="font-size: 13px; color: #aaa; line-height: 1.6; max-width: 400px; margin: 0 auto;">${t('about.subtitle')}</div>
-    `;
-
-    // ===== 2. 核心优势区 =====
-    const advantageSection = createCardSection("✨ " + t('about.advantages_title'), `
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-            <div class="about-adv-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 14px;">
-                <div style="font-size: 20px; margin-bottom: 6px;">🔗</div>
-                <div style="font-weight: bold; color: #00d4aa; font-size: 13px; margin-bottom: 4px;">${t('about.adv_native_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.adv_native_desc')}</div>
-            </div>
-            <div class="about-adv-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 14px;">
-                <div style="font-size: 20px; margin-bottom: 6px;">⚡</div>
-                <div style="font-weight: bold; color: #00d4aa; font-size: 13px; margin-bottom: 4px;">${t('about.adv_speed_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.adv_speed_desc')}</div>
-            </div>
-            <div class="about-adv-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 14px;">
-                <div style="font-size: 20px; margin-bottom: 6px;">💬</div>
-                <div style="font-weight: bold; color: #00d4aa; font-size: 13px; margin-bottom: 4px;">${t('about.adv_im_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.adv_im_desc')}</div>
-            </div>
-            <div class="about-adv-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 14px;">
-                <div style="font-size: 20px; margin-bottom: 6px;">🛡️</div>
-                <div style="font-weight: bold; color: #00d4aa; font-size: 13px; margin-bottom: 4px;">${t('about.adv_sandbox_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.adv_sandbox_desc')}</div>
-            </div>
-        </div>
-    `);
-
-    // ===== 3. 主要功能区 =====
-    const featureSection = createCardSection("🎯 " + t('about.features_title'), `
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-            <div class="about-feat-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 12px;">
-                <div style="font-weight: bold; color: #ccc; font-size: 13px; margin-bottom: 4px;"><span style="color: #00d4aa; margin-right: 4px;">1.</span>${t('about.feat_publish_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.feat_publish_desc')}</div>
-            </div>
-            <div class="about-feat-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 12px;">
-                <div style="font-weight: bold; color: #ccc; font-size: 13px; margin-bottom: 4px;"><span style="color: #00d4aa; margin-right: 4px;">2.</span>${t('about.feat_social_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.feat_social_desc')}</div>
-            </div>
-            <div class="about-feat-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 12px;">
-                <div style="font-weight: bold; color: #ccc; font-size: 13px; margin-bottom: 4px;"><span style="color: #00d4aa; margin-right: 4px;">3.</span>${t('about.feat_install_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.feat_install_desc')}</div>
-            </div>
-            <div class="about-feat-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 12px;">
-                <div style="font-weight: bold; color: #ccc; font-size: 13px; margin-bottom: 4px;"><span style="color: #00d4aa; margin-right: 4px;">4.</span>${t('about.feat_download_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.feat_download_desc')}</div>
-            </div>
-            <div class="about-feat-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 12px;">
-                <div style="font-weight: bold; color: #ccc; font-size: 13px; margin-bottom: 4px;"><span style="color: #00d4aa; margin-right: 4px;">5.</span>${t('about.feat_chat_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.feat_chat_desc')}</div>
-            </div>
-            <div class="about-feat-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 12px;">
-                <div style="font-weight: bold; color: #ccc; font-size: 13px; margin-bottom: 4px;"><span style="color: #00d4aa; margin-right: 4px;">6.</span>${t('about.feat_account_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.feat_account_desc')}</div>
-            </div>
-            <div class="about-feat-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 12px;">
-                <div style="font-weight: bold; color: #ccc; font-size: 13px; margin-bottom: 4px;"><span style="color: #00d4aa; margin-right: 4px;">7.</span>${t('about.feat_payment_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.feat_payment_desc')}</div>
-            </div>
-            <div class="about-feat-card" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 12px;">
-                <div style="font-weight: bold; color: #ccc; font-size: 13px; margin-bottom: 4px;"><span style="color: #00d4aa; margin-right: 4px;">8.</span>${t('about.feat_protection_title')}</div>
-                <div style="font-size: 12px; color: #888; line-height: 1.5;">${t('about.feat_protection_desc')}</div>
-            </div>
-        </div>
-    `);
-
-    // ===== 4. 使用指南区 =====
-    const guideSection = createCardSection("📖 " + t('about.guide_title'), `
-        <div style="display: flex; flex-direction: column; gap: 12px; padding-left: 4px;">
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">1.</span>
-                <div>
-                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_install_title')}</div>
-                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_install_desc')}</div>
-                </div>
-            </div>
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">2.</span>
-                <div>
-                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_path_title')}</div>
-                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_path_desc')}</div>
-                </div>
-            </div>
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">3.</span>
-                <div>
-                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_update_title')}</div>
-                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_update_desc')}</div>
-                </div>
-            </div>
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">4.</span>
-                <div>
-                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_publish_title')}</div>
-                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_publish_desc')}</div>
-                </div>
-            </div>
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">5.</span>
-                <div>
-                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_buy_title')}</div>
-                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_buy_desc')}</div>
-                </div>
-            </div>
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">6.</span>
-                <div>
-                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_refund_title')}</div>
-                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_refund_desc')}</div>
-                </div>
-            </div>
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">7.</span>
-                <div>
-                    <div style="font-size: 13px; font-weight: bold; color: #ccc; margin-bottom: 2px;">${t('about.guide_withdraw_title')}</div>
-                    <div style="font-size: 12px; color: #888; line-height: 1.6;">${t('about.guide_withdraw_desc')}</div>
-                </div>
-            </div>
-        </div>
-    `);
-
-    // ===== 5. 用户价值区 =====
-    const userValueSection = createCardSection("👤 " + t('about.benefits_title'), `
-        <div style="display: flex; flex-direction: column; gap: 10px; padding-left: 4px;">
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">1.</span>
-                <span style="font-size: 13px; color: #ccc; line-height: 1.6;">${t('about.benefit_1')}</span>
-            </div>
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">2.</span>
-                <span style="font-size: 13px; color: #ccc; line-height: 1.6;">${t('about.benefit_2')}</span>
-            </div>
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">3.</span>
-                <span style="font-size: 13px; color: #ccc; line-height: 1.6;">${t('about.benefit_3')}</span>
-            </div>
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">4.</span>
-                <span style="font-size: 13px; color: #ccc; line-height: 1.6;">${t('about.benefit_4')}</span>
-            </div>
-            <div style="display: flex; align-items: flex-start; gap: 8px;">
-                <span style="color: #00d4aa; font-weight: bold; font-size: 13px; flex-shrink: 0;">5.</span>
-                <span style="font-size: 13px; color: #ccc; line-height: 1.6;">${t('about.benefit_5')}</span>
-            </div>
-        </div>
-    `);
-
-    // ===== 6. 注意事项区 =====
-    const warningSection = document.createElement("div");
-    Object.assign(warningSection.style, {
-        background: "rgba(240, 160, 48, 0.05)",
-        borderRadius: "10px",
-        padding: "16px",
-        borderTop: "1px solid rgba(240, 160, 48, 0.15)",
-        borderRight: "1px solid rgba(240, 160, 48, 0.15)",
-        borderBottom: "1px solid rgba(240, 160, 48, 0.15)",
-        borderLeft: "3px solid #f0a030"
-    });
-    warningSection.innerHTML = `
-        <div style="font-size: 15px; font-weight: bold; color: #f0a030; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
-            <span>⚠️</span> ${t('about.warning_title')}
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-            <div style="font-size: 13px; color: #ccc; line-height: 1.6;">
-                <strong style="color: #f0a030;">${t('about.warning_login_title')}</strong>${t('about.warning_login_desc')}
-            </div>
-            <div style="font-size: 13px; color: #ccc; line-height: 1.6;">
-                <strong style="color: #f0a030;">${t('about.warning_account_title')}</strong>${t('about.warning_account_desc')}
-            </div>
-        </div>
-    `;
-
-    // ===== 7. 关于作者区 =====
-    const authorSection = document.createElement("div");
-    Object.assign(authorSection.style, { ...CARD_BASE_STYLE, textAlign: "center" });
-    authorSection.innerHTML = `
-        <div style="font-size: 15px; font-weight: bold; color: #00d4aa; margin-bottom: 12px;">${t('about.author_title')}</div>
-        <a href="https://space.bilibili.com/2114638644" target="_blank" style="text-decoration: none; display: inline-block;">
-            <img src="https://img.shields.io/badge/bilibili-猪的飞行梦-00A1D6?logo=bilibili&logoColor=white" alt="Bilibili" style="border-radius: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
-        </a>
-        <div style="margin-top: 12px; font-size: 12px; color: #666;">
-            ${t('about.author_thanks')}
-        </div>
-    `;
-
-    // ===== 返回按钮 =====
-    const backBtn = document.createElement("button");
-    Object.assign(backBtn.style, {
-        background: "rgba(51,51,51,0.8)",
-        border: "1px solid rgba(85,85,85,0.8)",
-        color: "#fff",
-        padding: "6px 14px",
-        borderRadius: "6px",
-        cursor: "pointer",
-        fontSize: "13px",
-        fontWeight: "bold",
-        display: "flex",
-        alignItems: "center",
-        gap: "6px",
-        boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
-        width: "fit-content",
-        transition: "0.2s",
-        marginLeft: "14px",
-        marginTop: "14px",
-        marginBottom: "4px"
-    });
-    backBtn.innerHTML = "⬅ " + t('common.back');
-    backBtn.onmouseover = () => {
-        backBtn.style.background = "#4CAF50";
-        backBtn.style.borderColor = "#4CAF50";
-    };
-    backBtn.onmouseout = () => {
-        backBtn.style.background = "rgba(51,51,51,0.8)";
-        backBtn.style.borderColor = "rgba(85,85,85,0.8)";
-    };
-    backBtn.onclick = () => {
-        window.dispatchEvent(new CustomEvent("comfy-route-back"));
-    };
-
-    // 组装
-    container.appendChild(backBtn);
-    container.appendChild(heroSection);
-    container.appendChild(advantageSection);
-    container.appendChild(featureSection);
-    container.appendChild(guideSection);
-    container.appendChild(userValueSection);
-    container.appendChild(warningSection);
-    container.appendChild(authorSection);
-
+    const container = element('div', 'about-view');
+    const back = element('button', 'about-back', '⬅ ' + t('common.back'));
+    back.type = 'button';
+    back.addEventListener('click', () => window.dispatchEvent(new CustomEvent('comfy-route-back')));
+    const hero = element('header', 'about-hero');
+    const title = element('h1', 'about-hero__title', t('about.title'));
+    title.id = `ranking-about-title-${++nextViewId}`;
+    container.setAttribute('aria-labelledby', title.id);
+    hero.append(title, element('p', 'about-hero__brand', t('about.brand')),
+        element('p', 'about-version', typeof versionString === 'string' ? versionString : t('about.version_unknown')),
+        element('p', 'about-description', t('about.subtitle')));
+    const advantages = section(t('about.advantages_title'), [grid([
+        [t('about.adv_native_title'), t('about.adv_native_desc'), '🔗'],
+        [t('about.adv_speed_title'), t('about.adv_speed_desc'), '⚡'],
+        [t('about.adv_im_title'), t('about.adv_im_desc'), '💬'],
+        [t('about.adv_sandbox_title'), t('about.adv_sandbox_desc'), '🛡️']
+    ])]);
+    const features = section(t('about.features_title'), [grid([
+        [t('about.feat_publish_title'), t('about.feat_publish_desc')],
+        [t('about.feat_social_title'), t('about.feat_social_desc')],
+        [t('about.feat_install_title'), t('about.feat_install_desc')],
+        [t('about.feat_download_title'), t('about.feat_download_desc')],
+        [t('about.feat_chat_title'), t('about.feat_chat_desc')],
+        [t('about.feat_account_title'), t('about.feat_account_desc')],
+        [t('about.feat_payment_title'), t('about.feat_payment_desc')],
+        [t('about.feat_protection_title'), t('about.feat_protection_desc')]
+    ], true)]);
+    const guideList = element('ol', 'about-list');
+    for (const [heading, description] of [
+        [t('about.guide_install_title'), t('about.guide_install_desc')],
+        [t('about.guide_path_title'), t('about.guide_path_desc')],
+        [t('about.guide_update_title'), t('about.guide_update_desc')],
+        [t('about.guide_publish_title'), t('about.guide_publish_desc')],
+        [t('about.guide_buy_title'), t('about.guide_buy_desc')],
+        [t('about.guide_refund_title'), t('about.guide_refund_desc')],
+        [t('about.guide_withdraw_title'), t('about.guide_withdraw_desc')]
+    ]) {
+        const item = element('li');
+        item.append(element('h3', 'about-item__title', heading), element('p', 'about-description', description));
+        guideList.appendChild(item);
+    }
+    const benefits = element('ol', 'about-list');
+    for (const text of [t('about.benefit_1'), t('about.benefit_2'), t('about.benefit_3'), t('about.benefit_4'), t('about.benefit_5')]) {
+        benefits.appendChild(element('li', 'about-benefit', text));
+    }
+    const warningCopy = [];
+    for (const [heading, description] of [
+        [t('about.warning_login_title'), t('about.warning_login_desc')],
+        [t('about.warning_account_title'), t('about.warning_account_desc')]
+    ]) {
+        const paragraph = element('p', 'about-warning__copy');
+        paragraph.append(element('strong', '', heading), document.createTextNode(description));
+        warningCopy.push(paragraph);
+    }
+    const warning = section(t('about.warning_title'), warningCopy);
+    warning.classList.add('about-section--warning');
+    const authorLink = element('a', 'about-author__link');
+    authorLink.href = UI.ABOUT.AUTHOR_URL;
+    authorLink.target = '_blank';
+    authorLink.rel = 'noopener noreferrer';
+    const badge = element('img', 'about-author__badge');
+    badge.src = UI.ABOUT.AUTHOR_BADGE_URL;
+    badge.alt = '';
+    badge.loading = 'lazy';
+    authorLink.appendChild(badge);
+    // 保留文字入口，即使远端徽章图片无法加载也可操作。
+    authorLink.appendChild(element('span', '', t('about.author_link')));
+    const author = section(t('about.author_title'), [authorLink, element('p', 'about-description', t('about.author_thanks'))]);
+    author.classList.add('about-section--author');
+    container.append(back, hero, advantages, features, section(t('about.guide_title'), [guideList]),
+        section(t('about.benefits_title'), [benefits]), warning, author);
     return container;
 }
 
-// 辅助函数：创建带标题的卡片分区（titleHtml 支持纯文本或 HTML）
-function createCardSection(titleHtml, contentHtml) {
-    const section = document.createElement("div");
-    Object.assign(section.style, CARD_BASE_STYLE);
-    section.innerHTML = `
-        <div style="font-size: 15px; font-weight: bold; color: #00d4aa; margin-bottom: 12px;">${titleHtml}</div>
-        ${contentHtml}
-    `;
-    return section;
-}
-
-// ==========================================
-// 🚀 显示关于信息（通过路由系统）
-// ==========================================
 export async function showAboutInfo(currentUser) {
-    // 动态获取版本配置
-    const versionConfig = await getVersionConfig();
-    const versionString = formatVersionString(versionConfig);
-    const stageLabel = getStageLabel(versionConfig.stage);
-
-    const view = createAboutView(versionString, stageLabel);
-    window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+    const generation = versionGeneration;
+    const view = createAboutView(formatVersionString(cachedVersionConfig || UI.DEFAULT_PROJECT_VERSION));
+    window.dispatchEvent(new CustomEvent('comfy-route-view', { detail: { view } }));
+    // 先显示完整页面，网络只补新原节点；不在请求完成后重新导航。
+    getVersionConfig().then(config => {
+        if (view.isConnected && generation === versionGeneration) {
+            view.querySelector('.about-version').textContent = formatVersionString(config);
+        }
+    });
 }
-
-// 导出版本获取函数供其他组件使用
-export { getVersionConfig };

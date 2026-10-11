@@ -14,6 +14,8 @@ import { t } from "./用户体验增强.js";
 import { getCachedProfile, getProfileWithSWR, PLACEHOLDERS, escapeHtml } from "../core/全局配置.js";
 import { api } from "../core/网络请求_业务API.js";
 
+let nextTipBoardItemId = 0;
+
 /**
  * 等级规则（参考QQ等级系统）：
  * - 1-100 积分 = 1 颗星星 ⭐，101-200 积分 = 2 颗星星，以此类推
@@ -134,17 +136,17 @@ export function isMaxTipLevel(amount) {
  * @returns {string} - 等级描述
  */
 export function getTipLevelDescription(amount) {
-    if (!amount || amount <= 0) return "新粉丝";
+    if (!amount || amount <= 0) return t('tip.new_fan');
     
     const level = calculateTipLevel(amount);
     
-    if (level.isMaxLevel) return "至尊赞助者 (已满级)";
-    if (level.suns >= 5) return "超级赞助者";
-    if (level.suns >= 1) return "黄金赞助者";
-    if (level.moons >= 3) return "白银赞助者";
-    if (level.moons >= 1) return "青铜赞助者";
-    if (level.stars >= 3) return "热心粉丝";
-    return "支持者";
+    if (level.isMaxLevel) return t('tip.level_max');
+    if (level.suns >= 5) return t('tip.level_super');
+    if (level.suns >= 1) return t('tip.level_gold');
+    if (level.moons >= 3) return t('tip.level_silver');
+    if (level.moons >= 1) return t('tip.level_bronze');
+    if (level.stars >= 3) return t('tip.level_fan');
+    return t('tip.level_supporter');
 }
 
 /**
@@ -155,7 +157,11 @@ export function getTipLevelDescription(amount) {
  * @returns {string} - 榜单项HTML
  */
 export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
-    const { account, amount, is_anon } = tipData;
+    if (!tipData || typeof tipData !== 'object' || Array.isArray(tipData)) return '';
+    const { account, is_anon } = tipData;
+    const amount = Number(tipData.amount);
+    if (!Number.isFinite(amount) || amount < 0) return '';
+    rank = Number.isSafeInteger(rank) && rank >= 0 ? rank : 0;
     
     // 排名徽章颜色
     const badgeColors = ['#FFD700', '#C0C0C0', '#CD7F32']; // 金银铜
@@ -182,7 +188,7 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
             <div style="display:flex; justify-content:space-between; padding:${cfg.padding}px 0; font-size:${cfg.font}px; align-items:center; border-bottom:1px dashed #333;">
                 <span style="display:flex; align-items:center; gap:6px;">
                     ${badgeHtml}
-                    <span style="color:#888;">🔒 匿名</span>
+                    <span style="color:#888;">🔒 ${t('creator.anonymous')}</span>
                 </span>
                 <span style="display:flex; align-items:center; gap:6px;">
                     ${levelHtml}
@@ -193,18 +199,19 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
     }
     
     // 🚀 SWR 模式：非匿名用户显示头像+用户名
-    const containerId = `tip-board-item-${account}-${rank}-${Date.now()}`;
+    const containerId = `ranking-tip-board-${++nextTipBoardItemId}`;
     
     // 从缓存获取初始数据（0延迟渲染）
     const cached = getCachedProfile(account);
     const avatarUrl = cached?.avatar || cached?.avatarDataUrl || PLACEHOLDERS.AVATAR_SMALL;
-    const userName = cached?.name || account;
+    const userName = cached?.name || account || t('common.unknown_user');
     
     // 后台静默校对并更新 DOM
     setTimeout(() => {
+        const container = document.getElementById(containerId);
+        if (!container) return;
         getProfileWithSWR(account, api.getUserProfile, (profile) => {
-            const container = document.getElementById(containerId);
-            if (!container) return;
+            if (!container.isConnected || document.getElementById(containerId) !== container) return;
             
             const avatarImg = container.querySelector('.tip-board-avatar');
             const nameSpan = container.querySelector('.tip-board-name');
@@ -225,7 +232,7 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
             <span style="display:flex; align-items:center; gap:6px;">
                 ${badgeHtml}
                 <span style="display:flex; align-items:center; gap:6px;">
-                    <img class="tip-board-avatar" src="${escapeHtml(avatarUrl)}" style="width:${cfg.avatar}px; height:${cfg.avatar}px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#333;">
+                    <img class="tip-board-avatar" alt="" src="${escapeHtml(avatarUrl)}" style="width:${cfg.avatar}px; height:${cfg.avatar}px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#333;">
                     <span class="tip-board-name" style="color:#ddd;">${escapeHtml(userName)}</span>
                 </span>
             </span>
@@ -245,12 +252,14 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
  * @param {string} size - 尺寸
  * @returns {string} - 完整榜单HTML
  */
-export function renderTipBoardHTML(boardData, maxShow = 5, emptyText = "暂无打赏，快来成为首个赞赏人吧！", size = 'normal') {
-    if (!boardData || boardData.length === 0) {
+export function renderTipBoardHTML(boardData, maxShow = 5, emptyText = t('tip.no_tips_yet'), size = 'normal') {
+    const entries = Array.isArray(boardData) ? boardData.filter(entry => entry && typeof entry === 'object'
+        && !Array.isArray(entry) && Number.isFinite(Number(entry.amount)) && Number(entry.amount) >= 0) : [];
+    if (entries.length === 0) {
         return `<div style="color:#666; font-size:12px; text-align:center; padding:12px 0;">${escapeHtml(emptyText)}</div>`;
     }
     
-    return boardData.slice(0, maxShow).map((t, i) => renderTipBoardItemHTML(t, i, size)).join('');
+    return entries.slice(0, maxShow).map((entry, i) => renderTipBoardItemHTML(entry, i, size)).join('');
 }
 
 /**

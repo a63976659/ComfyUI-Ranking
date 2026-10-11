@@ -21,8 +21,19 @@
  * @typedef {import('./类型定义.js').WalletData} WalletData
  */
 
+import { readUserSession, writeUserSession, sessionProfile } from "./用户会话存储.js";
 import { API, CACHE } from "./全局配置.js";
 import { clearSensitiveCache, clearAllCache } from "../components/性能优化工具.js";
+
+function safeRemoveStorageItem(storageKind, key) {
+    try {
+        const storage = storageKind === 'session' ? window.sessionStorage : window.localStorage;
+        storage.removeItem(key);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
 
 
 // ==========================================
@@ -124,7 +135,7 @@ const eventBus = {
                 try {
                     callback(data);
                 } catch (error) {
-                    console.error(`事件处理错误 [${event}]:`, error);
+                    console.error('事件处理错误，继续通知其它订阅者。');
                 }
             });
         }
@@ -203,28 +214,14 @@ function _createUserState(userData, token) {
 /**
  * 初始化用户状态（从本地存储恢复）
  */
+function sessionStorages() {
+    return ['localStorage', 'sessionStorage'].map(name => { try { return window[name]; } catch (_) { return null; } });
+}
+
 export function initUserState() {
-    try {
-        // 尝试从 localStorage 恢复
-        const userStr = localStorage.getItem(CACHE.LEGACY_KEYS.USER);
-        const token = localStorage.getItem(CACHE.LEGACY_KEYS.TOKEN);
-        
-        if (userStr && token) {
-            const userData = JSON.parse(userStr);
-            state.user = _createUserState(userData, token);
-        } else {
-            // 尝试从 sessionStorage 恢复
-            const sessionUserStr = sessionStorage.getItem(CACHE.LEGACY_KEYS.USER);
-            const sessionToken = sessionStorage.getItem(CACHE.LEGACY_KEYS.TOKEN);
-            
-            if (sessionUserStr && sessionToken) {
-                const userData = JSON.parse(sessionUserStr);
-                state.user = _createUserState(userData, sessionToken);
-            }
-        }
-    } catch (error) {
-        console.warn("用户状态恢复失败:", error);
-    }
+    const session = readUserSession(sessionStorages(), CACHE.LEGACY_KEYS);
+    state.user = session ? _createUserState(session.user, session.token)
+        : { isLoggedIn: false, account: null, name: null, avatar: null, token: null, wallet: null };
 }
 
 /**
@@ -234,15 +231,14 @@ export function initUserState() {
  * @param {boolean} remember - 是否记住登录
  */
 export function setUser(userData, token, remember = true) {
-    state.user = _createUserState(userData, token);
-    
-    // 持久化存储
-    const storage = remember ? localStorage : sessionStorage;
-    storage.setItem(CACHE.LEGACY_KEYS.USER, JSON.stringify(userData));
-    storage.setItem(CACHE.LEGACY_KEYS.TOKEN, token);
-    
-    // 触发事件
+    let profile;
+    try {
+        profile = writeUserSession(sessionStorages(), CACHE.LEGACY_KEYS, userData, token, remember,
+            Date.now() + (remember ? CACHE.SESSION_REMEMBER_TTL : CACHE.SESSION_TEMP_TTL));
+    } catch (error) { logout(); throw error; }
+    state.user = _createUserState(profile, token);
     eventBus.emit(EVENTS.USER_LOGIN, state.user);
+    return profile;
 }
 
 /**
@@ -274,20 +270,19 @@ export function getToken() {
  * @param {Object} updates - 更新的字段
  */
 export function updateUser(updates) {
-    Object.assign(state.user, updates);
-    
-    // 更新持久化存储
-    const userStr = localStorage.getItem(CACHE.LEGACY_KEYS.USER) || 
-                    sessionStorage.getItem(CACHE.LEGACY_KEYS.USER);
-    if (userStr) {
+    if (!state.user.isLoggedIn) return;
+    const storages = sessionStorages();
+    const session = readUserSession(storages, CACHE.LEGACY_KEYS);
+    if (!session || session.user.account !== state.user.account || session.token !== state.user.token) return;
+    const profile = sessionProfile({ ...session.user, ...updates, account: session.user.account });
+    state.user = _createUserState(profile, session.token);
+    for (const storage of storages) {
         try {
-            const userData = JSON.parse(userStr);
-            Object.assign(userData, updates);
-            const storage = localStorage.getItem(CACHE.LEGACY_KEYS.USER) ? localStorage : sessionStorage;
-            storage.setItem(CACHE.LEGACY_KEYS.USER, JSON.stringify(userData));
-        } catch {}
+            if (storage?.getItem(CACHE.LEGACY_KEYS.TOKEN) === session.token) {
+                storage.setItem(CACHE.LEGACY_KEYS.USER, JSON.stringify({ user: profile, expireAt: session.expireAt }));
+            }
+        } catch (_) {}
     }
-    
     eventBus.emit(EVENTS.USER_UPDATE, state.user);
 }
 
@@ -310,11 +305,16 @@ export function logout() {
     // 清除敏感数据内存缓存
     clearSensitiveCache();
 
-    // 清除存储
-    localStorage.removeItem(CACHE.LEGACY_KEYS.USER);
-    localStorage.removeItem(CACHE.LEGACY_KEYS.TOKEN);
-    sessionStorage.removeItem(CACHE.LEGACY_KEYS.USER);
-    sessionStorage.removeItem(CACHE.LEGACY_KEYS.TOKEN);
+    // 清除存储；即使浏览器禁用了 Storage，也必须完成内存登出与事件广播。
+    let storageCleanupFailed = false;
+    for (const [storageKind, key] of [
+        ['local', CACHE.LEGACY_KEYS.USER],
+        ['local', CACHE.LEGACY_KEYS.TOKEN],
+        ['session', CACHE.LEGACY_KEYS.USER],
+        ['session', CACHE.LEGACY_KEYS.TOKEN]
+    ]) {
+        if (!safeRemoveStorageItem(storageKind, key)) storageCleanupFailed = true;
+    }
 
     // 清除资源安装版本戳（ComfyCommunity_LocalVer_*）
     // 避免切换账号后残留的版本戳导致详情页按钮状态错误
@@ -327,9 +327,11 @@ export function logout() {
             }
         }
         keysToRemove.forEach(key => localStorage.removeItem(key));
-    } catch (e) {
-        console.warn('清除版本戳缓存失败:', e);
+    } catch (_) {
+        storageCleanupFailed = true;
     }
+
+    if (storageCleanupFailed) console.warn('浏览器存储不可用，部分登出缓存无法清理；内存会话已清除。');
 
     eventBus.emit(EVENTS.USER_LOGOUT);
 }
@@ -343,17 +345,21 @@ export function logout() {
 export function logoutAndClearUserData(account = null) {
     // 清除当前账号的 Profile 级缓存
     if (account) {
-        localStorage.removeItem(`ComfyCommunity_ProfileCache_${account}`);
-        localStorage.removeItem(`ComfyRanking_SidebarBackground_${account}`);
-        localStorage.removeItem(`ComfyRanking_ProfileBannerCache_${account}`);
+        safeRemoveStorageItem('local', `ComfyCommunity_ProfileCache_${account}`);
+        safeRemoveStorageItem('local', `ComfyRanking_SidebarBackground_${account}`);
+        safeRemoveStorageItem('local', `ComfyRanking_ProfileBannerCache_${account}`);
     }
     // 清除通用用户数据缓存（列表/聊天记录/通知）
-    localStorage.removeItem("ComfyCommunity_ListCache");
-    localStorage.removeItem("ComfyCommunity_ChatHistory");
-    localStorage.removeItem("ComfyRanking_Notifications");
-    localStorage.removeItem("ComfyRanking_ChatList");
+    safeRemoveStorageItem('local', "ComfyCommunity_ListCache");
+    safeRemoveStorageItem('local', "ComfyCommunity_ChatHistory");
+    safeRemoveStorageItem('local', "ComfyRanking_Notifications");
+    safeRemoveStorageItem('local', "ComfyRanking_ChatList");
     // 清除所有 ComfyRanking_ 前缀的数据缓存与内存敏感数据
-    clearAllCache();
+    try {
+        clearAllCache();
+    } catch (error) {
+        console.warn('清除持久化缓存失败，继续完成内存登出。');
+    }
     // logout() 内部已含 clearSensitiveCache 与 Token/User/版本戳清理
     logout();
 }
@@ -465,7 +471,7 @@ export function setNetworkStatus(online) {
 
 /**
  * 检查是否在线
- * 
+ *
  * 注意：navigator.onLine 仅反映本机网络接口状态，不代表云端服务可达；
  * 云端可达性请一律改问 isCloudReachable()（见下方段落）。
  * @returns {boolean}
@@ -505,14 +511,14 @@ export function isCloudReachable() {
 
 /**
  * 标记云端不可达，进入冷却
- * @param {string} [reason] - 仅用于日志定位（如失败的 endpoint）
+ * @param {string} [reason] - 保留调用兼容；不输出可能含私有信息的失败原因
  */
 export function markCloudDown(reason = '') {
     const wasReachable = isCloudReachable();
     state.network.cloudDownUntil = Date.now() + API.CLOUD_DOWN_COOLDOWN;
     // 只在「可达 → 不可达」的跃迁时打一条日志：冷却期内的重复失败不再刷屏
     if (wasReachable) {
-        console.warn(`☁️ 云端不可达，${API.CLOUD_DOWN_COOLDOWN / 1000} 秒内不再联网${reason ? `（${reason}）` : ''}`);
+        console.warn(`☁️ 云端不可达，${API.CLOUD_DOWN_COOLDOWN / 1000} 秒内不再联网`);
     }
 }
 

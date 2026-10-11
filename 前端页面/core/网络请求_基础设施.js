@@ -11,8 +11,8 @@
 
 import { removeCache, getCacheWithMeta } from "../components/性能优化工具.js";
 import { API, CACHE } from "./全局配置.js";
-import { logoutAndClearUserData, isOnline, isCloudReachable, markCloudDown, markCloudUp } from "./状态管理.js";
-import { CACHE_CONFIG, CACHE_INVALIDATION_MAP, invalidateRelatedCache, _getCacheTTL, getCache, setCache } from "./网络请求_缓存管理.js";
+import { eventBus, EVENTS, logoutAndClearUserData, isOnline, isCloudReachable, markCloudDown, markCloudUp } from "./状态管理.js";
+import { CACHE_CONFIG, CACHE_INVALIDATION_MAP, invalidateRelatedCache, _getCacheTTL, getCache, setCache, isPrivateApiGet } from "./网络请求_缓存管理.js";
 import { unproxyImages } from "./网络请求_图片代理.js";
 // 🔧 直接引入 i18n 叶子模块（而非 用户体验增强.js）：本文件处于依赖链最上游，
 // 引入带 DOM 初始化副作用的增强层可能造成启动时序问题；国际化模块无副作用、零循环依赖
@@ -42,11 +42,64 @@ const pendingRequests = new Map();
 // 本地凭证会导致所有登录态操作反复报「Token 签名无效」。去重窗口：并发请求
 // 同时收到 401 时只提示一次。
 let _authExpiredAt = 0;
-function notifyTokenExpired(serverMsg) {
+function _safeStorageGet(storageName, key) {
+    try {
+        const storage = window[storageName];
+        return storage ? storage.getItem(key) : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function _safeGetAuthToken() {
+    return _safeStorageGet('localStorage', 'ComfyCommunity_Token')
+        || _safeStorageGet('sessionStorage', 'ComfyCommunity_Token')
+        || '';
+}
+
+/** 与实际 Authorization 使用同一存储读取；仅返回比较函数，不暴露凭证。 */
+export function captureRequestSession() {
+    const originalToken = _safeGetAuthToken();
+    return () => originalToken === _safeGetAuthToken();
+}
+
+// 仅跟踪私有 GET；会话撤销不取消或重放已提交的业务写操作。
+const activePrivateReads = new Set();
+function revokePrivateReads(force = false) {
+    for (const entry of activePrivateReads) {
+        if (force || !entry.matches()) {
+            entry.revoked = true;
+            entry.controller?.abort();
+        }
+    }
+}
+for (const event of ['comfy-user-login', 'comfy-user-logout', 'comfy-ranking-auth-expired']) {
+    window.addEventListener(event, () => revokePrivateReads(true));
+}
+window.addEventListener('storage', event => {
+    if (event.key === null || event.key === CACHE.LEGACY_KEYS.USER) revokePrivateReads(true);
+    else if (event.key === CACHE.LEGACY_KEYS.TOKEN) revokePrivateReads();
+});
+eventBus.on(EVENTS.USER_LOGIN, () => revokePrivateReads(true));
+eventBus.on(EVENTS.USER_LOGOUT, () => revokePrivateReads(true));
+
+function _safeClearAuthStorage() {
+    for (const storageName of ['localStorage', 'sessionStorage']) {
+        try {
+            const storage = window[storageName];
+            storage?.removeItem('ComfyCommunity_Token');
+            storage?.removeItem('ComfyCommunity_User');
+        } catch (_) {
+            // 浏览器禁用 Storage 时仍继续完成内存登出和事件通知。
+        }
+    }
+}
+
+function notifyTokenExpired() {
     const now = Date.now();
     if (now - _authExpiredAt < 5000) return;
     _authExpiredAt = now;
-    console.warn(`⚠️ 登录凭证已失效（${serverMsg}），本地 Token 已清除，请重新登录`);
+    console.warn("⚠️ 登录凭证已失效，本地凭证已清除，请重新登录");
     // 动态 import UI 组件，与 proxyImages 同样避免模块初始化时序问题
     import("../components/UI交互提示组件.js").then(async ({ showToast }) => {
         const { t } = await import("../components/用户体验_国际化.js");
@@ -54,21 +107,22 @@ function notifyTokenExpired(serverMsg) {
     }).catch(() => {});
 }
 
-function handleAuthExpired(serverMsg, failedToken) {
+function handleAuthExpired(failedToken) {
     // 竞态防护：若用户在 401 返回前已重新登录（存储中的 Token 已更换），
     // 不清理新凭证；失败请求未携带 Token 时 401 与登录态无关，同样不打扰
     if (!failedToken) return false;
-    const currentToken = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
+    const currentToken = _safeGetAuthToken();
     if (currentToken !== failedToken) return false;
     // 清除前取出账号，用于清理账号级 Profile 缓存
     let account = null;
     try {
-        const userStr = localStorage.getItem("ComfyCommunity_User") || sessionStorage.getItem("ComfyCommunity_User");
+        const userStr = _safeStorageGet('localStorage', "ComfyCommunity_User")
+            || _safeStorageGet('sessionStorage', "ComfyCommunity_User");
         if (userStr) account = JSON.parse(userStr)?.user?.account || null;
     } catch (e) {}
     // 与手动登出同深度的完整清理：Token/User、私有数据缓存、内存缓存与安装版本戳
     logoutAndClearUserData(account);
-    notifyTokenExpired(serverMsg);
+    notifyTokenExpired();
     return true;
 }
 
@@ -202,11 +256,27 @@ const requestQueue = {
 };
 
 async function request(endpoint, options = {}) {
+    const privateRead = (options.method || "GET").toUpperCase() === "GET" && isPrivateApiGet(endpoint);
+    if (privateRead) {
+        removeCache(`api_${endpoint}`);
+        options = { ...options, noStore: true };
+    }
+    // 私有详情显式不留存：同时绕过响应命中/回退/去重、插件写缓存和浏览器缓存。
+    if (options.noStore) options = { ...options, noCache: true, cache: "no-store" };
     const url = `${BASE_URL}${endpoint}`;
     const method = (options.method || "GET").toUpperCase();
     const headers = { ...options.headers };
     if (!(options.body instanceof FormData)) { headers["Content-Type"] = "application/json"; }
-    const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
+    const token = _safeGetAuthToken();
+    const privateEntry = privateRead ? { revoked: false, controller: null, matches: () => token === _safeGetAuthToken() } : null;
+    const assertReadSession = () => {
+        if (privateRead && (privateEntry.revoked || !privateEntry.matches())) {
+            const error = new Error(t('auth.session_changed'));
+            error.name = 'SessionChangedError';
+            error.isCancelled = true;
+            throw error;
+        }
+    };
     if (token) {
         const tokenParts = token.split(".");
         if (tokenParts.length === 3) {
@@ -218,12 +288,9 @@ async function request(endpoint, options = {}) {
             // 🔧 修复：凭证既已清除，同步广播登出事件重置导航登录态/停止轮询，
             // 并给用户明确提示（原实现仅 console.warn 静默清理）
             console.warn("⚠️ 检测到无效/已过期的旧版 Token，已自动清除，请重新登录");
-            localStorage.removeItem("ComfyCommunity_Token");
-            localStorage.removeItem("ComfyCommunity_User");
-            sessionStorage.removeItem("ComfyCommunity_Token");
-            sessionStorage.removeItem("ComfyCommunity_User");
+            _safeClearAuthStorage();
             window.dispatchEvent(new CustomEvent('comfy-ranking-auth-expired'));
-            notifyTokenExpired("无效/已过期的旧版 Token");
+            notifyTokenExpired();
         }
     }
     
@@ -234,6 +301,7 @@ async function request(endpoint, options = {}) {
     // 🔑 P0修复：cacheKey 必须包含完整 endpoint（含查询参数），不能截断 '?' 之后的部分
     // 例：'/api/items?type=tool&sort=time' 和 '/api/items?type=tool&sort=views' 必须产生不同的缓存 Key
     const cacheKey = `api_${endpoint}`;
+    const trackPendingRequest = method === "GET" && !options.noCache;
     if (method === "GET" && !options.noCache) {
         const cached = getCache(cacheKey);
         if (cached) {
@@ -245,19 +313,29 @@ async function request(endpoint, options = {}) {
     // 📴 本地兜底数据（含过期缓存）——一次读取，供下面三处复用：
     //   ① 离线/云端不可达时直接返回它；② 判定本次 GET 是否属于「后台补新」（走短预算）；
     //   ③ 重试耗尽后的最终回退仍按原口径自行重读一次（期间可能有并发请求写入更新的数据）
-    const fallbackMeta = (method === "GET")
+    const fallbackMeta = (method === "GET" && !options.noCache)
         ? getCacheWithMeta(cacheKey, true)  // 忽略过期
         : { value: null, expired: false, found: false };
-    
+    const conditionalRead = method === "GET" && !options.noStore && options.credentials !== "include"
+        && !Object.keys(headers).some(name => name.toLowerCase() === "authorization")
+        && API.PUBLIC_CONDITIONAL_GET_PATHS.includes(endpoint.split(/[?#]/)[0]);
+    const conditionalMeta = conditionalRead ? getCacheWithMeta(cacheKey, true) : null;
+    if (conditionalRead) {
+        for (const name of Object.keys(headers)) if (name.toLowerCase() === "if-none-match") delete headers[name];
+        if (conditionalMeta?.found && conditionalMeta.etag) headers["If-None-Match"] = conditionalMeta.etag;
+    }
+
     // 🚀 P3优化：离线模式支持（网络状态取自 状态管理.js 的 isOnline()）
     // ☁️ 云端不可达冷却与本机断网同等对待：两者的结论都是「这次联网注定拿不到东西」，
     // 区别只在判据——前者看 navigator.onLine（本机网卡通不通），后者看上一次请求的
     // 失败结论是否还在冷却期内。没有这层的话，HF Space 单独连不上时 isOnline() 恒为 true，
     // 本分支永远不触发，于是每个界面、每轮 30 秒的消息轮询都要各自烧满 61~93 秒重试预算，
     // 而全局并发额度只有 6 个，挂死的后台请求会把前台请求全部挤到排队
+    // noCache 只代表绕过该 endpoint 的响应缓存，不得绕过共享网络熔断；榜单强制刷新
+    // 仍由列表层先显示自己的缓存，冷却期内直接失败返回，避免切换榜单逐个重试 HF。
     if (method === "GET" && (!isOnline() || !isCloudReachable())) {
         if (fallbackMeta.found) {
-            console.log(`📴 ${isOnline() ? '☁️ 云端不可达' : '离线模式'}：返回${fallbackMeta.expired ? '过期' : ''}缓存 (${endpoint})`);
+            console.log(`📴 ${isOnline() ? '☁️ 云端不可达' : '离线模式'}：返回${fallbackMeta.expired ? '过期' : ''}缓存`);
             const proxyFn2 = await getProxyImages();
             return proxyFn2(fallbackMeta.value);
         }
@@ -268,13 +346,13 @@ async function request(endpoint, options = {}) {
     }
     
     // ⚡ P1性能优化：请求去重（相同GET请求只发一次）
-    if (method === "GET") {
+    if (trackPendingRequest) {
         if (pendingRequests.has(cacheKey)) {
             return pendingRequests.get(cacheKey);
         }
     }
     
-    const fetchOptions = { method, headers, ...options };
+    const fetchOptions = { ...options, method, headers };
     
     // 🚀 核心修改：在将 body 转为 JSON 字符串发送前，执行无情剥离！
     if (options.body && !(options.body instanceof FormData) && typeof options.body !== "string") {
@@ -316,6 +394,7 @@ async function request(endpoint, options = {}) {
     const retryDelay = options.retryDelay ?? API.RETRY_DELAY;  // 指数退避基数
     
     // ⚡ P1性能优化：封装请求 Promise（支持去重 + 重试）
+    if (privateEntry) activePrivateReads.add(privateEntry);
     const requestPromise = (async () => {
         let lastError = null;
         // ☁️ 本次失败是否属于「网络层不可达」（超时 / 连不上），用于循环结束后决定是否打冷却。
@@ -323,6 +402,7 @@ async function request(endpoint, options = {}) {
         let networkLevelFailure = false;
         
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            assertReadSession();
             // 🚀 P1优化：指数退避延迟
             if (attempt > 0) {
                 // ☁️ 冷却已生效就停止重试：另一个并发请求可能刚刚确证云端不可达，
@@ -335,6 +415,7 @@ async function request(endpoint, options = {}) {
                     
             // 🚀 P4优化：使用请求取消管理器（支持超时 + 组件级取消）
             const controller = requestCancelManager.create(componentId);
+            if (privateEntry) privateEntry.controller = controller;
             const currentFetchOptions = { ...fetchOptions, signal: controller.signal };
             let timeoutId = null;
             let timedOut = false;
@@ -347,21 +428,51 @@ async function request(endpoint, options = {}) {
             try {
                 const result = await requestQueue.add(async () => {
                     if (!useCacheBudget) timeoutId = setTimeout(onTimeout, requestTimeout);
+                    // 请求可能在云端故障被另一个并发请求确认前进入队列；出队发出 fetch
+                    // 前复查共享状态，避免队列继续逐个访问已知不可达的 HF endpoint。
+                    if (method === "GET" && (!isOnline() || !isCloudReachable())) {
+                        const unavailableError = new Error(
+                            isOnline() ? t('feedback.cloud_unreachable_no_cache') : t('feedback.offline_no_cache')
+                        );
+                        unavailableError.name = 'CloudUnavailableError';
+                        throw unavailableError;
+                    }
+                    assertReadSession();
                     fetchStarted = true;
                     try {
-                        const response = await fetch(url, currentFetchOptions);
+                        let response = await fetch(url, currentFetchOptions);
+                        let validatedData;
+                        if (response.status === 304 && conditionalRead) {
+                            const currentMeta = getCacheWithMeta(cacheKey, true);
+                            if (conditionalMeta?.found && conditionalMeta.etag
+                                && response.headers?.get?.('ETag') === conditionalMeta.etag
+                                && currentMeta.found && currentMeta.etag === conditionalMeta.etag
+                                && currentMeta.value === conditionalMeta.value) {
+                                validatedData = currentMeta.value;
+                            } else {
+                                // 缓存可能在等待期间被清理/写操作失效；同一预算内补取完整响应。
+                                const fullHeaders = { ...currentFetchOptions.headers };
+                                for (const name of Object.keys(fullHeaders)) if (name.toLowerCase() === "if-none-match") delete fullHeaders[name];
+                                if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+                                response = await fetch(url, { ...currentFetchOptions, headers: fullHeaders, cache: "no-store" });
+                                if (response.status === 304) throw new SyntaxError('Unexpected not-modified response');
+                            }
+                        }
                         let data;
+                        let bodyConfirmed = true;
                         try {
-                            data = response.status === 204 ? {} : await response.json();
+                            data = validatedData !== undefined ? validatedData
+                                : response.status === 204 ? {} : await response.json();
                         } catch (error) {
                             // 错误响应的正文不可读时仍按 HTTP 状态处理，不能用缓存掩盖 401/403。
                             if (!response.ok && (error instanceof SyntaxError || error instanceof TypeError || (timedOut && error.name === 'AbortError'))) {
                                 data = {};
+                                bodyConfirmed = false;
                             } else {
                                 throw error;
                             }
                         }
-                        return { response, data };
+                        return { response, data, bodyConfirmed, validated: validatedData !== undefined };
                     } catch (error) {
                         transportFailed = error instanceof TypeError;
                         throw error;
@@ -371,8 +482,10 @@ async function request(endpoint, options = {}) {
                 requestCancelManager.remove(componentId, controller);
                 const { response } = result;
                 let responseData = result.data;
+                assertReadSession();
 
-                if (!response.ok) {
+                if (!response.ok && !result.validated) {
+                    if (!responseData || typeof responseData !== "object" || Array.isArray(responseData)) responseData = {};
                     let errorMsg = `请求失败 (${response.status})`;
                     
                     // 🚀 核心修改：增加对 FastAPI 422 报错数组的解析
@@ -395,11 +508,23 @@ async function request(endpoint, options = {}) {
                             // 迟到的旧 401 或匿名请求的 401 不再误触发登录态重置。
                             // 登录接口的 401 语义是「密码错误」而非凭证失效，不走全局清理，
                             // 避免与登录表单自身的错误提示重复叠加
-                            if (endpoint !== "/api/users/login" && handleAuthExpired(errorMsg, token)) {
+                            if (endpoint !== "/api/users/login" && handleAuthExpired(token)) {
                                 window.dispatchEvent(new CustomEvent('comfy-ranking-auth-expired'));
                             }
                         }
-                        throw new Error(errorMsg);
+                        const error = new Error(errorMsg);
+                        error.status = response.status;
+                        if (typeof responseData.detail === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(responseData.detail)) error.code = responseData.detail;
+                        throw error;
+                    }
+
+                    // 应用明确标记且正文可读的503只影响当前接口，仍允许其它榜单联网。
+                    if (response.status === 503 && result.bodyConfirmed &&
+                            response.headers?.get?.(API.ENDPOINT_ERROR_SCOPE_HEADER) === API.ENDPOINT_ERROR_SCOPE_VALUE) {
+                        lastError = new Error(errorMsg);
+                        lastError.status = response.status;
+                        networkLevelFailure = false;
+                        break;
                     }
 
                     // Hugging Face Space / 网关不可用通常以 502、503 或 504 响应，
@@ -408,12 +533,14 @@ async function request(endpoint, options = {}) {
                     // 都重复访问一次；普通 500 仍只视为单接口服务端错误。
                     if ([502, 503, 504].includes(response.status)) {
                         lastError = new Error(errorMsg);
+                        lastError.status = response.status;
                         networkLevelFailure = true;
                         markCloudDown(endpoint);
                         break;
                     }
                     
                     lastError = new Error(errorMsg);
+                    lastError.status = response.status;
                     continue;  // 5xx 错误重试
                 }
 
@@ -427,17 +554,19 @@ async function request(endpoint, options = {}) {
                 }
 
                 // ⚡ P1性能优化：GET 请求结果缓存
-                if (method === "GET") {
+                if (method === "GET" && !options.noStore) {
                     const ttl = _getCacheTTL(endpoint);
                     if (ttl > 0) {
                         // 创作者列表不持久化到 localStorage，避免空间不足
                         const persist = !endpoint.includes('/api/creators');
-                        setCache(cacheKey, responseData, ttl, persist);
+                        setCache(cacheKey, responseData, ttl, persist,
+                            conditionalRead ? { etag: response.headers?.get?.('ETag') } : {});
                     }
                 }
 
                 // 入口数据挂载代理
                 const proxyFn3 = await getProxyImages();
+                assertReadSession();
                 responseData = proxyFn3(responseData);
                 return responseData;
             } catch (error) {
@@ -445,7 +574,8 @@ async function request(endpoint, options = {}) {
                 // 🔍 失败/超时同样摘除 controller：成功路径在上方已 remove，这里不补的话，
                 // 取消分组里会堆积已失效的 controller，使 cancelAll 的在途计数虚高
                 requestCancelManager.remove(componentId, controller);
-                
+                assertReadSession();
+
                 // 🔍 主动撤销（组件级取消）与超时都表现为 AbortError，但语义完全相反：
                 // 超时该重试；主动撤销是调用方明确表示「这次结果我不要了」，绝不能重试，
                 // 否则会白烧一轮超时预算（搜索场景下用户每敲一次键都可能触发一次撤销）。
@@ -455,6 +585,13 @@ async function request(endpoint, options = {}) {
                     cancelErr.name = 'RequestCancelledError';
                     cancelErr.isCancelled = true;
                     throw cancelErr;
+                }
+
+                // 队列等待期间已有并发请求确证网络不可达：该请求尚未发出 fetch，
+                // 直接交给统一缓存兜底，不重试、不延长冷却，也不把队列错误当作网络探测。
+                if (error.name === 'CloudUnavailableError') {
+                    lastError = error;
+                    break;
                 }
                 
                 // 🔧 P1优化：可重试的错误类型
@@ -471,6 +608,7 @@ async function request(endpoint, options = {}) {
                     lastError = isTimeout
                         ? new Error('网络请求超时，请检查网络连接')
                         : new Error('网络连接失败，请检查网络');
+                    lastError.code = isTimeout ? 'network_timeout' : 'network_unavailable';
                     if (fetchStarted) networkLevelFailure = true;
                     // ☁️ 连接层失败（被墙 / DNS 污染 / 拒绝连接 / 证书错误）几乎不会是偶发抖动，
                     // 打上冷却后其它界面与轮询就不用再各自烧一遍预算。但单次失败不足以定论，
@@ -485,7 +623,7 @@ async function request(endpoint, options = {}) {
                 
                 // 🔧 P3优化：错误分类处理，提供更清晰的错误信息（不可重试错误直接抛出）
                 if (error instanceof SyntaxError) {
-                    throw new Error('服务器响应格式错误');
+                    throw new Error(t('feedback.response_format_error'));
                 }
                 throw error;
             }
@@ -494,12 +632,12 @@ async function request(endpoint, options = {}) {
         // ☁️ 所有尝试都因网络层原因失败（超时耗尽重试也走这里）→ 打上冷却，
         // 接下来 API.CLOUD_DOWN_COOLDOWN 内的 GET 全部就地走缓存，不再重复等待
         if (networkLevelFailure) markCloudDown(endpoint);
-        
+
         // 所有重试都失败，尝试回退到过期缓存
-        if (method === "GET") {
+        if (method === "GET" && !options.noCache) {
             const fallback = getCacheWithMeta(cacheKey, true);  // true = 允许过期
             if (fallback.found) {
-                console.warn(`📴 网络请求失败，回退到本地缓存: ${endpoint}`);
+                console.warn('📴 网络请求失败，回退到本地缓存');
                 const proxyFn4 = await getProxyImages();
                 return proxyFn4(fallback.value);  // 返回过期缓存数据
             }
@@ -508,8 +646,10 @@ async function request(endpoint, options = {}) {
         throw lastError || new Error('请求失败');
     })();
     
+    if (privateEntry) requestPromise.finally(() => activePrivateReads.delete(privateEntry)).catch(() => {});
+
     // 记录进行中的请求
-    if (method === "GET") {
+    if (trackPendingRequest) {
         pendingRequests.set(cacheKey, requestPromise);
     }
     
@@ -517,9 +657,11 @@ async function request(endpoint, options = {}) {
     // 🔧 补 .catch 空处理：finally 会派生出一个新的 Promise，而它从未被返回也无人接收，
     // 一旦请求失败（含主动撤销）就会在控制台抛 Uncaught (in promise)。
     // 原始 requestPromise 仍在下方正常返回给调用方处理，此处只是吞掉这份重复的拒绝
-    requestPromise.finally(() => {
-        pendingRequests.delete(cacheKey);
-    }).catch(() => {});
+    if (trackPendingRequest) {
+        requestPromise.finally(() => {
+            pendingRequests.delete(cacheKey);
+        }).catch(() => {});
+    }
     
     return requestPromise;
 }
@@ -540,12 +682,17 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
     const timeout = options.timeout || 1200000; // 20分钟全局超时（大型工具克隆需要较长时间）
     const controller = new AbortController();
     const globalTimer = setTimeout(() => controller.abort(), timeout);
+    const externalSignal = options.signal;
+    const abortFromCaller = () => controller.abort();
+    if (externalSignal?.aborted) controller.abort();
+    else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
 
     // 📡 空闲超时检测：长时间无数据视为连接已断
     const IDLE_TIMEOUT_DEFAULT = 30000;  // 30 秒无数据视为空闲
     const IDLE_TIMEOUT_GRACE = 5000;     // 收到 finalResult 后的宽限期 5 秒
     let currentIdleTimeout = options.idleTimeout || IDLE_TIMEOUT_DEFAULT;
     let idleTimer = null;
+    let finalResult = null;
 
     const clearIdleTimer = () => {
         if (idleTimer !== null) {
@@ -563,14 +710,41 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const error = new Error(`HTTP ${response.status}: ${response.statusText}`);
+            error.status = response.status;
+            // 仅当流式路由明确不存在/不接受该方法时，调用方可安全回退到旧端点。
+            // 网络错误、超时和服务端错误都可能发生在操作已开始后，不可自动重发。
+            error.fallbackSafe = response.status === 404 || response.status === 405;
+            throw error;
         }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        let finalResult = null;
-
+        const processSSELine = (line) => {
+            if (!line.startsWith("data: ")) return;
+            let data;
+            try {
+                data = JSON.parse(line.slice(6));
+            } catch (parseError) {
+                console.warn("[SSE] 解析事件失败:", parseError?.name || 'SyntaxError');
+                return;
+            }
+            if (!data || typeof data !== "object" || Array.isArray(data)) {
+                console.warn("[SSE] 忽略非对象事件");
+                return;
+            }
+            if (data.status === "success" || data.status === "error") {
+                // 先保存最终结果，UI 更新回调即使异常也不能丢失服务端结果。
+                finalResult = data;
+                currentIdleTimeout = IDLE_TIMEOUT_GRACE;
+            }
+            try {
+                onProgress?.(data);
+            } catch (callbackError) {
+                console.warn("[SSE] 进度回调失败");
+            }
+        };
         while (true) {
             // 使用 Promise.race 实现空闲超时：reader.read() 与空闲定时器竞争
             const idlePromise = new Promise((_, reject) => {
@@ -590,48 +764,43 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
                     // 如果已收到 finalResult，优先返回它（服务器只是没正确关闭连接）
                     if (finalResult) return finalResult;
                     // 否则返回空闲超时错误
-                    return { status: "error", message: "连接超时：30秒未收到数据" };
+                    return { status: "error", outcomeUnknown: true, message: "连接超时：30秒未收到数据" };
                 }
                 throw e;
             }
             clearIdleTimer();
 
             const { done, value } = readResult;
-            if (done) break;
+            if (done) {
+                buffer += decoder.decode();
+                for (const line of buffer.split("\n")) processSSELine(line);
+                buffer = "";
+                break;
+            }
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
             buffer = lines.pop() || ""; // 保留不完整行
-
-            for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                    try {
-                        const data = JSON.parse(line.slice(6));
-                        onProgress?.(data);
-
-                        if (data.status === "success" || data.status === "error") {
-                            finalResult = data;
-                            // 收到最终结果后，缩短空闲超时为宽限期，避免无谓等待连接关闭
-                            currentIdleTimeout = IDLE_TIMEOUT_GRACE;
-                        }
-                    } catch (e) {
-                        console.warn("[SSE] 解析事件失败:", line);
-                    }
-                }
-            }
+            for (const line of lines) processSSELine(line);
         }
 
-        return finalResult || { status: "error", message: "未收到最终结果" };
+        return finalResult || { status: "error", outcomeUnknown: true, message: "未收到最终结果" };
     } catch (err) {
+        // 已收到最终事件时，后续连接关闭错误不应覆盖操作结果或触发重复提交。
+        if (finalResult) return finalResult;
         if (err.name === "AbortError") {
-            // 全局超时时，如果已收到 finalResult 仍返回它
-            if (finalResult) return finalResult;
-            return { status: "error", message: "安装超时，请检查网络后重试" };
+            return {
+                status: "error",
+                outcomeUnknown: true,
+                cancelRequested: !!externalSignal?.aborted,
+                message: externalSignal?.aborted ? t('feedback.request_cancelled') : "连接超时，操作结果暂时无法确认"
+            };
         }
         throw err;
     } finally {
         clearTimeout(globalTimer);
         clearIdleTimer();
+        externalSignal?.removeEventListener("abort", abortFromCaller);
     }
 }
 

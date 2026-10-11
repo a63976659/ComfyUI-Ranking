@@ -18,22 +18,33 @@
 // 🌐 API 配置
 // ==========================================
 
-/** @type {{ BASE_URL: string, TIMEOUT: number, MAX_RETRIES: number, RETRY_DELAY: number, LIST_RETRIES: number, SEARCH_TIMEOUT: number, SEARCH_RETRIES: number, BACKGROUND_TIMEOUT: number, BACKGROUND_RETRIES: number, CLOUD_DOWN_COOLDOWN: number, SEARCH_COMPONENT_ID: string }} */
+/** @type {{ BASE_URL: string, TIMEOUT: number, VIDEO_UPLOAD_TIMEOUT: number, VIDEO_UPLOAD_RESPONSE_MAX_CHARS: number, LOCAL_CACHE_STATS_TIMEOUT: number, LOCAL_CACHE_CLEAR_TIMEOUT: number, LOCAL_CACHE_RESPONSE_MAX_BYTES: number, MAX_RETRIES: number, RETRY_DELAY: number, LIST_RETRIES: number, SEARCH_TIMEOUT: number, SEARCH_RETRIES: number, PROFILE_RESOURCE_TIMEOUT: number, CREATOR_CHART_SCRIPT_URL: string, BACKGROUND_TIMEOUT: number, BANNER_IMAGE_TIMEOUT: number, BACKGROUND_RETRIES: number, WORKFLOW_DOWNLOAD_TIMEOUT: number, CLOUD_DOWN_COOLDOWN: number, SEARCH_COMPONENT_ID: string, IMAGE_PROXY_PATH: string, LOCAL_IMAGE_PROXY_PREFIX: string, COMPLETE_IMAGE_QUERY_SUFFIX: string, PRIVATE_GET_PATTERNS: RegExp[], PUBLIC_CONDITIONAL_GET_PATHS: string[], CONDITIONAL_ETAG_PATTERN: RegExp, ENDPOINT_ERROR_SCOPE_HEADER: string, ENDPOINT_ERROR_SCOPE_VALUE: string }} */
 export const API = {
+    ENDPOINT_ERROR_SCOPE_HEADER: "X-Ranking-Error-Scope",
+    ENDPOINT_ERROR_SCOPE_VALUE: "endpoint",
+    // 仅公开榜单使用由正文派生的条件验证器，私有响应仍禁止留存。
+    PUBLIC_CONDITIONAL_GET_PATHS: ['/api/items', '/api/creators', '/api/creators/search', '/api/posts', '/api/prompts', '/api/tasks'],
+    CONDITIONAL_ETAG_PATTERN: /^W\/"rk-[a-f0-9]{64}"$/,
+
     // 云端 API 基础地址
     BASE_URL: "https://zhiwei666-comfyui-ranking-api.hf.space",
     
     // 请求超时时间（毫秒）
     TIMEOUT: 30000,
-    
+    VIDEO_UPLOAD_TIMEOUT: 300000,
+    VIDEO_UPLOAD_RESPONSE_MAX_CHARS: 65536,
+    LOCAL_CACHE_STATS_TIMEOUT: 10000,
+    LOCAL_CACHE_CLEAR_TIMEOUT: 60000,
+    LOCAL_CACHE_RESPONSE_MAX_BYTES: 8192,
+
     // GET 请求重试次数（实际尝试 MAX_RETRIES + 1 次）
     // 🔧 修复：此前本值为 3 且全库无人读取，真正的重试次数硬编码在 网络请求_基础设施.js 中为 2，
     // 现改为由基础设施读取本配置；取值 2 以保持既有的「共 3 次尝试」行为不变
     MAX_RETRIES: 2,
-    
+
     // 重试间隔（毫秒，指数退避基数：1s、2s、4s…）
     RETRY_DELAY: 1000,
-    
+
     // 🐢 弱网预算分级（仅作用于 GET，由 网络请求_基础设施.js 按 endpoint 路径精确匹配）
     // 默认预算下弱网一次列表请求最长要烧 3×30s + 1s + 2s = 93s，期间用户只能盯骨架屏。
     // 列表类：首屏已可由本地缓存先行上屏（见 侧边栏数据引擎.js），且列表往往是会话的第一个请求、
@@ -43,6 +54,8 @@ export const API = {
     // 搜索类：必然发生在列表已加载之后（空间已被唤醒），可放心收紧，93s → 10s×2 + 1s = 21s
     SEARCH_TIMEOUT: 10000,
     SEARCH_RETRIES: 1,
+    PROFILE_RESOURCE_TIMEOUT: 5000,
+    CREATOR_CHART_SCRIPT_URL: "https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js",
 
     // 🐢 后台补新预算（仅作用于 GET，由 网络请求_基础设施.js 按「本地是否已有可兜底数据」判定）
     // 七大列表视图都是「本地数据先上屏 → 再发请求补新」，此时界面上已经有内容，
@@ -50,6 +63,8 @@ export const API = {
     // 云端不通时会把前台请求（详情页、点赞、轮询）全部挤到排队，表现为「切哪个界面都要等」。
     // 故一旦本地已有该请求的缓存（含过期），单次超时压到 10s 且不再重试，最坏耗时 10s
     BACKGROUND_TIMEOUT: 10000,
+    BANNER_IMAGE_TIMEOUT: 75000,
+    WORKFLOW_DOWNLOAD_TIMEOUT: 120000,  // 工作流流式下载预算（2 分钟）
     BACKGROUND_RETRIES: 0,
 
     // ☁️ 云端不可达冷却（消费方见 状态管理.js 的「云端可达性」段落）
@@ -59,14 +74,50 @@ export const API = {
     // 并发额度全部让给前台。被动探测——冷却一过，下一个真实请求充当探针；
     // 期间任意一次成功响应（含 POST/PUT/DELETE）立即清零，不需等到冷却结束
     CLOUD_DOWN_COOLDOWN: 60 * 1000,
-    
+
     // 🔍 创作者搜索请求的取消分组 ID
     // 用户在搜索框继续输入时，侧边栏数据引擎.js 据此撤销上一次仍在途的搜索请求。
     // 不撤销的话，作废请求会持续占用并发额度（最多 6 个）与超时预算，
     // 把最新那次搜索挤到后面排队。仅搜索请求归入本分组，不影响其它任何请求
-    SEARCH_COMPONENT_ID: "sidebar-search"
+    SEARCH_COMPONENT_ID: "sidebar-search",
+    // 上传相对路径的云端图片读取入口。
+    IMAGE_PROXY_PATH: "/api/image_proxy",
+    // 本地广告预载要求真实图片，熔断占位图不能作为下载成功。
+    LOCAL_IMAGE_PROXY_PREFIX: "/community_hub/image?url=",
+    COMPLETE_IMAGE_QUERY_SUFFIX: "&require_complete=1",
+    // 身份相关或私有 GET 禁止通用响应缓存；公开列表仍使用原缓存策略。
+    PRIVATE_GET_PATTERNS: [
+        /^\/api\/(wallet|messages|chats|admin|disputes|users)(?:\/|$)/,
+        /^\/api\/my-(posts|prompts|tasks)(?:\/|$)/,
+        /^\/api\/(tasks|prompts)\/[^/]+$/
+    ]
 };
 
+
+// 发布视频的本地读取预算，不改变云端上传额度。
+export const PUBLISH_MEDIA_LIMITS = Object.freeze({
+    MAX_IMAGES: 9,
+    IMAGE_MAX_EDGE: 1920,
+    IMAGE_QUALITY: 0.85,
+    VIDEO_MAX_BYTES: 100 * 1024 * 1024,
+    VIDEO_MAX_SECONDS: 180,
+    VIDEO_METADATA_TIMEOUT: 15000
+});
+
+// 上传前处理预算；浏览器解码本身仍由宿主管理。
+export const IMAGE_PROCESS = {
+    HEADER_BYTES: 256 * 1024,
+    MAX_INPUT_BYTES: 50 * 1024 * 1024,
+    MAX_PIXELS: 40 * 1024 * 1024,
+    MAX_SOURCE_EDGE: 16384,
+    MAX_OUTPUT_EDGE: 4096,
+    MAX_OUTPUT_BYTES: 5 * 1024 * 1024,
+    TIMEOUT: 15000,
+    MIN_QUALITY: 0.3,
+    QUALITY_STEP: 0.1,
+    AVATAR_MAX_BYTES: 2 * 1024 * 1024,
+    AVATAR_SIZE: 512
+};
 
 // ==========================================
 // 🔐 管理员配置 (P0安全修复：管理员账号配置化)
@@ -88,6 +139,9 @@ export function isAdmin(account) {
 // ==========================================
 // 💾 缓存配置
 // ==========================================
+const RESOURCE_LIST_PREFIXES = [
+    "ListCache_tools_", "ListCache_skills_", "ListCache_apps_", "ListCache_recommends_"
+];
 export const CACHE = {
     // 缓存键前缀
     PREFIX: "ComfyRanking_",
@@ -107,8 +161,14 @@ export const CACHE = {
     
     // 内存缓存最大条目数
     MAX_MEMORY_ITEMS: 100,
+
+    // 本插件 localStorage 持久缓存的估算容量上限（不影响用户/会话等其它键）
+    MAX_STORAGE_BYTES: 2 * 1024 * 1024,
     
     // localStorage 键名（旧版兼容）
+    SESSION_REMEMBER_TTL: 30 * 24 * 60 * 60 * 1000,
+    INSTALLED_VERSION_UNCONFIRMED: "__installed_unconfirmed__", // 安装成功但没有实际版本证明
+    SESSION_TEMP_TTL: 24 * 60 * 60 * 1000,
     LEGACY_KEYS: {
         USER: "ComfyCommunity_User",
         TOKEN: "ComfyCommunity_Token",
@@ -119,9 +179,14 @@ export const CACHE = {
     
     // 本地背景存储键（不上传云端）
     LOCAL_KEYS: {
+        BANNER_CONFIG: "ComfyRanking_BannerConfig",                // 广告配置持久缓存
+        CREATORS_SESSION: "ComfyRanking_CreatorsCache",             // 沿用创作者临时缓存键
         SIDEBAR_BACKGROUND: "ComfyRanking_SidebarBackground",      // 工具背景图 Base64
         PROFILE_BANNER_CACHE: "ComfyRanking_ProfileBannerCache",   // 个人资料背景图本地缓存
         ACQUIRED_ITEMS: "ComfyRanking_AcquiredItems",              // 已获取的资源记录
+        PROFILE_LIST_PREFIX: "ProfileList_",                     // 兼容旧个人列表业务键
+        INSTALLED_VERSION_PREFIX: "ComfyCommunity_LocalVer_",      // 沿用既有安装版本键
+        ITEM_OWNERSHIP_PREFIX: "ItemOwnership_",                  // 缓存管理器业务键前缀
         // 🚀 新增：私信和通知本地缓存
         NOTIFICATIONS: "ComfyRanking_Notifications",               // 通知消息缓存
         CHAT_LIST: "ComfyRanking_ChatList",                        // 对话列表缓存
@@ -130,6 +195,12 @@ export const CACHE = {
         CHAT_CLEAR_PREFIX: "ComfyRanking_ChatCleared_"             // 聊天清空时间戳前缀
     },
     
+    REFUND_CACHE_PREFIXES: [
+        "api_/api/items", "api_/api/creators", "api_/api/wallet",
+        ...RESOURCE_LIST_PREFIXES
+    ],
+    RESOURCE_LIST_PREFIXES,
+
     // 🚀 新增：消息轮询配置
     MESSAGE_POLL: {
         INTERVAL: 30 * 1000,     // 轮询间隔：30秒
@@ -147,12 +218,18 @@ export const PAGINATION = {
     
     // 创作者每页数量
     CREATORS_PAGE_SIZE: 12,
+    SIDEBAR_ITEM_FETCH_LIMIT: 200,
+    SIDEBAR_CREATOR_FETCH_LIMIT: 500,
+    SIDEBAR_CREATOR_SEARCH_LIMIT: 50,
+    PROFILE_USERS_PAGE_SIZE: 20,
+    PROFILE_RESOURCE_FETCH_LIMIT: 200,
     
     // 评论每页数量
     COMMENTS_PAGE_SIZE: 10,
     
     // 消息每页数量
     MESSAGES_PAGE_SIZE: 20,
+    CHAT_MESSAGES_PAGE_SIZE: 50,
     
     // 滚动加载触发阈值（距底部像素）
     SCROLL_THRESHOLD: 300,
@@ -206,6 +283,19 @@ export const TIP_LEVELS = {
 // 🎨 UI 配置
 // ==========================================
 export const UI = {
+    CHAT_MAX_MSG_LENGTH: 1000,
+    CHAT_TIME_GAP_SECONDS: 5 * 60,
+    MAX_DISPUTE_EVIDENCE: 6,
+    RECHARGE_POLL_INTERVAL: 3000,
+    RECHARGE_POLL_LIMIT: 100,
+    RECHARGE_QR_MAX_BYTES: 2048,
+    PROFILE_BANNER_CACHE_BYTES: 512 * 1024,
+    // 与云端公开版本接口的缺省值一致；用于网络不可用时的本地展示。
+    DEFAULT_PROJECT_VERSION: Object.freeze({ stage: "beta", major: 2, minor: 0, patch: 0 }),
+    ABOUT: {
+        AUTHOR_URL: "https://space.bilibili.com/2114638644",
+        AUTHOR_BADGE_URL: "https://img.shields.io/badge/bilibili-猪的飞行梦-00A1D6?logo=bilibili&logoColor=white"
+    },
     // Toast 消息配置
     TOAST: {
         DURATION: 3000,           // 显示时长（毫秒）
@@ -390,7 +480,7 @@ export function getCurrentAccount() {
             return userData?.user?.account || null;
         }
     } catch (e) {
-        console.warn("获取当前账号失败:", e);
+        console.warn("获取当前账号失败。");
     }
     return null;
 }
@@ -456,8 +546,9 @@ export function getTipLevelConfig() {
 // 缓存键：ComfyCommunity_ProfileCache_{account}
 
 const PROFILE_CACHE_PREFIX = "ComfyCommunity_ProfileCache_";
-const _pendingProfileRequests = new Map();  // 防止 N+1 并发请求
+const _pendingProfileRequests = new Map();  // 每账号共享请求与全部订阅者
 const PENDING_TIMEOUT = 30000;  // 挂起请求超时清理时间（毫秒）
+let nextAvatarRenderId = 0;
 
 // ==========================================
 // 🔒 HTML 转义（底层公共工具）
@@ -488,6 +579,19 @@ function _mapAvatarField(profile) {
     }
 }
 
+const PUBLIC_PROFILE_FIELDS = ["account", "name", "avatar", "avatarDataUrl", "intro", "gender", "age",
+    "country", "region", "created_at", "followers", "following", "privacy", "is_admin", "bannerUrl",
+    "receivedLikes", "receivedFavorites", "receivedUses"];
+function _publicProfile(profile) {
+    return Object.fromEntries(PUBLIC_PROFILE_FIELDS.filter(key => Object.prototype.hasOwnProperty.call(profile, key))
+        .map(key => [key, profile[key]]));
+}
+
+function _validProfile(profile) {
+    return !!profile && typeof profile === 'object' && !Array.isArray(profile)
+        && ['name', 'avatar', 'avatarDataUrl'].every(field => profile[field] == null || typeof profile[field] === 'string');
+}
+
 /**
  * 🚀 获取缓存的用户资料（同步）
  * @param {string} account - 用户账号
@@ -499,8 +603,14 @@ export function getCachedProfile(account) {
         const cached = localStorage.getItem(PROFILE_CACHE_PREFIX + account);
         if (!cached) return null;
         const profile = JSON.parse(cached);
-        _mapAvatarField(profile);
-        return profile;
+        if (!_validProfile(profile)) return null;
+        const publicProfile = _publicProfile(profile);
+        _mapAvatarField(publicProfile);
+        // 旧资料缓存可能含联系方式；读取返回过滤副本并尝试迁移，不因迁移失败隐藏公开内容。
+        if (JSON.stringify(publicProfile) !== cached) {
+            try { localStorage.setItem(PROFILE_CACHE_PREFIX + account, JSON.stringify(publicProfile)); } catch (_) {}
+        }
+        return publicProfile;
     } catch {
         return null;
     }
@@ -512,9 +622,9 @@ export function getCachedProfile(account) {
  * @param {Object} profile - 用户资料
  */
 export function setCachedProfile(account, profile) {
-    if (!account || !profile) return;
+    if (!account || !_validProfile(profile)) return;
     try {
-        localStorage.setItem(PROFILE_CACHE_PREFIX + account, JSON.stringify(profile));
+        localStorage.setItem(PROFILE_CACHE_PREFIX + account, JSON.stringify(_publicProfile(profile)));
     } catch {}
 }
 
@@ -531,27 +641,32 @@ export function getProfileWithSWR(account, apiFn, onUpdate) {
     // 第一轨：同步返回缓存
     const cached = getCachedProfile(account);
     
-    // 第二轨：异步静默校对（防止 N+1 并发）
-    if (!_pendingProfileRequests.has(account)) {
-        const promise = apiFn(account).then(res => {
-            const profile = res.data || res;
+    // 第二轨：同账号只取一次，但每个视图都订阅结果。
+    let entry = _pendingProfileRequests.get(account);
+    if (!entry && typeof apiFn === 'function') {
+        entry = { listeners: new Set(), timer: null };
+        _pendingProfileRequests.set(account, entry);
+        const release = () => {
+            if (_pendingProfileRequests.get(account) === entry) _pendingProfileRequests.delete(account);
+            clearTimeout(entry.timer);
+            entry.listeners.clear();
+        };
+        entry.timer = setTimeout(release, PENDING_TIMEOUT);
+        Promise.resolve().then(() => apiFn(account)).then(res => {
+            // 超时后的旧结果不能覆盖新请求，也不能重新写入旧资料。
+            if (_pendingProfileRequests.get(account) !== entry) return;
+            if (res?.status && res.status !== 'success') return;
+            const data = res && Object.hasOwn(res, 'data') ? res.data : res;
+            if (!_validProfile(data)) return;
+            const profile = _publicProfile(data);
             _mapAvatarField(profile);
             setCachedProfile(account, profile);
-            if (onUpdate && typeof onUpdate === 'function') {
-                onUpdate(profile);
+            for (const listener of Array.from(entry.listeners)) {
+                try { listener(profile); } catch { /* 单个视图异常不阻断其它订阅者 */ }
             }
-            return profile;
-        }).catch(() => null).finally(() => {
-            _pendingProfileRequests.delete(account);
-        });
-        _pendingProfileRequests.set(account, promise);
-        // ⏱️ 超时自动清理：防止请求永不完成导致内存泄漏
-        setTimeout(() => {
-            if (_pendingProfileRequests.has(account)) {
-                _pendingProfileRequests.delete(account);
-            }
-        }, PENDING_TIMEOUT);
+        }).catch(() => {}).finally(release);
     }
+    if (entry && typeof onUpdate === 'function') entry.listeners.add(onUpdate);
     
     return cached;
 }
@@ -569,6 +684,9 @@ export function getProfileWithSWR(account, apiFn, onUpdate) {
  */
 export function renderAvatarWithSWR(options) {
     const { account, fallbackAvatar, fallbackName, avatarSize = 24, apiFn, containerId } = options;
+    const renderId = String(++nextAvatarRenderId);
+    const size = typeof avatarSize === 'number' || typeof avatarSize === 'string' ? Number(avatarSize) : NaN;
+    const safeSize = Number.isFinite(size) && size > 0 ? size : 24;
     
     // 从缓存获取
     const cached = getCachedProfile(account);
@@ -578,15 +696,28 @@ export function renderAvatarWithSWR(options) {
     // 后台静默校对并更新 DOM
     if (apiFn && containerId) {
         setTimeout(() => {
+            const container = document.getElementById(containerId);
+            if (!container || container.dataset.profileRender !== renderId) return;
             getProfileWithSWR(account, apiFn, (profile) => {
-                const container = document.getElementById(containerId);
-                if (!container) return;
+                if (!container.isConnected || document.getElementById(containerId) !== container
+                    || container.dataset.profileRender !== renderId) return;
                 
                 const avatarImg = container.querySelector('.swr-avatar');
                 const nameSpan = container.querySelector('.swr-name');
                 
                 if (avatarImg && profile.avatar) {
-                    avatarImg.src = profile.avatar;
+                    if (avatarImg.tagName === 'IMG') avatarImg.src = profile.avatar;
+                    else {
+                        const image = document.createElement('img');
+                        image.className = 'swr-avatar';
+                        image.alt = '';
+                        image.style.cssText = avatarImg.style.cssText;
+                        image.style.objectFit = 'cover';
+                        image.src = profile.avatar;
+                        avatarImg.replaceWith(image);
+                    }
+                } else if (avatarImg && avatarImg.tagName !== 'IMG' && profile.name) {
+                    avatarImg.textContent = Array.from(profile.name)[0]?.toUpperCase() || 'U';
                 }
                 if (nameSpan && profile.name) {
                     nameSpan.textContent = profile.name;
@@ -598,12 +729,12 @@ export function renderAvatarWithSWR(options) {
     // 生成初始 HTML（无头像时显示首字母背景）
     // 🔒 XSS防护：avatar/name/initial 均来自用户可修改的资料（昵称首字母可能是 < ），
     // 写入 HTML 前必须转义；上方 SWR 刷新路径用的是 .src / .textContent，本身就是安全的。
-    const initial = (name || account || 'U')[0].toUpperCase();
+    const initial = Array.from(String(name || account || 'U'))[0].toUpperCase();
     const avatarHtml = avatar 
-        ? `<img class="swr-avatar" src="${escapeHtml(avatar)}" style="width: ${avatarSize}px; height: ${avatarSize}px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #333;">` 
-        : `<div class="swr-avatar" style="width: ${avatarSize}px; height: ${avatarSize}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${Math.floor(avatarSize * 0.5)}px; font-weight: bold; flex-shrink: 0;">${escapeHtml(initial)}</div>`;
+        ? `<img class="swr-avatar" alt="" src="${escapeHtml(avatar)}" style="width: ${safeSize}px; height: ${safeSize}px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: #333;">`
+        : `<div class="swr-avatar" aria-hidden="true" style="width: ${safeSize}px; height: ${safeSize}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${Math.floor(safeSize * 0.5)}px; font-weight: bold; flex-shrink: 0;">${escapeHtml(initial)}</div>`;
     
-    return `<span id="${escapeHtml(containerId)}" style="display: inline-flex; align-items: center; gap: 6px;">${avatarHtml}<span class="swr-name">${escapeHtml(name)}</span></span>`;
+    return `<span id="${escapeHtml(containerId)}" data-profile-render="${renderId}" style="display: inline-flex; align-items: center; gap: 6px;">${avatarHtml}<span class="swr-name">${escapeHtml(name)}</span></span>`;
 }
 
 
@@ -611,6 +742,7 @@ export function renderAvatarWithSWR(options) {
 // 📦 导出默认配置对象
 // ==========================================
 export default {
+    IMAGE_PROCESS,
     API,
     CACHE,
     PAGINATION,
@@ -632,3 +764,10 @@ export default {
     getProfileWithSWR,
     renderAvatarWithSWR
 };
+
+
+// 提示词定价输入边界，与云端 PromptCreate/PromptUpdate 对应。
+export const PROMPT_LIMITS = Object.freeze({ MAX_PRICE: 10000 });
+
+// 任务定价边界，与云端 task_publication/task_terms 对应。
+export const TASK_LIMITS = Object.freeze({ MAX_PRICE: 2147483647, MAX_REFERENCE_IMAGES: 6, DEPOSIT_RATIOS: Object.freeze([10, 20, 30, 50]), TIP_AMOUNTS: Object.freeze([10, 50, 100, 500]) });

@@ -11,16 +11,31 @@
 //   - 全局弹窗管理器.js (购买确认/打赏/删除弹窗)
 // ==========================================
 
-import { api, proxyImages } from "../core/网络请求API.js";
+import { api, proxyImages, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
 import { getVideoPlayerHTML, setupVideoPlayerEvents, cleanupVideoPlayer } from "../components/视频播放器组件.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
-import { getCachedProfile, getProfileWithSWR, IS_WEB_MODE } from "../core/全局配置.js";
+import { getCachedProfile, getProfileWithSWR, IS_WEB_MODE, API, CACHE } from "../core/全局配置.js";
 import { findInListCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml, formatTime } from "../components/互动工具函数.js";  // 🧹 P2归一：局部 formatTime 已移除
+
+import { getUser, eventBus, EVENTS } from "../core/状态管理.js";
+import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
+
+const viewContexts = new WeakMap();
+let promptViewSequence = 0;
+const isCurrent = node => !!viewContexts.get(node)?.scope.isCurrent();
+function openOwnedModal(node, title, content, options) {
+    const context = viewContexts.get(node);
+    if (!context?.scope.isCurrent()) return null;
+    const modal = globalModal.openModal(title, content, options);
+    const removeCleanup = context.scope.addCleanup(() => globalModal.closeModal(modal));
+    content._cleanup = removeCleanup;
+    return modal;
+}
 
 /**
  * 🖼️ 生成头像 HTML 字符串
@@ -82,24 +97,40 @@ export function createPromptDetailView(promptId, currentUser) {
         </div>
     `;
 
-    // 返回按钮
-    container.querySelector("#btn-back-prompt-detail").onclick = () => {
-        const contentArea = container.querySelector("#prompt-content");
-        if (contentArea) {
-            cleanupVideoPlayer(contentArea);
-        }
-        window.dispatchEvent(new CustomEvent("comfy-route-back"));
-    };
-
-    // 防御性清理：监听 comfy-route-back 事件（防止其他地方直接派发导致遗漏）
-    const handleRouteBack = () => {
-        const contentArea = container.querySelector("#prompt-content");
-        if (contentArea) {
-            cleanupVideoPlayer(contentArea);
-        }
+    const contentArea = container.querySelector("#prompt-content");
+    const owner = currentUser?.account || null;
+    const sessionMatches = captureRequestSession();
+    const componentId = `prompt-detail-${++promptViewSequence}`;
+    let constructing = true, observer;
+    const scope = createTaskViewScope({
+        sessionMatches: () => sessionMatches() && (getUser()?.account || null) === owner,
+        connected: () => constructing || container.isConnected,
+        subscribe: notify => subscribeTaskSessionChanges(notify, { target: window, eventBus, events: EVENTS,
+            userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN }),
+        cancelReads: () => requestCancelManager.cancelAll(componentId),
+        invalidate: () => contentArea.replaceChildren()
+    });
+    const context = { scope, purchasePending: false, tipPending: false,
+        readOptions: { componentId, noCache: true, timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES } };
+    viewContexts.set(container, context); viewContexts.set(contentArea, context);
+    const handleRouteBack = () => scope.dispose();
+    scope.addCleanup(() => {
+        cleanupVideoPlayer(contentArea);
+        contentArea.querySelectorAll('audio').forEach(audio => { audio.pause(); audio.removeAttribute('src'); audio.load(); });
+        contentArea.replaceChildren(); observer?.disconnect();
         window.removeEventListener("comfy-route-back", handleRouteBack);
+    });
+    container._cleanup = () => scope.dispose();
+    container.querySelector("#btn-back-prompt-detail").onclick = () => {
+        scope.dispose(); window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
-    window.addEventListener("comfy-route-back", handleRouteBack, { once: true });
+    window.addEventListener("comfy-route-back", handleRouteBack);
+    queueMicrotask(() => {
+        constructing = false;
+        if (!scope.isCurrent()) return;
+        observer = new MutationObserver(() => { if (!container.isConnected) scope.dispose(); });
+        observer.observe(document.body, { childList: true, subtree: true });
+    });
 
     // 加载提示词详情
     loadPromptDetail(container, promptId, currentUser);
@@ -112,6 +143,7 @@ export function createPromptDetailView(promptId, currentUser) {
  */
 async function loadPromptDetail(container, promptId, currentUser) {
     const contentArea = container.querySelector("#prompt-content");
+    if (!isCurrent(container)) return;
 
     // 先清理旧的视频播放器全局事件（如果存在）
     if (contentArea) {
@@ -122,15 +154,17 @@ async function loadPromptDetail(container, promptId, currentUser) {
     let fromCache = false;
 
     try {
-        const res = await api.getPromptDetail(promptId);
+        const res = await api.getPromptDetail(promptId, viewContexts.get(container).readOptions);
+        if (!isCurrent(container)) return;
         prompt = res.data || res;
+        if (!prompt || typeof prompt !== "object" || Array.isArray(prompt) || prompt.id !== promptId) prompt = null;
     } catch (err) {
-        console.error("加载提示词详情失败:", err);
+        if (!isCurrent(container)) return;
         // 📴 从列表缓存回退（缓存中无 prompt_text，将显示付费遮罩）
         const cached = findInListCache("PromptsCache_", promptId);
         if (cached) {
-            console.warn("📴 从列表缓存回退加载提示词详情:", promptId);
-            prompt = cached;
+            // 列表回退只恢复公开元信息，旧缓存也不得提供正文或拥有状态。
+            prompt = { ...cached, prompt_text: null, owned: false, locked: true };
             fromCache = true;
         }
     }
@@ -145,11 +179,12 @@ async function loadPromptDetail(container, promptId, currentUser) {
         return;
     }
 
+    viewContexts.get(container).scope.addCleanup(() => { prompt.prompt_text = null; });
     prompt = proxyImages(prompt);  // 对提示词数据应用图片代理
 
     // 🔓 判断提示词是否可见（免费/作者/已购买 → prompt_text 已由服务端下发）
     const isOwner = currentUser && currentUser.account === prompt.author;
-    const isUnlocked = !!(prompt.prompt_text) || prompt.price === 0 || isOwner;
+    const isUnlocked = !fromCache && typeof prompt.prompt_text === "string" && prompt.locked !== true;
 
     // 判断是否为视频封面
     const isVideo = prompt.media_type === "video" && prompt.video_url;
@@ -281,7 +316,7 @@ async function loadPromptDetail(container, promptId, currentUser) {
             const videoEl = contentArea.querySelector('video');
             if (videoEl) {
                 videoEl.addEventListener('error', () => {
-                    console.warn('[VideoPlayer] 视频加载失败:', prompt.video_url);
+                    console.warn('[VideoPlayer] 视频加载失败');
                 });
             }
         }
@@ -306,6 +341,7 @@ async function loadPromptDetail(container, promptId, currentUser) {
             if (nameEl) nameEl.textContent = name;
 
             getProfileWithSWR(account, api.getUserProfile, (profile) => {
+                if (!isCurrent(contentArea)) return;
                 const avatarEl = avatarContainer?.querySelector('.swr-avatar');
                 _updateAvatarElement(avatarEl, profile, 40, 'border: 2px solid #444;');
                 if (nameEl && profile.name) nameEl.textContent = profile.name;
@@ -314,6 +350,7 @@ async function loadPromptDetail(container, promptId, currentUser) {
 
         // 绑定作者点击
         contentArea.querySelector("#author-row").onclick = (e) => {
+            if (!isCurrent(contentArea)) return;
             if (e.target.id === 'btn-edit-prompt' || e.target.id === 'btn-delete-prompt') return;
             openOtherUserProfileModal(prompt.author, currentUser);
         };
@@ -322,6 +359,7 @@ async function loadPromptDetail(container, promptId, currentUser) {
         const btnEdit = contentArea.querySelector("#btn-edit-prompt");
         if (btnEdit) {
             btnEdit.onclick = (e) => {
+                if (!isCurrent(contentArea)) return;
                 e.stopPropagation();
                 window.dispatchEvent(new CustomEvent("comfy-route-edit-prompt", {
                     detail: { promptData: prompt, currentUser }
@@ -333,6 +371,7 @@ async function loadPromptDetail(container, promptId, currentUser) {
         const btnDelete = contentArea.querySelector("#btn-delete-prompt");
         if (btnDelete) {
             btnDelete.onclick = (e) => {
+                if (!isCurrent(container)) return;
                 e.stopPropagation();
                 showDeleteConfirmDialog(prompt, container);
             };
@@ -360,6 +399,7 @@ async function loadPromptDetail(container, promptId, currentUser) {
  * 渲染提示词正文区
  */
 function renderPromptTextArea(contentArea, prompt, currentUser, isUnlocked) {
+    if (!isCurrent(contentArea)) return;
     const textArea = contentArea.querySelector("#prompt-text-area");
     if (!textArea) return;
 
@@ -377,7 +417,7 @@ function renderPromptTextArea(contentArea, prompt, currentUser, isUnlocked) {
             </div>
         `;
         textArea.querySelector("#btn-copy-prompt").onclick = () => {
-            copyToClipboard(prompt.prompt_text, textArea.querySelector("#btn-copy-prompt"));
+            if (isCurrent(contentArea)) copyToClipboard(prompt.prompt_text, textArea.querySelector("#btn-copy-prompt"), () => isCurrent(contentArea));
         };
     } else if (prompt.price > 0) {
         // 🔒 付费遮罩：模糊预览 + 解锁按钮
@@ -405,19 +445,20 @@ function renderPromptTextArea(contentArea, prompt, currentUser, isUnlocked) {
 /**
  * 📋 一键复制（navigator.clipboard 优先，execCommand 降级）
  */
-function copyToClipboard(text, btnEl) {
+function copyToClipboard(text, btnEl, current) {
     const onSuccess = () => {
+        if (!current()) return;
         showToast(t('prompt.copied'), "success");
         if (btnEl) {
             const original = btnEl.innerHTML;
             btnEl.innerHTML = `✅ ${t('prompt.copied')}`;
-            setTimeout(() => { btnEl.innerHTML = original; }, 1500);
+            setTimeout(() => { if (current() && btnEl.isConnected) btnEl.innerHTML = original; }, 1500);
         }
     };
-    const onFail = () => showToast(t('prompt.copy_failed'), "error");
+    const onFail = () => current() && showToast(t('prompt.copy_failed'), "error");
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(onSuccess).catch(() => fallbackCopy(text, onSuccess, onFail));
+        navigator.clipboard.writeText(text).then(onSuccess).catch(() => { if (current()) fallbackCopy(text, onSuccess, onFail); });
     } else {
         fallbackCopy(text, onSuccess, onFail);
     }
@@ -447,16 +488,41 @@ async function showPurchaseConfirmDialog(contentArea, prompt, currentUser) {
         return;
     }
 
-    // 刷新钱包余额，避免使用缓存的旧值
-    let balance = currentUser.balance || 0;
+    const context = viewContexts.get(contentArea);
+    if (!context?.scope.isCurrent() || context.purchasePending) return;
+    context.purchasePending = true;
+    let balance;
+    let expectedPrice;
+    let purchaseTitle;
     try {
-        const walletRes = await api.getWallet(currentUser.account);
-        if (walletRes && walletRes.status === "success") {
-            balance = walletRes.balance || 0;
-            currentUser.balance = balance;
+        const detailRes = await api.getPromptDetail(prompt.id, context.readOptions);
+        if (!isCurrent(contentArea)) return;
+        const latest = detailRes?.data;
+        if (detailRes?.status !== "success" || !latest || Array.isArray(latest) || latest.id !== prompt.id ||
+            typeof latest.owned !== "boolean" || !Number.isSafeInteger(latest.price) || latest.price < 0) throw new Error();
+        if (latest.owned) {
+            if (typeof latest.prompt_text !== "string") throw new Error();
+            prompt.prompt_text = latest.prompt_text;
+            prompt.owned = true;
+            prompt.price = latest.price;
+            renderPromptTextArea(contentArea, prompt, currentUser, true);
+            context.purchasePending = false;
+            return;
         }
-    } catch (err) {
-        console.warn("刷新钱包余额失败，使用缓存值:", err);
+        if (latest.price_confirmation_supported !== true) {
+            context.purchasePending = false;
+            showToast(t('acquire.purchase_verification_unavailable'), "warning");
+            return;
+        }
+        expectedPrice = latest.price;
+        purchaseTitle = typeof latest.title === "string" ? latest.title : prompt.title;
+        const walletRes = await api.getWallet(currentUser.account, context.readOptions);
+        if (!isCurrent(contentArea)) return;
+        if (walletRes?.status !== "success" || !Number.isSafeInteger(walletRes.balance) || walletRes.balance < 0) throw new Error();
+        balance = walletRes.balance;
+    } catch (_) {
+        if (isCurrent(contentArea)) { context.purchasePending = false; showToast(t('common.error'), "error"); }
+        return;
     }
 
     const content = document.createElement("div");
@@ -465,44 +531,45 @@ async function showPurchaseConfirmDialog(contentArea, prompt, currentUser) {
         <div style="text-align: center;">
             <div style="font-size: 36px; margin-bottom: 12px;">💎</div>
             <div style="font-size: 15px; font-weight: bold; color: #fff; margin-bottom: 10px;">${t('prompt.purchase_confirm_title')}</div>
-            <div style="font-size: 13px; color: #aaa; margin-bottom: 15px; line-height: 1.6;">${t('prompt.purchase_confirm_desc', { price: prompt.price, title: escapeHtml(prompt.title) })}</div>
+            <div style="font-size: 13px; color: #aaa; margin-bottom: 15px; line-height: 1.6;">${t('prompt.purchase_confirm_desc', { price: expectedPrice, title: escapeHtml(purchaseTitle) })}</div>
             <div style="margin-bottom: 15px; background: rgba(255,152,0,0.1); padding: 10px; border-radius: 4px; border: 1px solid #FF9800;">
                 ${t('prompt.purchase_balance')}: <strong style="color:#FF9800;">${balance}</strong>
             </div>
             <div style="display: flex; gap: 10px;">
                 <button id="purchase-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="purchase-confirm" style="flex: 1; background: linear-gradient(135deg, #FFD700, #FFA000); border: none; color: #333; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">💎 ${t('prompt.unlock', { price: prompt.price })}</button>
+                <button id="purchase-confirm" style="flex: 1; background: linear-gradient(135deg, #FFD700, #FFA000); border: none; color: #333; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">💎 ${t('prompt.unlock', { price: expectedPrice })}</button>
             </div>
         </div>
     `;
 
-    globalModal.openModal(`💎 ${t('prompt.purchase_confirm_title')}`, content, { width: "320px" });
-
-    content.querySelector("#purchase-cancel").onclick = () => globalModal.closeTopModal();
-
+    const modal = openOwnedModal(contentArea, `💎 ${t('prompt.purchase_confirm_title')}`, content, { width: "320px" });
+    let submitted = false;
+    const release = content._cleanup;
+    content._cleanup = () => { release?.(); if (!submitted) context.purchasePending = false; };
+    content.querySelector("#purchase-cancel").onclick = () => globalModal.closeModal(modal);
     content.querySelector("#purchase-confirm").onclick = async () => {
+        if (submitted || !isCurrent(contentArea) || !modal?.isConnected) return;
+        submitted = true;
         const confirmBtn = content.querySelector("#purchase-confirm");
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = `⏳ ${t('prompt.purchasing')}`;
         try {
-            confirmBtn.disabled = true;
-            confirmBtn.textContent = `⏳ ${t('prompt.purchasing')}...`;
-
-            const res = await api.purchasePrompt(prompt.id);
-            const purchasedText = res?.prompt_text || res?.data?.prompt_text || '';
-
-            showToast(t('prompt.purchase_success'), "success");
-            globalModal.closeTopModal();
-
-            // 原地解锁：服务端已返回 prompt_text，无需二次请求
-            prompt.prompt_text = purchasedText || prompt.prompt_text;
+            const res = await api.purchasePrompt(prompt.id, expectedPrice);
+            if (!isCurrent(contentArea)) return;
+            if (res?.status !== "success" || typeof res.prompt_text !== "string") throw new Error();
+            prompt.prompt_text = res.prompt_text;
             prompt.owned = true;
+            prompt.price = expectedPrice;
             renderPromptTextArea(contentArea, prompt, currentUser, true);
-        } catch (err) {
-            console.error("购买提示词失败:", err);
-            const detail = err?.response?.data?.detail;
-            showToast(detail || t('prompt.purchase_failed'), "error");
-        } finally {
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = `💎 ${t('prompt.unlock', { price: prompt.price })}`;
+            globalModal.closeModal(modal);
+            showToast(t('prompt.purchase_success'), "success");
+        } catch (error) {
+            // 请求可能已扣款；保持本视图购买锁，重新进入详情确认拥有状态。
+            if (!isCurrent(contentArea)) return;
+            if (error?.code === "purchase_price_changed" || error?.code === "purchase_price_confirmation_required") {
+                globalModal.closeModal(modal);
+                showToast(t('acquire.price_changed'), "warning");
+            } else showToast(t('prompt.purchase_failed'), "error");
         }
     };
 }
@@ -511,7 +578,9 @@ async function showPurchaseConfirmDialog(contentArea, prompt, currentUser) {
  * 👀 记录提示词浏览量（带60秒防抖）- 使用公共工具函数
  */
 async function recordPromptView(contentArea, promptId) {
+    if (!isCurrent(contentArea)) return;
     await recordView(api.recordPromptView, promptId, 'prompt', (res) => {
+        if (!isCurrent(contentArea)) return;
         const totalEl = contentArea.querySelector("#prompt-view-total");
         const dailyEl = contentArea.querySelector("#prompt-view-daily");
         if (totalEl) totalEl.textContent = res.views || 0;
@@ -531,16 +600,19 @@ function bindInteractionEvents(container, prompt, currentUser) {
 
     // 点赞
     btnLike.onclick = () => {
-        handleToggleLike(api.togglePromptLike, prompt.id, btnLike, likeCount, currentUser);
+        if (!isCurrent(container)) return;
+        handleToggleLike(api.togglePromptLike, prompt.id, btnLike, likeCount, currentUser, { isCurrent: () => isCurrent(container) });
     };
 
     // 收藏
     btnFavorite.onclick = () => {
-        handleToggleFavorite(api.togglePromptFavorite, prompt.id, btnFavorite, favoriteCount, currentUser);
+        if (!isCurrent(container)) return;
+        handleToggleFavorite(api.togglePromptFavorite, prompt.id, btnFavorite, favoriteCount, currentUser, { isCurrent: () => isCurrent(container) });
     };
 
     // 打赏
     btnTip.onclick = async () => {
+        if (!isCurrent(container)) return;
         if (!currentUser) {
             showToast(t('auth.login_required'), "warning");
             return;
@@ -557,21 +629,25 @@ function bindInteractionEvents(container, prompt, currentUser) {
  * 🎁 显示打赏对话框
  */
 async function showTipDialog(prompt, currentUser, container) {
-    // 刷新钱包余额，避免使用缓存的旧值
+    const context = viewContexts.get(container);
+    if (!isCurrent(container) || context.tipPending) return;
+    context.tipPending = true;
+    let balance;
     try {
-        const walletRes = await api.getWallet(currentUser.account);
-        if (walletRes && walletRes.status === "success") {
-            currentUser.balance = walletRes.balance || 0;
-        }
-    } catch (err) {
-        console.warn("刷新钱包余额失败，使用缓存值:", err);
+        const res = await api.getWallet(currentUser.account, viewContexts.get(container).readOptions);
+        if (!isCurrent(container)) return;
+        if (res?.status !== "success" || !Number.isSafeInteger(res.balance) || res.balance < 0) throw new Error();
+        balance = res.balance;
+    } catch (_) {
+        if (isCurrent(container)) { context.tipPending = false; showToast(t('common.error'), "error"); }
+        return;
     }
 
     const content = document.createElement("div");
     content.style.color = "#ccc";
     content.innerHTML = `
         <div style="margin-bottom: 12px; background: rgba(255,152,0,0.1); padding: 10px; border-radius: 4px; border: 1px solid #FF9800; text-align: center;">
-            ${t('wallet.current_balance')}: <strong style="color:#FF9800;">${currentUser.balance || 0}</strong> ${t('wallet.credits')}
+            ${t('wallet.current_balance')}: <strong style="color:#FF9800;">${balance}</strong> ${t('wallet.credits')}
         </div>
         <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
             <button class="tip-amount" data-amount="10" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
@@ -584,28 +660,37 @@ async function showTipDialog(prompt, currentUser, container) {
         </div>
     `;
 
-    globalModal.openModal(`🎁 ${t('prompt.tip_dialog_title')}`, content, { width: "300px" });
+    const modal = openOwnedModal(container, `🎁 ${t('prompt.tip_dialog_title')}`, content, { width: "300px" });
 
-    content.querySelector("#tip-cancel").onclick = () => globalModal.closeTopModal();
+    content.querySelector("#tip-cancel").onclick = () => globalModal.closeModal(modal);
+    let submitted = false;
+    const release = content._cleanup;
+    content._cleanup = () => { release?.(); if (!submitted) context.tipPending = false; };
 
     content.querySelectorAll(".tip-amount").forEach(btn => {
         btn.onclick = async () => {
+            if (submitted || !isCurrent(container) || !modal?.isConnected) return;
             const amount = parseInt(btn.dataset.amount);
 
             // 本地前置余额校验
-            if ((currentUser.balance || 0) < amount) {
+            if (balance < amount) {
                 showToast(t('wallet.insufficient_balance'), "warning");
                 return;
             }
 
             try {
-                await api.tipPrompt(prompt.id, amount, false);
+                submitted = true;
+                content.querySelectorAll(".tip-amount").forEach(button => { button.disabled = true; });
+                const res = await api.tipPrompt(prompt.id, amount, false);
+                if (!isCurrent(container)) return;
+                if (res?.status !== "success") throw new Error();
+                context.tipPending = false;
                 showToast(t('prompt.tip_success', { amount }), "success");
-                globalModal.closeTopModal();
+                globalModal.closeModal(modal);
                 // 刷新页面
                 loadPromptDetail(container.parentElement, prompt.id, currentUser);
             } catch (err) {
-                showToast(t('prompt.tip_failed') + ": " + err.message, "error");
+                if (isCurrent(container)) showToast(t('prompt.tip_failed'), "error");
             }
         };
     });
@@ -618,10 +703,17 @@ async function loadComments(container, promptId, currentUser) {
     const commentsList = container.querySelector("#comments-list");
     const commentInput = container.querySelector("#comment-input");
     const sendBtn = container.querySelector("#btn-send-comment");
+    if (!isCurrent(container)) return;
+    const context = viewContexts.get(container);
+    const generation = context.commentGeneration = (context.commentGeneration || 0) + 1;
+    const current = () => isCurrent(container) && context.commentGeneration === generation && commentsList.isConnected;
 
     try {
-        const res = await api.getPromptComments(promptId);
-        let comments = res.data || [];
+        const res = await api.getPromptComments(promptId, viewContexts.get(container).readOptions);
+        if (!current()) return;
+        if (res?.status !== "success" || !Array.isArray(res.data)) throw new Error();
+        let comments = res.data.filter(value => value && typeof value === "object" && !Array.isArray(value)
+            && typeof value.author === "string" && typeof value.content === "string");
         comments = proxyImages(comments);
 
         if (comments.length === 0) {
@@ -656,6 +748,7 @@ async function loadComments(container, promptId, currentUser) {
             // 后台静默校对每个评论作者的头像
             comments.forEach((c, idx) => {
                 getProfileWithSWR(c.author, api.getUserProfile, (profile) => {
+                    if (!current()) return;
                     const commentEl = commentsList.querySelector(`#comment-${idx}`);
                     if (!commentEl) return;
                     const avatarContainer = commentEl.querySelector('.swr-avatar-container');
@@ -667,6 +760,7 @@ async function loadComments(container, promptId, currentUser) {
             });
         }
     } catch (err) {
+        if (!current()) return;
         commentsList.innerHTML = `
             <div style="text-align: center; padding: 20px; color: #F44336; font-size: 12px;">
                 ${t('prompt.load_failed')}
@@ -676,6 +770,7 @@ async function loadComments(container, promptId, currentUser) {
 
     // 发送评论
     sendBtn.onclick = async () => {
+        if (!isCurrent(container) || !sendBtn.isConnected || sendBtn.disabled) return;
         if (!currentUser) {
             showToast(t('auth.login_required'), "warning");
             return;
@@ -688,13 +783,16 @@ async function loadComments(container, promptId, currentUser) {
         try {
             sendBtn.disabled = true;
             sendBtn.textContent = t('common.sending');
-            await api.addPromptComment(promptId, content);
-            commentInput.value = "";
+            const result = await api.addPromptComment(promptId, content);
+            if (!isCurrent(container) || !sendBtn.isConnected) return;
+            if (result?.status !== "success") throw new Error();
+            if (commentInput.value.trim() === content) commentInput.value = "";
             showToast(t('prompt.comment_success'), "success");
             loadComments(container, promptId, currentUser);
         } catch (err) {
-            showToast(t('prompt.comment_failed') + ": " + err.message, "error");
+            if (isCurrent(container) && sendBtn.isConnected) showToast(t('prompt.comment_failed'), "error");
         } finally {
+            if (!isCurrent(container) || !sendBtn.isConnected) return;
             sendBtn.disabled = false;
             sendBtn.textContent = t('common.send');
         }
@@ -702,7 +800,7 @@ async function loadComments(container, promptId, currentUser) {
 
     // 回车发送
     commentInput.onkeydown = (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
             e.preventDefault();
             sendBtn.click();
         }
@@ -713,6 +811,7 @@ async function loadComments(container, promptId, currentUser) {
  * 🗑️ 显示删除确认对话框
  */
 function showDeleteConfirmDialog(prompt, container) {
+    if (!isCurrent(container)) return;
     const content = document.createElement("div");
     content.style.color = "#ccc";
     content.innerHTML = `
@@ -727,25 +826,31 @@ function showDeleteConfirmDialog(prompt, container) {
         </div>
     `;
 
-    globalModal.openModal(t('prompt.delete_confirm'), content, { width: "300px" });
+    const modal = openOwnedModal(container, t('prompt.delete_confirm'), content, { width: "300px" });
 
-    content.querySelector("#delete-cancel").onclick = () => globalModal.closeTopModal();
+    content.querySelector("#delete-cancel").onclick = () => globalModal.closeModal(modal);
+    let submitted = false;
 
     content.querySelector("#delete-confirm").onclick = async () => {
+        if (submitted || !isCurrent(container) || !modal?.isConnected) return;
+        submitted = true;
         try {
             const confirmBtn = content.querySelector("#delete-confirm");
             confirmBtn.disabled = true;
             confirmBtn.textContent = t('common.deleting');
 
             await api.deletePrompt(prompt.id);
+            if (!isCurrent(container)) return;
             showToast(t('prompt.deleted'), "success");
-            globalModal.closeTopModal();
+            globalModal.closeModal(modal);
 
             // 通知列表刷新并返回
             window.dispatchEvent(new CustomEvent("comfy-prompts-refresh"));
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
         } catch (err) {
-            showToast(t('common.delete') + ": " + err.message, "error");
+            if (!isCurrent(container)) return;
+            showToast(t('common.error'), "error");
+            submitted = false;
             const confirmBtn = content.querySelector("#delete-confirm");
             confirmBtn.disabled = false;
             confirmBtn.textContent = t('common.delete');

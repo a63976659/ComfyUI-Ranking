@@ -10,12 +10,32 @@
 //   - 提示词组件.js (发布后刷新列表)
 // ==========================================
 
+import { createPublishFieldErrors } from "../market/发布字段错误.js";
+import { bindPublishFilePicker, setPublishFilePickerAction } from "../market/发布文件选择可访问性.js";
+import { compressPublishImage as compressImage, capturePublishVideoFrame } from "../market/有界图片处理.js";
 import { api } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
 import { removeCacheByPrefix } from "../components/性能优化工具.js";
-import { API } from "../core/全局配置.js";
+import { createPublishEditingLock } from "../market/发布编辑锁.js";
+import { createPublishSubmissionScope } from "../market/发布提交生命周期.js";
+import { parsePromptPrice, validatePromptPriceInput } from "./价格校验.js";
+import { API, CACHE, PUBLISH_MEDIA_LIMITS, IMAGE_PROCESS, PROMPT_LIMITS } from "../core/全局配置.js";
 import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
+
+function requirePromptUpload(result) {
+    if (result?.status !== 'success' || typeof result.url !== 'string' || !result.url.trim()) {
+        throw new Error('Unconfirmed prompt upload');
+    }
+    return result.url;
+}
+
+function confirmPromptSave(result, isEditMode) {
+    if (result?.status !== 'success' || (!isEditMode &&
+        (typeof result.data?.id !== 'string' || !result.data.id.trim()))) {
+        throw new Error('Unconfirmed prompt save');
+    }
+}
 
 // 📦 清除提示词列表缓存（前缀扫描，覆盖全部 类型/分类/排序 组合）
 function clearPromptsListCache() {
@@ -29,99 +49,63 @@ function clearPromptsListCache() {
     console.log('🗑️ 已清除提示词列表缓存');
 }
 
-// 🖼️ 图片压缩配置
-const IMAGE_MAX_SIZE = 1920;    // 最大宽/高
-const IMAGE_QUALITY = 0.85;     // JPG压缩质量
-
-/**
- * 🖼️ 压缩图片：转为JPG格式并限制尺寸
- */
-function compressImage(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = (e) => {
-            const img = new Image();
-            img.src = e.target.result;
-            img.onload = () => {
-                const canvas = document.createElement("canvas");
-                const ctx = canvas.getContext("2d");
-
-                let { width, height } = img;
-                if (width > IMAGE_MAX_SIZE || height > IMAGE_MAX_SIZE) {
-                    if (width > height) {
-                        height = Math.round(height * IMAGE_MAX_SIZE / width);
-                        width = IMAGE_MAX_SIZE;
-                    } else {
-                        width = Math.round(width * IMAGE_MAX_SIZE / height);
-                        height = IMAGE_MAX_SIZE;
-                    }
-                }
-
-                canvas.width = width;
-                canvas.height = height;
-                ctx.drawImage(img, 0, 0, width, height);
-
-                canvas.toBlob((blob) => {
-                    if (blob) {
-                        const newFileName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
-                        const compressedFile = new File([blob], newFileName, { type: "image/jpeg" });
-                        console.log(`🖼️ 图片压缩: ${(file.size/1024).toFixed(1)}KB → ${(compressedFile.size/1024).toFixed(1)}KB`);
-                        resolve(compressedFile);
-                    } else {
-                        reject(new Error("图片压缩失败"));
-                    }
-                }, "image/jpeg", IMAGE_QUALITY);
-            };
-            img.onerror = () => reject(new Error("图片加载失败"));
-        };
-        reader.onerror = () => reject(new Error("文件读取失败"));
-    });
-}
-
 /**
  * 🎬 使用 XMLHttpRequest 上传视频并支持进度回调
  */
-function uploadVideoWithProgress(file, onProgress) {
+function uploadVideoWithProgress(file, onProgress, { signal } = {}) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("file_type", "post_video");
-
-        const baseUrl = API?.BASE_URL || "";
-        xhr.open("POST", `${baseUrl}/api/upload`);
-
-        const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
-        if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-
-        xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable && onProgress) {
-                onProgress(Math.round((e.loaded / e.total) * 100));
-            }
+        let settled = false;
+        const abort = () => {
+            finish(Object.assign(new Error('Video upload aborted'), { name: 'AbortError' }));
+            try { xhr.abort(); } catch {}
         };
-
-        xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-                try {
-                    resolve(JSON.parse(xhr.responseText));
-                } catch {
-                    resolve({ url: xhr.responseText });
+        const finish = (error, result) => {
+            if (settled) return;
+            settled = true;
+            signal?.removeEventListener('abort', abort);
+            xhr.onload = xhr.onerror = xhr.ontimeout = xhr.onabort = null;
+            xhr.upload.onprogress = null;
+            if (error) reject(error); else resolve(result);
+        };
+        if (signal?.aborted) { abort(); return; }
+        signal?.addEventListener('abort', abort, { once: true });
+        const tokenFrom = readStorage => {
+            try { return readStorage().getItem(CACHE.LEGACY_KEYS.TOKEN); } catch { return null; }
+        };
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('file_type', 'post_video');
+            xhr.open('POST', `${API.BASE_URL}/api/upload`);
+            const token = tokenFrom(() => localStorage) || tokenFrom(() => sessionStorage);
+            if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            xhr.upload.onprogress = event => {
+                if (settled || !event.lengthComputable || !Number.isFinite(event.loaded) ||
+                    !Number.isFinite(event.total) || event.loaded < 0 || event.total <= 0) return;
+                const percent = Math.max(0, Math.min(100, Math.round(event.loaded / event.total * 100)));
+                try { onProgress?.(percent); } catch {}
+            };
+            xhr.onload = () => {
+                if (settled) return;
+                if (xhr.status < 200 || xhr.status >= 300) {
+                    finish(Object.assign(new Error('Video upload rejected'), { status: xhr.status })); return;
                 }
-            } else {
-                let msg = `上传失败 (${xhr.status})`;
                 try {
-                    const data = JSON.parse(xhr.responseText);
-                    if (data.detail || data.message || data.error) msg = data.detail || data.message || data.error;
-                } catch {}
-                reject(new Error(msg));
-            }
-        };
-
-        xhr.onerror = () => reject(new Error('网络错误，上传失败'));
-        xhr.ontimeout = () => reject(new Error('上传超时'));
-        xhr.timeout = 300000;
-        xhr.send(formData);
+                    if (typeof xhr.responseText !== 'string' || xhr.responseText.length > API.VIDEO_UPLOAD_RESPONSE_MAX_CHARS) {
+                        throw new Error('Invalid video upload response');
+                    }
+                    const result = JSON.parse(xhr.responseText);
+                    requirePromptUpload(result);
+                    finish(null, result);
+                } catch { finish(new Error('Unconfirmed video upload')); }
+            };
+            xhr.onerror = () => finish(new Error('Video upload network failure'));
+            xhr.ontimeout = () => finish(new Error('Video upload timed out'));
+            xhr.onabort = () => finish(Object.assign(new Error('Video upload aborted'), { name: 'AbortError' }));
+            xhr.timeout = API.VIDEO_UPLOAD_TIMEOUT;
+            xhr.send(formData);
+        } catch { finish(new Error('Video upload could not start')); }
     });
 }
 
@@ -146,22 +130,27 @@ function _clearDragIndicators(wrappers) {
 }
 
 // 创建图片区域「+」添加按钮
-function _createAddButton(imagesInput) {
-    const addBtn = document.createElement("div");
+function _createAddButton(imagesInput, scope) {
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.setAttribute("aria-label", t("post.upload_images"));
+    addBtn.setAttribute("data-file-picker-button", "");
     Object.assign(addBtn.style, {
         width: "80px",
         height: "80px",
-        border: "2px dashed #444",
+        background: "transparent",
+        border: "2px dashed var(--rk-border, var(--border-color, #444))",
         borderRadius: "6px",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         cursor: "pointer",
-        color: "#666",
+        color: "var(--rk-muted, var(--descrip-text, #a4a4a4))",
         fontSize: "24px"
     });
     addBtn.textContent = "+";
     addBtn.onclick = (e) => {
+        if (!scope.isCurrent() || imagesInput.disabled) return;
         e.stopPropagation();
         imagesInput.click();
     };
@@ -169,10 +158,22 @@ function _createAddButton(imagesInput) {
 }
 
 // 创建删除按钮点击处理器（停止冒泡 + 执行回调）
-function _createRemoveButtonHandler(removeCallback) {
+function _createRemoveButtonHandler(removeCallback, options = {}) {
+    const { previewContainer, wrapper, canInteract = () => true, focusEmpty } = options;
+    const images = () => Array.from(previewContainer.children).filter(child =>
+        child.tagName === 'DIV' && child.querySelector('img'));
     return (e) => {
         e.stopPropagation();
+        if (!canInteract() || e.currentTarget?.disabled) return;
+        const index = previewContainer ? images().indexOf(wrapper) : -1;
+        if (previewContainer && index < 0) return;
+        const restoreFocus = wrapper?.contains(document.activeElement);
         removeCallback();
+        if (!restoreFocus || !canInteract()) return;
+        const remaining = images();
+        const next = remaining[Math.min(index, remaining.length - 1)];
+        if (next) next.querySelector('button[data-action="remove"]').focus();
+        else focusEmpty?.focus();
     };
 }
 
@@ -184,14 +185,26 @@ function updateCoverMark(previewContainer) {
     wrappers.forEach((wrapper, idx) => {
         const img = wrapper.querySelector('img');
         const coverLabel = wrapper.querySelector('.cover-label');
+        wrapper.tabIndex = 0;
+        wrapper.setAttribute('role', 'group');
+        wrapper.setAttribute('aria-label', t('post.image_position', { index: idx + 1, total: wrappers.length }));
+        wrapper.setAttribute('aria-keyshortcuts', 'Alt+ArrowLeft Alt+ArrowRight');
+        if (!wrapper.title) wrapper.title = t('post.image_move_hint');
+        const remove = wrapper.querySelector('button[data-action="remove"]');
+        if (remove) {
+            remove.type = 'button';
+            remove.setAttribute('aria-label', t('post.remove_image', { index: idx + 1 }));
+        }
+        if (img && !img.hasAttribute('alt')) img.alt = '';
+
         if (img) {
-            img.style.borderColor = idx === 0 ? '#4CAF50' : '#444';
+            img.style.borderColor = idx === 0 ? '#4CAF50' : 'var(--rk-border, var(--border-color, #444))';
         }
         if (idx === 0) {
             if (!coverLabel) {
                 const label = document.createElement('span');
                 label.className = 'cover-label';
-                label.style.cssText = 'position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px; pointer-events: none;';
+                label.style.cssText = 'position: absolute; top: 4px; left: 4px; background: #4CAF50; color: var(--rk-text, var(--fg-color, #ddd)); font-size: 10px; padding: 2px 6px; border-radius: 3px; pointer-events: none;';
                 label.textContent = t('post.cover');
                 wrapper.appendChild(label);
             }
@@ -203,7 +216,7 @@ function updateCoverMark(previewContainer) {
 
 // ✅ 为图片预览容器设置拖拽排序
 function setupImageDragSort(previewContainer, fileArray, options = {}) {
-    const { onRemove, onDrop } = options;
+    const { onRemove, onDrop, canInteract = () => true, focusEmpty } = options;
     const getWrappers = () => Array.from(previewContainer.children).filter(
         child => child.tagName === 'DIV' && child.querySelector('img')
     );
@@ -211,6 +224,7 @@ function setupImageDragSort(previewContainer, fileArray, options = {}) {
     const wrappers = getWrappers();
     if (wrappers.length === 0) return;
 
+    updateCoverMark(previewContainer);
     let dragSrcEl = null;
     let dragSrcIndex = -1;
 
@@ -243,10 +257,32 @@ function setupImageDragSort(previewContainer, fileArray, options = {}) {
                     updateCoverMark(previewContainer);
                     setupImageDragSort(previewContainer, fileArray, options);
                 }
-            });
+            }, { previewContainer, wrapper, canInteract, focusEmpty });
         }
 
+        wrapper.onkeydown = (e) => {
+            if (e.target !== wrapper || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey ||
+                e.repeat || e.isComposing || !canInteract() ||
+                !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+            const current = getWrappers();
+            const from = current.indexOf(wrapper);
+            const to = from + (e.key === 'ArrowLeft' ? -1 : 1);
+            e.preventDefault(); e.stopPropagation();
+            // 编辑保存按已有URL、新文件分组；不能移动到另一组而仅改变视觉顺序。
+            if (from < 0 || to < 0 || to >= current.length ||
+                current[to]._imageType !== wrapper._imageType) return;
+            previewContainer.insertBefore(wrapper, to > from ? current[to].nextSibling : current[to]);
+            if (onDrop) onDrop();
+            else if (fileArray) {
+                const [moved] = fileArray.splice(from, 1);
+                fileArray.splice(to, 0, moved);
+            }
+            updateCoverMark(previewContainer);
+            wrapper.focus();
+        };
+
         wrapper.ondragstart = (e) => {
+            if (!canInteract()) { e.preventDefault(); return; }
             e.stopPropagation();
             dragSrcEl = wrapper;
             dragSrcIndex = getWrappers().indexOf(wrapper);
@@ -285,7 +321,8 @@ function setupImageDragSort(previewContainer, fileArray, options = {}) {
             e.stopPropagation();
             const currentWrappers = getWrappers();
             const targetIndex = currentWrappers.indexOf(wrapper);
-            if (targetIndex === dragSrcIndex || dragSrcIndex === -1) return;
+            if (!canInteract() || targetIndex === dragSrcIndex || dragSrcIndex === -1 ||
+                !currentWrappers.includes(dragSrcEl) || wrapper._imageType !== dragSrcEl._imageType) return;
 
             // 移动 DOM 元素
             if (targetIndex > dragSrcIndex) {
@@ -340,45 +377,34 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     const editTags = isEditMode ? (Array.isArray(editPromptData.tags) ? editPromptData.tags : []) : [];
 
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex",
-        flexDirection: "column",
-        gap: "0",
-        color: "#ccc",
-        fontSize: "14px",
-        padding: "0",
-        overflowY: "auto",
-        flex: "1",
-        boxSizing: "border-box"
-    });
+    const fieldLabelStyle = "display: block; font-size: 13px; font-weight: bold; color: var(--rk-text, var(--fg-color, #ddd)); margin-bottom: 8px;";
+    const inputStyle = "";
 
-    const fieldLabelStyle = "display: block; font-size: 13px; font-weight: bold; color: #fff; margin-bottom: 8px;";
-    const inputStyle = "width: 100%; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box; outline: none;";
-
+    container.classList.add("ranking-publish-form");
     container.innerHTML = `
         <!-- 顶部标题栏 -->
-        <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px; border-bottom: 1px solid #444; background: #1a1a1a;">
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <button id="btn-back-publish-prompt" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#667eea'; this.style.borderColor='#667eea'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
+        <div class="ranking-publish-header">
+            <div class="ranking-publish-heading">
+                <button type="button" id="btn-back-publish-prompt" class="ranking-publish-back">
                     ⬅ ${t('common.back')}
                 </button>
-                <span style="font-size: 16px; font-weight: bold; color: #fff;">🧩 ${isEditMode ? t('prompt.edit_title') : t('prompt.publish_title')}</span>
+                <span class="ranking-publish-title">🧩 ${isEditMode ? t('prompt.edit_title') : t('prompt.publish_title')}</span>
             </div>
         </div>
 
         <!-- 表单内容 -->
-        <div style="flex: 1; overflow-y: auto; padding: 15px;">
+        <div class="ranking-publish-body">
             <!-- 类型切换（图像/视频提示词） -->
             <div style="margin-bottom: 15px;">
                 <label style="${fieldLabelStyle}">🎯 ${t('prompt.type_label')}</label>
-                <div style="display: flex; gap: 0; background: #1a1a1a; border: 1px solid #444; border-radius: 6px; overflow: hidden;">
-                    <button id="ptype-image" style="flex: 1; padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;">
+                <div role="group" aria-label="${t('prompt.type_label')}" style="display: flex; gap: 0; background: var(--rk-panel, var(--comfy-input-bg, #292929)); border: 1px solid var(--rk-border, var(--border-color, #444)); border-radius: 6px; overflow: hidden;">
+                    <button id="ptype-image" style="flex: 1; padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;">
                         🎨 ${t('prompt.tab_image')}
                     </button>
-                    <button id="ptype-video" style="flex: 1; padding: 10px; background: transparent; color: #888; border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s; border-left: 1px solid #444;">
+                    <button id="ptype-video" style="flex: 1; padding: 10px; background: transparent; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s; border-left: 1px solid var(--rk-border, var(--border-color, #444));">
                         🎬 ${t('prompt.tab_video')}
                     </button>
-                    <button id="ptype-music" style="flex: 1; padding: 10px; background: transparent; color: #888; border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s; border-left: 1px solid #444;">
+                    <button id="ptype-music" style="flex: 1; padding: 10px; background: transparent; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s; border-left: 1px solid var(--rk-border, var(--border-color, #444));">
                         🎵 ${t('prompt.tab_music')}
                     </button>
                 </div>
@@ -386,61 +412,62 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             <!-- 分类选择 -->
             <div style="margin-bottom: 15px;">
-                <label style="${fieldLabelStyle}">🏷️ ${t('prompt.category_label')} <span style="color: #F44336;">*</span></label>
-                <select id="category-select" style="${inputStyle} cursor: pointer;">
+                <label for="category-select" style="${fieldLabelStyle}">🏷️ ${t('prompt.category_label')} <span style="color: #F44336;">*</span></label>
+                <select id="category-select" class="ranking-publish-input" style="${inputStyle} cursor: pointer;">
                     <option value="">${t('prompt.category_select')}</option>
                 </select>
             </div>
 
             <!-- 🏷️ 标签（自定义 + 推荐快加 + 搜索过滤） -->
             <div style="margin-bottom: 15px;">
-                <label style="${fieldLabelStyle}">🔖 ${t('prompt.tag_label')}</label>
+                <label for="tag-input" style="${fieldLabelStyle}">🔖 ${t('prompt.tag_label')}</label>
                 <div id="tags-selected" style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;"></div>
-                <input type="text" id="tag-input" placeholder="${t('prompt.tag_placeholder')}" maxlength="12" style="${inputStyle}" onfocus="this.style.borderColor='#764ba2'" onblur="this.style.borderColor='#444'">
-                <div style="font-size: 11px; color: #888; margin-top: 6px;">${t('prompt.tag_recommend')}</div>
+                <input type="text" id="tag-input" class="ranking-publish-input" placeholder="${t('prompt.tag_placeholder')}" maxlength="12" style="${inputStyle}">
+                <div style="font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); margin-top: 6px;">${t('prompt.tag_recommend')}</div>
                 <div id="tag-recommend-list" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; max-height: 92px; overflow-y: auto;"></div>
             </div>
 
             <!-- 标题输入 -->
             <div style="margin-bottom: 15px;">
-                <label style="${fieldLabelStyle}">📝 ${t('prompt.title_label')} <span style="color: #F44336;">*</span></label>
-                <input type="text" id="title-input" value="${escapeAttr(editTitle)}" placeholder="${t('prompt.title_placeholder')}" maxlength="50" style="${inputStyle}" onfocus="this.style.borderColor='#764ba2'" onblur="this.style.borderColor='#444'">
-                <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
+                <label for="title-input" style="${fieldLabelStyle}">📝 ${t('prompt.title_label')} <span style="color: #F44336;">*</span></label>
+                <input type="text" id="title-input" class="ranking-publish-input" value="${escapeAttr(editTitle)}" placeholder="${t('prompt.title_placeholder')}" maxlength="50" style="${inputStyle}">
+                <div style="text-align: right; font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); margin-top: 4px;">
                     <span id="title-count">${editTitle.length}</span>/50
                 </div>
             </div>
 
             <!-- 文案/简介输入 -->
             <div style="margin-bottom: 15px;">
-                <label style="${fieldLabelStyle}">✍️ ${t('prompt.content_label')} <span style="color: #F44336;">*</span></label>
-                <textarea id="content-input" placeholder="${t('prompt.content_placeholder')}" maxlength="2000" style="${inputStyle} height: 100px; resize: none; line-height: 1.6;" onfocus="this.style.borderColor='#764ba2'" onblur="this.style.borderColor='#444'">${escapeHtml(editContent)}</textarea>
-                <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
+                <label for="content-input" style="${fieldLabelStyle}">✍️ ${t('prompt.content_label')} <span style="color: #F44336;">*</span></label>
+                <textarea id="content-input" class="ranking-publish-input" placeholder="${t('prompt.content_placeholder')}" maxlength="2000" style="${inputStyle} height: 100px; resize: none; line-height: 1.6;">${escapeHtml(editContent)}</textarea>
+                <div style="text-align: right; font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); margin-top: 4px;">
                     <span id="content-count">${editContent.length}</span>/2000
                 </div>
             </div>
 
             <!-- 提示词正文（付费内容） -->
             <div style="margin-bottom: 15px;">
-                <label style="${fieldLabelStyle}">🔑 ${t('prompt.text_label')} <span style="color: #F44336;">*</span></label>
-                <textarea id="text-input" placeholder="${t('prompt.text_placeholder')}" maxlength="20000" style="${inputStyle} height: 180px; resize: none; line-height: 1.6; font-family: monospace;" onfocus="this.style.borderColor='#764ba2'" onblur="this.style.borderColor='#444'">${escapeHtml(editText)}</textarea>
-                <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
+                <label for="text-input" style="${fieldLabelStyle}">🔑 ${t('prompt.text_label')} <span style="color: #F44336;">*</span></label>
+                <textarea id="text-input" class="ranking-publish-input" placeholder="${t('prompt.text_placeholder')}" maxlength="20000" style="${inputStyle} height: 180px; resize: none; line-height: 1.6; font-family: monospace;">${escapeHtml(editText)}</textarea>
+                <div style="text-align: right; font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); margin-top: 4px;">
                     <span id="text-count">${editText.length}</span>/20000
                 </div>
             </div>
 
             <!-- 价格设置 -->
             <div style="margin-bottom: 15px;">
-                <label style="${fieldLabelStyle}">💎 ${t('prompt.price_label')}</label>
-                <input type="number" id="price-input" value="${editPrice}" min="0" max="10000" step="1" style="${inputStyle}" onfocus="this.style.borderColor='#764ba2'" onblur="this.style.borderColor='#444'">
+                <label for="price-input" style="${fieldLabelStyle}">💎 ${t('prompt.price_label')}</label>
+                <input type="number" id="price-input" class="ranking-publish-input" value="${escapeHtml(String(editPrice))}" min="0" max="${PROMPT_LIMITS.MAX_PRICE}" step="1" aria-describedby="price-error" style="${inputStyle}">
+                <div id="price-error" role="alert" hidden style="color: var(--rk-danger, #ef5350); font-size: 12px; margin-top: 6px;"></div>
             </div>
 
             <!-- 原创作品勾选（参考讨论区） -->
-            <div style="margin-bottom: 15px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 6px;">
+            <div style="margin-bottom: 15px; padding: 12px; background: var(--rk-panel, var(--comfy-input-bg, #292929)); border: 1px solid var(--rk-border, var(--border-color, #444)); border-radius: 6px;">
                 <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                     <input type="checkbox" id="is-original-checkbox" ${editIsOriginal ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #764ba2;" />
-                    <span style="font-size: 13px; color: #ccc;">🎨 ${t('publish.mark_as_original')}</span>
+                    <span style="font-size: 13px; color: var(--rk-text, var(--fg-color, #ddd));">🎨 ${t('publish.mark_as_original')}</span>
                 </label>
-                <div style="font-size: 11px; color: #888; margin-top: 6px; padding-left: 24px;">
+                <div style="font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); margin-top: 6px; padding-left: 24px;">
                     ${t('publish.original_default_hint')}
                 </div>
             </div>
@@ -448,11 +475,11 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             <!-- 图片上传区（图像提示词专用：多图 + 拖拽排序，首张为封面） -->
             <div id="image-upload-section" style="margin-bottom: 15px;">
                 <label style="${fieldLabelStyle}">🖼️ ${t('post.upload_images')} <span style="color: #F44336;">*</span>
-                    <span style="font-weight: normal; color: #888; font-size: 12px;">（${t('post.max_9_images')}）</span>
+                    <span style="font-weight: normal; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 12px;">（${t('post.max_9_images')}）</span>
                 </label>
                 <input type="file" id="images-input" accept="image/*" multiple style="display: none;">
-                <div id="images-preview" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 80px; padding: 15px; background: #1a1a1a; border: 2px dashed #444; border-radius: 8px; cursor: pointer; transition: 0.2s;">
-                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: #666; font-size: 13px;">
+                <div id="images-preview" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 80px; padding: 15px; background: var(--rk-panel, var(--comfy-input-bg, #292929)); border: 2px dashed var(--rk-border, var(--border-color, #444)); border-radius: 8px; cursor: pointer; transition: 0.2s;">
+                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 13px;">
                         <div style="font-size: 32px; margin-bottom: 8px;">📷</div>
                         ${t('post.click_upload')}
                     </div>
@@ -461,35 +488,35 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             <!-- 视频上传区（视频提示词专用：截取当前帧或手动上传封面） -->
             <div id="video-upload-section" style="margin-bottom: 20px; display: none;">
-                <label style="${fieldLabelStyle}">🎬 ${t('prompt.video_label')} <span id="video-required-mark" style="color: #F44336;">*</span><span id="video-optional-mark" style="color: #888; font-weight: normal; font-size: 12px; display: none;">${t('prompt.optional_mark')}</span></label>
+                <label style="${fieldLabelStyle}">🎬 ${t('prompt.video_label')} <span id="video-required-mark" style="color: #F44336;">*</span><span id="video-optional-mark" style="color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-weight: normal; font-size: 12px; display: none;">${t('prompt.optional_mark')}</span></label>
                 <input type="file" id="video-input" accept="video/mp4,video/webm,video/quicktime" style="display: none;">
-                <div id="video-preview-area" style="padding: 15px; background: #1a1a1a; border: 2px dashed #444; border-radius: 8px; cursor: pointer; transition: 0.2s;">
-                    <div id="video-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: #666; font-size: 13px;">
+                <div id="video-preview-area" style="padding: 15px; background: var(--rk-panel, var(--comfy-input-bg, #292929)); border: 2px dashed var(--rk-border, var(--border-color, #444)); border-radius: 8px; cursor: pointer; transition: 0.2s;">
+                    <div id="video-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 13px;">
                         <div style="font-size: 32px; margin-bottom: 8px;">🎬</div>
                         ${t('post.click_upload_video')}
                     </div>
                     <div id="video-player-wrap" style="display: none;">
                         <video id="video-player" controls style="width: 100%; max-height: 300px; border-radius: 8px; background: #000; display: block;"></video>
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px;">
-                            <div style="font-size: 12px; color: #aaa; line-height: 1.5;">
+                            <div style="font-size: 12px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); line-height: 1.5;">
                                 <div id="video-name"></div>
                                 <div id="video-meta"></div>
                             </div>
-                            <button id="btn-remove-video" style="width: 28px; height: 28px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 16px; line-height: 1; flex-shrink: 0;">×</button>
+                            <button id="btn-remove-video" style="width: 28px; height: 28px; border-radius: 50%; background: #F44336; color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 16px; line-height: 1; flex-shrink: 0;">×</button>
                         </div>
                         <!-- 封面区域（截取当前帧 / 手动上传） -->
                         <div id="video-cover-wrap" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color, #333);">
-                            <div style="font-size: 12px; font-weight: bold; color: #fff; margin-bottom: 8px;">${t('post.video_cover')}</div>
-                            <div style="display: flex; align-items: center; gap: 12px;">
+                            <div style="font-size: 12px; font-weight: bold; color: var(--rk-text, var(--fg-color, #ddd)); margin-bottom: 8px;">${t('post.video_cover')}</div>
+                            <div class="ranking-publish-cover-controls">
                                 <div style="position: relative; width: 80px; height: 80px; flex-shrink: 0;">
                                     <img id="cover-thumb" src="" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid #4CAF50; display: none;">
-                                    <span id="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px; display: none;">${t('post.cover')}</span>
+                                    <span id="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: var(--rk-on-accent, #fff); font-size: 10px; padding: 2px 6px; border-radius: 3px; display: none;">${t('post.cover')}</span>
                                 </div>
                                 <div style="display: flex; flex-direction: column; gap: 6px;">
-                                    <button id="btn-capture-frame" style="padding: 6px 12px; background: #333; border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
+                                    <button type="button" id="btn-capture-frame" class="ranking-publish-secondary">
                                         📸 ${t('post.capture_frame')}
                                     </button>
-                                    <button id="btn-upload-cover" style="padding: 6px 12px; background: #333; border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='#333'">
+                                    <button type="button" id="btn-upload-cover" class="ranking-publish-secondary">
                                         🖼️ ${t('post.upload_cover')}
                                     </button>
                                     <input type="file" id="cover-input" accept="image/*" style="display: none;">
@@ -503,28 +530,28 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             <!-- 🎵 音频上传区（音乐提示词专用：图片+音频方案，视频可选） -->
             <div id="audio-upload-section" style="margin-bottom: 20px; display: none;">
                 <label style="${fieldLabelStyle}">🎵 ${t('prompt.audio_label')} <span style="color: #F44336;">*</span></label>
-                <div style="font-size: 11px; color: #888; margin: -4px 0 8px; line-height: 1.5;">${t('prompt.music_media_hint')}</div>
+                <div style="font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); margin: -4px 0 8px; line-height: 1.5;">${t('prompt.music_media_hint')}</div>
                 <input type="file" id="audio-input" accept="audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,audio/ogg,.mp3,.wav,.m4a,.ogg" style="display: none;">
-                <div id="audio-preview-area" style="padding: 15px; background: #1a1a1a; border: 2px dashed #444; border-radius: 8px; cursor: pointer; transition: 0.2s;">
-                    <div id="audio-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: #666; font-size: 13px;">
+                <div id="audio-preview-area" style="padding: 15px; background: var(--rk-panel, var(--comfy-input-bg, #292929)); border: 2px dashed var(--rk-border, var(--border-color, #444)); border-radius: 8px; cursor: pointer; transition: 0.2s;">
+                    <div id="audio-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 13px;">
                         <div style="font-size: 32px; margin-bottom: 8px;">🎵</div>
                         ${t('post.click_upload_audio')}
                     </div>
                     <div id="audio-player-wrap" style="display: none;">
                         <audio id="audio-player" controls style="width: 100%; display: block;"></audio>
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px;">
-                            <div style="font-size: 12px; color: #aaa; line-height: 1.5;">
+                            <div style="font-size: 12px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); line-height: 1.5;">
                                 <div id="audio-name"></div>
                                 <div id="audio-meta"></div>
                             </div>
-                            <button id="btn-remove-audio" style="width: 28px; height: 28px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 16px; line-height: 1; flex-shrink: 0;">×</button>
+                            <button id="btn-remove-audio" style="width: 28px; height: 28px; border-radius: 50%; background: #F44336; color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 16px; line-height: 1; flex-shrink: 0;">×</button>
                         </div>
                     </div>
                 </div>
             </div>
 
             <!-- 提示信息 -->
-            <div style="background: rgba(102,126,234,0.1); border: 1px solid rgba(102,126,234,0.3); border-radius: 6px; padding: 12px; font-size: 12px; color: #aaa; line-height: 1.6;">
+            <div style="background: rgba(102,126,234,0.1); border: 1px solid rgba(102,126,234,0.3); border-radius: 6px; padding: 12px; font-size: 12px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); line-height: 1.6;">
                 💡 <strong>${t('prompt.notice_title')}：</strong><br>
                 • ${t('prompt.notice_1')}<br>
                 • ${t('prompt.notice_2')}<br>
@@ -532,7 +559,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             </div>
 
             <!-- 确认发布按钮 -->
-            <button id="btn-submit-prompt" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; color: #fff; border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: bold; transition: 0.2s; margin-top: 15px; margin-bottom: 5px;">
+            <button id="btn-submit-prompt" style="width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; color: var(--rk-on-accent, #fff); border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: bold; transition: 0.2s; margin-top: 15px; margin-bottom: 5px;">
                 ${isEditMode ? '💾' : '🚀'} ${isEditMode ? t('prompt.save_submit') : t('prompt.publish_submit')}
             </button>
         </div>
@@ -553,6 +580,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     let audioObjectUrl = null;
     let currentAudioUrl = editAudioUrl;
     let categoriesLoaded = false;
+    let categoryGeneration = 0;
     let selectedTags = [...editTags];      // 已选标签
     let recommendTags = [];                // 全站推荐标签 [{name, count}]
 
@@ -577,6 +605,15 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     const contentInput = container.querySelector("#content-input");
     const textInput = container.querySelector("#text-input");
     const priceInput = container.querySelector("#price-input");
+    const priceError = container.querySelector("#price-error");
+    priceInput.addEventListener("input", () => {
+        if (!scope.isCurrent()) return;
+        if (parsePromptPrice(priceInput.value) !== null) {
+            priceError.hidden = true;
+            priceError.textContent = "";
+            priceInput.removeAttribute("aria-invalid");
+        }
+    });
     const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
     const imageSection = container.querySelector("#image-upload-section");
     const imagesInput = container.querySelector("#images-input");
@@ -608,6 +645,65 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     const videoRequiredMark = container.querySelector("#video-required-mark");
     const videoOptionalMark = container.querySelector("#video-optional-mark");
     const submitBtn = container.querySelector("#btn-submit-prompt");
+    const account = currentUser?.account;
+    const scope = createPublishSubmissionScope(container, submitBtn, account);
+    const editingLock = createPublishEditingLock(container, [submitBtn, container.querySelector("#btn-back-publish-prompt")]);
+    scope.addCleanup(() => editingLock.dispose());
+    const previewReaders = new Set(), temporaryVideos = new Map();
+    const metadataTimers = new Map();
+    function releaseVideoMetadata(video) {
+        const url = temporaryVideos.get(video);
+        if (!temporaryVideos.has(video)) return;
+        clearTimeout(metadataTimers.get(video)); metadataTimers.delete(video);
+        temporaryVideos.delete(video); video.onloadedmetadata = video.onerror = null;
+        try { video.pause(); video.removeAttribute('src'); video.load(); } catch {}
+        URL.revokeObjectURL(url);
+    }
+    let videoGeneration = 0, coverGeneration = 0, coverController = null;
+    let manualCoverController = null;
+    function invalidateVideoSelection() {
+        videoGeneration++; coverGeneration++;
+        coverController?.abort(); coverController = null;
+        manualCoverController?.abort();
+        videoPlayer.onloadeddata = null;
+        for (const video of temporaryVideos.keys()) releaseVideoMetadata(video);
+        return videoGeneration;
+    }
+    let imageSelectionController = null;
+    let imagePreviewGeneration = 0;
+    const previewTimers = new Map();
+    function finishPreviewReader(reader) {
+        clearTimeout(previewTimers.get(reader)); previewTimers.delete(reader);
+        previewReaders.delete(reader); reader.onload = reader.onerror = reader.onabort = null;
+    }
+    function beginImagePreviews() {
+        const generation = ++imagePreviewGeneration;
+        for (const reader of previewReaders) { try { reader.abort(); } catch {} finally { finishPreviewReader(reader); } }
+        previewReaders.clear();
+        return generation;
+    }
+
+    scope.addCleanup(() => {
+        imageSelectionController?.abort();
+        coverController?.abort(); coverController = null;
+        manualCoverController?.abort();
+        for (const reader of previewReaders) { try { reader.abort(); } catch {} finally { finishPreviewReader(reader); } }
+        previewReaders.clear();
+        for (const video of temporaryVideos.keys()) releaseVideoMetadata(video);
+        videoPlayer.onloadeddata = null;
+        try { videoPlayer.pause(); videoPlayer.removeAttribute('src'); videoPlayer.load(); } catch {}
+        for (const url of [videoObjectUrl, coverObjectUrl, audioObjectUrl]) if (url) URL.revokeObjectURL(url);
+        videoObjectUrl = coverObjectUrl = audioObjectUrl = null;
+        imageFiles = []; existingImageUrls = [];
+        videoFile = videoCoverFile = audioFile = null; currentVideoUrl = currentCoverUrl = currentAudioUrl = '';
+        selectedTags = []; recommendTags = [];
+        try { audioPlayer.pause(); audioPlayer.removeAttribute('src'); audioPlayer.load(); } catch {}
+        container.querySelectorAll('input, textarea, select').forEach(input => { input.value = ''; input.disabled = true; });
+        container.querySelectorAll('button').forEach(button => { button.disabled = true; });
+        const status = document.createElement('p'); status.setAttribute('role', 'status');
+        status.textContent = t('auth.session_changed'); container.replaceChildren(status);
+    });
+
 
     // 防止图片预览区拖拽冒泡到 ComfyUI 画布
     if (imagesPreview) {
@@ -617,6 +713,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
     // ========== 返回按钮（有未保存内容时提醒确认） ==========
     container.querySelector("#btn-back-publish-prompt").onclick = async () => {
+        if (!scope.isCurrent()) return;
         const titleVal = titleInput.value.trim();
         const contentVal = contentInput.value.trim();
         const textVal = textInput.value.trim();
@@ -636,30 +733,35 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
                     title: isEditMode ? t('publish.unsaved_changes_title') : t('publish.leave_confirm_title'),
                     confirmText: t('common.leave'),
                     cancelText: t('common.stay'),
-                    type: 'warning'
+                    type: 'warning', signal: scope.confirmationSignal
                 }
             );
-            if (!confirmed) return;
+            if (!scope.isCurrent() || !confirmed) return;
         }
 
+        scope.dispose();
         window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
 
     // ========== 字数统计 ==========
-    titleInput.oninput = () => { container.querySelector("#title-count").textContent = titleInput.value.length; };
-    contentInput.oninput = () => { container.querySelector("#content-count").textContent = contentInput.value.length; };
-    textInput.oninput = () => { container.querySelector("#text-count").textContent = textInput.value.length; };
+    titleInput.oninput = () => {
+        if (!scope.isCurrent()) return; container.querySelector("#title-count").textContent = titleInput.value.length; };
+    contentInput.oninput = () => {
+        if (!scope.isCurrent()) return; container.querySelector("#content-count").textContent = contentInput.value.length; };
+    textInput.oninput = () => {
+        if (!scope.isCurrent()) return; container.querySelector("#text-count").textContent = textInput.value.length; };
 
     // ========== 类型切换 ==========
     function updateTypeUI() {
+        for (const [button, type] of [[ptypeImageBtn, 'image'], [ptypeVideoBtn, 'video'], [ptypeMusicBtn, 'music']]) button.setAttribute('aria-pressed', String(promptType === type));
         // 先重置三个按钮样式，再高亮当前选中项
         [ptypeImageBtn, ptypeVideoBtn, ptypeMusicBtn].forEach(btn => {
             btn.style.background = 'transparent';
-            btn.style.color = '#888';
+            btn.style.color = 'var(--rk-muted, var(--descrip-text, #a4a4a4))';
         });
         const activeBtn = promptType === 'image' ? ptypeImageBtn : (promptType === 'music' ? ptypeMusicBtn : ptypeVideoBtn);
         activeBtn.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-        activeBtn.style.color = '#fff';
+        activeBtn.style.color = 'var(--rk-on-accent, #fff)';
         // 图像区：图像提示词 + 音乐提示词（图片+音频方案）；视频区：视频/音乐；音频区：仅音乐
         imageSection.style.display = promptType === 'video' ? 'none' : 'block';
         videoSection.style.display = promptType === 'image' ? 'none' : 'block';
@@ -670,7 +772,11 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     }
 
     function switchPromptType(type) {
+        if (!scope.isCurrent()) return;
         if (promptType === type) return;
+        fieldErrors.clearAll();
+        imageSelectionController?.abort();
+        invalidateVideoSelection();
         promptType = type;
         // 清空另一类型的用户新选文件，防止混合；编辑模式下的已有URL数据保留
         if (type === 'image') {
@@ -715,6 +821,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
     // 🎵 音乐提示词：视频与「图片+音频」二选一，选定一组自动清空另一组
     function clearMusicVideoState() {
+        invalidateVideoSelection();
         videoFile = null;
         videoCoverFile = null;
         videoDuration = 0;
@@ -725,6 +832,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     }
 
     function clearMusicImageAudioState() {
+        imageSelectionController?.abort();
         imageFiles = [];
         existingImageUrls = [];
         audioFile = null;
@@ -740,20 +848,28 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
     // ========== 分类加载 ==========
     async function loadCategories() {
+        const generation = ++categoryGeneration, requestType = promptType;
+        categorySelect.innerHTML = `<option value="">${t('prompt.category_select')}</option>`;
         try {
-            const res = await api.getPromptCategories(promptType);
-            const categories = res.data || res || [];
+            const res = await api.getPromptCategories(requestType);
+            if (!scope.isCurrent() || generation !== categoryGeneration || requestType !== promptType) return;
+            const categories = Array.isArray(res) ? res : res?.data;
+            if (!Array.isArray(categories) || categories.some(cat => typeof cat !== 'string' || !cat.trim()) ||
+                (res?.status !== undefined && res.status !== 'success')) {
+                throw new Error('Invalid prompt categories');
+            }
             categorySelect.innerHTML = `<option value="">${t('prompt.category_select')}</option>`;
             categories.forEach(cat => {
                 const opt = document.createElement("option");
                 opt.value = cat;
                 opt.textContent = tIfExists('promptcat.' + cat, cat);
-                if (cat === editCategory && !categoriesLoaded) opt.selected = true;
+                if (cat === editCategory && requestType === editType && !categoriesLoaded) opt.selected = true;
                 categorySelect.appendChild(opt);
             });
-            categoriesLoaded = true;
+            if (requestType === editType) categoriesLoaded = true;
         } catch (err) {
-            console.error("加载分类失败:", err);
+            if (!scope.isCurrent() || generation !== categoryGeneration || requestType !== promptType) return;
+            console.error("提示词分类加载失败");
             showToast(t('prompt.category_load_failed'), "warning");
         }
     }
@@ -768,7 +884,8 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             const rm = document.createElement("button");
             rm.textContent = "×";
             rm.style.cssText = "background: none; border: none; color: #4DD0E1; cursor: pointer; font-size: 13px; line-height: 1; padding: 0;";
-            rm.onclick = () => { selectedTags = selectedTags.filter(x => x !== tag); renderSelectedTags(); renderRecommendTags(); };
+            rm.onclick = () => {
+        if (!scope.isCurrent()) return; selectedTags = selectedTags.filter(x => x !== tag); renderSelectedTags(); renderRecommendTags(); };
             chip.appendChild(rm);
             tagsSelectedEl.appendChild(chip);
         });
@@ -783,7 +900,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             .slice(0, 20);
         tagRecommendList.innerHTML = "";
         if (!list.length) {
-            tagRecommendList.innerHTML = `<span style="font-size: 11px; color: #666;">${t('prompt.tag_no_recommend')}</span>`;
+            tagRecommendList.innerHTML = `<span style="font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4));">${t('prompt.tag_no_recommend')}</span>`;
             return;
         }
         list.forEach(name => {
@@ -796,6 +913,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     }
 
     function addTag(name) {
+        if (!scope.isCurrent()) return;
         const clean = (name || "").trim().slice(0, 12);
         if (!clean) return;
         if (selectedTags.length >= 10) { showToast(t('prompt.tag_max'), "warning"); return; }
@@ -807,25 +925,30 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     }
 
     tagInput.onkeydown = (e) => {
+        if (!scope.isCurrent()) return;
         if (e.key === "Enter") { e.preventDefault(); addTag(tagInput.value); }
     };
-    tagInput.oninput = () => renderRecommendTags();
+    tagInput.oninput = () => { if (scope.isCurrent()) renderRecommendTags(); };
 
     async function loadRecommendTags() {
         try {
             const res = await api.getPromptTags();
+            if (!scope.isCurrent()) return;
             recommendTags = res.data || res || [];
             renderRecommendTags();
         } catch (err) {
-            console.error("加载推荐标签失败:", err);
+            if (!scope.isCurrent()) return;
+            console.error("提示词推荐标签加载失败");
         }
     }
 
     // ========== 多图上传（图像提示词专用：最多9张 + 拖拽排序，首张为封面） ==========
-    imagesInput.onchange = (e) => {
+    imagesInput.onchange = async (e) => {
+        if (!scope.isCurrent() || imageSelectionController || manualCoverController) return;
         const files = Array.from(e.target.files);
+        imagesInput.value = '';
         const totalImages = existingImageUrls.length + imageFiles.length;
-        const remaining = 9 - totalImages;
+        const remaining = PUBLISH_MEDIA_LIMITS.MAX_IMAGES - totalImages;
 
         if (remaining <= 0) {
             showToast(t('post.max_9_images'), "warning");
@@ -837,40 +960,69 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
         imagesInput.value = '';
         if (toAdd.length === 0) return;
 
-        imageFiles = [...imageFiles, ...toAdd];
+        const controller = new AbortController(); imageSelectionController = controller;
+        const cancel = () => controller.abort();
+        scope.confirmationSignal.addEventListener('abort', cancel, { once: true });
+        const inputDisabled = imagesInput.disabled, submitDisabled = submitBtn.disabled;
+        imagesInput.disabled = true; submitBtn.disabled = true; imagesInput.setAttribute('aria-busy', 'true');
+        try {
+            const accepted = [];
+            for (const file of toAdd) {
+                if (!scope.isCurrent() || controller.signal.aborted) return;
+                try {
+                    const processed = await compressImage(file, { signal: controller.signal });
+                    if (!scope.isCurrent() || controller.signal.aborted) return;
+                    accepted.push(processed);
+                } catch (error) {
+                    if (!scope.isCurrent() || controller.signal.aborted) return;
+                }
+            }
+            if (accepted.length !== toAdd.length) showToast(t('post.image_invalid_file'), 'warning');
+            if (!accepted.length) return;
+            imageFiles = [...imageFiles, ...accepted];
 
-        // 🎵 音乐二选一：选定图片后自动清空视频
-        if (promptType === 'music' && (videoFile || currentVideoUrl)) {
-            clearMusicVideoState();
-            showToast(t('post.media_exclusive'), "info");
-        }
+            // 🎵 音乐二选一：选定图片后自动清空视频
+            if (promptType === 'music' && (videoFile || currentVideoUrl)) {
+                clearMusicVideoState();
+                showToast(t('post.media_exclusive'), "info");
+            }
 
-        if (isEditMode) {
-            renderExistingImagePreviews();
-        } else {
-            renderImagePreviews();
+            if (isEditMode) {
+                renderExistingImagePreviews();
+            } else {
+                renderImagePreviews();
+            }
+        } finally {
+            scope.confirmationSignal.removeEventListener('abort', cancel);
+            if (imageSelectionController === controller) imageSelectionController = null;
+            if (scope.isCurrent()) {
+                imagesInput.disabled = inputDisabled; submitBtn.disabled = submitDisabled;
+                imagesInput.removeAttribute('aria-busy');
+            }
         }
     };
 
     // 渲染已有图片预览（编辑模式：已有URL与新文件混排）
     function renderExistingImagePreviews() {
+        const generation = beginImagePreviews();
         const totalImages = existingImageUrls.length + imageFiles.length;
 
         if (totalImages === 0) {
             imagesPreview.innerHTML = `
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: #666; font-size: 13px;">
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 13px;">
                     <div style="font-size: 32px; margin-bottom: 8px;">📷</div>
                     ${t('post.click_upload')}
                 </div>
             `;
-            imagesPreview.onclick = () => imagesInput.click();
+            setPublishFilePickerAction(imagesPreview, () => { if (scope.isCurrent()) imagesInput.click(); });
             return;
         }
 
         imagesPreview.innerHTML = "";
-        imagesPreview.onclick = null;
+        setPublishFilePickerAction(imagesPreview, null);
 
         const onDropReorder = () => {
+            if (!scope.isCurrent()) return;
             const wrappers = Array.from(imagesPreview.children).filter(c => c.querySelector('img'));
             const newExisting = [];
             const newFiles = [];
@@ -887,106 +1039,155 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
 
             wrapper.innerHTML = `
-                <img src="${escapeAttr(url)}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-                ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
-                <button data-action="remove" data-existing-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+                <img src="${escapeAttr(url)}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : 'var(--rk-border, var(--border-color, #444))'};">
+                ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: var(--rk-on-accent, #fff); font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
+                <button data-action="remove" data-existing-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; background: #F44336; color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
             `;
 
             wrapper._imageType = 'existing';
             wrapper._imageData = url;
 
             wrapper.querySelector("button").onclick = _createRemoveButtonHandler(() => {
+                if (!scope.isCurrent()) return;
                 existingImageUrls = existingImageUrls.filter(u => u !== url);
                 renderExistingImagePreviews();
-            });
+            }, { previewContainer: imagesPreview, wrapper, focusEmpty: imagesPreview,
+                canInteract: () => scope.isCurrent() && !imagesInput.disabled && !submitBtn.disabled });
 
             imagesPreview.appendChild(wrapper);
         });
 
-        setupImageDragSort(imagesPreview, null, { onDrop: onDropReorder });
+        setupImageDragSort(imagesPreview, null, { onDrop: onDropReorder, focusEmpty: imagesPreview,
+            canInteract: () => scope.isCurrent() && !imagesInput.disabled && !submitBtn.disabled });
 
         imageFiles.forEach((file, idx) => {
             const reader = new FileReader();
-            reader.onload = (e) => {
-                const wrapper = document.createElement("div");
-                Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
-                wrapper.innerHTML = `
-                    <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${existingImageUrls.length === 0 && idx === 0 ? '#4CAF50' : '#444'};">
-                    ${existingImageUrls.length === 0 && idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
-                    <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
-                `;
+            previewReaders.add(reader);
+            reader.onabort = () => finishPreviewReader(reader);
+            const wrapper = document.createElement("div");
+            Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
+            wrapper.innerHTML = `
+                <img src="" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${existingImageUrls.length === 0 && idx === 0 ? '#4CAF50' : 'var(--rk-border, var(--border-color, #444))'};">
+                ${existingImageUrls.length === 0 && idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: var(--rk-on-accent, #fff); font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
+                <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; background: #F44336; color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+            `;
 
-                wrapper._imageType = 'file';
-                wrapper._imageData = file;
+            wrapper.querySelector('img').removeAttribute('src');
+            wrapper._imageType = 'file';
+            wrapper._imageData = file;
 
-                wrapper.querySelector("button").onclick = _createRemoveButtonHandler(() => {
-                    imageFiles = imageFiles.filter(f => f !== file);
-                    renderExistingImagePreviews();
-                });
+            wrapper.querySelector("button").onclick = _createRemoveButtonHandler(() => {
+                if (!scope.isCurrent()) return;
+                imageFiles = imageFiles.filter(f => f !== file);
+                renderExistingImagePreviews();
+            }, { previewContainer: imagesPreview, wrapper, focusEmpty: imagesPreview,
+                canInteract: () => scope.isCurrent() && !imagesInput.disabled && !submitBtn.disabled });
 
-                imagesPreview.appendChild(wrapper);
-                setupImageDragSort(imagesPreview, null, { onDrop: onDropReorder });
+            imagesPreview.appendChild(wrapper);
+            setupImageDragSort(imagesPreview, null, { onDrop: onDropReorder, focusEmpty: imagesPreview,
+            canInteract: () => scope.isCurrent() && !imagesInput.disabled && !submitBtn.disabled });
+            reader.onerror = () => {
+                if (!previewReaders.has(reader)) return;
+                finishPreviewReader(reader);
+                if (!scope.isCurrent() || generation !== imagePreviewGeneration) return;
+                wrapper.querySelector('img').alt = t('post.image_preview_failed');
+                wrapper.title = t('post.image_preview_failed');
             };
-            reader.readAsDataURL(file);
+            reader.onload = (e) => {
+                if (!previewReaders.has(reader)) return;
+                finishPreviewReader(reader);
+                if (!scope.isCurrent() || generation !== imagePreviewGeneration) return;
+                wrapper.querySelector('img').src = e.target.result;
+            };
+            previewTimers.set(reader, setTimeout(() => {
+                if (!previewReaders.has(reader)) return;
+                reader.onerror?.(); try { reader.abort(); } catch {}
+            }, IMAGE_PROCESS.TIMEOUT));
+            try { reader.readAsDataURL(file); } catch { reader.onerror?.(); }
         });
 
-        if (totalImages < 9) {
-            imagesPreview.appendChild(_createAddButton(imagesInput));
+        if (totalImages < PUBLISH_MEDIA_LIMITS.MAX_IMAGES) {
+            imagesPreview.appendChild(_createAddButton(imagesInput, scope));
         }
     }
 
     // 渲染图片预览（新建模式）
     function renderImagePreviews() {
+        const generation = beginImagePreviews();
         if (imageFiles.length === 0) {
             imagesPreview.innerHTML = `
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: #666; font-size: 13px;">
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 13px;">
                     <div style="font-size: 32px; margin-bottom: 8px;">📷</div>
                     ${t('post.click_upload')}
                 </div>
             `;
-            imagesPreview.onclick = () => imagesInput.click();
+            setPublishFilePickerAction(imagesPreview, () => { if (scope.isCurrent()) imagesInput.click(); });
             return;
         }
 
         imagesPreview.innerHTML = "";
-        imagesPreview.onclick = null;
+        setPublishFilePickerAction(imagesPreview, null);
 
         imageFiles.forEach((file, idx) => {
             const reader = new FileReader();
-            reader.onload = (e) => {
-                const wrapper = document.createElement("div");
-                Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
+            previewReaders.add(reader);
+            reader.onabort = () => finishPreviewReader(reader);
+            const wrapper = document.createElement("div");
+            Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
 
-                wrapper.innerHTML = `
-                    <img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-                    ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
-                    <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
-                `;
+            wrapper.innerHTML = `
+                <img src="" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : 'var(--rk-border, var(--border-color, #444))'};">
+                ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: var(--rk-on-accent, #fff); font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
+                <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; background: #F44336; color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+            `;
 
-                wrapper._imageType = 'file';
-                wrapper._imageData = file;
+            wrapper.querySelector('img').removeAttribute('src');
+            wrapper._imageType = 'file';
+            wrapper._imageData = file;
 
-                imagesPreview.appendChild(wrapper);
-                setupImageDragSort(imagesPreview, imageFiles, {
-                    onRemove: (wrapper) => {
-                        const idx = imageFiles.indexOf(wrapper._imageData);
-                        if (idx >= 0) imageFiles.splice(idx, 1);
-                        renderImagePreviews();
-                    }
-                });
+            imagesPreview.appendChild(wrapper);
+            setupImageDragSort(imagesPreview, imageFiles, {
+                focusEmpty: imagesPreview,
+                canInteract: () => scope.isCurrent() && !imagesInput.disabled && !submitBtn.disabled,
+                onRemove: (wrapper) => {
+                    if (!scope.isCurrent()) return;
+                    const idx = imageFiles.indexOf(wrapper._imageData);
+                    if (idx >= 0) imageFiles.splice(idx, 1);
+                    renderImagePreviews();
+                }
+            });
+            reader.onerror = () => {
+                if (!previewReaders.has(reader)) return;
+                finishPreviewReader(reader);
+                if (!scope.isCurrent() || generation !== imagePreviewGeneration) return;
+                wrapper.querySelector('img').alt = t('post.image_preview_failed');
+                wrapper.title = t('post.image_preview_failed');
             };
-            reader.readAsDataURL(file);
+            reader.onload = (e) => {
+                if (!previewReaders.has(reader)) return;
+                finishPreviewReader(reader);
+                if (!scope.isCurrent() || generation !== imagePreviewGeneration) return;
+                wrapper.querySelector('img').src = e.target.result;
+            };
+            previewTimers.set(reader, setTimeout(() => {
+                if (!previewReaders.has(reader)) return;
+                reader.onerror?.(); try { reader.abort(); } catch {}
+            }, IMAGE_PROCESS.TIMEOUT));
+            try { reader.readAsDataURL(file); } catch { reader.onerror?.(); }
         });
 
-        if (imageFiles.length < 9) {
-            imagesPreview.appendChild(_createAddButton(imagesInput));
+        if (imageFiles.length < PUBLISH_MEDIA_LIMITS.MAX_IMAGES) {
+            imagesPreview.appendChild(_createAddButton(imagesInput, scope));
         }
     }
 
     // ========== 视频上传（视频提示词专用：截帧封面 / 手动上传封面） ==========
     videoInput.onchange = (e) => {
+        if (!scope.isCurrent()) return;
         const file = e.target.files?.[0];
         if (!file) return;
+        const generation = invalidateVideoSelection();
+        const initialCoverGeneration = coverGeneration;
 
         const validTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
         const validExts = ['.mp4', '.webm', '.mov'];
@@ -997,8 +1198,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             return;
         }
 
-        const MAX_SIZE = 100 * 1024 * 1024;
-        if (file.size > MAX_SIZE) {
+        if (!Number.isSafeInteger(file.size) || file.size <= 0 || file.size > PUBLISH_MEDIA_LIMITS.VIDEO_MAX_BYTES) {
             showToast(t('post.error_video_size'), "warning");
             videoInput.value = '';
             return;
@@ -1008,47 +1208,59 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
         const tempVideo = document.createElement('video');
         tempVideo.preload = 'metadata';
         const tempUrl = URL.createObjectURL(file);
-        tempVideo.src = tempUrl;
+        temporaryVideos.set(tempVideo, tempUrl);
 
         tempVideo.onloadedmetadata = () => {
-            URL.revokeObjectURL(tempUrl);
-            if (tempVideo.duration > 180) {
+            if (!scope.isCurrent() || generation !== videoGeneration || !temporaryVideos.has(tempVideo)) return;
+            const duration = tempVideo.duration;
+            releaseVideoMetadata(tempVideo);
+            if (!Number.isFinite(duration) || duration <= 0) {
+                showToast(t('post.error_video_load'), "warning");
+                videoInput.value = '';
+                return;
+            }
+            if (duration > PUBLISH_MEDIA_LIMITS.VIDEO_MAX_SECONDS) {
                 showToast(t('post.error_video_duration'), "warning");
                 videoInput.value = '';
                 return;
             }
 
-            videoDuration = tempVideo.duration;
+            videoDuration = duration;
             // 🎵 音乐二选一：选定视频后自动清空图片+音频
             if (promptType === 'music' && (imageFiles.length || existingImageUrls.length || audioFile || currentAudioUrl)) {
                 clearMusicImageAudioState();
                 showToast(t('post.media_exclusive'), "info");
             }
             videoFile = file;
-            videoCoverFile = null;
+            if (initialCoverGeneration === coverGeneration) { videoCoverFile = null; currentCoverUrl = ''; }
             if (videoObjectUrl) { URL.revokeObjectURL(videoObjectUrl); videoObjectUrl = null; }
             videoObjectUrl = URL.createObjectURL(file);
             currentVideoUrl = '';
-            currentCoverUrl = '';
             renderVideoPreview();
             videoInput.value = '';
         };
 
         tempVideo.onerror = () => {
-            URL.revokeObjectURL(tempUrl);
+            if (!scope.isCurrent() || generation !== videoGeneration || !temporaryVideos.has(tempVideo)) return;
+            releaseVideoMetadata(tempVideo);
             showToast(t('post.error_video_load'), "warning");
             videoInput.value = '';
         };
+        metadataTimers.set(tempVideo, setTimeout(() => {
+            if (temporaryVideos.has(tempVideo)) tempVideo.onerror?.();
+        }, PUBLISH_MEDIA_LIMITS.VIDEO_METADATA_TIMEOUT));
+        tempVideo.src = tempUrl;
     };
 
     // 渲染视频预览（首次加载视频数据时自动生成封面）
     function renderVideoPreview() {
+        const generation = videoGeneration;
         if (!videoFile && !currentVideoUrl) {
             videoEmptyState.style.display = 'flex';
             videoPlayerWrap.style.display = 'none';
             videoPreviewArea.style.borderStyle = 'dashed';
             videoPreviewArea.style.cursor = 'pointer';
-            videoPreviewArea.onclick = () => videoInput.click();
+            setPublishFilePickerAction(videoPreviewArea, () => { if (scope.isCurrent()) videoInput.click(); });
             videoCoverWrap.style.display = 'none';
             return;
         }
@@ -1057,14 +1269,14 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
         videoPlayerWrap.style.display = 'block';
         videoPreviewArea.style.borderStyle = 'solid';
         videoPreviewArea.style.cursor = 'default';
-        videoPreviewArea.onclick = null;
+        setPublishFilePickerAction(videoPreviewArea, null);
 
         const src = videoObjectUrl || currentVideoUrl;
         videoPlayer.src = src;
 
         if (videoFile) {
             videoNameEl.textContent = videoFile.name;
-            videoMetaEl.textContent = `${formatFileSize(videoFile.size)} · ${Math.round(videoDuration)}秒`;
+            videoMetaEl.textContent = `${formatFileSize(videoFile.size)} · ${Math.round(videoDuration)} ${t('common.seconds')}`;
         } else if (currentVideoUrl) {
             videoNameEl.textContent = t('post.existing_video');
             videoMetaEl.textContent = '';
@@ -1072,8 +1284,11 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
         // 自动生成封面（首次加载视频数据时）
         videoPlayer.onloadeddata = async () => {
-            if (!videoCoverFile && !currentCoverUrl) {
+            if (!scope.isCurrent() || generation !== videoGeneration) return;
+            if (!videoCoverFile && !currentCoverUrl && !manualCoverController) {
+                const coverRequest = ++coverGeneration;
                 const cover = await generateCoverFromVideo(videoPlayer);
+                if (!scope.isCurrent() || generation !== videoGeneration || coverRequest !== coverGeneration) return;
                 if (cover) {
                     videoCoverFile = cover;
                     renderCoverThumb();
@@ -1102,32 +1317,29 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
     // 从视频元素截取当前帧生成封面
     async function generateCoverFromVideo(videoEl) {
+        manualCoverController?.abort();
+        coverController?.abort();
+        const controller = new AbortController(); coverController = controller;
+        const cancel = () => controller.abort();
+        if (scope.confirmationSignal.aborted) cancel();
+        else scope.confirmationSignal.addEventListener('abort', cancel, { once: true });
         try {
-            const canvas = document.createElement('canvas');
-            canvas.width = videoEl.videoWidth || 640;
-            canvas.height = videoEl.videoHeight || 360;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-
-            return await new Promise((resolve) => {
-                canvas.toBlob((blob) => {
-                    if (blob) {
-                        const file = new File([blob], 'cover.jpg', { type: 'image/jpeg' });
-                        resolve(file);
-                    } else {
-                        resolve(null);
-                    }
-                }, 'image/jpeg', 0.85);
-            });
+            return await capturePublishVideoFrame(videoEl, { signal: controller.signal });
         } catch (err) {
-            console.error('封面生成失败:', err);
+            if (!scope.isCurrent() || err?.name === 'AbortError') return null;
+            console.error('提示词封面生成失败');
             return null;
+        } finally {
+            scope.confirmationSignal.removeEventListener('abort', cancel);
+            if (coverController === controller) coverController = null;
         }
     }
 
     // 删除视频
     btnRemoveVideo.onclick = (e) => {
+        if (!scope.isCurrent()) return;
         e.stopPropagation();
+        invalidateVideoSelection();
         videoFile = null;
         videoCoverFile = null;
         videoDuration = 0;
@@ -1140,12 +1352,15 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
     // 截取当前帧作为封面
     btnCaptureFrame.onclick = async (e) => {
+        if (!scope.isCurrent()) return;
         e.stopPropagation();
         if (!videoPlayer.videoWidth) {
             showToast(t('post.error_video_not_ready'), "warning");
             return;
         }
+        const generation = videoGeneration, coverRequest = ++coverGeneration;
         const cover = await generateCoverFromVideo(videoPlayer);
+        if (!scope.isCurrent() || generation !== videoGeneration || coverRequest !== coverGeneration) return;
         if (cover) {
             videoCoverFile = cover;
             currentCoverUrl = '';
@@ -1158,22 +1373,42 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
     // 手动上传封面
     btnUploadCover.onclick = (e) => {
+        if (!scope.isCurrent()) return;
         e.stopPropagation();
         coverInput.click();
     };
 
-    coverInput.onchange = (e) => {
+    coverInput.onchange = async (e) => {
+        if (!scope.isCurrent() || manualCoverController || imageSelectionController) return;
         const file = e.target.files?.[0];
-        if (!file) return;
-        if (!file.type.startsWith('image/')) {
-            showToast(t('post.error_cover_format'), "warning");
-            coverInput.value = '';
-            return;
-        }
-        videoCoverFile = file;
-        currentCoverUrl = '';
-        renderCoverThumb();
         coverInput.value = '';
+        if (!file) return;
+        const generation = videoGeneration, request = ++coverGeneration;
+        coverController?.abort(); coverController = null;
+        const controller = new AbortController(); manualCoverController = controller;
+        const cancel = () => controller.abort();
+        if (scope.confirmationSignal.aborted) cancel();
+        else scope.confirmationSignal.addEventListener('abort', cancel, { once: true });
+        const wasInputDisabled = coverInput.disabled, wasSubmitDisabled = submitBtn.disabled;
+        coverInput.disabled = true; submitBtn.disabled = true;
+        coverInput.setAttribute('aria-busy', 'true');
+        try {
+            const cover = await compressImage(file, { signal: controller.signal });
+            if (!scope.isCurrent() || controller.signal.aborted || generation !== videoGeneration || request !== coverGeneration) return;
+            videoCoverFile = cover;
+            currentCoverUrl = '';
+            renderCoverThumb();
+        } catch (error) {
+            if (!scope.isCurrent() || controller.signal.aborted || generation !== videoGeneration || request !== coverGeneration) return;
+            showToast(t('post.image_invalid_file'), "warning");
+        } finally {
+            scope.confirmationSignal.removeEventListener('abort', cancel);
+            if (manualCoverController === controller) manualCoverController = null;
+            if (scope.isCurrent()) {
+                coverInput.disabled = wasInputDisabled; submitBtn.disabled = wasSubmitDisabled;
+                coverInput.removeAttribute('aria-busy');
+            }
+        }
     };
 
     // 阻止视频区域的拖拽冒泡到 ComfyUI 画布
@@ -1185,6 +1420,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
     // ========== 🎵 音频上传（音乐提示词专用：图片+音频方案，视频可选） ==========
     audioInput.onchange = (e) => {
+        if (!scope.isCurrent()) return;
         const file = e.target.files?.[0];
         if (!file) return;
 
@@ -1225,7 +1461,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             audioPlayerWrap.style.display = 'none';
             audioPreviewArea.style.borderStyle = 'dashed';
             audioPreviewArea.style.cursor = 'pointer';
-            audioPreviewArea.onclick = () => audioInput.click();
+            setPublishFilePickerAction(audioPreviewArea, () => { if (scope.isCurrent()) audioInput.click(); });
             return;
         }
 
@@ -1233,7 +1469,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
         audioPlayerWrap.style.display = 'block';
         audioPreviewArea.style.borderStyle = 'solid';
         audioPreviewArea.style.cursor = 'default';
-        audioPreviewArea.onclick = null;
+        setPublishFilePickerAction(audioPreviewArea, null);
 
         audioPlayer.src = audioObjectUrl || currentAudioUrl;
 
@@ -1248,6 +1484,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
     // 删除音频
     btnRemoveAudio.onclick = (e) => {
+        if (!scope.isCurrent()) return;
         e.stopPropagation();
         audioFile = null;
         if (audioObjectUrl) { URL.revokeObjectURL(audioObjectUrl); audioObjectUrl = null; }
@@ -1262,104 +1499,131 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     audioPreviewArea.ondrop = (e) => e.stopPropagation();
 
     // ========== 提交发布/保存 ==========
+    const fieldErrors = createPublishFieldErrors([categorySelect, titleInput, contentInput, textInput], scope.confirmationSignal);
+    scope.addCleanup(fieldErrors.dispose);
+    let submissionPhase = 'idle';
     submitBtn.onclick = async () => {
+        if (!scope.isCurrent()) return;
+        if (submissionPhase !== 'idle' || imageSelectionController || manualCoverController) return;
+        fieldErrors.clearAll();
+        let saveAttempted = false, committed = false, outcomeUnknown = false;
         const title = titleInput.value.trim();
         const content = contentInput.value.trim();
         const promptText = textInput.value.trim();
         const category = categorySelect.value;
         const isOriginal = isOriginalCheckbox?.checked || false;
-        let price = parseInt(priceInput.value, 10);
-        if (isNaN(price) || price < 0) price = 0;
+        const price = validatePromptPriceInput(priceInput, priceError, t);
+        if (price === null) return;
+        // 一次提交只使用点击时的内容和媒体，异步等待不再读取可变编辑状态。
+        const submission = Object.freeze({
+            promptType: promptType,
+            imageFiles: Object.freeze([...imageFiles]),
+            existingImageUrls: Object.freeze([...existingImageUrls]),
+            videoFile: videoFile,
+            videoCoverFile: videoCoverFile,
+            currentVideoUrl: currentVideoUrl,
+            currentCoverUrl: currentCoverUrl,
+            audioFile: audioFile,
+            currentAudioUrl: currentAudioUrl,
+            selectedTags: Object.freeze([...selectedTags]),
+            targetId: editPromptData?.id
+        });
 
         // 表单校验（通用）
         if (!category) {
-            showToast(t('prompt.category_required'), "warning");
+            fieldErrors.show(categorySelect, t('prompt.category_required'));
             return;
         }
         if (!title) {
-            showToast(t('prompt.title_required'), "warning");
+            fieldErrors.show(titleInput, t('prompt.title_required'));
             return;
         }
         if (!content) {
-            showToast(t('prompt.content_required'), "warning");
+            fieldErrors.show(contentInput, t('prompt.content_required'));
             return;
         }
         if (!promptText) {
-            showToast(t('prompt.text_required'), "warning");
+            fieldErrors.show(textInput, t('prompt.text_required'));
             return;
         }
 
         // 类型专属校验
         // 视频提示词：视频与封面必填
         // 音乐提示词：有视频时封面必填；无视频时图片+音频必填
-        if (promptType === 'video') {
-            if (!videoFile && !currentVideoUrl) {
+        if (submission.promptType === 'video') {
+            if (!submission.videoFile && !submission.currentVideoUrl) {
                 showToast(t('post.error_no_video'), "warning");
                 return;
             }
-            if (!videoCoverFile && !currentCoverUrl) {
+            if (!submission.videoCoverFile && !submission.currentCoverUrl) {
                 showToast(t('post.error_no_cover'), "warning");
                 return;
             }
-        } else if (promptType === 'music') {
-            if (videoFile || currentVideoUrl) {
-                if (!videoCoverFile && !currentCoverUrl) {
+        } else if (submission.promptType === 'music') {
+            if (submission.videoFile || submission.currentVideoUrl) {
+                if (!submission.videoCoverFile && !submission.currentCoverUrl) {
                     showToast(t('post.error_no_cover'), "warning");
                     return;
                 }
             } else {
-                if (existingImageUrls.length + imageFiles.length === 0) {
+                if (submission.existingImageUrls.length + submission.imageFiles.length === 0) {
                     showToast(t('post.error_no_image'), "warning");
                     return;
                 }
-                if (!audioFile && !currentAudioUrl) {
+                if (!submission.audioFile && !submission.currentAudioUrl) {
                     showToast(t('post.error_no_audio'), "warning");
                     return;
                 }
             }
         } else {
-            if (existingImageUrls.length + imageFiles.length === 0) {
+            if (submission.existingImageUrls.length + submission.imageFiles.length === 0) {
                 showToast(t('post.error_no_image'), "warning");
                 return;
             }
         }
 
+        if (!scope.begin()) return;
+        submissionPhase = 'submitting';
+        editingLock.lock();
         try {
             submitBtn.disabled = true;
 
             const basePayload = {
-                prompt_type: promptType,
+                prompt_type: submission.promptType,
                 category,
                 title,
                 content,
                 prompt_text: promptText,
                 price,
-                tags: selectedTags,
+                tags: submission.selectedTags,
                 is_original: isOriginal
             };
 
             let payload;
 
             // 🎵 音乐提示词未上传视频时走「图片+音频」方案，与图像提示词共用图片上传链路
-            const musicAudioMode = promptType === 'music' && !videoFile && !currentVideoUrl;
+            const musicAudioMode = submission.promptType === 'music' && !submission.videoFile && !submission.currentVideoUrl;
 
-            if (promptType !== 'image' && !musicAudioMode) {
+            if (submission.promptType !== 'image' && !musicAudioMode) {
                 // 上传封面（截取帧或手动上传）
-                let coverUrl = currentCoverUrl;
-                if (videoCoverFile) {
+                let coverUrl = submission.currentCoverUrl;
+                if (submission.videoCoverFile) {
                     submitBtn.textContent = `⏳ ${t('post.uploading_cover')}`;
-                    const res = await api.uploadFile(videoCoverFile, "cover");
-                    coverUrl = res.url;
+                    const res = await api.uploadFile(submission.videoCoverFile, "cover");
+                    if (!scope.isCurrent()) return;
+                    coverUrl = requirePromptUpload(res);
                 }
 
                 // 上传视频（带进度）
-                let videoUrl = currentVideoUrl;
-                if (videoFile) {
+                let videoUrl = submission.currentVideoUrl;
+                if (submission.videoFile) {
                     submitBtn.textContent = `⏳ ${t('post.uploading_video')} 0%`;
-                    const res = await uploadVideoWithProgress(videoFile, (percent) => {
+                    const res = await uploadVideoWithProgress(submission.videoFile, (percent) => {
+                        if (!scope.isCurrent()) return;
                         submitBtn.textContent = `⏳ ${t('post.uploading_video')} ${percent}%`;
-                    });
-                    videoUrl = res.url;
+                    }, { signal: scope.confirmationSignal });
+                    if (!scope.isCurrent()) return;
+                    videoUrl = requirePromptUpload(res);
                 }
 
                 payload = {
@@ -1370,34 +1634,38 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
                     video_url: videoUrl
                 };
                 // 音乐提示词改走视频方案时清除旧音频
-                if (promptType === 'music') payload.audio_url = null;
+                if (submission.promptType === 'music') payload.audio_url = null;
             } else {
                 // 图像提示词 / 音乐提示词（图片+音频）：压缩并上传多图（首张为封面）
                 submitBtn.textContent = `⏳ ${t('post.compressing_images')}...`;
                 const compressedFiles = [];
-                for (let i = 0; i < imageFiles.length; i++) {
-                    submitBtn.textContent = `🖼️ ${t('post.compressing_progress', { current: i + 1, total: imageFiles.length })}...`;
-                    compressedFiles.push(await compressImage(imageFiles[i]));
+                for (let i = 0; i < submission.imageFiles.length; i++) {
+                    submitBtn.textContent = `🖼️ ${t('post.compressing_progress', { current: i + 1, total: submission.imageFiles.length })}...`;
+                    const compressed = await compressImage(submission.imageFiles[i], { signal: scope.confirmationSignal });
+                    if (!scope.isCurrent()) return;
+                    compressedFiles.push(compressed);
                 }
 
                 const uploadedUrls = [];
                 for (let i = 0; i < compressedFiles.length; i++) {
                     submitBtn.textContent = `⏳ ${t('post.uploading_progress', { current: i + 1, total: compressedFiles.length })}...`;
                     const res = await api.uploadFile(compressedFiles[i], "cover");
-                    uploadedUrls.push(res.url);
+                    if (!scope.isCurrent()) return;
+                    uploadedUrls.push(requirePromptUpload(res));
                 }
 
-                const allImages = [...existingImageUrls, ...uploadedUrls];
+                const allImages = [...submission.existingImageUrls, ...uploadedUrls];
 
                 // 🎵 音乐提示词：上传音频
                 let audioUrl = null;
                 if (musicAudioMode) {
-                    if (audioFile) {
+                    if (submission.audioFile) {
                         submitBtn.textContent = `⏳ ${t('post.uploading_audio')}`;
-                        const res = await api.uploadFile(audioFile, "post_audio");
-                        audioUrl = res.url;
+                        const res = await api.uploadFile(submission.audioFile, "post_audio");
+                        if (!scope.isCurrent()) return;
+                        audioUrl = requirePromptUpload(res);
                     } else {
-                        audioUrl = currentAudioUrl;
+                        audioUrl = submission.currentAudioUrl;
                     }
                 }
 
@@ -1413,10 +1681,18 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             submitBtn.textContent = `⏳ ${t('prompt.submitting')}...`;
             if (isEditMode) {
-                await api.updatePrompt(editPromptData.id, payload);
+                saveAttempted = true;
+                const result = await api.updatePrompt(submission.targetId, payload);
+                if (!scope.isCurrent()) return;
+                confirmPromptSave(result, true);
+                committed = true;
                 showToast(t('prompt.update_success'), "success");
             } else {
-                await api.createPrompt(payload);
+                saveAttempted = true;
+                const result = await api.createPrompt(payload, { publicationId: scope.publicationId });
+                if (!scope.isCurrent()) return;
+                confirmPromptSave(result, false);
+                committed = true;
                 showToast(t('prompt.publish_success'), "success");
             }
 
@@ -1425,11 +1701,19 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
 
         } catch (err) {
-            console.error("发布提示词失败:", err);
-            showToast(t('prompt.publish_failed') + ": " + (err?.response?.data?.detail || err.message), "error");
+            if (!scope.isCurrent()) return;
+            if (committed) return;
+            console.error("提示词发布失败");
+            outcomeUnknown = saveAttempted && ![400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            showToast(t(outcomeUnknown ? 'publish.save_unconfirmed' : 'prompt.publish_failed'),
+                outcomeUnknown ? 'warning' : 'error');
         } finally {
-            submitBtn.disabled = false;
-            submitBtn.textContent = `${isEditMode ? '💾' : '🚀'} ${isEditMode ? t('prompt.save_submit') : t('prompt.publish_submit')}`;
+            if (!scope.isCurrent()) return;
+            scope.finish(committed, outcomeUnknown);
+            if (!committed && !outcomeUnknown) editingLock.unlock();
+            submissionPhase = committed ? 'committed' : (outcomeUnknown ? 'unconfirmed' : 'idle');
+            submitBtn.disabled = committed || outcomeUnknown;
+            submitBtn.textContent = outcomeUnknown ? t('publish.result_pending') : `${isEditMode ? '💾' : '🚀'} ${isEditMode ? t('prompt.save_submit') : t('prompt.publish_submit')}`;
         }
     };
 
@@ -1449,6 +1733,11 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     renderSelectedTags();
     loadCategories();
     loadRecommendTags();
+
+    scope.addCleanup(bindPublishFilePicker(imagesPreview, imagesInput, t('post.upload_images'), scope.confirmationSignal));
+    scope.addCleanup(bindPublishFilePicker(videoPreviewArea, videoInput, t('post.upload_video'), scope.confirmationSignal));
+    coverInput.setAttribute('aria-label', t('post.upload_cover'));
+    scope.addCleanup(bindPublishFilePicker(audioPreviewArea, audioInput, t('prompt.audio_label'), scope.confirmationSignal));
 
     return container;
 }

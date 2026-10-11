@@ -5,55 +5,95 @@
 // 功能：展示任务详情、申请接单、提交成果、验收等操作
 // ==========================================
 
-import { api, proxyImages } from "../core/网络请求API.js";
+import { api, proxyImages, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
+import { hasAppliedToTask } from "./任务数据工具.js";
+import { loadTaskSnapshot } from "./任务详情加载.js";
+import { eventBus, EVENTS } from "../core/状态管理.js";
+import { createTaskViewScope, subscribeTaskSessionChanges } from "./任务视图生命周期.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
-import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR, isAdmin, IS_WEB_MODE } from "../core/全局配置.js";
-import { removeCache, findInListCache } from "../components/性能优化工具.js";
+import { API, CACHE, PLACEHOLDERS, TASK_LIMITS, getCachedProfile, getProfileWithSWR, isAdmin, IS_WEB_MODE } from "../core/全局配置.js";
+import { removeCache, findInListCache, requireListResponseData } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
 import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml } from "../components/互动工具函数.js";
 
+let taskViewSequence = 0;
+const taskScopes = new WeakMap();
+const modalScopes = new WeakMap();
+const taskCommentStates = new WeakMap();
+
+function openTaskModal(scope, title, content, options) {
+    if (scope && !scope.isCurrent()) return;
+    globalModal.openModal(title, content, options);
+    const modal = globalModal.activeModals.at(-1);
+    const release = scope?.addCleanup(() => globalModal.closeModal(modal));
+    modalScopes.set(content, { scope, modal, release });
+    content.addEventListener("click", event => {
+        if (!taskModalCurrent(content)) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        }
+    }, true);
+}
+function taskModalCurrent(content) {
+    const entry = modalScopes.get(content);
+    return Boolean(content.isConnected && (!entry?.scope || entry.scope.isCurrent()));
+}
+function closeTaskModal(content) {
+    const entry = modalScopes.get(content);
+    if (entry) { entry.release?.(); globalModal.closeModal(entry.modal); }
+}
+
 /**
  * 📝 创建任务详情视图
  */
 export function createTaskDetailView(taskId, currentUser) {
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex",
-        flexDirection: "column",
-        gap: "0",
-        color: "#ccc",
-        fontSize: "14px",
-        padding: "0",
-        overflowY: "auto",
-        flex: "1",
-        boxSizing: "border-box",
-        background: "#121212"
-    });
-    
+    container.className = "task-detail-view";
     container.innerHTML = `
-        <!-- 顶部导航 -->
-        <div style="display: flex; align-items: center; padding: 12px 15px; background: #1a1a1a; border-bottom: 1px solid var(--border-color, #333);">
-            <button id="btn-back" style="margin-left: 15px; margin-top: 18px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
-                ⬅ ${t('common.back')}
-            </button>
-            <span style="flex: 1; text-align: center; font-size: 15px; font-weight: bold; color: #fff;">${t('task.detail_title')}</span>
-            <div style="width: 60px;"></div>
-        </div>
-        
-        <!-- 加载中 -->
-        <div id="task-loading" style="text-align: center; padding: 60px; color: #888;">
-            <div style="font-size: 32px; margin-bottom: 15px;">⏳</div>
+        <header class="task-detail-header">
+            <button id="btn-back" class="about-back" type="button">⬅ ${t('common.back')}</button>
+            <h1 class="task-detail-title">${t('task.detail_title')}</h1>
+        </header>
+        <div id="task-loading" class="task-detail-status" role="status" aria-live="polite">
             ${t('common.loading')}
         </div>
-        
-        <!-- 详情内容 -->
-        <div id="task-content" style="display: none; padding: 15px;"></div>
+        <div id="task-cache-status" class="task-detail-cache-status" role="status" aria-live="polite" hidden></div>
+        <div id="task-content" class="task-detail-content" hidden></div>
     `;
-    
+
+    const componentId = `task-detail-${++taskViewSequence}`;
+    const scope = createTaskViewScope({
+        sessionMatches: captureRequestSession(),
+        connected: () => container.isConnected,
+        subscribe: notify => subscribeTaskSessionChanges(notify, {
+            target: window, eventBus, events: EVENTS,
+            userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN
+        }),
+        cancelReads: () => requestCancelManager.cancelAll(componentId),
+        invalidate: () => {
+            const content = container.querySelector("#task-content");
+            content.replaceChildren();
+            delete content.dataset.publisher;
+            content.hidden = true;
+            container.querySelector("#task-cache-status").hidden = true;
+            const status = container.querySelector("#task-loading");
+            status.hidden = false;
+            status.textContent = t('task.session_changed');
+        }
+    });
+    scope.componentId = componentId;
+    scope.root = container;
+    container._taskScope = scope;
+    container.querySelector("#task-content")._taskScope = scope;
+    container._cleanup = () => {
+        scope.dispose();
+        container.querySelector("#task-content").replaceChildren();
+    };
+
     // 返回按钮
     container.querySelector("#btn-back").onclick = () => {
         window.dispatchEvent(new CustomEvent("comfy-route-back"));
@@ -69,68 +109,50 @@ export function createTaskDetailView(taskId, currentUser) {
  * 📥 加载任务详情
  */
 async function loadTaskDetail(container, taskId, currentUser) {
+    container = container?.closest(".task-detail-view");
+    if (!container || !container._taskScope) return;
+    const scope = container._taskScope;
+    if (scope.loadGeneration) requestCancelManager.cancelAll(scope.componentId);
+    const generation = (scope.loadGeneration || 0) + 1;
+    scope.loadGeneration = generation;
     const loadingEl = container.querySelector("#task-loading");
     const contentEl = container.querySelector("#task-content");
-    
-    let task = null;
-    let fromCache = false;
-    
-    try {
-        const res = await api.getTaskDetail(taskId);
-        task = res.data;
-    } catch (err) {
-        console.error("加载任务详情失败:", err);
-        // 📴 从列表缓存回退
-        const cached = findInListCache("TasksCache_", taskId);
-        if (cached) {
-            console.warn("📴 从列表缓存回退加载任务详情:", taskId);
-            task = cached;
-            fromCache = true;
-        }
-    }
-    
-    if (!task) {
-        loadingEl.innerHTML = `
-            <div style="font-size: 32px; margin-bottom: 15px;">⚠️</div>
-            <div style="color: #F44336;">${t('common.load_failed')}</div>
-        `;
-        return;
-    }
-    
-    task = proxyImages(task);
-    loadingEl.style.display = "none";
-    contentEl.style.display = "block";
-    renderTaskDetail(contentEl, task, currentUser);
-    
-    if (fromCache) {
-        // 🔧 改用统一提示组件：原为手写 div（无动画、不排队、不避重叠，样式与其他提示不一致）；
-        // warning 类型的背景色与原手写值同为 #FF9800，视觉保持一致
-        showToast(t('feedback.cache_fallback'), 'warning');
-    } else {
-        // 只有在线加载成功时才记录浏览量
-        recordTaskView(contentEl, taskId);
-    }
+    const statusEl = container.querySelector("#task-cache-status");
+    const isCurrent = () => scope.isCurrent() && scope.loadGeneration === generation;
+    const display = (task, preview) => {
+        loadingEl.hidden = true;
+        contentEl.hidden = false;
+        statusEl.hidden = !preview;
+        if (preview) statusEl.textContent = t('task.cached_readonly');
+        renderTaskDetail(contentEl, proxyImages(task), preview ? null : currentUser, preview);
+    };
+    return loadTaskSnapshot({
+        taskId,
+        readCached: id => findInListCache("TasksCache_", id),
+        fetchDetail: cached => api.getTaskDetail(taskId, { componentId: scope.componentId, ...(cached
+            ? { timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES } : {}) }),
+        renderCached: task => display(task, true),
+        renderFresh: task => {
+            display(task, false);
+            recordTaskView(contentEl, taskId, isCurrent);
+        },
+        onError: cached => {
+            if (cached) {
+                statusEl.textContent = t('task.cached_refresh_failed');
+            } else {
+                loadingEl.setAttribute("role", "alert");
+                loadingEl.textContent = t('common.load_failed');
+            }
+        },
+        isCurrent
+    });
 }
 
-/**
- * 👀 记录任务浏览量（带60秒防抖）- 使用公共工具函数
- */
-async function recordTaskView(contentEl, taskId) {
-    console.log('[浏览量调试] recordTaskView 被调用, taskId:', taskId);
-    console.log('[浏览量调试] api.recordTaskView 类型:', typeof api.recordTaskView);
-    
-    const result = await recordView(api.recordTaskView, taskId, 'task', (res) => {
-        console.log('[浏览量调试] recordTaskView 成功, 响应:', JSON.stringify(res));
-        updateTaskViewStats(contentEl, res.views, res.daily_views);
-        
-        // 验证DOM更新
-        const totalEl = contentEl.querySelector("#task-view-total");
-        console.log('[浏览量调试] DOM更新后 task-view-total:', totalEl?.textContent);
+/** 仅确认在线详情后计浏览，迟到响应不能更新离开的页面。 */
+async function recordTaskView(contentEl, taskId, isCurrent) {
+    await recordView(api.recordTaskView, taskId, 'task', res => {
+        if (isCurrent()) updateTaskViewStats(contentEl, res.views, res.daily_views);
     });
-    
-    if (!result) {
-        console.warn('[浏览量调试] recordTaskView 返回 null (可能被防抖拦截或请求失败)');
-    }
 }
 
 /**
@@ -146,7 +168,19 @@ function updateTaskViewStats(contentEl, views, dailyViews) {
 /**
  * 🎨 渲染任务详情
  */
-function renderTaskDetail(contentEl, task, currentUser) {
+function _safeHttpHref(value) {
+    if (typeof value !== "string" || !value.trim()) return "";
+    try {
+        const url = new URL(value.trim());
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return "";
+        return url.href;
+    } catch {
+        return "";
+    }
+}
+
+function renderTaskDetail(contentEl, task, currentUser, preview = false) {
+    taskScopes.set(task, contentEl._taskScope);
     const statusStyles = {
         open: { bg: "#4CAF50", textKey: "task.status_open" },
         in_progress: { bg: "#2196F3", textKey: "task.status_in_progress" },
@@ -156,16 +190,31 @@ function renderTaskDetail(contentEl, task, currentUser) {
         cancelled: { bg: "#757575", textKey: "task.status_cancelled" }
     };
     
-    const status = statusStyles[task.status] || { bg: "#666", textKey: "common.unknown" };
+    const status = Object.prototype.hasOwnProperty.call(statusStyles, task.status)
+        ? statusStyles[task.status]
+        : { bg: "#666", textKey: "common.unknown" };
     const statusText = t(status.textKey);
     const currentAccount = typeof currentUser === 'string' ? currentUser : currentUser?.account;
-    const isPublisher = currentAccount === task.publisher;
-    const isAssignee = currentAccount === task.assignee;
-    const hasApplied = (task.applicants || []).some(a => a.account === currentAccount);
+    const isPublisher = Boolean(currentAccount) && currentAccount === task.publisher;
+    const isAssignee = Boolean(currentAccount) && currentAccount === task.assignee;
+    const applicants = Array.isArray(task.applicants)
+        ? task.applicants.filter(app => app && typeof app === "object" && !Array.isArray(app))
+        : [];
+    const referenceImages = Array.isArray(task.reference_images)
+        ? task.reference_images.filter(url => typeof url === "string" && url.trim())
+        : [];
+    const deliverables = Array.isArray(task.deliverables)
+        ? task.deliverables.filter(url => typeof url === "string" && url.trim())
+        : [];
+    const tipBoard = Array.isArray(task.tip_board)
+        ? task.tip_board.filter(entry => entry && typeof entry === "object" && !Array.isArray(entry))
+        : [];
+    const hasApplied = hasAppliedToTask(task, currentAccount);
+    const safeReferenceLink = _safeHttpHref(task.reference_link);
     
     // 👍 检查当前用户是否已点赞/收藏
-    const isLiked = task.liked_by?.includes(currentAccount) || false;
-    const isFavorited = task.favorited_by?.includes(currentAccount) || false;
+    const isLiked = Array.isArray(task.liked_by) && task.liked_by.includes(currentAccount);
+    const isFavorited = Array.isArray(task.favorited_by) && task.favorited_by.includes(currentAccount);
     
     contentEl.innerHTML = `
         <!-- 状态 + 价格 -->
@@ -174,8 +223,8 @@ function renderTaskDetail(contentEl, task, currentUser) {
                 ${statusText}
             </span>
             <div style="text-align: right;">
-                <div style="color: #FF9800; font-size: 20px; font-weight: bold;">💰 ${task.total_price} ${t('common.credits')}</div>
-                <div style="font-size: 11px; color: #888;">${t('task.deposit')} ${task.deposit_ratio}%（${task.deposit_amount} ${t('common.credits')}）</div>
+                <div style="color: #FF9800; font-size: 20px; font-weight: bold;">💰 ${escapeHtml(task.total_price)} ${t('common.credits')}</div>
+                <div style="font-size: 11px; color: #888;">${t('task.deposit')} ${escapeHtml(task.deposit_ratio)}%（${escapeHtml(task.deposit_amount)} ${t('common.credits')}）</div>
             </div>
         </div>
         
@@ -209,8 +258,8 @@ function renderTaskDetail(contentEl, task, currentUser) {
         
         <!-- 👀 浏览量统计 -->
         <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px; padding: 10px; background: #1a1a1a; border-radius: 8px; color: #888; font-size: 12px;">
-            <span style="display: flex; align-items: center; gap: 4px;">${t('task.view_total')}: <span id="task-view-total" style="color: #fff; font-weight: 500;">${task.views || 0}</span></span>
-            <span style="display: flex; align-items: center; gap: 4px;">${t('task.view_today')}: <span id="task-view-daily" style="color: #fff; font-weight: 500;">${task.daily_views || 0}</span></span>
+            <span style="display: flex; align-items: center; gap: 4px;">${t('task.view_total')}: <span id="task-view-total" style="color: #fff; font-weight: 500;">${escapeHtml(task.views || 0)}</span></span>
+            <span style="display: flex; align-items: center; gap: 4px;">${t('task.view_today')}: <span id="task-view-daily" style="color: #fff; font-weight: 500;">${escapeHtml(task.daily_views || 0)}</span></span>
         </div>
         
         <!-- 截止日期 -->
@@ -230,20 +279,20 @@ ${escapeHtml(task.description)}</div>
         </div>
         
         <!-- 参考图片 -->
-        ${(task.reference_images && task.reference_images.length > 0) ? `
+        ${referenceImages.length > 0 ? `
             <div style="margin-bottom: 20px;" class="ref-images-sandbox">
                 <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">🖼️ ${t('task.reference_images')}</div>
                 <div style="--sandbox-title-display: none">
-                    ${getCoverSandboxHTML(task.reference_images, true).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
+                    ${getCoverSandboxHTML(referenceImages, true).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
                 </div>
             </div>
         ` : ""}
         
         <!-- 参考链接 -->
-        ${task.reference_link ? `
+        ${safeReferenceLink ? `
             <div style="margin-bottom: 20px;">
                 <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">🔗 ${t('task.reference_link')}</div>
-                <a href="${escapeHtml(task.reference_link)}" target="_blank" style="color: #2196F3; font-size: 13px; word-break: break-all;">
+                <a href="${escapeHtml(safeReferenceLink)}" target="_blank" rel="noopener noreferrer" style="color: #2196F3; font-size: 13px; word-break: break-all;">
                     ${escapeHtml(task.reference_link)}
                 </a>
             </div>
@@ -252,10 +301,10 @@ ${escapeHtml(task.description)}</div>
         <!-- 👍 互动按钮栏 -->
         <div id="interaction-bar" style="display: flex; align-items: center; gap: 15px; padding: 15px 0; border-top: 1px solid var(--border-color, #333); border-bottom: 1px solid var(--border-color, #333); margin-bottom: 15px;">
             <button id="btn-like" style="background: ${isLiked ? '#FF5722' : 'var(--comfy-input-bg)'}; border: 1px solid ${isLiked ? '#FF5722' : '#555'}; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
-                ❤️ <span id="like-count">${task.likes || 0}</span>
+                ❤️ <span id="like-count">${escapeHtml(task.likes || 0)}</span>
             </button>
             <button id="btn-favorite" style="background: ${isFavorited ? '#FFC107' : 'var(--comfy-input-bg)'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
-                🔖 <span id="favorite-count">${task.favorites || 0}</span>
+                🔖 <span id="favorite-count">${escapeHtml(task.favorites || 0)}</span>
             </button>
             <button id="btn-tip" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
                 💰 ${t('post.tip_author')}
@@ -264,19 +313,19 @@ ${escapeHtml(task.description)}</div>
         
         <!-- 💰 打赏榜单 -->
         <div id="tip-board-area" style="margin-bottom: 15px;">
-            ${renderTipBoard(task.tip_board || [])}
+            ${renderTipBoard(tipBoard)}
         </div>
         
         <!-- 💬 评论区 -->
         <div style="margin-bottom: 15px;">
             <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                💬 ${t('post.comments_title')} <span style="color: #888; font-weight: normal;">(${task.comments || 0})</span>
+                💬 ${t('post.comments_title')} <span style="color: #888; font-weight: normal;">(${escapeHtml(task.comments || 0)})</span>
             </div>
             
             <!-- 评论输入框 -->
             <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                <input type="text" id="comment-input" placeholder="${t('post.comment_placeholder')}" style="flex: 1; padding: 10px 12px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 20px; color: #fff; font-size: 13px; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
-                <button id="btn-send-comment" style="background: #4CAF50; border: none; color: #fff; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
+                <input type="text" id="comment-input" aria-label="${escapeHtml(t('post.comment_placeholder'))}" aria-required="true" required placeholder="${escapeHtml(t('post.comment_placeholder'))}" style="flex: 1; padding: 10px 12px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 20px; color: #fff; font-size: 13px; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
+                <button type="button" id="btn-send-comment" style="background: #4CAF50; border: none; color: #fff; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
                     ${t('common.send')}
                 </button>
             </div>
@@ -302,22 +351,22 @@ ${escapeHtml(task.description)}</div>
         ` : ""}
         
         <!-- 交付成果（如果有） -->
-        ${(task.deliverables && task.deliverables.length > 0) ? `
+        ${deliverables.length > 0 ? `
             <div style="margin-bottom: 20px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;" class="deliverables-sandbox">
                 <div style="font-size: 13px; font-weight: bold; color: #FF9800; margin-bottom: 8px;">📦 ${t('task.deliverables')}</div>
                 <div style="--sandbox-title-display: none">
-                    ${getCoverSandboxHTML(task.deliverables, true).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
+                    ${getCoverSandboxHTML(deliverables, true).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
                 </div>
                 ${task.submit_note ? `<div style="margin-top: 10px; color: #ccc; font-size: 12px;">${t('task.note')}: ${escapeHtml(task.submit_note)}</div>` : ""}
             </div>
         ` : ""}
         
         <!-- 申请者列表（仅发布者可见，且在 open 状态） -->
-        ${isPublisher && task.status === "open" && (task.applicants || []).length > 0 ? `
+        ${isPublisher && task.status === "open" && applicants.length > 0 ? `
             <div style="margin-bottom: 20px;">
-                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">👥 ${t('task.applicants')}（${task.applicants.length}${t('task.applicants_count')}）</div>
+                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">👥 ${t('task.applicants')}（${applicants.length}${t('task.applicants_count')}）</div>
                 <div id="applicants-list" style="display: flex; flex-direction: column; gap: 8px;">
-                    ${task.applicants.map(app => `
+                    ${applicants.map(app => `
                         <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--comfy-menu-bg); border-radius: 8px;">
                             <img src="${escapeHtml(app.avatar || PLACEHOLDERS.AVATAR_SMALL)}"
                                  style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">
@@ -342,6 +391,15 @@ ${escapeHtml(task.description)}</div>
     // 设置发布者 dataset，供评论区权限判断使用
     contentEl.dataset.publisher = task.publisher;
     
+    if (preview) {
+        // 预览不发评论/资料操作请求，不使用历史申请状态执行操作。
+        contentEl.querySelectorAll("button, input, textarea, select").forEach(control => { control.disabled = true; });
+        contentEl.querySelector("#action-buttons").textContent = t('task.cached_readonly');
+        contentEl.querySelector("#comments-list").textContent = t('task.cached_readonly');
+        setupImageSandboxEvents(contentEl);
+        return;
+    }
+
     // 渲染操作按钮
     renderActionButtons(contentEl.querySelector("#action-buttons"), task, currentUser, isPublisher, isAssignee, hasApplied);
     
@@ -378,8 +436,10 @@ ${escapeHtml(task.description)}</div>
 /**
  * 🔧 通用确认对话框工厂函数
  */
-function _showConfirmDialog({ title, icon, message, description, confirmText, confirmStyle, loadingText, errorText, width, onConfirm }) {
+function _showConfirmDialog({ scope, title, icon, message, description, confirmText, confirmStyle, loadingText, errorText, width, onConfirm, onSuccess, validateResult = result => result?.status === "success" }) {
+    let phase = "idle";
     const content = document.createElement("div");
+    content._cleanup = () => { phase = "closed"; };
     content.style.color = "#ccc";
     // 🔒 XSS防护：message/description 可能嵌入其他用户的账号或昵称
     // （如 t('task.confirm_assign', { assignee })），写入 innerHTML 前必须转义。
@@ -396,30 +456,46 @@ function _showConfirmDialog({ title, icon, message, description, confirmText, co
         </div>
     `;
     
-    content.querySelector("#dialog-cancel").onclick = () => globalModal.closeTopModal();
-    
-    content.querySelector("#dialog-confirm").onclick = async () => {
-        const confirmBtn = content.querySelector("#dialog-confirm");
+    content.querySelector("#dialog-cancel").onclick = () => {
+        if (taskModalCurrent(content)) closeTaskModal(content);
+    };
+
+    const confirmBtn = content.querySelector("#dialog-confirm");
+    confirmBtn.onclick = async () => {
+        if (phase !== "idle" || !taskModalCurrent(content)) return;
+        phase = "submitting";
         confirmBtn.disabled = true;
         confirmBtn.textContent = loadingText || `⏳ ${t('common.confirming')}...`;
-        
+        content.setAttribute("aria-busy", "true");
         try {
-            await onConfirm();
+            const result = await onConfirm(content);
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            if (!validateResult(result)) throw new Error("Unconfirmed task operation");
+            phase = "committed";
+            await onSuccess(content);
         } catch (err) {
-            showToast(err.message || errorText, "error");
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = confirmText;
+            if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
+            const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            phase = rejected ? "idle" : "unconfirmed";
+            showToast(rejected ? errorText : t('task.operation_unconfirmed'), rejected ? "error" : "warning");
+        } finally {
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            content.removeAttribute("aria-busy");
+            confirmBtn.disabled = phase !== "idle";
+            confirmBtn.textContent = phase === "unconfirmed" ? t('task.operation_pending') : confirmText;
         }
     };
-    
-    globalModal.openModal(title, content, { width: width || "350px" });
+
+    openTaskModal(scope, title, content, { width: width || "350px" });
 }
 
 /**
  * 👤 显示接受任务申请确认对话框
  */
 function showAssignConfirmDialog(task, assignee, contentEl, currentUser) {
+    const taskId = task.id;
     _showConfirmDialog({
+        scope: taskScopes.get(task),
         title: t('task.choose_assignee'),
         icon: '👤',
         message: t('task.confirm_assign', { assignee }),
@@ -427,64 +503,107 @@ function showAssignConfirmDialog(task, assignee, contentEl, currentUser) {
         confirmText: t('common.confirm'),
         confirmStyle: 'background: #4CAF50',
         errorText: t('task.assign_failed'),
-        onConfirm: async () => {
-            await api.assignTask(task.id, assignee);
+        onConfirm: () => api.assignTask(taskId, assignee),
+        onSuccess: async (content) => {
             showToast(t('task.assign_success'), "success");
-            globalModal.closeTopModal();
-            loadTaskDetail(contentEl.closest("div"), task.id, currentUser);
+            closeTaskModal(content);
+            loadTaskDetail(contentEl.closest("div"), taskId, currentUser);
         }
     });
+}
+
+/** 申请与退回文字表单：固定输入快照，未知结果不重新开放写请求。 */
+function bindTaskTextSubmission({ content, taskId, input, button, confirmText, errorText, successText, trimValue, requiredText, submit, onSuccess }) {
+    let phase = "idle";
+    content._cleanup = () => { phase = "closed"; };
+    input.addEventListener("input", () => {
+        if (phase === "idle" && taskModalCurrent(content)) input.removeAttribute("aria-invalid");
+    });
+    button.onclick = async () => {
+        if (phase !== "idle" || !taskModalCurrent(content)) return;
+        const value = trimValue ? input.value.trim() : input.value;
+        if (requiredText && !value) {
+            input.setAttribute("aria-invalid", "true");
+            input.focus();
+            showToast(requiredText, "warning");
+            return;
+        }
+        if (typeof taskId !== "string" || !taskId.trim()) {
+            showToast(errorText, "error");
+            return;
+        }
+        phase = "submitting";
+        button.disabled = true;
+        input.readOnly = true;
+        button.textContent = `⏳ ${t('common.submitting')}...`;
+        content.setAttribute("aria-busy", "true");
+        try {
+            const result = await submit(taskId, value);
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            if (result?.status !== "success") throw new Error("Unconfirmed task text submission");
+            phase = "committed";
+            showToast(successText, "success");
+            closeTaskModal(content);
+            await onSuccess();
+        } catch (err) {
+            if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
+            const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            phase = rejected ? "idle" : "unconfirmed";
+            showToast(rejected ? errorText : t('task.operation_unconfirmed'), rejected ? "error" : "warning");
+        } finally {
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            content.removeAttribute("aria-busy");
+            button.disabled = phase !== "idle";
+            input.readOnly = phase !== "idle";
+            button.textContent = phase === "unconfirmed" ? t('task.operation_pending') : confirmText;
+        }
+    };
 }
 
 /**
  * 🙋 显示申请接单对话框
  */
 function showApplyDialog(task, currentUser) {
+    const taskId = task.id;
     const content = document.createElement("div");
     content.style.color = "#ccc";
     content.innerHTML = `
         <div style="margin-bottom: 15px;">
-            <div style="color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.apply_message_prompt')}</div>
+            <label for="apply-message" style="display: block; color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.apply_message_prompt')}</label>
             <textarea id="apply-message" rows="4" placeholder="${t('task.apply_message_placeholder')}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
         </div>
         <div style="display: flex; gap: 10px;">
-            <button id="apply-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-            <button id="apply-confirm" style="flex: 1; background: #FF9800; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
+            <button type="button" id="apply-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button type="button" id="apply-confirm" style="flex: 1; background: #FF9800; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
         </div>
     `;
     
-    content.querySelector("#apply-cancel").onclick = () => globalModal.closeTopModal();
-    
-    content.querySelector("#apply-confirm").onclick = async () => {
-        const message = content.querySelector("#apply-message").value;
-        const confirmBtn = content.querySelector("#apply-confirm");
-        confirmBtn.disabled = true;
-        confirmBtn.textContent = `⏳ ${t('common.submitting')}...`;
-        
-        try {
-            await api.applyTask(task.id, message);
-            showToast(t('task.apply_success'), "success");
-            globalModal.closeTopModal();
-            // 重新加载任务详情
-            const container = document.querySelector('#task-content')?.parentElement;
-            if (container && currentUser) {
-                loadTaskDetail(container, task.id, currentUser);
-            }
-        } catch (err) {
-            showToast(err.message || t('task.apply_failed'), "error");
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = t('common.confirm_submit');
-        }
+    content.querySelector("#apply-cancel").onclick = () => {
+        if (taskModalCurrent(content)) closeTaskModal(content);
     };
-    
-    globalModal.openModal(t('task.apply_task'), content, { width: "400px" });
+    bindTaskTextSubmission({
+        content, taskId,
+        input: content.querySelector("#apply-message"),
+        button: content.querySelector("#apply-confirm"),
+        confirmText: t('common.confirm_submit'), errorText: t('task.apply_failed'), successText: t('task.apply_success'),
+        trimValue: false, requiredText: null,
+        submit: (id, value) => api.applyTask(id, value),
+        onSuccess: () => {
+            const container = taskScopes.get(task)?.root;
+            if (container && currentUser) return loadTaskDetail(container, taskId, currentUser);
+        }
+    });
+
+    openTaskModal(taskScopes.get(task), t('task.apply_task'), content, { width: "400px" });
 }
 
 /**
  * ↩️ 显示撤回申请确认对话框
  */
 function showCancelApplyConfirmDialog(task, currentUser) {
+    const taskId = task.id;
     _showConfirmDialog({
+        scope: taskScopes.get(task),
         title: t('task.cancel_apply'),
         icon: '↩️',
         message: t('task.confirm_cancel_apply'),
@@ -492,13 +611,13 @@ function showCancelApplyConfirmDialog(task, currentUser) {
         confirmText: t('common.confirm'),
         confirmStyle: 'background: #FF9800',
         errorText: t('task.cancel_apply_failed'),
-        onConfirm: async () => {
-            await api.cancelApplyTask(task.id);
+        onConfirm: () => api.cancelApplyTask(taskId),
+        onSuccess: async (content) => {
             showToast(t('task.apply_cancelled'), "success");
-            globalModal.closeTopModal();
-            const container = document.querySelector('#task-content')?.parentElement;
+            closeTaskModal(content);
+            const container = taskScopes.get(task)?.root;
             if (container && currentUser) {
-                loadTaskDetail(container, task.id, currentUser);
+                loadTaskDetail(container, taskId, currentUser);
             }
         }
     });
@@ -508,7 +627,9 @@ function showCancelApplyConfirmDialog(task, currentUser) {
  * ❌ 显示取消任务确认对话框
  */
 function showCancelTaskConfirmDialog(task) {
+    const taskId = task.id;
     _showConfirmDialog({
+        scope: taskScopes.get(task),
         title: t('task.cancel_task'),
         icon: '⚠️',
         message: t('task.confirm_cancel_task'),
@@ -517,10 +638,11 @@ function showCancelTaskConfirmDialog(task) {
         confirmStyle: 'background: #F44336',
         loadingText: `⏳ ${t('common.cancelling')}...`,
         errorText: t('task.cancel_task_failed'),
-        onConfirm: async () => {
-            await api.cancelTask(task.id);
+        onConfirm: () => api.cancelTask(taskId),
+        validateResult: result => result?.status === "success" && Number.isSafeInteger(result.refunded_amount) && result.refunded_amount >= 0,
+        onSuccess: async (content) => {
             showToast(t('task.task_cancelled'), "success");
-            globalModal.closeTopModal();
+            closeTaskModal(content);
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
         }
     });
@@ -530,7 +652,9 @@ function showCancelTaskConfirmDialog(task) {
  * ✅ 显示验收通过确认对话框
  */
 function showAcceptConfirmDialog(task, currentUser) {
+    const taskId = task.id;
     _showConfirmDialog({
+        scope: taskScopes.get(task),
         title: t('task.accept_work'),
         icon: '✅',
         message: t('task.confirm_accept'),
@@ -538,13 +662,13 @@ function showAcceptConfirmDialog(task, currentUser) {
         confirmText: t('task.accept_work'),
         confirmStyle: 'background: #4CAF50',
         errorText: t('common.operation_failed'),
-        onConfirm: async () => {
-            await api.acceptTask(task.id, true);
+        onConfirm: () => api.acceptTask(taskId, true),
+        onSuccess: async (content) => {
             showToast(t('task.accept_success'), "success");
-            globalModal.closeTopModal();
-            const container = document.querySelector('#task-content')?.parentElement;
+            closeTaskModal(content);
+            const container = taskScopes.get(task)?.root;
             if (container && currentUser) {
-                loadTaskDetail(container, task.id, currentUser);
+                loadTaskDetail(container, taskId, currentUser);
             }
         }
     });
@@ -554,56 +678,47 @@ function showAcceptConfirmDialog(task, currentUser) {
  * ❌ 显示验收拒绝对话框
  */
 function showRejectDialog(task, currentUser) {
+    const taskId = task.id;
     const content = document.createElement("div");
     content.style.color = "#ccc";
     content.innerHTML = `
         <div style="margin-bottom: 15px;">
-            <div style="color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.reject_reason_prompt')}</div>
-            <textarea id="reject-feedback" rows="4" placeholder="${t('task.reject_reason_placeholder')}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
+            <label for="reject-feedback" style="display: block; color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.reject_reason_prompt')}</label>
+            <textarea aria-required="true" id="reject-feedback" rows="4" placeholder="${t('task.reject_reason_placeholder')}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
         </div>
         <div style="display: flex; gap: 10px;">
-            <button id="reject-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-            <button id="reject-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('task.reject_work')}</button>
+            <button type="button" id="reject-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button type="button" id="reject-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('task.reject_work')}</button>
         </div>
     `;
     
-    content.querySelector("#reject-cancel").onclick = () => globalModal.closeTopModal();
-    
-    content.querySelector("#reject-confirm").onclick = async () => {
-        const feedback = content.querySelector("#reject-feedback").value.trim();
-        if (!feedback) {
-            showToast(t('task.reject_reason_required'), "warning");
-            return;
-        }
-        
-        const confirmBtn = content.querySelector("#reject-confirm");
-        confirmBtn.disabled = true;
-        confirmBtn.textContent = `⏳ ${t('common.submitting')}...`;
-        
-        try {
-            await api.acceptTask(task.id, false, feedback);
-            showToast(t('task.work_returned'), "success");
-            globalModal.closeTopModal();
-            // 重新加载任务详情
-            const container = document.querySelector('#task-content')?.parentElement;
-            if (container && currentUser) {
-                loadTaskDetail(container, task.id, currentUser);
-            }
-        } catch (err) {
-            showToast(err.message || t('common.operation_failed'), "error");
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = t('task.reject_work');
-        }
+    content.querySelector("#reject-cancel").onclick = () => {
+        if (taskModalCurrent(content)) closeTaskModal(content);
     };
-    
-    globalModal.openModal(t('task.reject_work'), content, { width: "400px" });
+    bindTaskTextSubmission({
+        content, taskId,
+        input: content.querySelector("#reject-feedback"),
+        button: content.querySelector("#reject-confirm"),
+        confirmText: t('task.reject_work'), errorText: t('common.operation_failed'), successText: t('task.work_returned'),
+        trimValue: true, requiredText: t('task.reject_reason_required'),
+        submit: (id, value) => api.acceptTask(id, false, value),
+        onSuccess: () => {
+            const container = taskScopes.get(task)?.root;
+            if (container && currentUser) return loadTaskDetail(container, taskId, currentUser);
+        }
+    });
+
+    openTaskModal(taskScopes.get(task), t('task.reject_work'), content, { width: "400px" });
 }
 
 /**
  * 🗑️ 显示删除评论确认对话框
  */
 function showDeleteCommentConfirmDialog(taskId, comment, container, currentUser) {
+    const commentId = comment.id;
+    let phase = "idle";
     const content = document.createElement("div");
+    content._cleanup = () => { phase = "closed"; };
     content.style.color = "#ccc";
     content.innerHTML = `
         <div style="text-align: center;">
@@ -611,32 +726,44 @@ function showDeleteCommentConfirmDialog(taskId, comment, container, currentUser)
             <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('post.delete_comment_confirm')}</div>
             <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('post.delete_comment_warning')}</div>
             <div style="display: flex; gap: 10px;">
-                <button id="delete-comment-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="delete-comment-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
+                <button type="button" id="delete-comment-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+                <button type="button" id="delete-comment-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
             </div>
         </div>
     `;
     
-    content.querySelector("#delete-comment-cancel").onclick = () => globalModal.closeTopModal();
-    
-    content.querySelector("#delete-comment-confirm").onclick = async () => {
-        const confirmBtn = content.querySelector("#delete-comment-confirm");
+    content.querySelector("#delete-comment-cancel").onclick = () => {
+        if (taskModalCurrent(content)) closeTaskModal(content);
+    };
+    const confirmBtn = content.querySelector("#delete-comment-confirm");
+    confirmBtn.onclick = async () => {
+        if (phase !== "idle" || !taskModalCurrent(content)) return;
+        phase = "submitting";
         confirmBtn.disabled = true;
-        confirmBtn.textContent = `⏳ ${t('common.deleting')}...`;
-        
+        confirmBtn.textContent = t('common.deleting');
+        content.setAttribute("aria-busy", "true");
         try {
-            await api.deleteComment(taskId, comment.id);
+            const result = await api.deleteComment(taskId, commentId);
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            if (result?.status !== "success") throw new Error("Unconfirmed task comment deletion");
+            phase = "committed";
             showToast(t('post.delete_comment_success'), "success");
-            globalModal.closeTopModal();
-            loadTaskComments(container, taskId, currentUser);
+            closeTaskModal(content);
+            await loadTaskComments(container, taskId, currentUser);
         } catch (err) {
-            showToast(t('post.delete_comment_failed') + ": " + err.message, "error");
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = t('common.delete');
+            if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
+            const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            phase = rejected ? "idle" : "unconfirmed";
+            showToast(t(rejected ? 'post.delete_comment_failed' : 'task.comment_unconfirmed'), rejected ? "error" : "warning");
+        } finally {
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            content.removeAttribute("aria-busy");
+            confirmBtn.disabled = phase !== "idle";
+            confirmBtn.textContent = t(phase === "unconfirmed" ? 'task.comment_pending' : 'common.delete');
         }
     };
-    
-    globalModal.openModal(t('common.delete'), content, { width: "350px" });
+
+    openTaskModal(container._taskScope, t('common.delete'), content, { width: "350px" });
 }
 
 /**
@@ -753,11 +880,18 @@ function bindActionEvents(container, task, currentUser) {
     
     // 查看申诉详情
     container.querySelector("#btn-view-dispute")?.addEventListener("click", () => {
+        const scope = taskScopes.get(task);
+        const button = container.querySelector("#btn-view-dispute");
+        const current = () => Boolean(button?.isConnected && scope?.isCurrent());
+        if (!current()) return;
         import("./申诉详情组件.js").then(module => {
+            if (!current()) return;
             const view = module.createDisputeDetailView(task.dispute_id, currentUser, () => {
                 window.dispatchEvent(new CustomEvent("comfy-route-back"));
             });
             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+        }).catch(() => {
+            if (current()) showToast(t('dispute.get_detail_failed'), 'error');
         });
     });
 }
@@ -766,88 +900,105 @@ function bindActionEvents(container, task, currentUser) {
  * 📤 显示提交成果对话框
  */
 function showSubmitDialog(task, currentUser) {
+    const taskId = task.id;
+    let phase = "idle";
     const content = document.createElement("div");
+    content._cleanup = () => { phase = "closed"; };
     content.style.color = "#ccc";
     content.innerHTML = `
         <div style="margin-bottom: 15px;">
-            <label style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.deliverable_images')} *</label>
-            <input type="file" id="deliverable-files" multiple accept="image/*" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; border-radius: 6px; color: #fff;">
-            <div style="font-size: 11px; color: #888; margin-top: 4px;">${t('task.support_multiple_images')}</div>
+            <label for="deliverable-files" style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.deliverable_images')} <span aria-hidden="true">*</span></label>
+            <input type="file" aria-required="true" aria-describedby="deliverable-hint" id="deliverable-files" multiple accept="image/*" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; border-radius: 6px; color: #fff;">
+            <div id="deliverable-hint" style="font-size: 11px; color: #888; margin-top: 4px;">${t('task.support_multiple_images')}</div>
         </div>
         
         <div style="margin-bottom: 20px;">
-            <label style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.note_optional')}</label>
+            <label for="submit-note" style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.note_optional')}</label>
             <textarea id="submit-note" rows="3" placeholder="${t('task.note_placeholder')}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box;"></textarea>
         </div>
         
         <div style="display: flex; gap: 10px;">
-            <button id="btn-cancel-modal" style="flex: 1; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-            <button id="btn-confirm-submit" style="flex: 1; padding: 10px; background: #4CAF50; border: none; color: #fff; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
+            <button type="button" id="btn-cancel-modal" style="flex: 1; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button type="button" id="btn-confirm-submit" style="flex: 1; padding: 10px; background: #4CAF50; border: none; color: #fff; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
         </div>
     `;
     
-    content.querySelector("#btn-cancel-modal").onclick = () => globalModal.closeTopModal();
-    
-    content.querySelector("#btn-confirm-submit").onclick = async () => {
-        const files = content.querySelector("#deliverable-files").files;
-        const note = content.querySelector("#submit-note").value;
-        
-        if (!files || files.length === 0) {
+    content.querySelector("#btn-cancel-modal").onclick = () => {
+        if (taskModalCurrent(content)) closeTaskModal(content);
+    };
+    const filesInput = content.querySelector("#deliverable-files");
+    const noteInput = content.querySelector("#submit-note");
+    const confirmBtn = content.querySelector("#btn-confirm-submit");
+    filesInput.addEventListener("change", () => {
+        if (phase === "idle" && taskModalCurrent(content)) filesInput.removeAttribute("aria-invalid");
+    });
+    confirmBtn.onclick = async () => {
+        if (phase !== "idle" || !taskModalCurrent(content)) return;
+        const files = Array.from(filesInput.files || []);
+        const note = noteInput.value;
+        if (!files.length) {
+            filesInput.setAttribute("aria-invalid", "true");
+            filesInput.focus();
             showToast(t('task.please_upload_deliverables'), "warning");
             return;
         }
-        
+        if (typeof taskId !== "string" || !taskId.trim()) {
+            showToast(t('task.submit_failed'), "error");
+            return;
+        }
+        phase = "submitting";
+        filesInput.disabled = confirmBtn.disabled = true;
+        noteInput.readOnly = true;
+        content.setAttribute("aria-busy", "true");
+        let saveAttempted = false;
         try {
-            const confirmBtn = content.querySelector("#btn-confirm-submit");
-            confirmBtn.disabled = true;
-            confirmBtn.textContent = `⏳ ${t('common.uploading')}...`;
-            
-            // 上传交付图片
             const deliverables = [];
             for (let i = 0; i < files.length; i++) {
                 confirmBtn.textContent = `⏳ ${t('common.upload_progress', { current: i + 1, total: files.length })}...`;
-                try {
-                    const processedFile = await compressImageForUpload(files[i]);
-                    const res = await api.uploadFile(processedFile, "task");
-                    deliverables.push(res.url);
-                } catch (uploadErr) {
-                    console.error("图片上传失败:", uploadErr);
+                if (!taskModalCurrent(content) || phase === "closed") return;
+                const processedFile = await compressImageForUpload(files[i]);
+                if (!taskModalCurrent(content) || phase === "closed") return;
+                const response = await api.uploadFile(processedFile, "task");
+                if (!taskModalCurrent(content) || phase === "closed") return;
+                if (response?.status !== "success" || typeof response.url !== "string" || !response.url.trim()) {
+                    throw new Error("Unconfirmed task image upload");
                 }
+                deliverables.push(response.url);
             }
-            
-            if (deliverables.length === 0) {
-                showToast(t('task.upload_failed_retry'), "error");
-                confirmBtn.disabled = false;
-                confirmBtn.textContent = t('common.confirm_submit');
-                return;
-            }
-            
-            // 提交成果
             confirmBtn.textContent = `⏳ ${t('common.submitting')}...`;
-            await api.submitTask(task.id, deliverables, note || null);
-            
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            saveAttempted = true;
+            const result = await api.submitTask(taskId, deliverables, note || null);
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            if (result?.status !== "success") throw new Error("Unconfirmed task delivery");
+            phase = "committed";
             showToast(t('task.submit_success_waiting'), "success");
-            globalModal.closeTopModal();
-            // 重新加载任务详情
-            const container = document.querySelector('#task-content')?.parentElement;
-            if (container && currentUser) {
-                loadTaskDetail(container, task.id, currentUser);
-            }
+            closeTaskModal(content);
+            const container = taskScopes.get(task)?.root;
+            if (container && currentUser) await loadTaskDetail(container, taskId, currentUser);
         } catch (err) {
-            showToast(err.message || t('task.submit_failed'), "error");
-            const confirmBtn = content.querySelector("#btn-confirm-submit");
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = t('common.confirm_submit');
+            if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
+            const unknown = saveAttempted && ![400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            phase = unknown ? "unconfirmed" : "idle";
+            showToast(t(unknown ? 'task.operation_unconfirmed' : (saveAttempted ? 'task.submit_failed' : 'task.upload_failed_retry')),
+                unknown ? "warning" : "error");
+        } finally {
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            content.removeAttribute("aria-busy");
+            filesInput.disabled = confirmBtn.disabled = phase !== "idle";
+            noteInput.readOnly = phase !== "idle";
+            confirmBtn.textContent = t(phase === "unconfirmed" ? 'task.operation_pending' : 'common.confirm_submit');
         }
     };
-    
-    globalModal.openModal(`📤 ${t('task.submit_work')}`, content, { width: "450px" });
+
+    openTaskModal(taskScopes.get(task), `📤 ${t('task.submit_work')}`, content, { width: "450px" });
 }
 
 /**
  * 🔗 绑定任务互动事件（点赞/收藏/打赏）- 使用公共工具函数
  */
 function bindTaskInteractionEvents(container, task, currentUser) {
+    const scope = taskScopes.get(task);
     const btnLike = container.querySelector("#btn-like");
     const btnFavorite = container.querySelector("#btn-favorite");
     const btnTip = container.querySelector("#btn-tip");
@@ -857,14 +1008,14 @@ function bindTaskInteractionEvents(container, task, currentUser) {
     // 点赞 - 使用公共工具函数
     if (btnLike) {
         btnLike.onclick = () => {
-            handleToggleLike(api.toggleTaskLike, task.id, btnLike, likeCount, currentUser);
+            handleToggleLike(api.toggleTaskLike, task.id, btnLike, likeCount, currentUser, { isCurrent: () => !!scope?.isCurrent() });
         };
     }
     
     // 收藏 - 使用公共工具函数
     if (btnFavorite) {
         btnFavorite.onclick = () => {
-            handleToggleFavorite(api.toggleTaskFavorite, task.id, btnFavorite, favoriteCount, currentUser);
+            handleToggleFavorite(api.toggleTaskFavorite, task.id, btnFavorite, favoriteCount, currentUser, { isCurrent: () => !!scope?.isCurrent() });
         };
     }
     
@@ -888,42 +1039,63 @@ function bindTaskInteractionEvents(container, task, currentUser) {
  * 🎁 显示任务打赏对话框
  */
 function showTaskTipDialog(task, currentUser, container) {
+    const taskId = task.id;
+    let phase = "idle";
     const content = document.createElement("div");
+    content._cleanup = () => { phase = "closed"; };
     content.style.color = "#ccc";
     content.innerHTML = `
         <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
-            <button class="tip-amount" data-amount="10" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="50" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">50 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="100" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">100 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="500" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">500 ${t('task.points')}</button>
+            ${TASK_LIMITS.TIP_AMOUNTS.map(amount => `<button type="button" class="tip-amount" data-amount="${amount}" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">${amount} ${t('task.points')}</button>`).join("")}
         </div>
         <div style="display: flex; gap: 10px;">
-            <button id="tip-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+            <button type="button" id="tip-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
         </div>
     `;
 
-    globalModal.openModal(`🎁 ${t('post.tip_dialog_title')}`, content, { width: "300px" });
+    openTaskModal(taskScopes.get(task), `🎁 ${t('post.tip_dialog_title')}`, content, { width: "300px" });
 
-    // 取消按钮
-    content.querySelector("#tip-cancel").onclick = () => globalModal.closeTopModal();
-
-    // 打赏金额按钮
-    content.querySelectorAll(".tip-amount").forEach(btn => {
+    content.querySelector("#tip-cancel").onclick = () => {
+        if (taskModalCurrent(content)) closeTaskModal(content);
+    };
+    const amountButtons = Array.from(content.querySelectorAll(".tip-amount"));
+    amountButtons.forEach(btn => {
+        const preset = btn.dataset.amount;
         btn.onclick = async () => {
-            const amount = parseInt(btn.dataset.amount);
+            if (phase !== "idle" || !taskModalCurrent(content)) return;
+            const rawAmount = btn.dataset.amount;
+            const amount = typeof rawAmount === "string" && /^\d+$/.test(rawAmount) ? Number(rawAmount) : NaN;
+            if (rawAmount !== preset || !Number.isSafeInteger(amount) || !TASK_LIMITS.TIP_AMOUNTS.includes(amount)) {
+                showToast(t('tip.integer_amount'), "warning");
+                return;
+            }
+            if (typeof taskId !== "string" || !taskId.trim()) {
+                showToast(t('post.tip_failed'), "error");
+                return;
+            }
+            phase = "submitting";
+            amountButtons.forEach(button => { button.disabled = true; });
+            content.setAttribute("aria-busy", "true");
             try {
-                await api.tipTask(task.id, amount, false);
+                const result = await api.tipTask(taskId, amount, false);
+                if (!taskModalCurrent(content) || phase === "closed") return;
+                if (result?.status !== "success") throw new Error("Unconfirmed task tip");
+                phase = "committed";
                 showToast(t('post.tip_success', { amount }), "success");
-                globalModal.closeTopModal();
-                // 刷新页面
-                loadTaskDetail(container.closest("div"), task.id, currentUser);
-            } catch (err) {
-                showToast(t('post.tip_failed') + ": " + err.message, "error");
+                closeTaskModal(content);
+                await loadTaskDetail(container.closest("div"), taskId, currentUser);
+            } catch (_) {
+                if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
+                phase = "unconfirmed";
+                showToast(t('tip.unknown_result'), "warning");
+            } finally {
+                if (!taskModalCurrent(content) || phase === "closed") return;
+                content.removeAttribute("aria-busy");
+                amountButtons.forEach(button => { button.disabled = phase !== "idle"; });
             }
         };
     });
 }
-
 /**
  * 🎁 渲染打赏榜单 - 使用公共工具函数
  */
@@ -935,10 +1107,10 @@ function renderTipBoard(tipBoard) {
  * 🖼️ 渲染评论头像HTML
  */
 function _renderCommentAvatar(name, avatarUrl) {
-    const initial = (name || 'U')[0].toUpperCase();
+    const initial = String(name || 'U')[0].toUpperCase();
     // 🔒 XSS防护：评论者昵称与头像均来自他人可修改的资料，写入 HTML 前必须转义
     return avatarUrl 
-        ? `<img class="swr-avatar" src="${escapeHtml(avatarUrl)}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">` 
+        ? `<img class="swr-avatar" src="${escapeHtml(avatarUrl)}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">`
         : `<div class="swr-avatar" style="width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold;">${escapeHtml(initial)}</div>`;
 }
 
@@ -949,10 +1121,35 @@ async function loadTaskComments(container, taskId, currentUser) {
     const commentsList = container.querySelector("#comments-list");
     const commentInput = container.querySelector("#comment-input");
     const sendBtn = container.querySelector("#btn-send-comment");
-    
+    const scope = container._taskScope;
+    const account = typeof currentUser === "string" ? currentUser : currentUser?.account;
+    let state = taskCommentStates.get(container);
+    if (!state || state.list !== commentsList || state.input !== commentInput || state.button !== sendBtn
+        || state.taskId !== taskId || state.account !== account || state.scope !== scope) {
+        state?.dispose();
+        state = { list: commentsList, input: commentInput, button: sendBtn, taskId, account, scope, phase: "idle", generation: 0, bound: false };
+        state.dispose = () => {
+            state.phase = "closed";
+            state.release?.();
+            if (commentInput) { commentInput.value = ""; commentInput.readOnly = true; }
+            if (sendBtn) { sendBtn.disabled = true; sendBtn.removeAttribute("aria-busy"); }
+            if (taskCommentStates.get(container) === state) taskCommentStates.delete(container);
+        };
+        taskCommentStates.set(container, state);
+        state.release = scope?.addCleanup?.(state.dispose);
+    }
+    const isCurrent = () => state.phase !== "closed" && taskCommentStates.get(container) === state
+        && (!scope || scope.isCurrent()) && commentsList?.isConnected
+        && container.querySelector("#comments-list") === commentsList
+        && container.querySelector("#comment-input") === commentInput && container.querySelector("#btn-send-comment") === sendBtn;
+    if (!isCurrent()) return;
+    const generation = ++state.generation;
+    const readCurrent = () => isCurrent() && generation === state.generation;
+
     try {
-        const res = await api.getTaskComments(taskId);
-        let comments = res.data || [];
+        const res = await api.getTaskComments(taskId, { componentId: scope?.componentId, noCache: true, timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES });
+        if (!readCurrent()) return;
+        let comments = requireListResponseData(res);
         comments = proxyImages(comments);
         
         if (comments.length === 0) {
@@ -978,7 +1175,7 @@ async function loadTaskComments(container, taskId, currentUser) {
                 );
                 
                 return `
-                    <div id="task-comment-${idx}" data-account="${escapeHtml(c.author)}" data-comment-id="${c.id || idx}" style="background: #1a1a1a; padding: 12px; border-radius: 8px;">
+                    <div id="task-comment-${idx}" data-account="${escapeHtml(c.author)}" data-comment-id="${escapeHtml(c.id || idx)}" style="background: #1a1a1a; padding: 12px; border-radius: 8px;">
                         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
                             <div class="swr-avatar-container">${avatarHtml}</div>
                             <span class="swr-name" style="font-size: 13px; color: #fff; font-weight: 500;">${escapeHtml(name)}</span>
@@ -994,14 +1191,16 @@ async function loadTaskComments(container, taskId, currentUser) {
             
             // 后台静默校对每个评论作者的头像
             comments.forEach((c, idx) => {
+                const originalCommentEl = commentsList.querySelector(`#task-comment-${idx}`);
                 getProfileWithSWR(c.author, api.getUserProfile, (profile) => {
+                    if (!isCurrent() || !profile || typeof profile !== "object") return;
                     const commentEl = commentsList.querySelector(`#task-comment-${idx}`);
-                    if (!commentEl) return;
+                    if (!commentEl || commentEl !== originalCommentEl) return;
                     const avatarContainer = commentEl.querySelector('.swr-avatar-container');
                     const nameEl = commentEl.querySelector('.swr-name');
                     
                     if (avatarContainer && profile.avatar) {
-                        avatarContainer.innerHTML = _renderCommentAvatar(profile.name || name, profile.avatar);
+                        avatarContainer.innerHTML = _renderCommentAvatar(profile.name || nameEl?.textContent || c.author_name || c.author, profile.avatar);
                     }
                     if (nameEl && profile.name) nameEl.textContent = profile.name;
                 });
@@ -1010,6 +1209,7 @@ async function loadTaskComments(container, taskId, currentUser) {
             // 绑定删除评论按钮事件
             commentsList.querySelectorAll(".btn-delete-comment").forEach(btn => {
                 btn.onclick = () => {
+                    if (!readCurrent() || !btn.isConnected) return;
                     const idx = parseInt(btn.dataset.idx);
                     const comment = comments[idx];
                     if (!comment) return;
@@ -1018,6 +1218,7 @@ async function loadTaskComments(container, taskId, currentUser) {
             });
         }
     } catch (err) {
+        if (!readCurrent()) return;
         commentsList.innerHTML = `
             <div style="text-align: center; padding: 20px; color: #F44336; font-size: 12px;">
                 ${t('post.comment_load_failed')}
@@ -1025,51 +1226,72 @@ async function loadTaskComments(container, taskId, currentUser) {
         `;
     }
     
-    // 发送评论
-    if (sendBtn) {
+    // 同一组输入/按钮只绑定一次；列表刷新不重新开放在途或未知提交。
+    if (sendBtn && commentInput && !state.bound && isCurrent()) {
+        state.bound = true;
+        sendBtn.disabled = false;
+        sendBtn.removeAttribute("aria-busy");
+        sendBtn.textContent = t('common.send');
+        commentInput.readOnly = false;
+        commentInput.removeAttribute("aria-invalid");
+        commentInput.oninput = () => {
+            if (state.phase === "idle" && isCurrent() && commentInput.value.trim()) commentInput.removeAttribute("aria-invalid");
+        };
         sendBtn.onclick = async () => {
-            if (!currentUser) {
-                showToast(t('auth.login_required'), "warning");
-                return;
-            }
-            const content = commentInput.value.trim();
-            if (!content) {
+            if (state.phase !== "idle" || !isCurrent()) return;
+            if (!account) { showToast(t('auth.login_required'), "warning"); return; }
+            const value = commentInput.value.trim();
+            if (!value) {
+                commentInput.setAttribute("aria-invalid", "true");
+                commentInput.focus();
                 showToast(t('post.comment_required'), "warning");
                 return;
             }
+            commentInput.removeAttribute("aria-invalid");
+            state.phase = "submitting";
+            sendBtn.disabled = true;
+            sendBtn.setAttribute("aria-busy", "true");
+            commentInput.readOnly = true;
+            sendBtn.textContent = t('post.comment_sending');
             try {
-                sendBtn.disabled = true;
-                sendBtn.textContent = t('post.comment_sending');
-                await api.addTaskComment(taskId, content);
+                const result = await api.addTaskComment(taskId, value);
+                if (!isCurrent()) return;
+                if (result?.status !== "success" || typeof result.data?.id !== "string" || !result.data.id.trim()
+                    || result.data.author !== account || result.data.content !== value) throw new Error("Unconfirmed task comment");
+                state.phase = "committed";
                 commentInput.value = "";
                 showToast(t('post.comment_success'), "success");
-                loadTaskComments(container, taskId, currentUser);
+                await loadTaskComments(container, taskId, currentUser);
+                if (isCurrent()) state.phase = "idle";
             } catch (err) {
-                showToast(t('post.comment_failed') + ": " + err.message, "error");
+                if (!isCurrent() || state.phase === "committed") return;
+                const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+                state.phase = rejected ? "idle" : "unconfirmed";
+                showToast(t(rejected ? 'post.comment_failed' : 'task.comment_unconfirmed'), rejected ? "error" : "warning");
             } finally {
-                sendBtn.disabled = false;
-                sendBtn.textContent = t('common.send');
+                if (!isCurrent()) return;
+                sendBtn.removeAttribute("aria-busy");
+                sendBtn.disabled = state.phase !== "idle";
+                commentInput.readOnly = state.phase !== "idle";
+                sendBtn.textContent = t(state.phase === "unconfirmed" ? 'task.comment_pending' : 'common.send');
             }
         };
-    }
-    
-    // 回车发送
-    if (commentInput) {
-        commentInput.onkeydown = (e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                sendBtn?.click();
+        commentInput.onkeydown = event => {
+            if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !event.repeat) {
+                event.preventDefault();
+                sendBtn.click();
             }
         };
     }
 }
-
 /**
  * 🕐 格式化时间
  */
 function formatTime(timestamp) {
     if (!timestamp) return "";
-    const date = new Date(timestamp * 1000);
+    const seconds = Number(timestamp);
+    const date = new Date(seconds * 1000);
+    if (!Number.isFinite(seconds) || seconds < 0 || !Number.isFinite(date.getTime())) return t('common.unknown');
     return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`;
 }
 
@@ -1080,9 +1302,10 @@ function formatDeadline(deadline) {
     if (!deadline) return t('time.unlimited');
     try {
         const date = new Date(deadline);
+        if (!Number.isFinite(date.getTime())) return t('common.unknown');
         return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`;
     } catch {
-        return deadline;
+        return t('common.unknown');
     }
 }
 
@@ -1090,7 +1313,10 @@ function formatDeadline(deadline) {
  * 🗑️ 显示删除任务确认对话框
  */
 function showDeleteTaskConfirm(task, contentEl) {
+    const taskId = task.id;
+    let phase = "idle";
     const content = document.createElement("div");
+    content._cleanup = () => { phase = "closed"; };
     content.style.color = "#ccc";
     content.innerHTML = `
         <div style="text-align: center;">
@@ -1104,28 +1330,45 @@ function showDeleteTaskConfirm(task, contentEl) {
         </div>
     `;
     
-    content.querySelector("#delete-cancel").onclick = () => globalModal.closeTopModal();
-    
-    content.querySelector("#delete-confirm").onclick = async () => {
+    content.querySelector("#delete-cancel").onclick = () => {
+        if (taskModalCurrent(content)) closeTaskModal(content);
+    };
+
+    const confirmBtn = content.querySelector("#delete-confirm");
+    confirmBtn.onclick = async () => {
+        if (phase !== "idle" || !taskModalCurrent(content)) return;
+        if (typeof taskId !== "string" || !taskId.trim()) {
+            showToast(t('task.delete_failed'), "error");
+            return;
+        }
+        phase = "submitting";
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = t('common.deleting');
+        content.setAttribute("aria-busy", "true");
         try {
-            const confirmBtn = content.querySelector("#delete-confirm");
-            confirmBtn.disabled = true;
-            confirmBtn.textContent = t('common.deleting');
-            
-            await api.cancelTask(task.id);
+            const result = await api.cancelTask(taskId);
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            if (result?.status !== "success" || !Number.isSafeInteger(result.refunded_amount) || result.refunded_amount < 0) {
+                throw new Error("Unconfirmed task cancellation");
+            }
+            phase = "committed";
             showToast(t('task.delete_success'), "success");
-            globalModal.closeTopModal();
-            
+            closeTaskModal(content);
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
         } catch (err) {
-            showToast(err.message || t('task.delete_failed'), "error");
-            const confirmBtn = content.querySelector("#delete-confirm");
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = t('common.delete');
+            if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
+            const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            phase = rejected ? "idle" : "unconfirmed";
+            showToast(t(rejected ? 'task.delete_failed' : 'task.delete_unconfirmed'), rejected ? "error" : "warning");
+        } finally {
+            if (!taskModalCurrent(content) || phase === "closed") return;
+            content.removeAttribute("aria-busy");
+            confirmBtn.disabled = phase !== "idle";
+            confirmBtn.textContent = t(phase === "unconfirmed" ? 'task.delete_pending' : 'common.delete');
         }
     };
-    
-    globalModal.openModal(t('common.delete'), content, { width: "300px" });
+
+    openTaskModal(taskScopes.get(task), t('common.delete'), content, { width: "300px" });
 }
 
 /**
@@ -1133,26 +1376,26 @@ function showDeleteTaskConfirm(task, contentEl) {
  */
 function showDisputeDialog(task, currentUser) {
     const content = document.createElement("div");
-    content.style.color = "#ccc";
+    content.className = "task-dispute";
     content.innerHTML = `
-        <div style="margin-bottom: 16px;">
-            <label style="display: block; color: #ccc; margin-bottom: 8px; font-size: 14px;">${t('dispute.reason')} <span style="color: #f44;">*</span></label>
-            <textarea id="dispute-reason" placeholder="${t('dispute.reason_placeholder')}" style="width: 100%; height: 120px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 8px; color: #fff; padding: 12px; resize: none; box-sizing: border-box; font-size: 14px; line-height: 1.5;"></textarea>
+        <div class="task-dispute__field">
+            <label for="dispute-reason" class="task-dispute__label">${t('dispute.reason')} <span aria-hidden="true" class="task-dispute__required">*</span></label>
+            <textarea id="dispute-reason" aria-required="true" placeholder="${t('dispute.reason_placeholder')}" class="task-dispute__reason"></textarea>
         </div>
         
-        <div style="margin-bottom: 16px;">
-            <label style="display: block; color: #ccc; margin-bottom: 8px; font-size: 14px;">${t('dispute.evidence_optional')}</label>
-            <div id="evidence-upload-area" style="border: 2px dashed #444; border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; color: #888; transition: all 0.2s;">
+        <div class="task-dispute__field">
+            <label for="evidence-file-input" class="task-dispute__label">${t('dispute.evidence_optional')}</label>
+            <button type="button" id="evidence-upload-area" class="task-dispute__upload">
                 📷 ${t('dispute.click_upload_evidence')}
-            </div>
-            <input type="file" id="evidence-file-input" accept="image/*" multiple style="display: none;">
-            <div id="evidence-preview" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;"></div>
+            </button>
+            <input type="file" aria-label="${t('dispute.evidence_optional')}" id="evidence-file-input" accept="image/*" multiple class="task-dispute__file">
+            <div id="evidence-preview" class="task-dispute__preview"></div>
         </div>
         
-        <div style="background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
-            <div style="color: #FF9800; font-size: 13px;">
+        <div class="task-dispute__notice">
+            <div class="task-dispute__notice-copy">
                 ⚠️ ${t('dispute.notice_title')}：
-                <ul style="margin: 8px 0 0 16px; padding: 0; line-height: 1.6;">
+                <ul class="task-dispute__notice-list">
                     <li>${t('dispute.notice_1')}</li>
                     <li>${t('dispute.notice_2')}</li>
                     <li>${t('dispute.notice_3')}</li>
@@ -1160,7 +1403,7 @@ function showDisputeDialog(task, currentUser) {
             </div>
         </div>
         
-        <button id="btn-submit-dispute" style="width: 100%; padding: 14px; background: linear-gradient(135deg, #F44336, #D32F2F); border: none; border-radius: 8px; color: #fff; font-size: 15px; font-weight: bold; cursor: pointer;">
+        <button id="btn-submit-dispute" class="task-dispute__submit">
             ${t('dispute.submit')}
         </button>
     `;
@@ -1170,12 +1413,35 @@ function showDisputeDialog(task, currentUser) {
     const fileInput = content.querySelector("#evidence-file-input");
     const preview = content.querySelector("#evidence-preview");
     const evidenceFiles = [];
+    const previewUrls = new Set();
+    let closed = false, submitting = false;
+    const reasonInput = content.querySelector("#dispute-reason");
+    const submitButton = content.querySelector("#btn-submit-dispute");
+    const setSubmitting = active => {
+        submitting = active;
+        content.setAttribute("aria-busy", String(active));
+        reasonInput.readOnly = active;
+        uploadArea.disabled = active;
+        fileInput.disabled = active;
+        submitButton.disabled = active;
+        preview.querySelectorAll("button").forEach(button => { button.disabled = active; });
+    };
+    reasonInput.addEventListener("input", () => reasonInput.removeAttribute("aria-invalid"));
+    const releasePreviews = () => {
+        for (const url of previewUrls) URL.revokeObjectURL(url);
+        previewUrls.clear();
+    };
+    content._cleanup = () => {
+        if (closed) return;
+        closed = true;
+        releasePreviews();
+        evidenceFiles.length = 0;
+    };
     
-    uploadArea.onclick = () => fileInput.click();
-    uploadArea.onmouseover = () => { uploadArea.style.borderColor = "#2196F3"; uploadArea.style.color = "#2196F3"; };
-    uploadArea.onmouseout = () => { uploadArea.style.borderColor = "#444"; uploadArea.style.color = "#888"; };
+    uploadArea.onclick = () => { if (!closed && !submitting && taskModalCurrent(content)) fileInput.click(); };
     
     fileInput.onchange = (e) => {
+        if (closed || submitting || !taskModalCurrent(content)) return;
         for (const file of e.target.files) {
             if (evidenceFiles.length >= 6) {
                 showToast(t('dispute.max_6_images'), "warning");
@@ -1183,19 +1449,27 @@ function showDisputeDialog(task, currentUser) {
             }
             evidenceFiles.push(file);
         }
+        fileInput.value = "";
         renderPreview();
     };
     
     function renderPreview() {
-        preview.innerHTML = evidenceFiles.map((file, idx) => `
-            <div style="position: relative;">
-                <img src="${URL.createObjectURL(file)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px;">
-                <button data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; background: #f44; color: #fff; border: none; border-radius: 50%; cursor: pointer; font-size: 12px; line-height: 18px;">×</button>
+        releasePreviews();
+        if (closed) return;
+        preview.innerHTML = evidenceFiles.map((file, idx) => {
+            const url = URL.createObjectURL(file);
+            previewUrls.add(url);
+            return `
+            <div class="task-dispute__evidence">
+                <img alt="" src="${url}" class="task-dispute__image">
+                <button type="button" aria-label="${escapeHtml(t('dispute.remove_evidence', { index: idx + 1 }))}" data-idx="${idx}" class="task-dispute__remove">×</button>
             </div>
-        `).join("");
+        `;
+        }).join("");
         
         preview.querySelectorAll("button").forEach(btn => {
             btn.onclick = () => {
+                if (closed || submitting || !taskModalCurrent(content)) return;
                 evidenceFiles.splice(parseInt(btn.dataset.idx), 1);
                 renderPreview();
             };
@@ -1203,44 +1477,65 @@ function showDisputeDialog(task, currentUser) {
     }
     
     // 提交申诉
-    content.querySelector("#btn-submit-dispute").onclick = async () => {
-        const reason = content.querySelector("#dispute-reason").value.trim();
+    submitButton.onclick = async () => {
+        if (closed || submitting || !taskModalCurrent(content)) return;
+        const reason = reasonInput.value.trim();
         if (!reason) {
+            reasonInput.setAttribute("aria-invalid", "true");
+            reasonInput.focus();
             showToast(t('dispute.please_enter_reason'), "warning");
             return;
         }
         
-        const btn = content.querySelector("#btn-submit-dispute");
-        btn.disabled = true;
+        reasonInput.removeAttribute("aria-invalid");
+        const files = evidenceFiles.slice();
+        const btn = submitButton;
+        setSubmitting(true);
         btn.textContent = `•• ${t('common.submitting')}...`;
         
         try {
             // 上传证据图片
             const evidenceUrls = [];
-            for (let i = 0; i < evidenceFiles.length; i++) {
-                btn.textContent = `•• ${t('common.upload_image_progress', { current: i + 1, total: evidenceFiles.length })}...`;
-                const processedFile = await compressImageForUpload(evidenceFiles[i]);
+            for (let i = 0; i < files.length; i++) {
+                btn.textContent = `•• ${t('common.upload_image_progress', { current: i + 1, total: files.length })}...`;
+                if (!taskModalCurrent(content)) return;
+                const processedFile = await compressImageForUpload(files[i]);
+                if (!taskModalCurrent(content)) return;
                 const res = await api.uploadFile(processedFile, "dispute");
+                if (!taskModalCurrent(content)) return;
+                if (res?.status !== "success" || typeof res.url !== "string" || !res.url.trim()) {
+                    throw new Error("Invalid evidence upload response");
+                }
                 evidenceUrls.push(res.url);
             }
             
             // 提交申诉
             btn.textContent = `•• ${t('dispute.submitting')}...`;
-            await api.disputeTask(task.id, reason, evidenceUrls);
+            if (!taskModalCurrent(content)) return;
+            const response = await api.disputeTask(task.id, reason, evidenceUrls);
+            if (!taskModalCurrent(content)) return;
             
+            const dispute = response?.data;
+            if (response?.status !== "success" || typeof dispute?.id !== "string" || !dispute.id.trim()
+                || dispute.task_id !== task.id || dispute.initiator !== currentUser?.account) {
+                throw new Error("Invalid task dispute response");
+            }
+
             showToast(t('dispute.submit_success'), "success");
-            globalModal.closeTopModal();
+            closeTaskModal(content);
             // 重新加载任务详情
-            const container = document.querySelector('#task-content')?.parentElement;
+            const container = taskScopes.get(task)?.root;
             if (container && currentUser) {
                 loadTaskDetail(container, task.id, currentUser);
             }
         } catch (err) {
-            showToast(err.message || t('dispute.submit_failed'), "error");
-            btn.disabled = false;
+            if (!taskModalCurrent(content)) return;
+            showToast(t('dispute.submit_failed'), "error");
             btn.textContent = t('dispute.submit');
+        } finally {
+            if (!closed && taskModalCurrent(content)) setSubmitting(false);
         }
     };
     
-    globalModal.openModal(`⚖️ ${t('dispute.start')}`, content, { width: "480px" });
+    openTaskModal(taskScopes.get(task), `⚖️ ${t('dispute.start')}`, content, { width: "480px" });
 }

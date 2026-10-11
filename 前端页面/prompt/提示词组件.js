@@ -14,14 +14,16 @@
 //   - 性能优化工具.js (缓存/骨架屏)
 // ==========================================
 
-import { api, proxyImages } from "../core/网络请求API.js";
+import { createPromptCategorySync, isPromptCategoryList } from "./提示词分类同步.js";
+import { createCardNavigationScope } from "../components/卡片导航生命周期.js";
+import { api, proxyImages, captureRequestSession } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 // 📦 列表缓存走 readListCache/writeListCache 统一口径；分类缓存形态不同（空数组也是
 // 有效缓存态），仍用底层 setCache/getCacheWithMeta
-import { setCache, getCacheWithMeta, readListCache, writeListCache, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
-import { applyViewportAnimations } from "../components/动画音效引擎.js";
+import { setCache, getCacheWithMeta, readListCache, writeListCache, requireListResponseData, isEmptyListRefreshWithExistingData, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
+import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
-import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { API, CACHE, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 缓存配置
@@ -32,15 +34,16 @@ const PAGE_SIZE = 20;
 // 缓存当前用户
 let currentUserCache = null;
 
-// 📴 分类同步中标记：防止多次切换重复发起长耗时请求
-let _categoriesSyncing = false;
-
 /**
  * 📴 读取本地分类缓存（含过期缓存，离线容灾）
  */
 function _loadCategoriesCache(type) {
-    const { value, found } = getCacheWithMeta(`${CATEGORIES_CACHE_PREFIX}_${type}`, true);
-    return (found && Array.isArray(value)) ? value : null;
+    try {
+        const { value, found } = getCacheWithMeta(`${CATEGORIES_CACHE_PREFIX}_${type}`, true);
+        return (found && isPromptCategoryList(value)) ? value : null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -53,8 +56,8 @@ function _saveCategoriesCache(type, list) {
 // 🔧 修复内存泄漏：保存当前筛选事件监听器引用，以便在重新创建时移除
 let currentFilterHandler = null;
 
-// 🔧 自动分页器引用（用于组件切换时清理）
-let currentPaginator = null;
+// 当前视图清理入口；分页器由各视图实例持有。
+let activeViewCleanup = null;
 
 // 分类数据缓存（避免重复请求）
 let categoriesCache = null;
@@ -96,7 +99,7 @@ function _generateAvatarHtml(avatar, name, size) {
     const initial = (name || 'U')[0].toUpperCase();
     // 🔒 XSS防护：avatar / name 均来自他人可修改的资料（昵称首字母可能是 < ），写入 HTML 前必须转义
     if (avatar) {
-        return `<img class="swr-avatar" src="${escapeHtml(avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
+        return `<img class="swr-avatar" alt="" src="${escapeHtml(avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
     }
     const fontSize = Math.max(9, Math.round(size * 0.5));
     return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${escapeHtml(initial)}</div>`;
@@ -106,21 +109,18 @@ function _generateAvatarHtml(avatar, name, size) {
  * 🧩 创建提示词视图
  */
 export function createPromptsView(currentUser, keyword = "") {
-    // 清理旧分页器
-    if (currentPaginator) {
-        currentPaginator.stop();
-        currentPaginator = null;
-    }
+    if (activeViewCleanup) activeViewCleanup();
 
     currentUserCache = currentUser;
     const searchKeyword = (keyword || "").substring(0, 100).toLowerCase();
 
     const container = document.createElement("div");
+    container.className = "prompt-board";
     Object.assign(container.style, {
         display: "flex",
         flexDirection: "column",
         gap: "0",
-        color: "#ccc",
+        color: "var(--rk-text, var(--fg-color, #ddd))",
         fontSize: "14px",
         padding: "0",
         overflowY: "auto",
@@ -130,20 +130,20 @@ export function createPromptsView(currentUser, keyword = "") {
 
     container.innerHTML = `
         <!-- 🎨 模块切换（图像/视频/音乐） -->
-        <div id="prompt-type-tabs" style="display: flex; gap: 8px; padding: 12px 15px 0 15px;">
-            <button class="prompt-type-tab" data-type="image" style="flex: 1; padding: 10px 0; border-radius: 8px; border: 1px solid #555; background: var(--comfy-input-bg); color: #fff; font-size: 13px; font-weight: bold; cursor: pointer; transition: 0.2s;">
+        <div id="prompt-type-tabs" class="prompt-board__types" role="group" aria-label="${escapeHtml(t('prompt.type_label'))}">
+            <button type="button" class="prompt-type-tab" data-type="image">
                 🎨 ${t('prompt.tab_image')}
             </button>
-            <button class="prompt-type-tab" data-type="video" style="flex: 1; padding: 10px 0; border-radius: 8px; border: 1px solid #555; background: var(--comfy-input-bg); color: #fff; font-size: 13px; font-weight: bold; cursor: pointer; transition: 0.2s;">
+            <button type="button" class="prompt-type-tab" data-type="video">
                 🎬 ${t('prompt.tab_video')}
             </button>
-            <button class="prompt-type-tab" data-type="music" style="flex: 1; padding: 10px 0; border-radius: 8px; border: 1px solid #555; background: var(--comfy-input-bg); color: #fff; font-size: 13px; font-weight: bold; cursor: pointer; transition: 0.2s;">
+            <button type="button" class="prompt-type-tab" data-type="music">
                 🎵 ${t('prompt.tab_music')}
             </button>
         </div>
 
         <!-- 🏷️ 分类选择条（换行自适应侧边栏宽度） -->
-        <div id="prompt-category-bar" style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 15px 0 15px; flex-shrink: 0;">
+        <div id="prompt-category-bar" class="prompt-board__categories" role="group" aria-label="${escapeHtml(t('prompt.category_label'))}">
             <div style="color: #888; font-size: 12px; padding: 6px 0;">⏳</div>
         </div>
 
@@ -157,19 +157,27 @@ export function createPromptsView(currentUser, keyword = "") {
 
         <!-- 加载更多 -->
         <div id="load-more-wrapper" style="display: none; padding: 15px; text-align: center; border-top: 1px solid var(--border-color, #333);">
-            <button id="btn-load-more" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='var(--comfy-input-bg)'">
+            <button type="button" id="btn-load-more" class="prompt-board__more">
                 ${t('post.load_more')}
             </button>
         </div>
     `;
 
     // 🔌 状态与元素引用
-    let currentPage = 1;
     let currentSort = "latest";
     let currentType = "image";      // 当前模块：image / video / music
     let currentCategory = null;     // 当前分类（null = 全部）
     let allPromptsData = [];        // 全量数据缓存
     let isLoadingFromNetwork = false;
+    let listViewGeneration = 0;
+    let networkRequestGeneration = 0;
+    let currentPaginator = null;
+    let disposed = false;
+    let firstPageReady = false;
+    const cardNavigation = createCardNavigationScope(window, () => !disposed, {
+        captureSession: captureRequestSession,
+        storageKeys: [CACHE.LEGACY_KEYS.TOKEN, CACHE.LEGACY_KEYS.USER]
+    });
 
     const promptsGrid = container.querySelector("#prompts-grid");
     const loadMoreWrapper = container.querySelector("#load-more-wrapper");
@@ -180,16 +188,17 @@ export function createPromptsView(currentUser, keyword = "") {
     const getCacheKey = () => `${CACHE_KEY_PREFIX}_${currentType}_${currentCategory || 'all'}_${currentSort}`;
 
     // 🎨 模块切换样式
-    const applyTypeTabStyles = () => {
+    const syncTypeTabState = () => {
         container.querySelectorAll(".prompt-type-tab").forEach(btn => {
             const active = btn.dataset.type === currentType;
-            btn.style.background = active ? "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" : "var(--comfy-input-bg)";
-            btn.style.borderColor = active ? "#764ba2" : "#555";
+            btn.setAttribute("aria-pressed", String(active));
         });
     };
 
     // 🏷️ 渲染分类选择条（全部 + 分类；增删由云端管理界面管理）
     const renderCategoryBar = (categories) => {
+        const focused = document.activeElement;
+        const focusedCategory = focused && categoryBar.contains(focused) ? focused._categoryValue : undefined;
         categoryBar.innerHTML = "";
         const allChip = _createCategoryChip(t('prompt.category_all'), null, currentCategory === null);
         categoryBar.appendChild(allChip);
@@ -197,31 +206,23 @@ export function createPromptsView(currentUser, keyword = "") {
         (categories || []).forEach(cat => {
             categoryBar.appendChild(_createCategoryChip(_catLabel(cat), cat, currentCategory === cat));
         });
+        if (focusedCategory !== undefined) {
+            const replacement = [...categoryBar.children].find(chip => chip._categoryValue === focusedCategory) || allChip;
+            replacement.focus({ preventScroll: true });
+        }
     };
 
     // 🏷️ 单个分类 chip
     const _createCategoryChip = (label, value, active) => {
         const chip = document.createElement("button");
         chip.textContent = label;
-        Object.assign(chip.style, {
-            flexShrink: "0",
-            maxWidth: "100%",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            padding: "6px 14px",
-            borderRadius: "16px",
-            border: `1px solid ${active ? "#764ba2" : "#555"}`,
-            background: active ? "linear-gradient(135deg, #667eea 0%, #764ba2 100%)" : "var(--comfy-input-bg)",
-            color: "#fff",
-            fontSize: "12px",
-            cursor: "pointer",
-            whiteSpace: "nowrap",
-            transition: "0.2s"
-        });
+        chip.type = "button";
+        chip.className = "prompt-board__category";
+        chip._categoryValue = value;
+        chip.setAttribute("aria-pressed", String(active));
         chip.onclick = () => {
-            if (currentCategory === value) return;
+            if (disposed || currentCategory === value) return;
             currentCategory = value;
-            currentPage = 1;
             allPromptsData = [];
             resetPagination();
             loadCategoriesAndReload();
@@ -230,28 +231,17 @@ export function createPromptsView(currentUser, keyword = "") {
     };
 
     // 📥 后台同步分类（静默，不阻塞首屏；失败保留旧缓存）
-    const syncCategoriesInBackground = async () => {
-        const typeAtSync = currentType;
-        try {
-            const res = await api.getPromptCategories(typeAtSync);
-            const list = res.data || res || [];
-            // 期间若已切换模块，结果转存到对应模块缓存，并重新同步当前模块
-            // （同步标记保持 true，由递归链的 finally 统一释放，避免窗口期内重复发请求）
-            if (typeAtSync !== currentType) {
-                categoriesCache = { type: typeAtSync, list };
-                _saveCategoriesCache(typeAtSync, list);
-                syncCategoriesInBackground();
-                return;
-            }
-            categoriesCache = { type: typeAtSync, list };
-            _saveCategoriesCache(typeAtSync, list);
-            renderCategoryBar(list);
-        } catch (err) {
-            console.warn("后台更新提示词分类失败（保留本地缓存）:", err);
-        } finally {
-            if (typeAtSync === currentType) _categoriesSyncing = false;
-        }
-    };
+    const syncCategoriesInBackground = createPromptCategorySync({
+        isCurrent: () => !disposed,
+        getType: () => currentType,
+        fetchCategories: type => api.getPromptCategories(type),
+        save: (type, list) => {
+            _saveCategoriesCache(type, list);
+            categoriesCache = { type, list };
+        },
+        render: renderCategoryBar,
+        onError: () => console.warn("后台更新提示词分类失败（保留本地缓存）")
+    });
 
     // 📥 加载分类并刷新列表
     // ⚡ 完全不阻塞首屏：按"内存缓存 → localStorage 缓存 → 空分类占位"取数，
@@ -259,6 +249,7 @@ export function createPromptsView(currentUser, keyword = "") {
     // 保证断网/云端不通时首屏与子界面切换与其他榜单一样秒开
     // （与插件榜/工作流/推荐榜/任务榜/讨论区的四态策略一致）
     const loadCategoriesAndReload = () => {
+        if (disposed) return;
         let list = null;
         // 1. 优先内存缓存（同模块重复进入/切换）
         if (categoriesCache && categoriesCache.type === currentType) {
@@ -278,21 +269,25 @@ export function createPromptsView(currentUser, keyword = "") {
         }
         renderCategoryBar(list);
         loadPrompts(1);
-        if (!_categoriesSyncing) {
-            _categoriesSyncing = true;
-            syncCategoriesInBackground();
-        }
+        syncCategoriesInBackground();
     };
 
     // 🚀 自动分页加载回调
-    const loadMorePrompts = async (page, pageSize) => {
+    const loadMorePrompts = async (page, pageSize, { isCurrent = () => true } = {}) => {
+        if (disposed || !isCurrent()) return [];
         try {
-            isLoadingFromNetwork = true;
             const res = await api.getPrompts(currentType, currentCategory, page, pageSize, currentSort);
-            const prompts = res.data || [];
-            isLoadingFromNetwork = false;
+            if (disposed || !isCurrent()) return [];
+            const prompts = requireListResponseData(res);
 
-            if (prompts.length === 0) return [];
+            if (prompts.length === 0) {
+                if (searchKeyword && !allPromptsData.some(prompt => _matchesSearch(prompt, searchKeyword))) {
+                    renderListSearchMessage(promptsGrid, t('pagination.search_empty'));
+                } else {
+                    promptsGrid.querySelector('.list-search-message')?.remove();
+                }
+                return [];
+            }
 
             allPromptsData = [...allPromptsData, ...proxyImages(prompts)];
 
@@ -302,7 +297,8 @@ export function createPromptsView(currentUser, keyword = "") {
             // 渲染卡片
             const newCards = [];
             displayPrompts.forEach(p => {
-                const card = createPromptCard(p);
+                promptsGrid.querySelector('.list-search-message')?.remove();
+                const card = createPromptCard(p, currentUser, () => !disposed, cardNavigation.capture);
                 newCards.push(card);
                 promptsGrid.appendChild(card);
             });
@@ -317,14 +313,16 @@ export function createPromptsView(currentUser, keyword = "") {
 
             return prompts;
         } catch (err) {
-            console.error("分页加载提示词失败:", err);
-            isLoadingFromNetwork = false;
+            if (disposed || !isCurrent()) return [];
+            console.error("分页加载提示词失败");
+            promptsGrid.querySelector('.list-search-message')?.remove();
             return null;  // 返回 null 表示加载失败（区别于空数组表示没有更多数据）
         }
     };
 
     // 🚀 启动自动分页
     const startAutoPagination = () => {
+        if (disposed) return;
         if (currentPaginator) {
             currentPaginator.stop();
         }
@@ -333,9 +331,12 @@ export function createPromptsView(currentUser, keyword = "") {
 
         currentPaginator = createPaginationLoader({
             container: scrollContainer,
+            canLoad: () => !disposed && firstPageReady && !isLoadingFromNetwork,
             loadMore: loadMorePrompts,
             pageSize: PAGE_SIZE,
-            threshold: 200
+            threshold: 200,
+            autoFill: () => Boolean(searchKeyword) && !allPromptsData.some(prompt => _matchesSearch(prompt, searchKeyword)),
+            t
         });
 
         currentPaginator.start();
@@ -346,6 +347,7 @@ export function createPromptsView(currentUser, keyword = "") {
 
     // 🚀 重置分页器（切换模块/分类/排序时）
     const resetPagination = () => {
+        if (disposed) return;
         if (currentPaginator) {
             currentPaginator.reset();
         }
@@ -371,10 +373,11 @@ export function createPromptsView(currentUser, keyword = "") {
 
     // 🎯 监听外部筛选变化事件（侧边栏排序下拉）
     const handleFilterChange = (e) => {
+        if (disposed) return;
         const { sort } = e.detail;
         if (sort) {
+            listViewGeneration++;
             currentSort = sort;
-            currentPage = 1;
 
             // 🚀 重置分页器
             resetPagination();
@@ -401,6 +404,8 @@ export function createPromptsView(currentUser, keyword = "") {
 
     // 监听外部刷新事件（详情页互动后通知列表刷新）
     const refreshHandler = () => {
+        if (disposed) return;
+        listViewGeneration++;
         if (allPromptsData.length > 0) {
             const sorted = sortPromptsLocally(allPromptsData, currentSort);
             renderPromptsFromCache(sorted);
@@ -436,28 +441,49 @@ export function createPromptsView(currentUser, keyword = "") {
     };
 
     const loadPrompts = async (page = 1, append = false) => {
-        const cacheKey = getCacheKey();
+        if (disposed) return;
+        if (!append && page === 1) firstPageReady = false;
+        const viewGeneration = !append && page === 1 ? ++listViewGeneration : listViewGeneration;
+        const requestedType = currentType;
+        const requestedCategory = currentCategory;
+        const requestedSort = currentSort;
+        const cacheKey = `${CACHE_KEY_PREFIX}_${requestedType}_${requestedCategory || 'all'}_${requestedSort}`;
 
         // ✅ 优先从本地缓存读取（含过期缓存：离线容灾，与插件榜/工作流/推荐榜策略一致）
         if (!append && page === 1) {
             const cachedData = readListCache(cacheKey);
             if (cachedData) {
                 allPromptsData = proxyImages(cachedData);
-                renderPromptsFromCache(allPromptsData);
+                renderPromptsFromCache(allPromptsData, true);
                 // 后台静默更新
-                silentRefresh();
+                silentRefresh().finally(() => {
+                    if (disposed || viewGeneration !== listViewGeneration) return;
+                    if (searchKeyword && !allPromptsData.some(prompt => _matchesSearch(prompt, searchKeyword))) {
+                        currentPaginator?.load();
+                    }
+                });
                 return;
             }
         }
 
+        let requestGeneration = null;
         try {
             if (!append) {
                 showSkeleton();
             }
 
+            requestGeneration = ++networkRequestGeneration;
             isLoadingFromNetwork = true;
-            const res = await api.getPrompts(currentType, currentCategory, page, PAGE_SIZE, currentSort);
-            const prompts = res.data || [];
+            const res = await api.getPrompts(requestedType, requestedCategory, page, PAGE_SIZE, requestedSort);
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration === networkRequestGeneration) {
+                    isLoadingFromNetwork = false;
+                    silentRefresh();
+                }
+                return;
+            }
+            const prompts = requireListResponseData(res);
+            if (page === 1) firstPageReady = true;
             const total = res.total || 0;
             isLoadingFromNetwork = false;
 
@@ -477,15 +503,26 @@ export function createPromptsView(currentUser, keyword = "") {
             let displayPrompts = prompts.filter(p => _matchesSearch(p, searchKeyword));
 
             if (displayPrompts.length === 0 && page === 1) {
-                promptsGrid.innerHTML = _renderEmptyState();
-                loadMoreWrapper.style.display = "none";
+                if (searchKeyword) {
+                    promptsGrid.innerHTML = "";
+                    renderListSearchMessage(promptsGrid, total > PAGE_SIZE ? t('pagination.searching') : t('pagination.search_empty'));
+                    if (total > PAGE_SIZE) {
+                        startAutoPagination();
+                        currentPaginator?.load();
+                    } else {
+                        loadMoreWrapper.style.display = "none";
+                    }
+                } else {
+                    promptsGrid.innerHTML = _renderEmptyState();
+                    loadMoreWrapper.style.display = "none";
+                }
                 return;
             }
 
             // 渲染卡片
             const cards = [];
             displayPrompts.forEach(p => {
-                const card = createPromptCard(p);
+                const card = createPromptCard(p, currentUser, () => !disposed, cardNavigation.capture);
                 cards.push(card);
                 promptsGrid.appendChild(card);
             });
@@ -503,16 +540,22 @@ export function createPromptsView(currentUser, keyword = "") {
 
             // 显示/隐藏加载更多（基于过滤后的数据）
             const loadedCount = page * PAGE_SIZE;
-            const filteredTotal = searchKeyword ? displayPrompts.length : total;
-            if (loadedCount < filteredTotal) {
+            if (loadedCount < total) {
                 loadMoreWrapper.style.display = "block";
             } else {
                 loadMoreWrapper.style.display = "none";
             }
 
         } catch (err) {
-            console.error("加载提示词失败:", err);
+            if (disposed) return;
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration !== networkRequestGeneration) return;
+                isLoadingFromNetwork = false;
+                silentRefresh();
+                return;
+            }
             isLoadingFromNetwork = false;
+            console.error("加载提示词失败");
             // 网络失败时尝试从缓存读取（包括过期缓存，离线容灾）
             if (!append) {
                 const cachedData = readListCache(cacheKey);
@@ -521,27 +564,30 @@ export function createPromptsView(currentUser, keyword = "") {
                     renderPromptsFromCache(allPromptsData);
                     showToast(t('prompt.network_cache'), "warning");
                 } else {
-                    promptsGrid.innerHTML = `
-                        <div style="grid-column: span 2; text-align: center; padding: 40px; color: #F44336;">
-                            <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
-                            ${t('prompt.load_failed')}
-                        </div>
-                    `;
+                    renderListLoadError(promptsGrid, t('prompt.load_failed'), () => loadPrompts(1, false), t);
                 }
             }
         }
     };
 
     // 从缓存渲染提示词列表
-    const renderPromptsFromCache = (prompts) => {
+    const renderPromptsFromCache = (prompts, deferSearchScan = false) => {
+        firstPageReady = true;
         promptsGrid.innerHTML = "";
 
         // 🔍 搜索过滤
         const filteredPrompts = prompts.filter(p => _matchesSearch(p, searchKeyword));
 
         if (filteredPrompts.length === 0) {
-            promptsGrid.innerHTML = _renderEmptyState();
-            loadMoreWrapper.style.display = "none";
+            if (searchKeyword) {
+                renderListSearchMessage(promptsGrid, t('pagination.searching'));
+                startAutoPagination();
+                loadMoreWrapper.style.display = "none";
+                if (!deferSearchScan) currentPaginator?.load();
+            } else {
+                promptsGrid.innerHTML = _renderEmptyState();
+                loadMoreWrapper.style.display = "none";
+            }
             return;
         }
 
@@ -549,7 +595,7 @@ export function createPromptsView(currentUser, keyword = "") {
         const firstPage = filteredPrompts.slice(0, PAGE_SIZE);
         const cards = [];
         firstPage.forEach(p => {
-            const card = createPromptCard(p);
+            const card = createPromptCard(p, currentUser, () => !disposed, cardNavigation.capture);
             cards.push(card);
             promptsGrid.appendChild(card);
         });
@@ -573,29 +619,58 @@ export function createPromptsView(currentUser, keyword = "") {
 
     // 后台静默更新
     const silentRefresh = async () => {
-        if (isLoadingFromNetwork) return;
-
+        if (disposed || isLoadingFromNetwork) return;
+        const viewGeneration = listViewGeneration;
+        const requestedType = currentType;
+        const requestedCategory = currentCategory;
+        const requestedSort = currentSort;
+        const cacheKey = `${CACHE_KEY_PREFIX}_${requestedType}_${requestedCategory || 'all'}_${requestedSort}`;
+        const requestGeneration = ++networkRequestGeneration;
         try {
             isLoadingFromNetwork = true;
-            const res = await api.getPrompts(currentType, currentCategory, 1, PAGE_SIZE, currentSort);
-            const prompts = res.data || [];
+            const res = await api.getPrompts(requestedType, requestedCategory, 1, PAGE_SIZE, requestedSort, {
+                noCache: true,
+                timeout: API.BACKGROUND_TIMEOUT,
+                retries: API.BACKGROUND_RETRIES
+            });
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration === networkRequestGeneration) {
+                    isLoadingFromNetwork = false;
+                    silentRefresh();
+                }
+                return;
+            }
+            const prompts = requireListResponseData(res);
             isLoadingFromNetwork = false;
 
-            // 更新缓存
-            const cacheKey = getCacheKey();
-            writeListCache(cacheKey, prompts, getCacheTTL());
-
-            // 对比新旧数据，有变化时重新渲染
-            if (_promptsDataChanged(allPromptsData, prompts)) {
-                console.log(`✅ 提示词 ${currentType}/${currentSort} 检测到新数据，执行静默更新`);
-                allPromptsData = proxyImages(prompts);
-                renderPromptsFromCache(allPromptsData);
+            if (isEmptyListRefreshWithExistingData(prompts, allPromptsData)) {
+                console.warn(`🛡️ 提示词 ${requestedType}/${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
-                allPromptsData = proxyImages(prompts);
+                // 更新缓存
+                writeListCache(cacheKey, prompts, getCacheTTL());
+
+                // 对比新旧数据，有变化时重新渲染
+                if (_promptsDataChanged(allPromptsData, prompts)) {
+                    console.log(`✅ 提示词 ${currentType}/${currentSort} 检测到新数据，执行静默更新`);
+                    allPromptsData = proxyImages(prompts);
+                    renderPromptsFromCache(allPromptsData);
+                } else {
+                    allPromptsData = proxyImages(prompts);
+                }
             }
         } catch (err) {
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration === networkRequestGeneration) {
+                    isLoadingFromNetwork = false;
+                    silentRefresh();
+                }
+                return;
+            }
             isLoadingFromNetwork = false;
-            console.warn("后台更新失败:", err);
+            console.warn("后台更新提示词失败（保留当前内容）");
+        }
+        if (searchKeyword && !allPromptsData.some(prompt => _matchesSearch(prompt, searchKeyword))) {
+            currentPaginator?.load();
         }
     };
 
@@ -617,12 +692,11 @@ export function createPromptsView(currentUser, keyword = "") {
     // 🎨 模块切换（图像/视频/音乐）
     container.querySelectorAll(".prompt-type-tab").forEach(btn => {
         btn.onclick = () => {
-            if (btn.dataset.type === currentType) return;
+            if (disposed || btn.dataset.type === currentType) return;
             currentType = btn.dataset.type;
             currentCategory = null;
-            currentPage = 1;
             allPromptsData = [];
-            applyTypeTabStyles();
+            syncTypeTabState();
             resetPagination();
             loadCategoriesAndReload();
         };
@@ -630,38 +704,44 @@ export function createPromptsView(currentUser, keyword = "") {
 
     // 加载更多按钮
     loadMoreBtn.onclick = () => {
-        currentPage++;
-        loadPrompts(currentPage, true);
+        if (disposed) return;
+        currentPaginator?.load();
     };
 
     // 初始加载
-    applyTypeTabStyles();
+    syncTypeTabState();
     loadCategoriesAndReload();
 
     // 🔧 组件生命周期清理方法
     container._cleanup = () => {
+        if (disposed) return;
+        disposed = true;
+        cardNavigation.dispose();
+        if (activeViewCleanup === container._cleanup) activeViewCleanup = null;
+        listViewGeneration++;
+        networkRequestGeneration++;
+        stopViewportAnimations(promptsGrid);
         // 清理筛选事件监听器
-        if (currentFilterHandler) {
-            window.removeEventListener("comfy-prompts-filter-change", currentFilterHandler);
-            currentFilterHandler = null;
-        }
+        window.removeEventListener("comfy-prompts-filter-change", handleFilterChange);
+        if (currentFilterHandler === handleFilterChange) currentFilterHandler = null;
         // 清理刷新事件监听器
         window.removeEventListener("comfy-prompts-refresh", refreshHandler);
         // 如果有分页器，停止它
-        if (currentPaginator) {
-            currentPaginator.stop();
-            currentPaginator = null;
-        }
+        const stoppedPaginator = currentPaginator;
+        currentPaginator = null;
+        try { stoppedPaginator?.stop(); } catch { console.warn("榜单分页器清理失败"); }
     };
 
+    activeViewCleanup = container._cleanup;
     return container;
 }
 
 /**
  * 🎴 创建单个提示词卡片（小红书风格）
  */
-function createPromptCard(prompt) {
+function createPromptCard(prompt, currentUser = currentUserCache, isCurrent = () => true, captureNavigation = () => isCurrent) {
     const card = document.createElement("div");
+    card.className = "business-list-card";
     Object.assign(card.style, {
         background: "var(--comfy-menu-bg)",
         borderRadius: "8px",
@@ -679,15 +759,15 @@ function createPromptCard(prompt) {
 
     // 价格徽标：免费绿色 / 💎价格金色
     const priceHtml = (prompt.price > 0)
-        ? `<span style="background: linear-gradient(135deg, #FFD700, #FFA000); color: #333; font-size: 10px; font-weight: bold; padding: 2px 8px; border-radius: 10px;">💎 ${prompt.price}</span>`
+        ? `<span style="background: linear-gradient(135deg, #FFD700, #FFA000); color: #333; font-size: 10px; font-weight: bold; padding: 2px 8px; border-radius: 10px;">💎 ${escapeHtml(prompt.price)}</span>`
         : `<span style="background: rgba(76, 175, 80, 0.25); color: #4CAF50; font-size: 10px; font-weight: bold; padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(76, 175, 80, 0.5);">${t('prompt.free')}</span>`;
 
     card.innerHTML = `
         <!-- 封面图 -->
         <div style="position: relative; width: 100%; padding-top: 100%; background: #111;">
-            <img src="${prompt.cover_image || 'data:image/svg+xml,...'}" 
+            <img src="${escapeHtml(prompt.cover_image || 'data:image/svg+xml,...')}"
                  style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;"
-                 onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23222%22 width=%22200%22 height=%22200%22/%3E%3Ctext x=%22100%22 y=%22100%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2224%22%3E🖼️%3C/text%3E%3C/svg%3E'">
+                 alt="">
             ${isVideo ? `
             <!-- 视频播放按钮 -->
             <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -711,9 +791,9 @@ function createPromptCard(prompt) {
         <!-- 内容区 -->
         <div style="padding: 10px;">
             <!-- 标题 -->
-            <div style="font-size: 13px; font-weight: 500; color: #fff; margin-bottom: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4;">
+            <button type="button" class="business-list-card__title">
                 ${escapeHtml(prompt.title)}
-            </div>
+            </button>
             
             <!-- 分类标签 -->
             <div style="margin-bottom: 6px;">
@@ -722,21 +802,22 @@ function createPromptCard(prompt) {
             </div>
             
             <!-- 作者信息（SWR 缓存头像） -->
-            <div id="prompt-author-${prompt.id}" style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;"></div>
+            <div class="business-list-card__author" style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;"></div>
             
             <!-- 互动数据 -->
-            <div style="display: flex; align-items: center; gap: 12px; font-size: 11px; color: #888;">
-                <span>❤️ ${prompt.likes || 0}</span>
-                <span>🔖 ${prompt.favorites || 0}</span>
-                <span>🔥 ${prompt.views || 0}</span>
-                <span style="margin-left: auto; font-size: 10px;">${timeStr}</span>
+            <div style="display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--rk-muted, var(--descrip-text, #888));">
+                <span>❤️ ${escapeHtml(prompt.likes || 0)}</span>
+                <span>🔖 ${escapeHtml(prompt.favorites || 0)}</span>
+                <span>🔥 ${escapeHtml(prompt.views || 0)}</span>
+                <span style="margin-left: auto; font-size: 10px;">${escapeHtml(timeStr)}</span>
             </div>
         </div>
     `;
 
     // 🚀 SWR 头像渲染：先从缓存读取，后台静默校对
     setTimeout(() => {
-        const authorContainer = card.querySelector(`#prompt-author-${prompt.id}`);
+        if (!isCurrent() || !card.isConnected) return;
+        const authorContainer = card.querySelector(".business-list-card__author");
         if (!authorContainer) return;
 
         const account = prompt.author;
@@ -747,10 +828,11 @@ function createPromptCard(prompt) {
         // 渲染初始头像
         const avatarHtml = _generateAvatarHtml(avatar, name, 18);
 
-        authorContainer.innerHTML = `${avatarHtml}<span class="swr-name" style="font-size: 11px; color: #999; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(name)}</span>`;
+        authorContainer.innerHTML = `${avatarHtml}<span class="swr-name" style="font-size: 11px; color: var(--rk-muted, var(--descrip-text, #999)); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(name)}</span>`;
 
         // 后台静默校对
         getProfileWithSWR(account, api.getUserProfile, (profile) => {
+            if (!isCurrent() || !card.isConnected) return;
             const avatarEl = authorContainer.querySelector('.swr-avatar');
             const nameEl = authorContainer.querySelector('.swr-name');
             if (avatarEl && profile.avatar) {
@@ -766,22 +848,31 @@ function createPromptCard(prompt) {
         });
     }, 0);
 
-    // 悬停效果
-    card.onmouseover = () => {
-        card.style.transform = "translateY(-2px)";
-        card.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
-    };
-    card.onmouseout = () => {
-        card.style.transform = "translateY(0)";
-        card.style.boxShadow = "none";
+    const cover = card.querySelector('img');
+    if (cover) cover.onerror = () => {
+        cover.onerror = null;
+        cover.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23222" width="200" height="200"/%3E%3C/svg%3E';
     };
 
-    // 点击进入详情
-    card.onclick = () => {
-        import("./提示词详情组件.js").then(module => {
-            const view = module.createPromptDetailView(prompt.id, currentUserCache);
+    let opening = false;
+    card.onclick = async () => {
+        if (opening || !isCurrent() || !card.isConnected) return;
+        const isNavigationCurrent = captureNavigation();
+        if (!isNavigationCurrent()) { showToast(t('auth.reopen_list'), 'warning'); return; }
+        opening = true;
+        card.setAttribute('aria-busy', 'true');
+        try {
+            const module = await import("./提示词详情组件.js");
+            if (!isNavigationCurrent() || !card.isConnected || !card.getClientRects().length) return;
+            const view = module.createPromptDetailView(prompt.id, currentUser);
+            if (!isNavigationCurrent() || !card.isConnected) { view._cleanup?.(); return; }
             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-        });
+        } catch {
+            if (isNavigationCurrent() && card.isConnected && card.getClientRects().length) showToast(t('prompt.load_failed'), 'error');
+        } finally {
+            opening = false;
+            card.removeAttribute('aria-busy');
+        }
     };
 
     return card;

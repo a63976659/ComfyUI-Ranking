@@ -18,7 +18,7 @@
 import { PAGINATION } from "../core/全局配置.js";
 // 📦 列表缓存工具需要本地可用的缓存实现；下方「向后兼容重导出」那行是纯转发、
 // 不会生成本地绑定，故此处必须单独 import（勿误删，否则 readListCache 运行时报错）
-import { setCache, getCacheWithMeta } from "../core/网络请求_缓存管理.js";
+import { setCache, getCacheWithMeta, removeCache, getCacheKeysByPrefix } from "../core/网络请求_缓存管理.js";
 
 // ==========================================
 // 🔒 P0安全优化：敏感数据脱敏工具
@@ -216,8 +216,10 @@ export { setCache, getCache, getCacheWithMeta, removeCache, removeCacheByPrefix,
  * @param {Object} options - 配置选项
  * @param {HTMLElement} options.container - 滚动容器
  * @param {Function} options.loadMore - 加载更多数据的函数，返回 Promise
+ * @param {Function} options.t - 本地化函数（分页状态和失败重试文案）
  * @param {number} options.pageSize - 每页数量，默认 20
  * @param {number} options.threshold - 触发阈值（距底部像素），默认 200
+ * @param {Function} [options.autoFill] - 可选；返回 true 时继续搜索分页，无滚动空间时也会填充到可滚动
  * @returns {Object} 分页加载器实例
  */
 export function createPaginationLoader(options) {
@@ -227,42 +229,59 @@ export function createPaginationLoader(options) {
         pageSize = 20,
         threshold = 200
     } = options;
+    const translate = options.t;
+    const autoFill = options.autoFill;
+    const canLoad = options.canLoad;
     
     let currentPage = 1;  // 首屏已渲染第1页，loadMore前先递增，从第2页开始加载
     let isLoading = false;
     let hasMore = true;
     let debounceTimer = null;
-    let consecutiveErrors = 0;
-    let retryTimer = null;
     let generation = 0;  // 🔄 轻量级取消令牌，reset 时递增以丢弃飞行中请求
+    let stopped = false;  // 保持创建后可手动加载；stop 后仅 start 能重新启用。
     
     // 加载指示器
     const loadingIndicator = document.createElement("div");
     loadingIndicator.className = "pagination-loading";
-    loadingIndicator.innerHTML = `
-        <div style="text-align: center; padding: 20px; color: #888;">
-            <span class="loading-spinner"></span>
-            <span style="margin-left: 8px;">加载中...</span>
-        </div>
-    `;
+    loadingIndicator.setAttribute("role", "status");
+    loadingIndicator.setAttribute("aria-live", "polite");
+    loadingIndicator.setAttribute("aria-atomic", "true");
+    const loadingSpinner = document.createElement("span");
+    loadingSpinner.className = "pagination-loading__spinner";
+    loadingSpinner.setAttribute("aria-hidden", "true");
+    const loadingText = document.createElement("span");
+    loadingText.textContent = translate("pagination.loading");
+    loadingIndicator.append(loadingSpinner, loadingText);
     loadingIndicator.style.display = "none";
     
     // "没有更多"提示
     const endIndicator = document.createElement("div");
     endIndicator.className = "pagination-end";
-    endIndicator.innerHTML = `
-        <div style="text-align: center; padding: 20px; color: #666; font-size: 13px;">
-            — 已经到底了 —
-        </div>
-    `;
+    endIndicator.setAttribute("role", "status");
+    endIndicator.setAttribute("aria-live", "polite");
+    endIndicator.textContent = translate("pagination.end");
     endIndicator.style.display = "none";
+
+    const retryIndicator = document.createElement("div");
+    retryIndicator.className = "pagination-error";
+    retryIndicator.setAttribute("role", "alert");
+    retryIndicator.setAttribute("aria-live", "assertive");
+    const retryMessage = document.createElement("span");
+    retryMessage.textContent = translate("pagination.failed");
+    const retryButton = document.createElement("button");
+    retryButton.type = "button";
+    retryButton.className = "pagination-error__retry";
+    retryButton.textContent = translate("common.retry");
+    retryIndicator.append(retryMessage, retryButton);
+    retryIndicator.style.display = "none";
     
     // 滚动事件处理（带防抖）
     const handleScroll = () => {
+        if (stopped) return;
         if (debounceTimer) clearTimeout(debounceTimer);
         
         debounceTimer = setTimeout(() => {
-            if (isLoading || !hasMore) return;
+            if (stopped || isLoading || !hasMore) return;
             
             const { scrollTop, scrollHeight, clientHeight } = container;
             const distanceToBottom = scrollHeight - scrollTop - clientHeight;
@@ -275,67 +294,89 @@ export function createPaginationLoader(options) {
     
     // 加载下一页
     const _loadNextPage = async () => {
-        if (isLoading || !hasMore) return;
+        if (stopped || isLoading || !hasMore) return;
+        if (typeof canLoad === "function" && !canLoad()) return;
         
         isLoading = true;
         loadingIndicator.style.display = "block";
+        const savedGen = generation;
         
         try {
             currentPage++;  // 先递增，再加载（首屏已渲染第1页，从第2页开始）
-            const savedGen = generation;
-            const result = await loadMore(currentPage, pageSize);
+            const result = await loadMore(currentPage, pageSize, {
+                isCurrent: () => savedGen === generation
+            });
             if (savedGen !== generation) return;  // reset 被调用了，丢弃结果
             
             // 加载失败，允许重试
             if (result === null) {
-                consecutiveErrors++;
-                if (consecutiveErrors >= 3) {
-                    hasMore = false;
-                    loadingIndicator.style.display = "none";
-                    if (retryTimer) clearTimeout(retryTimer);
-                    retryTimer = setTimeout(() => {
-                        consecutiveErrors = 0;
-                        hasMore = true;
-                    }, 5000);
-                }
+                currentPage = Math.max(1, currentPage - 1);
+                hasMore = false;
+                loadingIndicator.style.display = "none";
+                retryIndicator.style.display = "flex";
                 return;
-            }
-            
-            consecutiveErrors = 0;
-            if (retryTimer) {
-                clearTimeout(retryTimer);
-                retryTimer = null;
             }
             
             // 判断是否还有更多 - 返回空数组则停止
             if (!result || result.length === 0) {
                 hasMore = false;
                 loadingIndicator.style.display = "none";
+                endIndicator.style.display = "block";
+            } else {
+                endIndicator.style.display = "none";
             }
         } catch (error) {
-            console.error("分页加载失败:", error);
+            if (savedGen === generation) {
+                currentPage = Math.max(1, currentPage - 1);
+                hasMore = false;
+                retryIndicator.style.display = "flex";
+                console.error("分页加载失败");
+            }
         } finally {
-            isLoading = false;
-            if (hasMore) {
+            if (savedGen === generation) {
+                isLoading = false;
                 loadingIndicator.style.display = "none";
+                // Search callers can scan pages with no local matches without
+                // changing pagination behavior for other lists.
+                if (hasMore && typeof autoFill === "function" &&
+                    (autoFill() || container.scrollHeight <= container.clientHeight + threshold)) {
+                    _loadNextPage();
+                }
             }
         }
     };
+
+    retryButton.addEventListener("click", () => {
+        if (stopped || isLoading) return;
+        retryIndicator.style.display = "none";
+        hasMore = true;
+        _loadNextPage();
+    });
     
     // 启动监听
     const start = () => {
+        stopped = false;
         container.addEventListener("scroll", handleScroll);
         // 添加指示器到容器末尾
         const scrollContent = container.querySelector(".scroll-content") || container;
         scrollContent.appendChild(loadingIndicator);
         scrollContent.appendChild(endIndicator);
+        scrollContent.appendChild(retryIndicator);
     };
     
     // 停止监听
     const stop = () => {
+        stopped = true;
+        generation++;
+        if (isLoading) currentPage = Math.max(1, currentPage - 1);
+        isLoading = false;
         container.removeEventListener("scroll", handleScroll);
         if (debounceTimer) clearTimeout(debounceTimer);
-        if (retryTimer) clearTimeout(retryTimer);
+        loadingIndicator.style.display = "none";
+        retryIndicator.style.display = "none";
+        loadingIndicator.remove();
+        endIndicator.remove();
+        retryIndicator.remove();
     };
     
     // 重置状态
@@ -344,13 +385,9 @@ export function createPaginationLoader(options) {
         currentPage = 1;  // 首屏已渲染第1页，分页器从第2页开始
         hasMore = true;
         isLoading = false;
-        consecutiveErrors = 0;
-        if (retryTimer) {
-            clearTimeout(retryTimer);
-            retryTimer = null;
-        }
         loadingIndicator.style.display = "none";
         endIndicator.style.display = "none";
+        retryIndicator.style.display = "none";
     };
     
     // 手动触发加载
@@ -365,6 +402,24 @@ export function createPaginationLoader(options) {
         get hasMore() { return hasMore; },
         get currentPage() { return currentPage; }
     };
+}
+
+/** Render an accessible, localized search state inside a list grid. */
+export function renderListSearchMessage(container, message) {
+    container.querySelector('.list-search-message')?.remove();
+    const status = document.createElement("div");
+    status.className = "list-search-message";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    status.textContent = message;
+    Object.assign(status.style, {
+        gridColumn: "1 / -1",
+        textAlign: "center",
+        padding: "24px 16px",
+        color: "var(--descrip-text, #999)"
+    });
+    container.appendChild(status);
+    return status;
 }
 
 
@@ -519,10 +574,23 @@ export function lazyLoadImages(container, selector = "img") {
  */
 export function debounce(fn, delay = 300) {
     let timer = null;
-    return function(...args) {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => fn.apply(this, args), delay);
+    let generation = 0;
+    const debounced = function(...args) {
+        const current = ++generation;
+        if (timer !== null) clearTimeout(timer);
+        timer = setTimeout(() => {
+            if (current !== generation) return;
+            timer = null;
+            fn.apply(this, args);
+        }, delay);
     };
+    debounced.cancel = () => {
+        generation++;
+        const pending = timer;
+        timer = null;
+        if (pending !== null) clearTimeout(pending);
+    };
+    return debounced;
 }
 
 /**
@@ -957,10 +1025,14 @@ export function createVirtualScroller(options) {
     };
     
     // 窗口尺寸变化
-    const handleResize = debounce(() => {
+    const resizeDebounce = debounce(() => {
+        if (_isDestroyed) return;
         _containerHeight = container.clientHeight;
         render();
     }, 200);
+    const handleResize = () => {
+        if (!_isDestroyed) resizeDebounce();
+    };
     
     // 初始化
     const init = () => {
@@ -972,6 +1044,7 @@ export function createVirtualScroller(options) {
     // 销毁
     const destroy = () => {
         _isDestroyed = true;
+        resizeDebounce.cancel();
         container.removeEventListener("scroll", handleScroll);
         window.removeEventListener("resize", handleResize);
         if (rafId) cancelAnimationFrame(rafId);
@@ -1259,9 +1332,21 @@ export { eventManager };
  * @returns {Array|null} 命中返回数组，未命中/空列表返回 null
  */
 export function readListCache(cacheKey) {
-    const { value } = getCacheWithMeta(cacheKey, true);  // true = 忽略过期
-    if (!Array.isArray(value) || value.length === 0) return null;
+    const { value, found } = getCacheWithMeta(cacheKey, true);  // true = 忽略过期
+    if (!Array.isArray(value)) {
+        if (found) removeCache(cacheKey);
+        return null;
+    }
+    if (value.length === 0) return null;
+    if (_hasInvalidListItem(value)) {
+        removeCache(cacheKey);
+        return null;
+    }
     return value;
+}
+
+function _hasInvalidListItem(items) {
+    return items.some(item => !item || typeof item !== "object" || Array.isArray(item));
 }
 
 /**
@@ -1271,8 +1356,61 @@ export function readListCache(cacheKey) {
  * @param {number} ttl - 有效期（毫秒），由调用方传 getCacheTTL()
  */
 export function writeListCache(cacheKey, items, ttl) {
-    if (!Array.isArray(items)) return;
+    if (!Array.isArray(items) || _hasInvalidListItem(items)) return;
     setCache(cacheKey, items, ttl, true);  // true = 持久化 localStorage
+}
+
+/**
+ * Validate a successful list endpoint envelope before data reaches UI state or cache.
+ * @param {Object} response - API response envelope
+ * @returns {Array} validated list data
+ */
+export function requireListResponseData(response) {
+    if (response?.status !== "success" || !Array.isArray(response.data)
+        || _hasInvalidListItem(response.data)) {
+        const error = new Error("Invalid list response");
+        error.name = "InvalidListResponseError";
+        throw error;
+    }
+    return response.data;
+}
+
+/**
+ * 判断后台成功响应的空数组是否会覆盖当前榜单已有内容。
+ * 列表服务在冷启动/数据同步窗口可能暂时返回空数组；已有结果应继续显示，
+ * 直到非空新数据到达。无缓存时的真实空列表仍按正常结果处理。
+ * @param {Array} nextItems 本次请求得到的列表
+ * @param {Array} currentItems 当前榜单已显示的数据
+ * @returns {boolean} 是否应跳过此次缓存回写和列表替换
+ */
+export function isEmptyListRefreshWithExistingData(nextItems, currentItems) {
+    return Array.isArray(nextItems) && nextItems.length === 0
+        && Array.isArray(currentItems) && currentItems.length > 0;
+}
+
+/**
+ * 渲染可访问的列表首屏失败状态，并提供显式重试入口。
+ * 使用 DOM/textContent，避免错误文案进入 HTML sink。
+ */
+export function renderListLoadError(container, message, onRetry, t) {
+    if (!container) return;
+    const status = document.createElement("div");
+    status.className = "comfy-ranking-list-error";
+    status.setAttribute("role", "alert");
+    status.setAttribute("aria-live", "assertive");
+
+    const text = document.createElement("p");
+    text.className = "comfy-ranking-list-error__message";
+    text.textContent = message;
+
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "comfy-ranking-list-error__retry";
+    retry.textContent = t("common.retry");
+    retry.addEventListener("click", () => onRetry?.());
+
+    status.append(text, retry);
+    container.replaceChildren(status);
 }
 
 /**
@@ -1283,20 +1421,14 @@ export function writeListCache(cacheKey, items, ttl) {
  */
 export function findInListCache(prefix, id) {
     try {
-        const fullPrefix = "ComfyRanking_" + prefix;
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && key.startsWith(fullPrefix)) {
-                const raw = JSON.parse(localStorage.getItem(key));
-                const items = raw?.value;
-                if (Array.isArray(items)) {
-                    const found = items.find(item => item.id === id);
-                    if (found) return found;
-                }
-            }
+        for (const cacheKey of getCacheKeysByPrefix(prefix)) {
+            const items = readListCache(cacheKey);
+            if (!items) continue;
+            const item = items.find(entry => entry.id === id);
+            if (item) return item;
         }
     } catch (e) {
-        console.warn("列表缓存查找失败:", e);
+        console.warn("列表缓存查找失败");
     }
     return null;
 }

@@ -12,6 +12,7 @@ import { showToast } from "./UI交互提示组件.js";
 import { setLanguage, getLanguage, t } from "./用户体验增强.js";
 import { clearAllCache } from "./性能优化工具.js";
 import { IS_WEB_MODE } from "../core/全局配置.js";
+import { getDiskCacheStats, clearDiskCache } from './缓存管理请求.js';
 
 // 🔧 设置项 localStorage Key
 const SETTINGS_KEY = "ComfyCommunity_Settings";
@@ -76,6 +77,7 @@ function formatSize(bytes) {
 function getBrowserCacheStats() {
     let totalSize = 0;
     let count = 0;
+    let available = true;
     try {
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
@@ -87,8 +89,8 @@ function getBrowserCacheStats() {
                 }
             }
         }
-    } catch (e) {}
-    return { count, totalSize };
+    } catch (e) { available = false; }
+    return { count, totalSize, available };
 }
 
 /**
@@ -114,6 +116,10 @@ export function createSettingsView() {
     const styleSheet = document.createElement("style");
     styleSheet.textContent = `
         .setting-switch {
+            color: inherit;
+            appearance: none;
+            border: 0;
+            padding: 0;
             position: relative;
             width: 44px;
             height: 24px;
@@ -122,6 +128,10 @@ export function createSettingsView() {
             cursor: pointer;
             transition: 0.3s;
             flex-shrink: 0;
+        }
+        .setting-switch:focus-visible {
+            outline: 2px solid currentColor;
+            outline-offset: 3px;
         }
         .setting-switch.active {
             background: #4CAF50;
@@ -275,10 +285,10 @@ export function createSettingsView() {
             <!-- 设置项：界面语言 -->
             <div class="setting-item">
                 <div style="flex: 1;">
-                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.language')} / Language</div>
+                    <div id="label-language" style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.language')} / Language</div>
                     <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.language_desc')} / Select display language</div>
                 </div>
-                <select id="select-language" class="setting-select">
+                <select aria-labelledby="label-language" id="select-language" class="setting-select">
                     ${LANGUAGE_OPTIONS.map(opt => 
                         `<option value="${opt.value}" ${(settings.language || 'zh-CN') === opt.value ? 'selected' : ''}>${opt.label}</option>`
                     ).join('')}
@@ -293,10 +303,10 @@ export function createSettingsView() {
             <!-- 设置项：创作者卡片背景图 -->
             <div class="setting-item">
                 <div style="flex: 1;">
-                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.creator_banner')}</div>
-                    <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.creator_banner_desc')}</div>
+                    <div id="label-creator-banner" style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.creator_banner')}</div>
+                    <div id="desc-creator-banner" style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.creator_banner_desc')}</div>
                 </div>
-                <div id="switch-creator-banner" class="setting-switch ${settings.showCreatorBanner ? 'active' : ''}"></div>
+                <button type="button" role="switch" id="switch-creator-banner" aria-labelledby="label-creator-banner" aria-describedby="desc-creator-banner" class="setting-switch ${settings.showCreatorBanner ? 'active' : ''}"></button>
             </div>
             
             <!-- 分类：更多功能 -->
@@ -307,19 +317,19 @@ export function createSettingsView() {
             <!-- 设置项：榜单切换动画 -->
             <div class="setting-item">
                 <div style="flex: 1;">
-                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.animations')}</div>
-                    <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.animations_desc')}</div>
+                    <div id="label-animations" style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.animations')}</div>
+                    <div id="desc-animations" style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.animations_desc')}</div>
                 </div>
-                <div id="switch-animations" class="setting-switch ${settings.enableAnimations ? 'active' : ''}"></div>
+                <button type="button" role="switch" id="switch-animations" aria-labelledby="label-animations" aria-describedby="desc-animations" class="setting-switch ${settings.enableAnimations ? 'active' : ''}"></button>
             </div>
             
             <!-- 设置项：动画音效 -->
             <div class="setting-item">
                 <div style="flex: 1;">
-                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.sound')}</div>
-                    <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.sound_desc')}</div>
+                    <div id="label-sound-effects" style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.sound')}</div>
+                    <div id="desc-sound-effects" style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.sound_desc')}</div>
                 </div>
-                <div id="switch-sound-effects" class="setting-switch ${settings.enableSoundEffects ? 'active' : ''}"></div>
+                <button type="button" role="switch" id="switch-sound-effects" aria-labelledby="label-sound-effects" aria-describedby="desc-sound-effects" class="setting-switch ${settings.enableSoundEffects ? 'active' : ''}"></button>
             </div>
             
             <!-- 分类：数据与缓存 -->
@@ -330,16 +340,16 @@ export function createSettingsView() {
             <!-- 设置项：缓存刷新间隔（滑条） -->
             <div class="setting-item" style="flex-direction: column; align-items: flex-start; gap: 12px;">
                 <div style="flex: 1; width: 100%;">
-                    <div style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.cache_expire')}</div>
+                    <div id="label-cache-expire" style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.cache_expire')}</div>
                     <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.cache_expire_desc')}</div>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
                     <div style="display: flex; align-items: center; gap: 12px; width: 100%;">
-                        <input type="range" id="slider-cache-expire" class="setting-range-slider"
+                        <input aria-labelledby="label-cache-expire" type="range" id="slider-cache-expire" class="setting-range-slider"
                             value="${settings.cacheExpireSeconds || 7200}"
                             min="60" max="86400" step="60"
                             style="flex: 1;">
-                        <input type="number" id="input-cache-expire" class="setting-number-input"
+                        <input aria-labelledby="label-cache-expire" type="number" id="input-cache-expire" class="setting-number-input"
                             value="${settings.cacheExpireSeconds || 7200}"
                             min="60" max="86400" step="60">
                         <span id="cache-expire-label" style="color: #4CAF50; font-size: 12px; min-width: 55px; white-space: nowrap;"></span>
@@ -402,9 +412,11 @@ export function createSettingsView() {
      */
     function _bindSwitchHandler(selector, settingKey, labelKey, iconOn = '✅') {
         const switchEl = container.querySelector(selector);
+        switchEl.setAttribute("aria-checked", String(switchEl.classList.contains("active")));
         switchEl.onclick = () => {
             const newValue = !switchEl.classList.contains("active");
             switchEl.classList.toggle("active", newValue);
+            switchEl.setAttribute("aria-checked", String(newValue));
             const currentSettings = getSettings();
             currentSettings[settingKey] = newValue;
             saveSettings(currentSettings);
@@ -419,8 +431,15 @@ export function createSettingsView() {
     
     // 🌐 下拉控制：界面语言
     const selectLanguage = container.querySelector("#select-language");
+    let languageTimer = null;
+    let languageGeneration = 0;
     selectLanguage.onchange = () => {
+        if (cacheViewDisposed || !container.isConnected) return;
         const newLang = selectLanguage.value;
+        if (!LANGUAGE_OPTIONS.some(option => option.value === newLang)) return;
+        const generation = ++languageGeneration;
+        clearTimeout(languageTimer);
+        languageTimer = null;
         
         const currentSettings = getSettings();
         currentSettings.language = newLang;
@@ -428,19 +447,28 @@ export function createSettingsView() {
         
         // 同步到 i18n 模块
         setLanguage(newLang);
+        if (cacheViewDisposed || generation !== languageGeneration || !container.isConnected) return;
         
         const langName = LANGUAGE_OPTIONS.find(opt => opt.value === newLang)?.label || newLang;
         showToast(`🌐 ${t('settings.language_changed')} ${langName.split(' / ')[0]}`, "success");
         
-        // 🔄 通过路由系统刷新，保持 activeInlineView 同步
-        setTimeout(() => {
-            // 先返回主页
-            window.dispatchEvent(new CustomEvent("comfy-route-back"));
-            // 再重新打开设置页
-            setTimeout(() => {
-                const newSettingsView = createSettingsView();
-                window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: newSettingsView } }));
-            }, 50);
+        languageTimer = setTimeout(() => {
+            languageTimer = null;
+            if (cacheViewDisposed || generation !== languageGeneration || !container.isConnected) return;
+            const restoreFocus = document.activeElement === selectLanguage;
+            const newSettingsView = createSettingsView();
+            if (cacheViewDisposed || generation !== languageGeneration || !container.isConnected) {
+                newSettingsView._cleanup?.();
+                return;
+            }
+            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: newSettingsView } }));
+            if (!newSettingsView.isConnected) {
+                newSettingsView._cleanup?.();
+                return;
+            }
+            if (restoreFocus && (document.activeElement === document.body || document.activeElement === selectLanguage)) {
+                newSettingsView.querySelector("#select-language")?.focus({ preventScroll: true });
+            }
         }, 100);
     };
     
@@ -509,28 +537,57 @@ export function createSettingsView() {
     
     // 📊 缓存统计面板
     const cacheStatsPanel = container.querySelector("#cache-stats-panel");
+    cacheStatsPanel.setAttribute('role', 'status');
+    cacheStatsPanel.setAttribute('aria-live', 'polite');
+    let statsGeneration = 0;
+    let statsController = null;
+    let lastStatsHTML = null;
+    let cacheViewDisposed = false;
+    container._cleanup = () => {
+        if (cacheViewDisposed) return;
+        cacheViewDisposed = true;
+        languageGeneration++;
+        clearTimeout(languageTimer);
+        languageTimer = null;
+        statsGeneration++;
+        statsController?.abort();
+        statsController = null;
+    };
     
     async function loadCacheStats() {
+        const generation = ++statsGeneration;
+        statsController?.abort();
+        const controller = new AbortController();
+        statsController = controller;
         // 📱 Web 模式：无本地磁盘缓存，仅统计浏览器缓存
         if (IS_WEB_MODE) {
+            statsController = null;
             const browserStats = getBrowserCacheStats();
+            if (!browserStats.available) {
+                const status = lastStatsHTML === null ? t('settings.cache_stats_unavailable') : t('settings.cache_stats_stale');
+                cacheStatsPanel.innerHTML = `<div>${status}</div>` + (lastStatsHTML || '');
+                return;
+            }
             cacheStatsPanel.innerHTML = `
                 <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #aaa; font-size: 13px;">
                     <span style="color: #ccc;">${t('settings.cache_browser')}：</span>${browserStats.count} ${t('settings.files')} · ${formatSize(browserStats.totalSize)}
                 </div>
             `;
+            lastStatsHTML = cacheStatsPanel.innerHTML;
             return;
         }
         try {
             const [diskRes, browserStats] = await Promise.all([
-                fetch("/community_hub/cache/stats").then(r => r.ok ? r.json() : null).catch(() => null),
+                getDiskCacheStats({ signal: controller.signal }),
                 Promise.resolve(getBrowserCacheStats())
             ]);
+            if (generation !== statsGeneration || cacheViewDisposed || !container.isConnected) return;
+            if (!browserStats.available) throw new Error('cache_stats_unavailable');
             
-            const imageCount = diskRes?.image_count || 0;
-            const imageSize = diskRes?.image_size || 0;
-            const videoCount = diskRes?.video_count || 0;
-            const videoSize = diskRes?.video_size || 0;
+            const imageCount = diskRes.image_count;
+            const imageSize = diskRes.image_size;
+            const videoCount = diskRes.video_count;
+            const videoSize = diskRes.video_size;
             const browserCount = browserStats.count;
             const browserSize = browserStats.totalSize;
             
@@ -542,6 +599,7 @@ export function createSettingsView() {
                         ${t('settings.no_cache')}
                     </div>
                 `;
+                lastStatsHTML = cacheStatsPanel.innerHTML;
                 return;
             }
             
@@ -556,12 +614,16 @@ export function createSettingsView() {
                     <span style="color: #ccc;">${t('settings.cache_browser')}：</span>${browserCount} ${t('settings.files')} · ${formatSize(browserSize)}
                 </div>
             `;
+            lastStatsHTML = cacheStatsPanel.innerHTML;
         } catch (e) {
+            if (generation !== statsGeneration || cacheViewDisposed || !container.isConnected) return;
             cacheStatsPanel.innerHTML = `
                 <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #888; font-size: 13px;">
-                    ${t('settings.no_cache')}
+                    ${lastStatsHTML === null ? t('settings.cache_stats_unavailable') : t('settings.cache_stats_stale')}
                 </div>
-            `;
+            ` + (lastStatsHTML || '');
+        } finally {
+            if (statsController === controller) statsController = null;
         }
     }
     
@@ -569,31 +631,34 @@ export function createSettingsView() {
     const btnClearBrowser = container.querySelector("#btn-clear-browser-cache");
     const btnClearDisk = container.querySelector("#btn-clear-disk-cache");
     const btnClearAll = container.querySelector("#btn-clear-all-cache");
+    const clearButtons = [btnClearBrowser, btnClearDisk, btnClearAll].filter(Boolean);
+    let clearingCache = false;
     
     async function handleClearCache(btn, action) {
+        if (clearingCache || cacheViewDisposed || !container.isConnected) return;
+        clearingCache = true;
         const originalText = btn.textContent;
         btn.textContent = t('settings.cache_clearing');
-        btn.disabled = true;
+        clearButtons.forEach(button => { button.disabled = true; button.setAttribute('aria-busy', 'true'); });
         
         try {
             if (action === 'browser' || action === 'all') {
-                clearAllCache();
+                if (!clearAllCache()) throw new Error('cache_operation_unconfirmed');
             }
             if (action === 'disk' || action === 'all') {
-                await fetch("/community_hub/cache/clear", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ target: "all" })
-                });
+                await clearDiskCache();
             }
+            if (cacheViewDisposed || !container.isConnected) return;
             await loadCacheStats();
-            showToast(t('settings.cache_cleared'), "success");
+            if (!cacheViewDisposed && container.isConnected) showToast(t('settings.cache_cleared'), "success");
         } catch (e) {
-            showToast(t('settings.cache_cleared'), "success");
+            if (cacheViewDisposed || !container.isConnected) return;
+            showToast(t('settings.cache_clear_unconfirmed'), "error");
             await loadCacheStats();
         } finally {
             btn.textContent = originalText;
-            btn.disabled = false;
+            clearingCache = false;
+            clearButtons.forEach(button => { button.disabled = false; button.removeAttribute('aria-busy'); });
         }
     }
     

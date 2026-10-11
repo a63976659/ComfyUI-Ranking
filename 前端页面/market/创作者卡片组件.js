@@ -11,36 +11,80 @@
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { createCommentSection } from "../social/评论与互动组件.js";
 import { renderTipLevelHTML, getTipLevelRuleShort } from "../components/打赏等级工具.js";
-import { getBannerCacheKey, PLACEHOLDERS, getCachedProfile, getProfileWithSWR, escapeHtml } from "../core/全局配置.js";
+import { getBannerCacheKey, PLACEHOLDERS, getCachedProfile, getProfileWithSWR, escapeHtml, CACHE, API } from "../core/全局配置.js";
 import { api } from "../core/网络请求_业务API.js";
+import { captureRequestSession, requestCancelManager } from "../core/网络请求_基础设施.js";
+import { getUser, eventBus, EVENTS } from "../core/状态管理.js";
+import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
 import { getSettings } from "../components/全局设置组件.js";
 import { t } from "../components/用户体验增强.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 
-// ==========================================
-// 📌 模块级常量
-// ==========================================
-
-// 打赏按钮统一样式（通过 CSS 类控制 hover，避免内联事件）
-const _TIP_BUTTON_STYLE = 'padding: 4px 10px; background: linear-gradient(135deg, #FF9800, #F57C00); color: #fff; border: none; border-radius: 4px; font-size: 11px; cursor: pointer; transition: 0.2s;';
-
-// section 标签统一样式
-const _SECTION_LABEL_STYLE = 'font-size: 12px; font-weight: bold; margin-bottom: 8px; color: #aaa;';
-
-// ==========================================
-// 📌 模块级状态：当前展开的卡片
-// ==========================================
+// 当前展开卡片由原生展开按钮与鼠标摘要入口共同管理。
 let currentExpandedCard = null;
 
-// 注入打赏按钮 hover 样式（模块加载时执行一次）
-(function _injectTipBtnStyle() {
-    if (document.getElementById('creator-tip-btn-style')) return;
-    const style = document.createElement('style');
-    style.id = 'creator-tip-btn-style';
-    style.textContent = '.creator-tip-btn:hover { opacity: 0.8; }';
-    document.head.appendChild(style);
-})();
+// 身份事件共用底层订阅；每张卡片仍独立捕获会话并决定是否撤销。
+const creatorSessionSubscribers = new Set();
+let stopCreatorSessionSubscription = null;
+let creatorSessionDispatchDepth = 0;
+function releaseCreatorSessionSubscription() {
+    if (creatorSessionSubscribers.size || creatorSessionDispatchDepth) return;
+    const stop = stopCreatorSessionSubscription;
+    stopCreatorSessionSubscription = null;
+    stop?.();
+}
+function subscribeCreatorSessionChanges(notify) {
+    const entry = { notify };
+    creatorSessionSubscribers.add(entry);
+    if (!stopCreatorSessionSubscription) {
+        try {
+            stopCreatorSessionSubscription = subscribeTaskSessionChanges(force => {
+                creatorSessionDispatchDepth++;
+                try {
+                    // 本轮新建的卡片不接收旧事件，已清理的卡片不再被通知。
+                    for (const current of [...creatorSessionSubscribers]) {
+                        if (!creatorSessionSubscribers.has(current)) continue;
+                        try { current.notify(force); }
+                        catch (_) { console.warn('创作者会话通知失败，继续通知其它卡片。'); }
+                    }
+                } finally {
+                    creatorSessionDispatchDepth--;
+                    releaseCreatorSessionSubscription();
+                }
+            }, { target: window, eventBus, events: EVENTS,
+                userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN });
+        } catch (error) {
+            creatorSessionSubscribers.delete(entry);
+            throw error;
+        }
+    }
+    return () => {
+        creatorSessionSubscribers.delete(entry);
+        releaseCreatorSessionSubscription();
+    };
+}
+
+// 所有卡片共用一个移除观察器；不为未展开的卡片逐个扫描整页。
+const mountedCreatorCards = new Map();
+let creatorRemovalObserver = null;
+function trackCreatorRemoval(card, dispose) {
+    mountedCreatorCards.set(card, dispose);
+    if (!creatorRemovalObserver) {
+        creatorRemovalObserver = new MutationObserver(() => {
+            for (const [node, cleanup] of mountedCreatorCards) {
+                if (!node.isConnected) cleanup();
+            }
+        });
+        creatorRemovalObserver.observe(document.body, { childList: true, subtree: true });
+    }
+    return () => {
+        mountedCreatorCards.delete(card);
+        if (!mountedCreatorCards.size) {
+            creatorRemovalObserver?.disconnect(); creatorRemovalObserver = null;
+        }
+    };
+}
 
 /**
  * 处理打赏创作者按钮点击
@@ -48,44 +92,54 @@ let currentExpandedCard = null;
  * @param {object} currentUser - 当前登录用户
  * @param {Function} onTipSuccess - 打赏成功回调
  */
-async function handleTipCreator(creatorData, currentUser, onTipSuccess) {
+async function handleTipCreator(creatorData, currentUser, onTipSuccess, parentCurrent) {
+    if (parentCurrent && !parentCurrent()) return;
     // 检查用户是否登录
     if (!currentUser) {
         showToast(t('creator.tip_login_required'), "warning");
         return;
     }
-    
+
     // 不能给自己打赏
     if (currentUser.account === creatorData.account) {
         showToast(t('creator.cannot_tip_self'), "warning");
         return;
     }
-    
+
     // 打开打赏弹窗
     await openTipModal(currentUser, {
         account: creatorData.account,
         name: creatorData.name
     }, (newBalance) => {
-        // 🐛 Bug修复：打赏成功后同步余额并通知其他组件
-        if (newBalance !== undefined && newBalance !== null) {
-            currentUser.balance = newBalance;
-        }
-        // 派发全局余额更新事件
-        window.dispatchEvent(new CustomEvent('comfy-wallet-update', { detail: { balance: currentUser.balance } }));
         // 执行原有成功回调
         if (onTipSuccess) onTipSuccess();
-    });
+    }, null, { isCurrent: parentCurrent });
 }
 
+let echartsLoading = null, echartsLoadFailures = 0;
 function loadECharts() {
-    return new Promise((resolve, reject) => {
-        if (window.echarts) { resolve(window.echarts); return; }
+    if (typeof window.echarts?.init === 'function') return Promise.resolve(window.echarts);
+    if (echartsLoading) return echartsLoading;
+    echartsLoading = new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js";
-        script.onload = () => resolve(window.echarts);
-        script.onerror = () => reject(new Error("ECharts load failed"));
+        let settled = false;
+        const finish = (error) => {
+            if (settled) return;
+            settled = true; clearTimeout(timer);
+            script.onload = script.onerror = null; script.remove();
+            if (error) { echartsLoadFailures++; reject(new Error('ECharts load failed')); }
+            else { echartsLoadFailures = 0; resolve(window.echarts); }
+        };
+        const timer = setTimeout(() => finish(true), API.PROFILE_RESOURCE_TIMEOUT);
+        const scriptURL = new URL(API.CREATOR_CHART_SCRIPT_URL);
+        // 移除script不保证终止原下载；失败后的读取不能复用未结束的旧URL。
+        if (echartsLoadFailures) scriptURL.searchParams.set('_ranking_retry', `${Date.now()}-${echartsLoadFailures}`);
+        script.src = scriptURL.href;
+        script.onload = () => finish(typeof window.echarts?.init !== 'function');
+        script.onerror = () => finish(true);
         document.head.appendChild(script);
-    });
+    }).finally(() => { echartsLoading = null; });
+    return echartsLoading;
 }
 
 /**
@@ -93,9 +147,9 @@ function loadECharts() {
  */
 function _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml, containerId = '') {
     const idAttr = containerId ? ` id="${escapeHtml(containerId)}"` : '';
-    return `<div${idAttr} style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:${idx % 2 === 0 ? '#222' : 'var(--comfy-menu-bg)'};border-radius:4px;margin-bottom:4px;">` +
-        `<div style="display:flex;align-items:center;gap:8px;"><span style="font-size:14px;min-width:24px;">${rankIcon}</span>${userHtml}</div>` +
-        `<div style="display:flex;align-items:center;gap:6px;">${levelHtml}<span style="color:#4CAF50;font-weight:bold;font-size:11px;">${entry.amount}</span></div></div>`;
+    return `<div${idAttr} class="creator-tip-entry">` +
+        `<div class="creator-tip-entry__identity"><span class="creator-tip-entry__rank" aria-hidden="true">${rankIcon}</span>${userHtml}</div>` +
+        `<div class="creator-tip-entry__value">${levelHtml}<span class="creator-tip-entry__amount">${escapeHtml(entry.amount)}</span></div></div>`;
 }
 
 /**
@@ -107,110 +161,110 @@ function _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml, contain
  * @param {object} currentUser - 当前登录用户
  * @param {Function} onTipSuccess - 打赏成功回调
  */
-export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献榜", onUserClick = null, creatorData = null, currentUser = null, onTipSuccess = null) {
+export function createTipBoardSection(tipBoard = [], title = t('creator.tip_board.title'), onUserClick = null, creatorData = null, currentUser = null, onTipSuccess = null, parentCurrent = null) {
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        background: "#1a1d2e", border: "1px solid #2d334a", borderRadius: "6px",
-        padding: "10px", marginTop: "10px"
-    });
+    const current = () => container.isConnected && (!parentCurrent || parentCurrent());
+    container.className = 'creator-tip-board';
 
     // 等级规则说明
     const levelRuleHtml = `
-        <div style="font-size: 11px; color: #888; margin-bottom: 8px; padding: 4px 8px; background: rgba(255,255,255,0.03); border-radius: 4px;">
+        <div class="creator-tip-board__rule">
             📊 ${t('creator.tip_level_rule')}：${getTipLevelRuleShort()}
         </div>
     `;
 
     if (!tipBoard || tipBoard.length === 0) {
         container.innerHTML = `
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                <div style="font-size: 12px; font-weight: bold; color: #FF9800; display: flex; align-items: center; gap: 6px;">
+            <div class="creator-tip-board__header">
+                <div class="creator-tip-board__title">
                     ${escapeHtml(title)}
-                    <span style="font-size: 10px; color: #888; font-weight: normal;">(${t('creator.tip_board.count', {count: 0})})</span>
+                    <span class="creator-tip-board__count">(${t('creator.tip_board.count', {count: 0})})</span>
                 </div>
-                ${creatorData ? `<button id="btn-tip-creator-empty" class="creator-tip-btn" style="${_TIP_BUTTON_STYLE}">${t('creator.tip_this_creator')}</button>` : ''}
+                ${creatorData ? `<button id="btn-tip-creator-empty" type="button" class="creator-tip-btn">${t('creator.tip_this_creator')}</button>` : ''}
             </div>
             ${levelRuleHtml}
-            <div style="color: #666; font-size: 12px; text-align: center; padding: 15px 0;">${t('creator.no_tips')}</div>
+            <div class="creator-tip-board__empty">${t('creator.no_tips')}</div>
         `;
-        
+
         // 绑定打赏按钮事件（空榜单时）
         if (creatorData) {
             const tipBtn = container.querySelector('#btn-tip-creator-empty');
             if (tipBtn) {
-                tipBtn.onclick = async () => await handleTipCreator(creatorData, currentUser, onTipSuccess);
+                tipBtn.onclick = async () => await handleTipCreator(creatorData, currentUser, onTipSuccess, current);
             }
         }
-        
+
         return container;
     }
 
     // 榜单前10名
     const top10 = tipBoard.slice(0, 10);
-    const rankColors = ["#FFD700", "#C0C0C0", "#CD7F32"]; // 金银铜
 
     // 🚀 使用统一的打赏等级工具渲染星星/月亮/太阳
     let listHtml = top10.map((entry, idx) => {
-        const rankColor = rankColors[idx] || "#888";
-        const rankIcon = idx < 3 ? ["🥇", "🥈", "🥉"][idx] : `<span style="color:${rankColor}">#${idx + 1}</span>`;
-        
+        const rankIcon = idx < 3 ? ["🥇", "🥈", "🥉"][idx] : `#${idx + 1}`;
+
         // 使用统一等级工具获取等级图标
         const levelHtml = renderTipLevelHTML(entry.amount, true);
-        
+
         if (entry.is_anon) {
-            const userHtml = `<span style="color: #888; font-style: italic; font-size: 13px;">${t('creator.anonymous')}</span>`;
+            const userHtml = `<span class="creator-tip-entry__anonymous">${t('creator.anonymous')}</span>`;
             return _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml);
         }
-        
+
         // 🚀 SWR 模式：非匿名用户显示头像+用户名
         const containerId = `creator-tip-board-item-${entry.account}-${idx}-${Date.now()}`;
-        
+
         // 从缓存获取初始数据（0延迟渲染）
         const cached = getCachedProfile(entry.account);
         const avatarUrl = cached?.avatar || cached?.avatarDataUrl || PLACEHOLDERS.AVATAR_SMALL;
         const userName = cached?.name || entry.account;
-        
+
         // 后台静默校对并更新 DOM
         setTimeout(() => {
+            if (!current()) return;
             getProfileWithSWR(entry.account, api.getUserProfile, (profile) => {
                 const itemContainer = document.getElementById(containerId);
-                if (!itemContainer) return;
-                
+                if (!current() || !itemContainer || !profile || typeof profile !== 'object' || Array.isArray(profile) || (profile.account != null && profile.account !== entry.account)) return;
+
                 const avatarImg = itemContainer.querySelector('.tip-board-avatar');
                 const nameSpan = itemContainer.querySelector('.tip-board-name');
-                
-                if (avatarImg && profile.avatar) {
+
+                if (avatarImg && typeof profile.avatar === 'string' && profile.avatar) {
                     avatarImg.src = profile.avatar;
                 }
-                if (nameSpan && profile.name) {
+                if (nameSpan && typeof profile.name === 'string' && profile.name) {
                     nameSpan.textContent = profile.name;
+                    const userControl = itemContainer.querySelector('.tip-board-user');
+                    if (userControl) userControl.setAttribute('aria-label', `${t('creator.visit_profile')}: ${profile.name}`);
                 }
             });
         }, 0);
-        
+
         // 🔒 XSS防护：昵称/头像均来自用户可修改的资料，写入 HTML 前必须转义
         // （下方 SWR 刷新路径用的是 .src / .textContent，本身就是安全的）
-        const userHtml = `<span class="tip-board-user" data-account="${escapeHtml(entry.account)}" data-anon="false" style="display: flex; align-items: center; gap: 6px; color: #4CAF50; cursor: pointer; font-size: 13px;"><img class="tip-board-avatar" src="${escapeHtml(avatarUrl)}" style="width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--comfy-input-bg);"><span class="tip-board-name">${escapeHtml(userName)}</span></span>`;
+        const userTag = onUserClick ? 'button' : 'span';
+        const userHtml = `<${userTag} ${onUserClick ? 'type="button"' : ''} class="tip-board-user" data-account="${escapeHtml(entry.account)}" data-anon="false" aria-label="${escapeHtml(`${t('creator.visit_profile')}: ${userName}`)}"><img class="tip-board-avatar" src="${escapeHtml(avatarUrl)}" alt=""><span class="tip-board-name">${escapeHtml(userName)}</span></${userTag}>`;
         return _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml, containerId);
     }).join("");
 
     container.innerHTML = `
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-            <div style="font-size: 12px; font-weight: bold; color: #FF9800; display: flex; align-items: center; gap: 6px;">
+        <div class="creator-tip-board__header">
+            <div class="creator-tip-board__title">
                 ${escapeHtml(title)}
-                <span style="font-size: 10px; color: #888; font-weight: normal;">(${t('creator.tip_board.count', {count: tipBoard.length})})</span>
+                <span class="creator-tip-board__count">(${t('creator.tip_board.count', {count: tipBoard.length})})</span>
             </div>
-            ${creatorData ? `<button id="btn-tip-creator" class="creator-tip-btn" style="${_TIP_BUTTON_STYLE}">${t('creator.tip_this_creator')}</button>` : ''}
+            ${creatorData ? `<button id="btn-tip-creator" type="button" class="creator-tip-btn">${t('creator.tip_this_creator')}</button>` : ''}
         </div>
         ${levelRuleHtml}
-        <div style="max-height: 200px; overflow-y: auto;">${listHtml}</div>
+        <div class="creator-tip-board__list">${listHtml}</div>
     `;
 
     // 绑定打赏按钮事件
     if (creatorData) {
         const tipBtn = container.querySelector('#btn-tip-creator');
         if (tipBtn) {
-            tipBtn.onclick = async () => await handleTipCreator(creatorData, currentUser, onTipSuccess);
+            tipBtn.onclick = async () => await handleTipCreator(creatorData, currentUser, onTipSuccess, current);
         }
     }
 
@@ -220,7 +274,7 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
             if (el.dataset.anon === "false") {
                 el.onclick = (e) => {
                     e.stopPropagation();
-                    onUserClick(el.dataset.account);
+                    if (current()) onUserClick(el.dataset.account);
                 };
             }
         });
@@ -232,96 +286,128 @@ export function createTipBoardSection(tipBoard = [], title = "🎁 赞赏贡献�
 export function createCreatorCard(creatorData, currentUser = null) {
     const card = document.createElement("div");
     card.setAttribute("data-item-id", creatorData.account);
-    Object.assign(card.style, {
-        backgroundColor: "var(--comfy-input-bg, #2b2b2b)", borderRadius: "8px", 
-        marginBottom: "12px", border: "1px solid #444", color: "#fff", fontFamily: "sans-serif",
-        overflow: "hidden"  // 🖼️ 背景图需要隐藏溢出
-    });
-
+    card.className = 'creator-card';
     const chartContainerId = `creator-chart-${Math.random().toString(36).substr(2, 9)}`;
     const summaryView = document.createElement("div");
-    summaryView.style.cursor = "pointer";
+    summaryView.className = 'creator-card__summary';
 
     const avatarSrc = creatorData.avatar || PLACEHOLDERS.AVATAR;
-    
+
     // ⚙️ 读取设置：是否显示创作者背景图
     const settings = getSettings();
     const showBanner = settings.showCreatorBanner;
-    
+
     // 🖼️ 个人资料卡背景图：优先使用本地缓存（与个人资料界面共用同一份缓存）
     const cacheKey = getBannerCacheKey(creatorData.account);
-    const cachedBanner = localStorage.getItem(cacheKey);
-    const bannerUrl = cachedBanner || creatorData.bannerUrl;  // 优先用本地缓存
-    const hasBanner = showBanner && bannerUrl && bannerUrl.trim() !== '';  // ⚙️ 受设置控制
-    
+    let cachedBanner = null;
+    try { cachedBanner = localStorage.getItem(cacheKey); } catch (_) { /* 可选装饰缓存不可用时继续构建卡片。 */ }
+    const validBanner = value => typeof value === 'string' && value.trim() ? value : '';
+    const bannerUrl = validBanner(cachedBanner) || validBanner(creatorData.bannerUrl);
+    const hasBanner = !!(showBanner && bannerUrl);  // 有效本地缓存优先，受显示设置控制
+
     // 🖼️ 全覆盖背景图样式
     // 在使用 bannerUrl 之前添加安全过滤
     const safeBannerUrl = (bannerUrl || '').replace(/['"()\\]/g, '');
-    const cardBgStyle = hasBanner 
-        ? `background-image: url(${safeBannerUrl}); background-size: cover; background-position: center;`
-        : '';
-    
+    summaryView.classList.toggle('creator-card__summary--banner', !!hasBanner);
+    if (hasBanner) summaryView.style.backgroundImage = `url("${safeBannerUrl}")`;
+    const profileName = typeof creatorData.name === 'string' && creatorData.name.trim() ? creatorData.name : creatorData.account;
+    const profileLabel = `${t('creator.visit_profile')}: ${profileName}`;
+    const stat = (field, label, value, unit = '') => `<div class="creator-card__stat" data-stat="${field}"><span>${escapeHtml(label)}</span><strong class="creator-card__stat-value"><span class="${/^\d+$/.test(String(value)) ? 'creator-card__number' : ''}">${escapeHtml(value)}</span>${unit ? ` <small>${escapeHtml(unit)}</small>` : ''}</strong></div>`;
     summaryView.innerHTML = `
-        <div style="${cardBgStyle} position: relative; padding: 10px; border-radius: 8px;">
-            ${hasBanner ? '<div style="position: absolute; inset: 0; background: rgba(0,0,0,0.2); border-radius: 8px;"></div>' : ''}
-            <div style="position: relative; z-index: 1;">
-                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 10px; padding: 5px 0;">
-                    <img class="creator-avatar-link" src="${escapeHtml(avatarSrc)}" title="${t('creator.visit_profile')}" style="width: 50px; height: 50px; border-radius: 50%; border: 2px solid ${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}; object-fit: cover; cursor: pointer; transition: 0.2s; ${hasBanner ? 'box-shadow: 0 2px 8px rgba(0,0,0,0.3);' : ''}" onmouseover="this.style.borderColor='#4CAF50'" onmouseout="this.style.borderColor='${hasBanner ? 'rgba(255,255,255,0.8)' : '#555'}'">
-                    <div class="creator-name-link" title="${t('creator.visit_profile')}" style="font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; color: #FFD700; text-shadow: 0 1px 4px rgba(0,0,0,0.8), 0 0 8px rgba(255,215,0,0.3);" onmouseover="this.style.color='#FFA500'" onmouseout="this.style.color='#FFD700'">${escapeHtml(creatorData.name)}</div>
-                    <div data-stat="downloads" style="font-size: 12px; color: #FF6B6B; margin-left: auto; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">${t('creator.usage_count', {count: creatorData.downloads || 0})}</div>
-                </div>
-                <div style="font-size: 12px; color: ${hasBanner ? '#ccc' : '#aaa'}; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 10px;">${escapeHtml(creatorData.shortDesc && creatorData.shortDesc !== "null" ? creatorData.shortDesc : t('profile.no_intro'))}</div>
-                <div style="background: rgba(34,34,34,${hasBanner ? '0.8' : '1'}); border-radius: 6px; padding: 8px 10px; border: 1px dashed #555;">
-                    <div style="display: flex; gap: 15px; font-size: 12px; color: #eee; justify-content: space-between; margin-bottom: 8px;">
-                        <span data-stat="likes" style="color: #FF5722;">👍 ${t('creator.stats.likes')}: <strong>${creatorData.likes}</strong></span>
-                        <span data-stat="favorites" style="color: #FFC107;">🔖 ${t('creator.stats.favorites')}: <strong>${creatorData.favorites}</strong></span>
-                        <span data-stat="followers" style="color: #4CAF50;">👥 ${t('creator.stats.followers')}: <strong>${creatorData.followers}</strong></span>
-                    </div>
-                    <div style="display: flex; gap: 15px; font-size: 12px; color: #ccc; justify-content: center; border-top: 1px solid var(--border-color, #333); padding-top: 8px;">
-                        <span data-stat="toolsCount" style="color: #2196F3;">🛠️ ${t('creator.output.tools')}: <strong>${creatorData.toolsCount}</strong> ${t('creator.output.unit')}</span>
-                        <span data-stat="skillsCount" style="color: #7C4DFF;">⚡ ${t('creator.output.skills')}: <strong>${creatorData.skillsCount || 0}</strong> ${t('creator.output.unit')}</span>
-                        <span data-stat="appsCount" style="color: #9C27B0;">📦 ${t('creator.output.apps')}: <strong>${creatorData.appsCount}</strong> ${t('creator.output.unit')}</span>
-                    </div>
-                </div>
-            </div>
+        <div class="creator-card__identity">
+            <button type="button" class="creator-avatar-link" aria-label="${escapeHtml(profileLabel)}"><img src="${escapeHtml(avatarSrc)}" alt=""></button>
+            <button type="button" class="creator-name-link" aria-label="${escapeHtml(profileLabel)}">${escapeHtml(creatorData.name)}</button>
+        </div>
+        <div class="creator-card__usage" data-stat="downloads">${escapeHtml(t('creator.usage_count', {count: creatorData.downloads || 0}))}</div>
+        <p class="creator-card__intro">${escapeHtml(creatorData.shortDesc && creatorData.shortDesc !== "null" ? creatorData.shortDesc : t('profile.no_intro'))}</p>
+        <div class="creator-card__statistics">
+            <div class="creator-card__stats">${stat('likes',t('creator.stats.likes'),creatorData.likes)}${stat('favorites',t('creator.stats.favorites'),creatorData.favorites)}${stat('followers',t('creator.stats.followers'),creatorData.followers)}</div>
+            <div class="creator-card__outputs">${stat('toolsCount',t('creator.output.tools'),creatorData.toolsCount,t('creator.output.unit'))}${stat('skillsCount',t('creator.output.skills'),creatorData.skillsCount || 0,t('creator.output.unit'))}${stat('appsCount',t('creator.output.apps'),creatorData.appsCount,t('creator.output.unit'))}</div>
         </div>
     `;
+    summaryView.tabIndex = 0;
+    summaryView.setAttribute('role', 'button');
+    summaryView.setAttribute('aria-expanded', 'false');
+    summaryView.setAttribute('aria-controls', `detail-${chartContainerId}`);
+    summaryView.setAttribute('aria-label', `${profileName}: ${t('creator.expand_details')}`);
 
-    const jumpToProfile = (e) => { 
-        e.stopPropagation(); 
-        openOtherUserProfileModal(creatorData.account, currentUser); 
+    const jumpToProfile = (e) => {
+        e.stopPropagation();
+        if (scope.isCurrent() && card.isConnected) openOtherUserProfileModal(creatorData.account, currentUser);
     };
     summaryView.querySelector('.creator-avatar-link').onclick = jumpToProfile;
     summaryView.querySelector('.creator-name-link').onclick = jumpToProfile;
 
     const detailView = document.createElement("div");
-    Object.assign(detailView.style, { display: "none", marginTop: "12px", paddingTop: "12px", borderTop: "1px dashed #555" });
+    detailView.className = "creator-card__detail";
+    detailView.id = `detail-${chartContainerId}`;
+    detailView.hidden = true;
+    detailView.style.display = "none";
 
-    // 🔄 延迟渲染：初始只显示 loading 状态
-    detailView.innerHTML = `
-        <div id="detail-content-${chartContainerId}" style="display: none;">
-            <div style="${_SECTION_LABEL_STYLE}">${t('creator.chart.download_trend')}</div>
-            <div id="${chartContainerId}" style="width: 100%; height: 180px; background: #222; border-radius: 4px; margin-bottom: 15px;"></div>
-            <div id="tipboard-${chartContainerId}"></div>
-            <div style="${_SECTION_LABEL_STYLE} margin-bottom: 6px; margin-top: 15px;">${t('creator.message_board')}</div>
-            <div id="board-${chartContainerId}" style="height: 250px; border: 1px solid #444; border-radius: 4px; overflow: hidden;"></div>
-        </div>
-        <div id="detail-loading-${chartContainerId}" style="text-align: center; padding: 40px 20px; color: #888;">
-            <div style="font-size: 14px;">⏳ ${t('creator.loading_details')}</div>
-        </div>
-        <div id="detail-error-${chartContainerId}" style="display: none; text-align: center; padding: 40px 20px; color: #F44336;">
-            <div style="font-size: 14px; margin-bottom: 12px;">❌ ${t('creator.load_failed')}</div>
-            <button id="btn-retry-${chartContainerId}" style="padding: 6px 16px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">${t('creator.retry')}</button>
-        </div>
-    `;
+    // 首次展开才挂载详情骨架；折叠保留节点和原评论实例。
+    let detailMounted = false;
+    function mountDetails() {
+        if (detailMounted) return;
+        detailView.innerHTML = `
+            <div id="detail-content-${chartContainerId}" style="display: none;">
+                <div class="creator-card__section-label">${t('creator.chart.download_trend')}</div>
+                <div id="${chartContainerId}" class="creator-card__chart"></div>
+                <div id="tipboard-${chartContainerId}"></div>
+                <div class="creator-card__section-label creator-card__section-label--comments">${t('creator.message_board')}</div>
+                <div id="board-${chartContainerId}" class="creator-card__comments"></div>
+            </div>
+            <div id="detail-loading-${chartContainerId}" class="creator-card__status" role="status">
+                <div class="creator-card__status-copy">⏳ ${t('creator.loading_details')}</div>
+            </div>
+            <div id="detail-error-${chartContainerId}" class="creator-card__status creator-card__status--error" role="alert" style="display: none;">
+                <div class="creator-card__status-copy">❌ ${t('creator.load_failed')}</div>
+                <button id="btn-retry-${chartContainerId}" type="button" class="creator-card__retry">${t('creator.retry')}</button>
+            </div>
+        `;
+        detailMounted = true;
+    }
 
     // 状态标记
+    let commentUI = null;
     let isDetailLoaded = false;
     let isChartRendered = false;
     let chartInstance = null;
+    let generation = 0, detailPending = false, chartPending = false, detailRead = null;
+    let widthObserver = null, widthTimer = null, resizeTimer = null;
+    let stopTrackingRemoval = null, resizeSubscribed = false;
+    let constructing = true;
+    const matches = captureRequestSession();
+    const account = currentUser?.account || null;
+    const sessionMatches = () => matches() && (getUser()?.account || null) === account;
+    const componentId = chartContainerId;
+    const scope = createTaskViewScope({
+        sessionMatches, connected: () => constructing || card.isConnected,
+        subscribe: subscribeCreatorSessionChanges,
+        cancelReads: () => requestCancelManager.cancelAll(componentId),
+        invalidate: () => {
+            detailView.replaceChildren();
+            const notice = document.createElement('div');
+            notice.setAttribute('role', 'status'); notice.textContent = t('auth.session_changed');
+            detailView.append(notice); detailView.hidden = false; detailView.style.display = 'block';
+            summaryView.setAttribute('aria-disabled', 'true'); summaryView.tabIndex = -1; summaryView.setAttribute('aria-expanded', 'true');
+        }
+    });
+    const current = token => scope.isCurrent() && card.isConnected && detailView.style.display !== 'none' && token === generation;
+    const clearChartWork = () => {
+        widthObserver?.disconnect(); widthObserver = null;
+        clearTimeout(widthTimer); clearTimeout(resizeTimer); widthTimer = resizeTimer = null;
+        chartPending = false;
+    };
+    const pauseDetails = () => {
+        generation++; detailPending = false;
+        requestCancelManager.cancelAll(componentId);
+        clearChartWork(); commentUI?._setActive?.(false);
+    };
 
     // 🔄 加载详情数据
     async function loadCreatorDetails() {
+        const token = generation;
+        if (!current(token) || detailPending) return;
         const loadingEl = detailView.querySelector(`#detail-loading-${chartContainerId}`);
         const contentEl = detailView.querySelector(`#detail-content-${chartContainerId}`);
         const errorEl = detailView.querySelector(`#detail-error-${chartContainerId}`);
@@ -339,9 +425,20 @@ export function createCreatorCard(creatorData, currentUser = null) {
         contentEl.style.display = 'none';
         errorEl.style.display = 'none';
 
+        detailPending = true;
+        let ownedRead = null;
         try {
-            const response = await api.getCreatorDetails(creatorData.account);
-            if (response.status === "success" && response.data) {
+            // 等待已取消的旧读取完成退出，避免网络层去重复用旧Promise。
+            if (detailRead) { try { await detailRead; } catch (_) {} }
+            if (!current(token)) return;
+            ownedRead = api.getCreatorDetails(creatorData.account, { componentId });
+            detailRead = ownedRead;
+            const response = await ownedRead;
+            if (!current(token)) return;
+            if (response?.status === "success" && response.data && typeof response.data === 'object' && !Array.isArray(response.data)
+                && response.data.account === creatorData.account
+                && Array.isArray(response.data.commentsData) && Array.isArray(response.data.tip_board)
+                && response.data.trendData && typeof response.data.trendData === 'object' && !Array.isArray(response.data.trendData)) {
                 // 缓存详情数据到 creatorData 对象
                 creatorData._detailData = response.data;
                 creatorData.trendData = response.data.trendData;
@@ -353,31 +450,36 @@ export function createCreatorCard(creatorData, currentUser = null) {
                 contentEl.style.display = 'block';
                 renderDetailContent(response.data);
             } else {
-                throw new Error(response.detail || response.error || '加载失败');
+                throw new Error('Invalid creator details');
             }
         } catch (err) {
-            console.error('加载创作者详情失败:', err);
+            if (!current(token)) return;
             loadingEl.style.display = 'none';
             errorEl.style.display = 'block';
-            
+
             // 绑定重试按钮
             const retryBtn = errorEl.querySelector(`#btn-retry-${chartContainerId}`);
             if (retryBtn) {
                 retryBtn.onclick = () => loadCreatorDetails();
             }
+        } finally {
+            if (ownedRead && detailRead === ownedRead) detailRead = null;
+            if (current(token)) detailPending = false;
         }
     }
 
     // 🎨 渲染详情内容（图表、赞赏榜、留言板）
     function renderDetailContent(detailData) {
         const contentEl = detailView.querySelector(`#detail-content-${chartContainerId}`);
-        
+
         // 🎁 添加赞赏贡献总榜
         const tipBoardContainer = contentEl.querySelector(`#tipboard-${chartContainerId}`);
         tipBoardContainer.innerHTML = ''; // 清空之前的内容
-        
+
         // 打赏成功后的回调函数 - 刷新创作者数据
+        const tipGeneration = generation;
         const onTipSuccess = () => {
+            if (!current(tipGeneration)) return;
             // 触发重新加载创作者数据
             if (window.refreshCreatorData) {
                 window.refreshCreatorData(creatorData.account);
@@ -386,41 +488,49 @@ export function createCreatorCard(creatorData, currentUser = null) {
             creatorData._detailData = null;
             isDetailLoaded = false;
         };
-        
+
         const tipBoardUI = createTipBoardSection(
-            detailData.tip_board, 
+            detailData.tip_board,
             t('creator.tip_board.title'),
-            (account) => openOtherUserProfileModal(account, currentUser),
+            (account) => { if (current(tipGeneration)) openOtherUserProfileModal(account, currentUser); },
             creatorData,
             currentUser,
-            onTipSuccess
+            onTipSuccess,
+            () => current(tipGeneration)
         );
         tipBoardContainer.appendChild(tipBoardUI);
 
         // 💬 添加留言板
         const boardContainer = contentEl.querySelector(`#board-${chartContainerId}`);
-        boardContainer.innerHTML = ''; // 清空之前的内容
-        // 🚀 P0安全修复：传递创作者账号作为 contentAuthor，使创作者可以删除其主页下的评论
-        const commentUI = createCommentSection(creatorData.account, detailData.commentsData || [], currentUser, null, creatorData.account);
-        boardContainer.appendChild(commentUI);
+        if (!commentUI) {
+            boardContainer.innerHTML = '';
+            commentUI = createCommentSection(creatorData.account, detailData.commentsData || [], currentUser, null, creatorData.account);
+            boardContainer.appendChild(commentUI);
+        }
+        commentUI._setActive?.(detailView.style.display !== "none");
 
         // 📊 渲染趋势图表
         renderTrendChart(detailData.trendData);
     }
 
     // 📊 渲染趋势图表
-    function _initTrendChart(chartDom, trendData) {
+    function _initTrendChart(chartDom, trendData, token) {
+        if (!current(token)) return;
         loadECharts().then(echarts => {
-            chartDom.innerHTML = ""; 
-            chartInstance = echarts.init(chartDom, 'dark', { backgroundColor: 'transparent' });
-            
+            if (!current(token) || !chartDom.isConnected) return;
+            chartDom.innerHTML = "";
+            const theme = getComputedStyle(card);
+            const textColor = theme.getPropertyValue('--rk-text').trim() || theme.color;
+            const borderColor = theme.getPropertyValue('--rk-border').trim() || theme.borderColor;
+            chartInstance = echarts.init(chartDom, null, { backgroundColor: 'transparent' });
+
             const data = trendData || { months: [], tools: [], skills: [], apps: [], recommends: [] };
 
             chartInstance.setOption({
                 tooltip: { trigger: 'axis', textStyle: { fontSize: 11 } },
                 grid: { top: 10, bottom: 20, left: 35, right: 10, containLabel: true },
-                xAxis: { type: 'category', data: data.months, axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#444' } } },
-                yAxis: { type: 'value', splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888', fontSize: 10 }, minInterval: 1 },
+                xAxis: { type: 'category', data: data.months, axisLabel: { color: textColor, fontSize: 10 }, axisLine: { lineStyle: { color: borderColor } } },
+                yAxis: { type: 'value', splitLine: { lineStyle: { color: borderColor, type: 'dashed' } }, axisLabel: { color: textColor, fontSize: 10 }, minInterval: 1 },
                 series: [
                     { name: t('creator.chart.series.tools'), type: 'line', data: data.tools, smooth: true, itemStyle: { color: '#4CAF50' }, lineStyle: { width: 2, type: 'dashed' } },
                     { name: t('creator.chart.series.skills'), type: 'line', data: data.skills || [], smooth: true, itemStyle: { color: '#7C4DFF' }, lineStyle: { width: 2, type: 'dashed' } },
@@ -429,88 +539,116 @@ export function createCreatorCard(creatorData, currentUser = null) {
                 ]
             });
             isChartRendered = true;
-            
+
             // 初始化完成后延迟调用resize确保正确渲染
-            setTimeout(() => {
-                if (chartInstance) chartInstance.resize();
+            resizeTimer = setTimeout(() => {
+                resizeTimer = null;
+                if (current(token) && chartInstance) chartInstance.resize();
             }, 300);
-        }).catch(err => { 
-            chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#F44336;">${t('creator.chart.load_failed')}</div>`; 
-        });
+        }).catch(() => {
+            if (!current(token)) return;
+            chartInstance?.dispose(); chartInstance = null; isChartRendered = false;
+            chartDom.innerHTML = `<div class="creator-card__chart-status creator-card__chart-status--error" role="status">${t('creator.chart.load_failed')}</div>`;
+        }).finally(() => { if (current(token)) chartPending = false; });
     }
 
     function renderTrendChart(trendData) {
-        if (isChartRendered) return;
+        const token = generation;
+        if (!current(token)) return;
+        if (isChartRendered) { chartInstance?.resize(); return; }
+        if (chartPending) return;
+        chartPending = true;
         const chartDom = detailView.querySelector(`#${chartContainerId}`);
-        if (!chartDom) return;
-        
-        chartDom.innerHTML = `<div style="text-align:center; line-height:180px; color:#888;">${t('creator.chart.loading')}</div>`;
-        
+        if (!chartDom) { chartPending = false; return; }
+
+        chartDom.innerHTML = `<div class="creator-card__chart-status" role="status">${t('creator.chart.loading')}</div>`;
+
         // 使用 ResizeObserver 等待容器获得有效宽度后再渲染
         if (chartDom.clientWidth === 0) {
-            const observer = new ResizeObserver((entries) => {
+            widthObserver = new ResizeObserver((entries) => {
+                if (!current(token)) return;
                 for (const entry of entries) {
                     if (entry.contentRect.width > 0) {
-                        observer.disconnect();
-                        _initTrendChart(chartDom, trendData);
+                        widthObserver?.disconnect(); widthObserver = null;
+                        clearTimeout(widthTimer); widthTimer = null;
+                        _initTrendChart(chartDom, trendData, token);
                         return;
                     }
                 }
             });
-            observer.observe(chartDom);
-            
+            widthObserver.observe(chartDom);
+
             // 安全超时：5秒后如果仍未获得宽度，放弃并清理
-            setTimeout(() => {
-                observer.disconnect();
+            widthTimer = setTimeout(() => {
+                if (!current(token)) return;
+                widthObserver?.disconnect(); widthObserver = null; widthTimer = null; chartPending = false;
                 if (chartDom.clientWidth === 0) {
                     chartDom.innerHTML = '';
                 }
             }, 5000);
             return;
         }
-        
-        _initTrendChart(chartDom, trendData);
+
+        _initTrendChart(chartDom, trendData, token);
     }
 
-    // 🔄 点击展开/收起
-    summaryView.onclick = () => {
-        const isHidden = detailView.style.display === "none";
-        
-        if (isHidden) {
-            // 展开当前卡片
-            // 1. 如果有其他卡片已展开，先关闭它
-            if (currentExpandedCard && currentExpandedCard !== card) {
-                const otherDetailView = currentExpandedCard.querySelector('[id^="detail-content-"]')?.parentElement;
-                if (otherDetailView) {
-                    otherDetailView.style.display = "none";
-                }
+    function setExpanded(expanded) {
+        if (!scope.isCurrent()) return;
+        if (expanded) {
+            mountDetails();
+            if (!resizeSubscribed) {
+                window.addEventListener('resize', resizeHandler); resizeSubscribed = true;
             }
-            
-            // 2. 展开当前卡片
-            detailView.style.display = "block";
+            if (currentExpandedCard && currentExpandedCard !== card) currentExpandedCard._closeDetails?.();
+            detailView.hidden = false; detailView.style.display = "block";
             currentExpandedCard = card;
-            
-            // 3. 加载详情数据
-            loadCreatorDetails();
         } else {
-            // 收起当前卡片
-            detailView.style.display = "none";
-            if (currentExpandedCard === card) {
-                currentExpandedCard = null;
-            }
+            pauseDetails(); detailView.hidden = true; detailView.style.display = "none";
+            if (currentExpandedCard === card) currentExpandedCard = null;
         }
+        summaryView.setAttribute('aria-expanded', String(expanded));
+        summaryView.setAttribute('aria-label', `${profileName}: ${t(expanded ? 'creator.collapse_details' : 'creator.expand_details')}`);
+        if (expanded) loadCreatorDetails();
+    }
+    const toggleDetails = () => setExpanded(detailView.hidden);
+    summaryView.onclick = event => {
+        if (event.target.closest('button')) return;
+        toggleDetails();
     };
+    card._closeDetails = () => setExpanded(false);
+    const keyHandler = event => {
+        if (event.target === summaryView && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault(); event.stopPropagation(); toggleDetails(); return;
+        }
+        if (event.key !== 'Escape' || detailView.hidden || !card.contains(document.activeElement)) return;
+        event.preventDefault(); event.stopPropagation();
+        setExpanded(false); summaryView.focus();
+    };
+    card.addEventListener('keydown', keyHandler);
 
-    const resizeHandler = () => { if (chartInstance) chartInstance.resize(); };
-    window.addEventListener('resize', resizeHandler);
+    const resizeHandler = () => { if (current(generation) && chartInstance) chartInstance.resize(); };
 
-    card._cleanup = () => {
-        window.removeEventListener('resize', resizeHandler);
+    card._pauseComments = () => commentUI?._setActive?.(false);
+    card._pauseDetails = pauseDetails;
+    scope.addCleanup(() => {
+        pauseDetails(); stopTrackingRemoval?.(); stopTrackingRemoval = null;
+        summaryView.onclick = null; card.removeEventListener('keydown', keyHandler);
+        summaryView.setAttribute('aria-disabled', 'true'); summaryView.tabIndex = -1;
+        commentUI?._cleanup?.();
+        if (currentExpandedCard === card) currentExpandedCard = null;
+        if (resizeSubscribed) window.removeEventListener('resize', resizeHandler);
+        resizeSubscribed = false;
         if (chartInstance) {
             chartInstance.dispose();
             chartInstance = null;
         }
-    };
+    });
+    card._cleanup = () => scope.dispose();
+    queueMicrotask(() => {
+        constructing = false;
+        if (!scope.isCurrent()) return;
+        stopTrackingRemoval = trackCreatorRemoval(card, () => scope.dispose());
+    });
 
     card.appendChild(summaryView);
     card.appendChild(detailView);

@@ -25,6 +25,14 @@ import { escapeHtml } from "../core/全局配置.js";
 // Toast 队列管理（避免重叠）
 let toastQueue = [];
 let toastOffset = 50;
+let dialogInstanceId = 0;
+const dialogStack = [];
+
+function repositionToasts() {
+    toastQueue.forEach((toast, index) => {
+        toast.style.top = `${toastOffset + index * 60}px`;
+    });
+}
 
 /**
  * 显示 Toast 消息提示
@@ -34,63 +42,35 @@ let toastOffset = 50;
  */
 export function showToast(message, type = "info", duration = 3000) {
     const toast = document.createElement("div");
-    const colors = { 
-        success: "#4CAF50", 
-        error: "#F44336", 
-        info: "#2196F3", 
-        warning: "#FF9800" 
-    };
-    const icons = { 
-        success: "✅", 
-        error: "❌", 
-        info: "ℹ️", 
-        warning: "⚠️" 
-    };
-    
-    // 计算位置（避免重叠）
-    const topPosition = toastOffset + toastQueue.length * 60;
-    
-    Object.assign(toast.style, {
-        position: "fixed", 
-        top: `${topPosition - 30}px`, 
-        left: "50%", 
-        transform: "translateX(-50%)",
-        background: colors[type] || colors.info, 
-        color: "#fff", 
-        padding: "12px 24px",
-        borderRadius: "8px", 
-        fontSize: "14px", 
-        fontWeight: "500", 
-        zIndex: "10000",
-        boxShadow: "0 4px 20px rgba(0,0,0,0.3)", 
-        opacity: "0", 
-        transition: "all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)",
-        pointerEvents: "auto", 
-        display: "flex", 
-        alignItems: "center", 
-        gap: "10px",
-        maxWidth: "400px",
-        wordBreak: "break-word"
-    });
+    const safeType = ["success", "error", "warning", "info"].includes(type) ? type : "info";
+    toast.className = `comfy-ranking-toast comfy-ranking-toast--${safeType}`;
+    toast.setAttribute("role", type === "error" ? "alert" : "status");
+    toast.setAttribute("aria-live", safeType === "error" ? "assertive" : "polite");
+    toast.setAttribute("aria-atomic", "true");
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    if (reduceMotion) toast.classList.add("comfy-ranking-toast--reduced-motion");
+    // 新提示从目标位置上方滑入；关闭后再按当前队列位置重排。
+    toast.style.top = `${toastOffset + toastQueue.length * 60 - 30}px`;
 
     // 提示文本统一转义：message 常携带昵称/标题/后端报错等用户可控内容，
     // 全库无任何调用方故意向 showToast 传 HTML 标签，故无条件转义不会改变现有显示效果。
+    const icons = { success: "✅", error: "❌", info: "ℹ️", warning: "⚠️" };
     toast.innerHTML = `
-        <span style="font-size: 16px;">${icons[type] || icons.info}</span>
-        <span style="flex: 1;">${escapeHtml(message)}</span>
-        <span class="toast-close" style="cursor: pointer; opacity: 0.7; font-size: 18px; margin-left: 8px;">×</span>
+        <span class="comfy-ranking-toast__icon" aria-hidden="true">${icons[safeType]}</span>
+        <span class="comfy-ranking-toast__message">${escapeHtml(message)}</span>
+        <button type="button" class="toast-close comfy-ranking-toast__close" aria-label="${escapeHtml(t('common.close'))}">×</button>
     `;
     
     document.body.appendChild(toast);
     toastQueue.push(toast);
     
     // 点击关闭
-    toast.querySelector(".toast-close").onclick = () => closeToast(toast);
+    toast.querySelector(".toast-close").addEventListener("click", () => closeToast(toast));
     
     // 入场动画
     requestAnimationFrame(() => {
         toast.style.opacity = "1";
-        toast.style.top = `${topPosition}px`;
+        repositionToasts();
     });
 
     // 自动关闭
@@ -99,16 +79,17 @@ export function showToast(message, type = "info", duration = 3000) {
 }
 
 function closeToast(toast) {
+    if (!toast?.isConnected || toast.classList.contains("comfy-ranking-toast--closing")) return;
     if (toast._autoCloseTimer) clearTimeout(toast._autoCloseTimer);
     
-    toast.style.opacity = "0";
-    toast.style.transform = "translateX(-50%) translateY(-20px)";
+    toast.classList.add("comfy-ranking-toast--closing");
     
     setTimeout(() => {
         toast.remove();
         const idx = toastQueue.indexOf(toast);
         if (idx > -1) toastQueue.splice(idx, 1);
-    }, 300);
+        repositionToasts();
+    }, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 300);
 }
 
 
@@ -124,12 +105,9 @@ function closeToast(toast) {
  */
 function _createDialogOverlay(bgOpacity = 0.6, blurPx = 3) {
     const overlay = document.createElement("div");
-    Object.assign(overlay.style, {
-        position: "fixed", top: "0", left: "0", width: "100vw", height: "100vh",
-        background: `rgba(0,0,0,${bgOpacity})`, zIndex: "10001", display: "flex",
-        alignItems: "center", justifyContent: "center", backdropFilter: `blur(${blurPx}px)`,
-        opacity: "0", transition: "opacity 0.2s"
-    });
+    overlay.className = "comfy-ranking-dialog-overlay";
+    overlay.style.setProperty("--dialog-overlay-opacity", String(bgOpacity));
+    overlay.style.setProperty("--dialog-blur", `${blurPx}px`);
     return overlay;
 }
 
@@ -144,16 +122,16 @@ function _createDialogOverlay(bgOpacity = 0.6, blurPx = 3) {
  * @param {string} [transformOrigin] - 变换基点（影响初始 transform）
  * @returns {HTMLElement}
  */
-function _createDialogBox({ width = "360px", background = "#222", borderRadius = "12px", padding = "24px", boxShadow = "0 10px 40px rgba(0,0,0,0.5)", gap = "16px", hasYTranslate = true } = {}) {
+function _createDialogBox({ width = "360px", background = "var(--comfy-menu-bg, #222)", borderRadius = "12px", padding = "24px", boxShadow = "0 10px 40px rgba(0,0,0,0.5)", gap = "16px", hasYTranslate = true } = {}) {
     const box = document.createElement("div");
-    const initTransform = hasYTranslate ? "scale(0.9) translateY(-20px)" : "scale(0.9)";
-    Object.assign(box.style, {
-        background, border: "1px solid #444", borderRadius,
-        padding, width, maxWidth: "90vw", color: "#fff",
-        boxShadow,
-        display: "flex", flexDirection: "column", gap,
-        transform: initTransform, transition: "transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)"
-    });
+    box.className = "comfy-ranking-dialog";
+    box.dataset.motion = hasYTranslate ? "translate" : "scale";
+    box.style.setProperty("--dialog-width", width);
+    box.style.setProperty("--dialog-background", background);
+    box.style.setProperty("--dialog-radius", borderRadius);
+    box.style.setProperty("--dialog-padding", padding);
+    box.style.setProperty("--dialog-shadow", boxShadow);
+    box.style.setProperty("--dialog-gap", gap);
     return box;
 }
 
@@ -164,6 +142,11 @@ function _createDialogBox({ width = "360px", background = "#222", borderRadius =
  * @param {boolean} hasYTranslate - 是否包含 Y 轴位移
  */
 function _showDialogAnimation(overlay, box, hasYTranslate = true) {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+        overlay.style.opacity = "1";
+        box.style.transform = hasYTranslate ? "scale(1) translateY(0)" : "scale(1)";
+        return;
+    }
     requestAnimationFrame(() => {
         overlay.style.opacity = "1";
         box.style.transform = hasYTranslate ? "scale(1) translateY(0)" : "scale(1)";
@@ -178,10 +161,76 @@ function _showDialogAnimation(overlay, box, hasYTranslate = true) {
  * @param {Function} [callback] - 关闭完成后的回调
  */
 function _closeDialog(overlay, box, hasYTranslate = true, callback) {
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    if (reduceMotion) {
+        overlay.style.transition = "none";
+        box.style.transition = "none";
+    }
     overlay.style.opacity = "0";
     box.style.transform = hasYTranslate ? "scale(0.9) translateY(-20px)" : "scale(0.9)";
-    setTimeout(() => { overlay.remove(); if (callback) callback(); }, 200);
+    setTimeout(() => { overlay.remove(); if (callback) callback(); }, reduceMotion ? 0 : 200);
 }
+
+/** 为共用弹窗提供模态语义、焦点约束与关闭后的焦点恢复。 */
+function _setupDialogAccessibility(box, titleId, descriptionId, initialFocusSelector, onEscape) {
+    const previousFocus = document.activeElement;
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-modal", "true");
+    box.setAttribute("aria-labelledby", titleId);
+    if (descriptionId) box.setAttribute("aria-describedby", descriptionId);
+    else box.removeAttribute("aria-describedby");
+    box.setAttribute("tabindex", "-1");
+
+    const getFocusable = () => Array.from(box.querySelectorAll(
+        'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+    )).filter(element => element.tabIndex >= 0 && !element.closest('[inert], [hidden], [aria-hidden="true"]')
+        && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden");
+
+    const handleKeydown = event => {
+        if (dialogStack[dialogStack.length - 1] !== box) return;
+        if (event.key === "Escape") {
+            event.preventDefault();
+            onEscape();
+            return;
+        }
+        if (event.key !== "Tab") return;
+        const focusable = getFocusable();
+        if (!focusable.length) {
+            event.preventDefault();
+            box.focus();
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !focusable.includes(document.activeElement))) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !focusable.includes(document.activeElement))) {
+            event.preventDefault();
+            first.focus();
+        }
+    };
+    dialogStack.push(box);
+    document.addEventListener("keydown", handleKeydown);
+    const focusable = getFocusable();
+    const requestedFocus = box.querySelector(initialFocusSelector);
+    const initialFocus = focusable.includes(requestedFocus) ? requestedFocus : focusable[0] || box;
+    initialFocus.focus();
+
+    return {
+        cleanup() {
+            document.removeEventListener("keydown", handleKeydown);
+            const stackIndex = dialogStack.lastIndexOf(box);
+            if (stackIndex >= 0) dialogStack.splice(stackIndex, 1);
+        },
+        restoreFocus() {
+            if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+        }
+    };
+}
+
+// 业务弹窗复用相同的模态栈、焦点循环与恢复行为；调用方负责在关闭时 cleanup。
+export { _setupDialogAccessibility as setupDialogAccessibility };
 
 // ==========================================
 // ⚠️ 确认对话框
@@ -196,37 +245,49 @@ function _closeDialog(overlay, box, hasYTranslate = true, callback) {
  * @param {string} options.cancelText - 取消按钮文字
  * @param {string} options.type - 类型: 'warning', 'danger', 'info'
  * @param {boolean} options.html - 是否把 message 当作可信 HTML 渲染（默认 false，即按纯文本转义）
+ * @param {Function} options.onConfirm - 可选异步操作，返回 false 时按未成功关闭；调用方负责业务错误提示
+ * @param {string} options.processingText - 异步操作期间的本地化状态文案
+ * @param {AbortSignal} [options.signal] - 强制释放原范围弹窗，不取消已提交业务操作
  * @returns {Promise<boolean>}
  */
 export function showConfirm(message, options = {}) {
     const {
-        title = "操作确认",
-        confirmText = "确认执行",
-        cancelText = "取消",
+        title = t('common.confirm_action'),
+        confirmText = t('common.confirm_execute'),
+        cancelText = t('common.cancel'),
         type = "warning",
-        html = false
+        html = false,
+        onConfirm,
+        processingText = t('common.processing'),
+        signal
     } = options;
     
     const typeConfig = {
-        warning: { icon: "⚠️", color: "#FF9800", btnColor: "#FF9800" },
-        danger: { icon: "🚨", color: "#F44336", btnColor: "#F44336" },
-        info: { icon: "ℹ️", color: "#2196F3", btnColor: "#2196F3" }
+        warning: { icon: "⚠️" },
+        danger: { icon: "🚨" },
+        info: { icon: "ℹ️" }
     };
-    const config = typeConfig[type] || typeConfig.warning;
+    const safeType = Object.hasOwn(typeConfig, type) ? type : "warning";
+    const config = typeConfig[safeType];
     
+    if (signal?.aborted) return Promise.resolve(false);
     return new Promise((resolve) => {
         const overlay = _createDialogOverlay(0.6, 3);
         const box = _createDialogBox({ width: "360px", hasYTranslate: true });
+        box.dataset.type = safeType;
+        const dialogId = ++dialogInstanceId;
+        const titleId = `ui-dialog-title-${dialogId}`;
+        const descriptionId = `ui-dialog-description-${dialogId}`;
 
         box.innerHTML = `
-            <div style="font-size: 18px; font-weight: bold; color: ${config.color}; display: flex; align-items: center; gap: 10px;">
-                <span style="font-size: 24px;">${config.icon}</span>
+            <div id="${titleId}" class="comfy-ranking-dialog__title" role="heading" aria-level="2">
+                <span class="comfy-ranking-dialog__icon" aria-hidden="true">${config.icon}</span>
                 <span>${escapeHtml(title)}</span>
             </div>
-            <div style="font-size: 14px; color: #ccc; line-height: 1.7; padding: 8px 0;">${html ? message : escapeHtml(message)}</div>
-            <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 8px;">
-                <button id="ui-btn-cancel" style="padding: 10px 20px; background: transparent; border: 1px solid #555; color: #aaa; border-radius: 6px; cursor: pointer; transition: 0.2s; font-size: 14px;">${escapeHtml(cancelText)}</button>
-                <button id="ui-btn-confirm" style="padding: 10px 20px; background: ${config.btnColor}; border: none; color: #fff; border-radius: 6px; cursor: pointer; font-weight: bold; box-shadow: 0 2px 8px ${config.btnColor}44; transition: 0.2s; font-size: 14px;">${escapeHtml(confirmText)}</button>
+            <div id="${descriptionId}" class="comfy-ranking-dialog__message${html ? '' : ' comfy-ranking-dialog__message--plain'}">${html ? message : escapeHtml(message)}</div>
+            <div class="comfy-ranking-dialog__actions">
+                <button id="ui-btn-cancel" class="comfy-ranking-dialog__button comfy-ranking-dialog__button--cancel" type="button">${escapeHtml(cancelText)}</button>
+                <button id="ui-btn-confirm" class="comfy-ranking-dialog__button comfy-ranking-dialog__button--confirm" type="button">${escapeHtml(confirmText)}</button>
             </div>
         `;
 
@@ -236,26 +297,65 @@ export function showConfirm(message, options = {}) {
         // 入场动画
         _showDialogAnimation(overlay, box, true);
 
-        const close = (result) => {
-            _closeDialog(overlay, box, true, () => resolve(result));
+        let settled = false, aborted = false;
+        let pending = false;
+        let dialogAccessibility, observer;
+        const abort = () => {
+            if (aborted) return;
+            aborted = true; settled = true; pending = false;
+            observer?.disconnect(); dialogAccessibility?.cleanup(); overlay.remove();
+            signal?.removeEventListener("abort", abort);
+            resolve(false);
+        };
+        const close = result => {
+            if (settled || pending) return;
+            settled = true;
+            observer?.disconnect();
+            dialogAccessibility?.cleanup();
+            _closeDialog(overlay, box, true, () => {
+                signal?.removeEventListener("abort", abort);
+                if (!aborted) dialogAccessibility?.restoreFocus();
+                resolve(aborted ? false : result);
+            });
         };
 
-        // ESC 键关闭
-        const handleKeydown = (e) => {
-            if (e.key === "Escape") {
-                document.removeEventListener("keydown", handleKeydown);
-                close(false);
-            }
-        };
-        document.addEventListener("keydown", handleKeydown);
+        dialogAccessibility = _setupDialogAccessibility(
+            box, titleId, descriptionId, "#ui-btn-cancel", () => close(false)
+        );
+
+        observer = new MutationObserver(() => { if (!overlay.isConnected) abort(); });
+        observer.observe(document.body, { childList: true, subtree: true });
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) { abort(); return; }
 
         box.querySelector("#ui-btn-cancel").onclick = () => {
-            document.removeEventListener("keydown", handleKeydown);
             close(false);
         };
-        box.querySelector("#ui-btn-confirm").onclick = () => {
-            document.removeEventListener("keydown", handleKeydown);
-            close(true);
+        box.querySelector("#ui-btn-confirm").onclick = async () => {
+            if (settled || pending) return;
+            if (typeof onConfirm !== "function") { close(true); return; }
+            pending = true;
+            box.setAttribute("aria-busy", "true");
+            box.querySelector("#ui-btn-cancel").disabled = true;
+            const confirmButton = box.querySelector("#ui-btn-confirm");
+            confirmButton.disabled = true;
+            confirmButton.textContent = processingText;
+            const progress = document.createElement("p");
+            progress.textContent = processingText;
+            progress.setAttribute("role", "status");
+            progress.setAttribute("aria-live", "polite");
+            box.querySelector(".comfy-ranking-dialog__message").appendChild(progress);
+            box.focus();
+            let succeeded = false;
+            try { succeeded = (await onConfirm()) !== false; }
+            catch {
+                if (!settled) showToast(t('common.operation_failed'), "error");
+            } finally {
+                if (settled) return;
+                pending = false;
+                box.removeAttribute("aria-busy");
+                close(succeeded);
+            }
         };
     });
 }
@@ -275,14 +375,17 @@ export function showConfirm(message, options = {}) {
  */
 export function showRetryDialog(message, retryFn, options = {}) {
     const {
-        title = "操作失败",
-        retryText = "🔄 重试",
-        cancelText = "关闭",
+        title = t('common.error'),
+        retryText = `🔄 ${t('common.retry')}`,
+        cancelText = t('common.close'),
         html = false
     } = options;
     
     return new Promise((resolve) => {
         const overlay = _createDialogOverlay(0.7, 4);
+        const dialogId = ++dialogInstanceId;
+        const titleId = `ui-dialog-title-${dialogId}`;
+        const descriptionId = `ui-dialog-description-${dialogId}`;
         const box = _createDialogBox({
             width: "400px",
             background: "linear-gradient(145deg, #2a2a2a, #1f1f1f)",
@@ -292,20 +395,19 @@ export function showRetryDialog(message, retryFn, options = {}) {
             gap: "20px",
             hasYTranslate: false
         });
-        // RetryDialog 的过渡时间略长
-        box.style.transition = "transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)";
+        box.dataset.type = "retry";
 
         box.innerHTML = `
-            <div style="text-align: center;">
-                <div style="font-size: 48px; margin-bottom: 16px;">😕</div>
-                <div style="font-size: 20px; font-weight: bold; color: #F44336;">${escapeHtml(title)}</div>
+            <div class="comfy-ranking-dialog__header comfy-ranking-dialog__header--center">
+                <div class="comfy-ranking-dialog__illustration" aria-hidden="true">😕</div>
+                <div id="${titleId}" class="comfy-ranking-dialog__title comfy-ranking-dialog__title--center" role="heading" aria-level="2">${escapeHtml(title)}</div>
             </div>
-            <div style="font-size: 14px; color: #bbb; line-height: 1.7; text-align: center; padding: 0 10px; background: #1a1a1a; border-radius: 8px; padding: 16px;">
+            <div id="${descriptionId}" class="comfy-ranking-dialog__message comfy-ranking-dialog__message--center">
                 ${html ? message : escapeHtml(message)}
             </div>
-            <div style="display: flex; gap: 12px; justify-content: center;">
-                <button id="ui-btn-cancel" style="flex: 1; padding: 12px 20px; background: #333; border: 1px solid #555; color: #aaa; border-radius: 8px; cursor: pointer; transition: 0.2s; font-size: 14px;">${escapeHtml(cancelText)}</button>
-                <button id="ui-btn-retry" style="flex: 1; padding: 12px 20px; background: linear-gradient(135deg, #2196F3, #1976D2); border: none; color: #fff; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 14px;">${escapeHtml(retryText)}</button>
+            <div class="comfy-ranking-dialog__actions comfy-ranking-dialog__actions--center">
+                <button id="ui-btn-cancel" class="comfy-ranking-dialog__button comfy-ranking-dialog__button--cancel" type="button">${escapeHtml(cancelText)}</button>
+                <button id="ui-btn-retry" class="comfy-ranking-dialog__button comfy-ranking-dialog__button--retry" type="button">${escapeHtml(retryText)}</button>
             </div>
         `;
 
@@ -315,35 +417,49 @@ export function showRetryDialog(message, retryFn, options = {}) {
         // 入场动画
         _showDialogAnimation(overlay, box, false);
 
-        const close = () => {
-            _closeDialog(overlay, box, false);
+        let settled = false;
+        let retryInProgress = false;
+        let dialogAccessibility;
+        const settle = result => {
+            if (settled) return;
+            settled = true;
+            dialogAccessibility?.cleanup();
+            _closeDialog(overlay, box, false, () => {
+                dialogAccessibility?.restoreFocus();
+                resolve(result);
+            });
         };
+        dialogAccessibility = _setupDialogAccessibility(
+            box, titleId, descriptionId, "#ui-btn-cancel", () => {
+                if (!retryInProgress) settle(false);
+            }
+        );
 
         box.querySelector("#ui-btn-cancel").onclick = () => {
-            close();
-            resolve(false);
+            settle(false);
         };
         
         box.querySelector("#ui-btn-retry").onclick = async () => {
             const retryBtn = box.querySelector("#ui-btn-retry");
             retryBtn.innerHTML = `<span class="btn-spinner"></span> ${t('common.retrying')}`;
             retryBtn.disabled = true;
+            retryInProgress = true;
             
             try {
                 await retryFn();
-                close();
-                resolve(true);
+                settle(true);
             } catch (error) {
-                // 重试失败，更新错误信息（与初次渲染保持一致：默认纯文本，仅 html=true 时按 HTML 渲染）
+                // 重试错误可能来自远端或扩展，即使初始提示允许富文本也必须作为纯文本处理
                 const errText = error.message || t('common.retry_failed');
-                const errBox = box.querySelector("div[style*='background: #1a1a1a']");
+                const errBox = box.querySelector(".comfy-ranking-dialog__message");
                 if (html) {
-                    errBox.innerHTML = errText;
+                    errBox.innerHTML = escapeHtml(errText);
                 } else {
                     errBox.textContent = errText;
                 }
                 retryBtn.innerHTML = escapeHtml(retryText);
                 retryBtn.disabled = false;
+                retryInProgress = false;
             }
         };
     });
@@ -373,7 +489,7 @@ let loadingCount = 0;
  * 显示全局加载遮罩
  * @param {string} message - 加载提示文字
  */
-export function showLoading(message = "加载中...") {
+export function showLoading(message = t('feedback.processing')) {
     loadingCount++;
     
     if (loadingOverlay) {
@@ -461,7 +577,7 @@ export function hideLoading() {
  * @param {boolean} loading - 是否加载中
  * @param {string} loadingText - 加载时显示的文字
  */
-export function setButtonLoading(button, loading, loadingText = "处理中...") {
+export function setButtonLoading(button, loading, loadingText = t('feedback.processing')) {
     if (!button) return;
     
     if (loading) {
@@ -494,7 +610,7 @@ export function setButtonLoading(button, loading, loadingText = "处理中...") 
  * @param {string} text - 要复制的文本
  * @param {string} successMsg - 成功提示
  */
-export async function copyToClipboard(text, successMsg = "已复制到剪贴板") {
+export async function copyToClipboard(text, successMsg = t('feedback.copied')) {
     try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
             await navigator.clipboard.writeText(text);
@@ -510,7 +626,7 @@ export async function copyToClipboard(text, successMsg = "已复制到剪贴板"
         }
         showToast(successMsg, "success");
     } catch (error) {
-        showToast("复制失败", "error");
+        showToast(t('feedback.copy_failed'), "error");
     }
 }
 
@@ -527,9 +643,9 @@ export async function copyToClipboard(text, successMsg = "已复制到剪贴板"
  */
 export async function withFeedback(asyncFn, options = {}) {
     const {
-        loadingMsg = "处理中...",
-        successMsg = "操作成功",
-        errorMsg = "操作失败",
+        loadingMsg = t('feedback.processing'),
+        successMsg = t('feedback.operation_success'),
+        errorMsg = t('feedback.operation_failed'),
         showLoadingOverlay = false,
         button = null
     } = options;
@@ -551,8 +667,7 @@ export async function withFeedback(asyncFn, options = {}) {
         
         return result;
     } catch (error) {
-        const msg = error.message || errorMsg;
-        showToast(msg, "error");
+        showToast(errorMsg, "error");
         throw error;
     } finally {
         if (showLoadingOverlay) {
@@ -572,58 +687,113 @@ export async function withFeedback(asyncFn, options = {}) {
 /**
  * 创建安装进度条
  * @param {HTMLElement} container - 进度条容器元素
- * @returns {{update: Function, complete: Function, error: Function, destroy: Function}}
+ * @returns {{update: Function, complete: Function, error: Function, showDiagnostics: Function, destroy: Function}}
  */
 export function createInstallProgress(container) {
     // 创建进度条DOM
+    const preparingLabel = t('install.preparing');
     const wrapper = document.createElement("div");
     wrapper.className = "install-progress-wrapper";
     wrapper.innerHTML = `
-        <div style="width: 100%; margin: 12px 0;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                <span class="progress-stage" style="font-size: 12px; color: #aaa;">准备中...</span>
-                <span class="progress-percent" style="font-size: 12px; color: #2196F3; font-weight: bold;">0%</span>
+        <div class="install-progress">
+            <div class="install-progress__header">
+                <span class="install-progress__stage" role="status" aria-live="polite">${escapeHtml(preparingLabel)}</span>
+                <span class="install-progress__elapsed" role="timer" aria-live="off"></span>
+                <span class="install-progress__percent">0%</span>
             </div>
-            <div style="position: relative; width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
-                <div class="progress-fill" style="
-                    width: 0%;
-                    height: 100%;
-                    background: linear-gradient(90deg, #2196F3, #4CAF50);
-                    border-radius: 3px;
-                    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-                "></div>
+            <div class="install-progress__track" role="progressbar" aria-label="${escapeHtml(t('install.progress_label'))}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="${escapeHtml(preparingLabel)}">
+                <div class="install-progress__fill"></div>
             </div>
         </div>
     `;
     container.innerHTML = "";
     container.appendChild(wrapper);
 
-    const fill = wrapper.querySelector(".progress-fill");
-    const stage = wrapper.querySelector(".progress-stage");
-    const percent = wrapper.querySelector(".progress-percent");
+    const fill = wrapper.querySelector(".install-progress__fill");
+    const stage = wrapper.querySelector(".install-progress__stage");
+    const elapsed = wrapper.querySelector(".install-progress__elapsed");
+    const percent = wrapper.querySelector(".install-progress__percent");
+    const progressTrack = wrapper.querySelector(".install-progress__track");
+    const startedAt = Date.now();
+    let cancelButton = null;
+    const updateElapsed = () => {
+        const totalSeconds = Math.floor((Date.now() - startedAt) / 1000);
+        const time = `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+        const elapsedLabel = t('install.elapsed', { time });
+        elapsed.textContent = elapsedLabel;
+        elapsed.setAttribute("aria-label", elapsedLabel);
+    };
+    const elapsedTimer = setInterval(updateElapsed, 1000);
+    const stopElapsedTimer = () => clearInterval(elapsedTimer);
+    updateElapsed();
 
     return {
         update(progress, message) {
             const p = Math.max(0, Math.min(100, progress));
             fill.style.width = `${p}%`;
             percent.textContent = `${p}%`;
-            if (message) stage.textContent = message;
+            progressTrack.setAttribute("aria-valuenow", String(p));
+            if (message) {
+                stage.textContent = message;
+                progressTrack.setAttribute("aria-valuetext", message);
+            }
         },
         complete(message) {
+            stopElapsedTimer();
+            cancelButton?.remove();
             fill.style.width = "100%";
-            fill.style.background = "linear-gradient(90deg, #4CAF50, #8BC34A)";
             percent.textContent = "100%";
-            percent.style.color = "#4CAF50";
-            stage.textContent = message || "✅ 安装完成！";
-            stage.style.color = "#4CAF50";
+            progressTrack.setAttribute("aria-valuenow", "100");
+            wrapper.classList.add("is-complete");
+            stage.textContent = message || `✅ ${t('install.complete')}`;
+            progressTrack.setAttribute("aria-valuetext", stage.textContent);
         },
         error(message) {
-            fill.style.background = "#F44336";
-            percent.style.color = "#F44336";
-            stage.textContent = message || "❌ 安装失败";
-            stage.style.color = "#F44336";
+            stopElapsedTimer();
+            cancelButton?.remove();
+            wrapper.classList.add("is-error");
+            stage.textContent = message || `❌ ${t('install.failed')}`;
+            progressTrack.setAttribute("aria-valuetext", stage.textContent);
+        },
+        showDiagnostics(entries) {
+            if (!Array.isArray(entries) || entries.length === 0) return;
+            const details = document.createElement("details");
+            details.className = "install-progress__diagnostics";
+            const summary = document.createElement("summary");
+            summary.textContent = t('install.diagnostics');
+            details.appendChild(summary);
+
+            const list = document.createElement("ol");
+            for (const entry of entries.slice(-50)) {
+                const item = document.createElement("li");
+                const stageKey = entry.stageKey;
+                const stageLabel = stageKey ? t(stageKey) : (entry.stage || t('install.stage_unknown'));
+                item.textContent = t('install.diagnostic_entry', {
+                    time: entry.time,
+                    stage: stageLabel,
+                    progress: Number.isFinite(entry.progress) ? `${entry.progress}%` : "—"
+                });
+                list.appendChild(item);
+            }
+            details.appendChild(list);
+            wrapper.appendChild(details);
+        },
+        addCancelButton(label, onCancel) {
+            if (cancelButton || typeof onCancel !== "function") return;
+            cancelButton = document.createElement("button");
+            cancelButton.type = "button";
+            cancelButton.className = "install-progress__cancel";
+            cancelButton.textContent = label;
+            cancelButton.addEventListener("click", () => {
+                if (cancelButton.disabled) return;
+                cancelButton.disabled = true;
+                cancelButton.textContent = t('install.cancelling');
+                onCancel();
+            });
+            wrapper.appendChild(cancelButton);
         },
         destroy() {
+            stopElapsedTimer();
             wrapper.remove();
         }
     };

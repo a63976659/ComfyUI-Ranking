@@ -1,10 +1,15 @@
-import { api } from "../core/网络请求API.js";
+import { createUnreadBadgeUpdate, validUnreadCount } from "./未读角标工具.js";
+import { api, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
-import { CACHE, PLACEHOLDERS } from "../core/全局配置.js";
+import { API, CACHE, UI, PAGINATION, PLACEHOLDERS } from "../core/全局配置.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t } from "../components/用户体验增强.js";
 // 🔒 XSS防护：对用户可控字段进行 HTML 转义（🧹 P2归一：使用统一版）
 import { escapeHtml } from "../components/互动工具函数.js";
+
+import { getUser, eventBus, EVENTS } from "../core/状态管理.js";
+import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
+let chatSequence = 0;
 
 // 🚀 本地存储键管理
 const getChatListKey = (account) => `${CACHE.LOCAL_KEYS.CHAT_LIST}_${account}`;
@@ -36,7 +41,7 @@ const formatRelativeTime = (timestamp) => {
     return `${date.getMonth() + 1}${t('chat.date_month')}${date.getDate()}${t('chat.date_day')} ${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
 };
 // 🚀 P1-5: 超过5分钟则显示时间分隔符
-const TIME_GAP_THRESHOLD = 5 * 60; // 秒
+const TIME_GAP_THRESHOLD = UI.CHAT_TIME_GAP_SECONDS; // 秒
 const shouldShowTimeSeparator = (prevMsg, currMsg) => {
     if (!prevMsg || !prevMsg.created_at || !currMsg.created_at) return false;
     const prev = _normalizeTs(prevMsg.created_at) / 1000;
@@ -45,35 +50,30 @@ const shouldShowTimeSeparator = (prevMsg, currMsg) => {
 };
 
 export function openChatModal(currentUser, targetAccount = null) {
-    // 🚀 P2-1: 头像交互统一处理（点击打开个人资料 + hover 缩放）
+    if (!currentUser?.account || getUser()?.account !== currentUser.account) return showToast(t("notif.login_required"), "warning");
     const _attachAvatarInteraction = (avatarEl, account, currentUser) => {
-        avatarEl.style.cursor = "pointer";
-        avatarEl.onclick = (e) => { e.stopPropagation(); openOtherUserProfileModal(account, currentUser); };
-        avatarEl.onmouseover = () => avatarEl.style.transform = "scale(1.1)";
-        avatarEl.onmouseout = () => avatarEl.style.transform = "scale(1)";
+        const button = document.createElement('button'); button.type = 'button';
+        button.className = 'chat-avatar-button';
+        button.setAttribute('aria-label', `${t('chat.view_profile')} ${account}`);
+        button.onclick = event => { event.stopPropagation(); if (scope.isCurrent()) openOtherUserProfileModal(account, currentUser); };
+        avatarEl.replaceWith(button); button.appendChild(avatarEl); return button;
     };
     const container = document.createElement("div");
     // 🔧 自适应高度：flex 填充剩余空间（与主界面保持一致）
-    Object.assign(container.style, { display: "flex", flexDirection: "column", flex: "1", minHeight: "0", boxSizing: "border-box", color: "#fff", background: "var(--comfy-menu-bg)", overflow: "hidden" });
+    container.classList.add("chat-view");
     
     // 🚀 返回按钮位置可调整参数：margin-left 控制右移，margin-top 控制下移
     const topHeader = document.createElement("div");
-    Object.assign(topHeader.style, { padding: "10px 15px", borderBottom: "1px solid #444", display: "flex", alignItems: "center", gap: "10px", background: "var(--comfy-input-bg)" });
+    topHeader.classList.add("chat-top-header");
     topHeader.innerHTML = `
-        <button id="btn-back-chat" style="margin-left: 15px; margin-top: 20px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
+        <button type="button" id="btn-back-chat" class="chat-button">
             ⬅ ${t('common.back')}
         </button>
-        <span style="font-size: 16px; font-weight: bold; flex: 1;">💬 ${t('chat.title')}</span>
-        <button id="btn-clear-chat-top" style="background: transparent; border: 1px solid #F44336; color: #F44336; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; transition: 0.2s; display: none;" onmouseover="this.style.background='#F44336'; this.style.color='#fff'" onmouseout="this.style.background='transparent'; this.style.color='#F44336'"></button>
+        <span class="chat-title">💬 ${t('chat.title')}</span>
+        <button type="button" id="btn-clear-chat-top" class="chat-button chat-clear" hidden></button>
     `;
     // 🚀 P2-3: 统一的清理函数
-    const cleanup = () => {
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-        saveDraft();
-        // 🔔 关闭聊天时通知顶部导航刷新 ✉️ 未读红点：
-        //    打开会话已把收到的消息标记为已读，未读数随之下降，需即时回写红点
-        window.dispatchEvent(new CustomEvent("comfy-chat-unread-changed"));
-    };
+    const cleanup = () => scope.dispose();
 
     topHeader.querySelector("#btn-back-chat").onclick = () => {
         cleanup();
@@ -85,45 +85,42 @@ export function openChatModal(currentUser, targetAccount = null) {
     clearBtnTop.innerHTML = "🗑️ " + t('chat.clear_messages');
 
     const mainArea = document.createElement("div");
-    Object.assign(mainArea.style, { display: "flex", flex: 1, overflow: "hidden" });
+    mainArea.classList.add("chat-main");
     
     const leftPanel = document.createElement("div");
-    Object.assign(leftPanel.style, { width: "250px", borderRight: "1px solid #444", border: "1px solid #444", borderTop: "none", display: "flex", flexDirection: "column", background: "#181818" });
+    leftPanel.classList.add("chat-list-panel");
     const chatListContainer = document.createElement("div");
-    Object.assign(chatListContainer.style, { flex: 1, overflowY: "auto" });
+    chatListContainer.classList.add("chat-list");
     leftPanel.appendChild(chatListContainer);
     
     const rightPanel = document.createElement("div");
-    Object.assign(rightPanel.style, { flex: 1, display: "flex", flexDirection: "column", background: "var(--comfy-menu-bg)" });
+    rightPanel.classList.add("chat-conversation");
     
     const chatHeader = document.createElement("div");
-    Object.assign(chatHeader.style, { padding: "15px", borderBottom: "1px solid var(--border-color, #333)", background: "#222", fontWeight: "bold", display: "flex", alignItems: "center" });
+    chatHeader.classList.add("chat-header");
     
     const messagesArea = document.createElement("div");
-    Object.assign(messagesArea.style, { flex: 1, padding: "15px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px" });
+    messagesArea.classList.add("chat-messages");
     
     const inputArea = document.createElement("div");
-    Object.assign(inputArea.style, { padding: "15px", borderTop: "1px solid var(--border-color, #333)", display: "flex", gap: "10px", background: "#222" });
+    inputArea.classList.add("chat-composer");
     
     // 🚀 P1-2: 改为 textarea，支持多行输入
     const inputField = document.createElement("textarea");
     inputField.rows = 1;
-    Object.assign(inputField.style, { 
-        flex: 1, padding: "10px", border: "1px solid #444", borderRadius: "6px",
-        background: "var(--comfy-input-bg)", color: "#fff", fontSize: "13px", outline: "none",
-        resize: "none", maxHeight: "100px", minHeight: "40px", overflow: "auto",
-        lineHeight: "1.4", boxSizing: "border-box"
-    });
+    inputField.classList.add("chat-input");
     inputField.placeholder = t('chat.input_placeholder');
+    inputField.setAttribute("aria-label", t("chat.input_placeholder"));
     // 🚀 P1-2: 自适应高度
     const adjustHeight = () => {
         inputField.style.height = "auto";
-        inputField.style.height = Math.min(inputField.scrollHeight, 100) + "px";
+        inputField.style.height = inputField.scrollHeight + "px";
     };
     inputField.addEventListener("input", adjustHeight);
     
     const sendBtn = document.createElement("button");
-    Object.assign(sendBtn.style, { padding: "10px 20px", borderRadius: "20px", border: "none", background: "#2196F3", color: "#fff", cursor: "pointer", fontWeight: "bold" });
+    sendBtn.classList.add("chat-send");
+    sendBtn.type = "button";
     sendBtn.innerText = t('common.send');
     
     inputArea.appendChild(inputField);
@@ -141,41 +138,50 @@ export function openChatModal(currentUser, targetAccount = null) {
     let currentTargetInfo = null;  // 🚀 新增：保存当前聊天对象的完整信息
     let pollTimer = null;           // 🚀 P0-1：消息轮询定时器
 
-    // 🚀 P1-4: 草稿保存/恢复/清除
-    const saveDraft = () => {
-        if (currentChatTarget && inputField.value.trim()) {
-            localStorage.setItem(getDraftKey(currentUser.account, currentChatTarget), inputField.value);
-        } else if (currentChatTarget) {
-            localStorage.removeItem(getDraftKey(currentUser.account, currentChatTarget));
-        }
-    };
-    const restoreDraft = (targetAccount) => {
-        const draft = localStorage.getItem(getDraftKey(currentUser.account, targetAccount));
-        if (draft) {
-            inputField.value = draft;
-            adjustHeight();
-        } else {
-            inputField.value = "";
-            adjustHeight();
-        }
-    };
-    const clearDraft = () => {
-        if (currentChatTarget) {
-            localStorage.removeItem(getDraftKey(currentUser.account, currentChatTarget));
-        }
-    };
+    let constructing = true, observer, listGeneration = 0, historyGeneration = 0, conversationGeneration = 0;
+    let sending = false, readRevision = 0;
+    const acknowledgedReads = new Map();
+    const drafts = new Map(), clearTimes = new Map(), pendingMessages = new Map();
+    const componentId = `chat-${++chatSequence}`;
+    const sessionMatches = captureRequestSession();
+    const scope = createTaskViewScope({
+        sessionMatches: () => sessionMatches() && getUser()?.account === currentUser.account,
+        connected: () => constructing || container.isConnected,
+        subscribe: notify => subscribeTaskSessionChanges(notify, { target: window, eventBus, events: EVENTS,
+            userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN }),
+        cancelReads: () => { requestCancelManager.cancelAll(componentId); requestCancelManager.cancelAll(`${componentId}-history`); },
+        invalidate: () => { inputField.disabled = true; sendBtn.disabled = true; clearBtnTop.disabled = true; }
+    });
+    scope.addCleanup(() => {
+        clearTimeout(pollTimer); pollTimer = null; observer?.disconnect();
+        drafts.clear(); clearTimes.clear(); pendingMessages.clear(); acknowledgedReads.clear(); allMessages = []; currentTargetInfo = null; currentChatTarget = null;
+        inputField.value = ''; messagesArea.replaceChildren(); chatListContainer.replaceChildren(); chatHeader.replaceChildren();
+        window.dispatchEvent(new CustomEvent('comfy-chat-unread-changed'));
+    });
+    container._cleanup = cleanup;
+    const options = { noCache: true, componentId, timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES };
+    const saveDraft = () => { if (currentChatTarget) drafts.set(currentChatTarget, inputField.value); };
+    const restoreDraft = target => { inputField.value = drafts.get(target) || ''; adjustHeight(); };
+    const removeLegacy = key => { try { localStorage.removeItem(key); } catch (_) {} };
+    removeLegacy(getChatListKey(currentUser.account));
 
     // 🚀 P0-3：消息分页配置
-    const PAGE_SIZE = 50;
-    const MAX_MSG_LENGTH = 1000;    // 🚀 P0-2：消息最大长度
+    const PAGE_SIZE = PAGINATION.CHAT_MESSAGES_PAGE_SIZE;
+    const MAX_MSG_LENGTH = UI.CHAT_MAX_MSG_LENGTH;    // 🚀 P0-2：消息最大长度
     let currentDisplayCount = PAGE_SIZE;
     let allMessages = [];
     
     // 🚀 新增：渲染对话列表（带头像）
     const renderChatList = (list) => {
+        if (!scope.isCurrent()) return;
+        const focused = document.activeElement?.closest('.chat-list-item');
+        const focusedAccount = focused && chatListContainer.contains(focused) ? focused.dataset.account : null;
+        const focusedIndex = focusedAccount ? [...chatListContainer.querySelectorAll('.chat-list-item')].indexOf(focused) : -1;
+        const oldScrollTop = chatListContainer.scrollTop;
         chatListContainer.innerHTML = "";
         if (list.length === 0) {
-            chatListContainer.innerHTML = `<div style="padding:20px; text-align:center; color:#888; font-size:12px;">${t('chat.no_conversations')}</div>`;
+            chatListContainer.innerHTML = `<div class="chat-status" role="status">${t('chat.no_conversations')}</div>`;
+            if (focusedAccount && document.activeElement === document.body) topHeader.querySelector('#btn-back-chat').focus({ preventScroll: true });
             return;
         }
         list.forEach(chat => {
@@ -183,67 +189,67 @@ export function openChatModal(currentUser, targetAccount = null) {
             const name = chat.target_name || chat.name || acc;
             const avatar = chat.avatar || chat.target_avatar || PLACEHOLDERS.AVATAR_SMALL;
             const lastMsg = chat.last_message || "";
-            const unread = chat.unread_count || 0;
+            const unread = validUnreadCount(chat.unread_count);
 
-            const chatItem = document.createElement("div");
-            Object.assign(chatItem.style, { 
-                padding: "12px", borderBottom: "1px solid var(--border-color, #333)", cursor: "pointer",
-                transition: "0.2s", display: "flex", alignItems: "center", gap: "10px"
-            });
-            chatItem.onmouseover = () => chatItem.style.background = "var(--comfy-input-bg)";
-            chatItem.onmouseout = () => chatItem.style.background = currentChatTarget === acc ? "var(--comfy-input-bg)" : "transparent";
-            
-            // 高亮当前选中的对话
-            if (currentChatTarget === acc) {
-                chatItem.style.background = "var(--comfy-input-bg)";
-            }
-            
+            const chatItem = document.createElement("button");
+            chatItem.dataset.account = acc;
+            chatItem.type = "button"; chatItem.setAttribute("aria-pressed", String(currentChatTarget === acc));
+            chatItem.classList.add("chat-list-item");
             chatItem.innerHTML = `
-                <img src="${escapeHtml(avatar)}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1px solid #555; flex-shrink: 0;">
-                <div style="flex: 1; min-width: 0;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="font-weight: bold; font-size: 13px; color: #fff;">${escapeHtml(name)}</div>
-                        ${unread > 0 ? `<span style="background: #F44336; color: white; font-size: 10px; padding: 2px 6px; border-radius: 10px;">${unread}</span>` : ''}
-                    </div>
-                    <div style="font-size: 12px; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(lastMsg) || '@' + escapeHtml(acc)}</div>
-                </div>
+                <img class="chat-list-avatar" alt="" src="${escapeHtml(avatar)}">
+                <span class="chat-list-item-body">
+                    <span class="chat-list-item-meta"><span class="chat-list-name">${escapeHtml(name)}</span>
+                        ${unread > 0 ? `<span class="chat-unread">${unread}</span>` : ''}
+                    </span>
+                    <span class="chat-list-preview">${escapeHtml(lastMsg) || '@' + escapeHtml(acc)}</span>
+                </span>
             `;
             chatItem.onclick = () => loadChatHistory(acc, name, avatar);
             chatListContainer.appendChild(chatItem);
         });
+        chatListContainer.scrollTop = oldScrollTop;
+        if (focusedAccount && document.activeElement === document.body) {
+            const buttons = [...chatListContainer.querySelectorAll('.chat-list-item')];
+            const target = buttons.find(button => button.dataset.account === focusedAccount)
+                || buttons[Math.min(focusedIndex, buttons.length - 1)];
+            if (target) {
+                target.focus({ preventScroll: true });
+                const bounds = target.getBoundingClientRect(), viewport = chatListContainer.getBoundingClientRect();
+                if (bounds.top < viewport.top) chatListContainer.scrollTop += bounds.top - viewport.top;
+                else if (bounds.bottom > viewport.bottom) chatListContainer.scrollTop += bounds.bottom - viewport.bottom;
+            }
+        }
     };
 
     const loadChatList = async () => {
-        const listCacheKey = getChatListKey(currentUser.account);
-        
-        // 🚀 新增：先从本地缓存读取，立即显示
-        const cachedStr = localStorage.getItem(listCacheKey);
-        if (cachedStr) {
-            try {
-                renderChatList(JSON.parse(cachedStr));
-            } catch(e) {
-                console.warn('[私信] 解析对话列表缓存失败:', e);
-            }
-        }
-        
-        // 然后从云端同步最新数据
+        if (!scope.isCurrent()) return [];
+        const generation = ++listGeneration;
+        const requestedReadRevision = readRevision;
         try {
-            const res = await api.getChatList(currentUser.account);
-            const list = res.data || [];
-            
-            // 保存到本地缓存
-            localStorage.setItem(listCacheKey, JSON.stringify(list));
-            
-            renderChatList(list);
-        } catch(e) {
-            // 🚀 P1-7: loadChatList 错误处理
-            console.error('[私信] 加载对话列表失败:', e);
-            showToast(t('chat.load_list_failed'), 'error');
+            const res = await api.getChatList(currentUser.account, options);
+            if (!scope.isCurrent() || generation !== listGeneration) return [];
+            if (res?.status !== 'success' || !Array.isArray(res.data)) throw new Error('Invalid chat list');
+            const list = res.data.filter(chat => chat && typeof chat === 'object' && !Array.isArray(chat)
+                && typeof (chat.target_account || chat.account || chat.receiver || chat.sender) === 'string')
+                .map(chat => (acknowledgedReads.get(chat.target_account || chat.account || chat.receiver || chat.sender) || 0) > requestedReadRevision
+                    ? { ...chat, unread_count: 0 } : chat);
+            renderChatList(list); return list;
+        } catch (_) {
+            if (scope.isCurrent() && generation === listGeneration) showToast(t('chat.load_list_failed'), 'error');
+            return [];
         }
     };
 
     // 🚀 P0-3：分页渲染消息
-    const renderMsgs = (msgs, targetAvatar) => {
+    const renderMsgs = (msgs, targetAvatar, prepend = false) => {
+        if (!scope.isCurrent()) return;
+        const active = document.activeElement;
+        const focusedMessage = messagesArea.contains(active) ? active.closest('.chat-message') : null;
+        const focusedId = focusedMessage?.dataset.messageId;
+        const focusedAvatar = active?.classList.contains('chat-avatar-button');
+        const focusedMore = messagesArea.contains(active) && active?.classList.contains('chat-load-more');
+        const oldTop = messagesArea.scrollTop, oldHeight = messagesArea.scrollHeight;
+        const followBottom = Math.ceil(oldTop + messagesArea.clientHeight) >= oldHeight;
         allMessages = msgs;
         const startIdx = Math.max(0, msgs.length - currentDisplayCount);
         const visibleMsgs = msgs.slice(startIdx);
@@ -254,17 +260,16 @@ export function openChatModal(currentUser, targetAccount = null) {
 
         // 🚀 P0-3：如果有更多历史消息，显示"加载更多"按钮
         if (startIdx > 0) {
-            const loadMoreBtn = document.createElement("div");
-            Object.assign(loadMoreBtn.style, {
-                textAlign: "center", padding: "10px", cursor: "pointer",
-                color: "#888", fontSize: "12px", transition: "0.2s"
-            });
+            const loadMoreBtn = document.createElement("button");
+            loadMoreBtn.type = "button";
+            loadMoreBtn.classList.add("chat-load-more");
             loadMoreBtn.textContent = t('chat.load_more');
-            loadMoreBtn.onmouseover = () => { loadMoreBtn.style.color = "#2196F3"; };
-            loadMoreBtn.onmouseout = () => { loadMoreBtn.style.color = "#888"; };
             loadMoreBtn.onclick = () => {
+                if (!scope.isCurrent() || !loadMoreBtn.isConnected) return;
                 currentDisplayCount += PAGE_SIZE;
-                renderMsgs(allMessages, targetAvatar);
+                renderMsgs(allMessages, targetAvatar, true);
+                const focusTarget = messagesArea.querySelector(".chat-load-more") || messagesArea.querySelector(".chat-bubble");
+                if (focusTarget) { if (!focusTarget.matches("button")) focusTarget.tabIndex = -1; focusTarget.focus({ preventScroll: true }); }
             };
             messagesArea.appendChild(loadMoreBtn);
         }
@@ -276,73 +281,37 @@ export function openChatModal(currentUser, targetAccount = null) {
             // 🚀 P1-5: 超过5分钟插入时间分隔符
             if (shouldShowTimeSeparator(prevMsg, msg)) {
                 const sep = document.createElement("div");
-                Object.assign(sep.style, {
-                    textAlign: "center", color: "#666", fontSize: "11px",
-                    padding: "6px 0", userSelect: "none"
-                });
+                sep.classList.add("chat-time-separator");
                 sep.textContent = formatRelativeTime(msg.created_at);
                 messagesArea.appendChild(sep);
             }
 
             const bubbleWrap = document.createElement("div");
-            Object.assign(bubbleWrap.style, { 
-                display: "flex", 
-                justifyContent: isMe ? "flex-end" : "flex-start",
-                alignItems: "flex-end",
-                gap: "8px",
-                marginBottom: "2px"
-            });
+            bubbleWrap.classList.add("chat-message");
+            if (typeof msg.id === 'string') bubbleWrap.dataset.messageId = msg.id;
+            bubbleWrap.classList.toggle("chat-message--mine", isMe);
             
             // 🚀 新增：头像元素
             const avatarEl = document.createElement("img");
-            Object.assign(avatarEl.style, { 
-                width: "32px", height: "32px", borderRadius: "50%", 
-                objectFit: "cover", border: "1px solid #555", flexShrink: "0",
-                cursor: isMe ? "default" : "pointer"
-            });
+            avatarEl.classList.add("chat-avatar");
+            avatarEl.alt = "";
             avatarEl.src = isMe ? myAvatar : otherAvatar;
             avatarEl.title = isMe ? t('chat.me') : `${t('chat.view_profile')} ${currentTargetInfo?.name || currentChatTarget}`;
             
-            // 🚀 P2-1: 点击对方头像跳转个人资料
-            if (!isMe) {
-                _attachAvatarInteraction(avatarEl, currentChatTarget, currentUser);
-            }
+            const avatarNode = isMe ? avatarEl : _attachAvatarInteraction(avatarEl, currentChatTarget, currentUser);
             
             // 🚀 P1-5: 气泡+时间戳外层容器
             const bubbleCol = document.createElement("div");
-            Object.assign(bubbleCol.style, {
-                display: "flex", flexDirection: "column",
-                alignItems: isMe ? "flex-end" : "flex-start",
-                maxWidth: "65%"
-            });
+            bubbleCol.classList.add("chat-bubble-column");
 
             const bubble = document.createElement("div");
-            Object.assign(bubble.style, { 
-                padding: "10px 14px", borderRadius: "16px", 
-                fontSize: "14px", lineHeight: "1.5", wordBreak: "break-word"
-            });
+            bubble.classList.add("chat-bubble");
             
-            if (isMe) {
-                Object.assign(bubble.style, { 
-                    background: "linear-gradient(135deg, #2196F3, #1976D2)", 
-                    color: "#fff", borderBottomRightRadius: "4px",
-                    boxShadow: "0 2px 8px rgba(33, 150, 243, 0.3)"
-                });
-            } else {
-                Object.assign(bubble.style, { 
-                    background: "#3a3a3a", color: "#eee", 
-                    borderBottomLeftRadius: "4px",
-                    boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
-                });
-            }
             bubble.innerText = msg.content;
 
             // 🚀 P1-5: 气泡下方时间戳
             const timeEl = document.createElement("div");
-            Object.assign(timeEl.style, {
-                fontSize: "10px", color: "#666", marginTop: "2px",
-                padding: "0 2px", userSelect: "none"
-            });
+            timeEl.classList.add("chat-message-time");
             timeEl.textContent = formatRelativeTime(msg.created_at);
 
             bubbleCol.appendChild(bubble);
@@ -351,234 +320,188 @@ export function openChatModal(currentUser, targetAccount = null) {
             // 根据是否是自己的消息调整布局顺序
             if (isMe) {
                 bubbleWrap.appendChild(bubbleCol);
-                bubbleWrap.appendChild(avatarEl);
+                bubbleWrap.appendChild(avatarNode);
             } else {
-                bubbleWrap.appendChild(avatarEl);
+                bubbleWrap.appendChild(avatarNode);
                 bubbleWrap.appendChild(bubbleCol);
             }
             
             messagesArea.appendChild(bubbleWrap);
         });
-        setTimeout(() => messagesArea.scrollTop = messagesArea.scrollHeight, 50);
+        messagesArea.scrollTop = prepend ? oldTop + Math.max(0, messagesArea.scrollHeight - oldHeight)
+            : followBottom ? messagesArea.scrollHeight : oldTop;
+        if (!prepend && document.activeElement === document.body && (focusedId || focusedMore)) {
+            const row = focusedId ? [...messagesArea.querySelectorAll('.chat-message')].find(node => node.dataset.messageId === focusedId) : null;
+            const target = row?.querySelector(focusedAvatar ? '.chat-avatar-button' : '.chat-bubble')
+                || messagesArea.querySelector('.chat-load-more') || messagesArea.querySelector('.chat-bubble') || inputField;
+            if (target) { if (!target.matches('button')) target.tabIndex = -1; target.focus({ preventScroll: true }); }
+        }
     };
 
     const loadChatHistory = async (targetAccount, targetName, targetAvatar) => {
-        // 🚀 核心修复：防止 undefined 污染数据流
-        if (!targetAccount || targetAccount === "undefined") return;
-
-        // 🚀 P1-4: 切换对话前保存当前草稿
-        saveDraft();
-
+        if (!scope.isCurrent() || typeof targetAccount !== 'string' || !targetAccount || targetAccount === 'undefined') return;
+        const switched = currentChatTarget !== targetAccount;
+        if (switched) { saveDraft(); conversationGeneration++; currentDisplayCount = PAGE_SIZE; allMessages = []; messagesArea.replaceChildren(); }
         currentChatTarget = targetAccount;
-        const displayName = targetName && targetName !== "undefined" ? targetName : targetAccount;
+        chatListContainer.querySelectorAll(".chat-list-item").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.account === targetAccount)));
+        const generation = ++historyGeneration;
+        requestCancelManager.cancelAll(`${componentId}-history`);
+        const current = () => scope.isCurrent() && currentChatTarget === targetAccount && generation === historyGeneration;
+        const displayName = targetName && targetName !== 'undefined' ? targetName : targetAccount;
         const avatar = targetAvatar || PLACEHOLDERS.AVATAR_SMALL;
-
-        // 🚀 P0-3：切换对话时重置分页计数
-        currentDisplayCount = PAGE_SIZE;
-
-        // 🚀 新增：保存当前聊天对象信息
         currentTargetInfo = { account: targetAccount, name: displayName, avatar };
-        
-        // 🚀 新增：保存上次聊天对象，下次打开默认展开
-        localStorage.setItem(getLastChatKey(currentUser.account), JSON.stringify(currentTargetInfo));
+        try { localStorage.setItem(getLastChatKey(currentUser.account), JSON.stringify({ account: targetAccount })); } catch (_) {}
 
+        const headerHadFocus = !switched && chatHeader.contains(document.activeElement);
         chatHeader.innerHTML = `
-            <img id="chat-target-avatar" src="${escapeHtml(avatar)}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 1px solid #555; cursor: pointer; margin-right: 10px; transition: 0.2s;" title="${t('chat.view_profile')}">
-            <div style="flex: 1;">
-                <div style="font-weight: bold; font-size: 14px; color: #fff;">${t('chat.chatting_with')} ${escapeHtml(displayName)} ${t('chat.chatting_suffix')}</div>
-                <div style="font-size: 11px; color: #888;">@${escapeHtml(targetAccount)}</div>
+            <img id="chat-target-avatar" class="chat-target-avatar" alt="" src="${escapeHtml(avatar)}">
+            <div class="chat-target-info">
+                <div class="chat-target-name">${t('chat.chatting_with')} ${escapeHtml(displayName)} ${t('chat.chatting_suffix')}</div>
+                <div class="chat-target-account">@${escapeHtml(targetAccount)}</div>
             </div>
         `;
-        
         // 🚀 显示顶部的清空消息按钮
-        clearBtnTop.style.display = "block";
+        clearBtnTop.hidden = false;
         
         // 🚀 P2-1: 点击头像跳转个人资料
         const avatarEl = chatHeader.querySelector("#chat-target-avatar");
-        _attachAvatarInteraction(avatarEl, targetAccount, currentUser);
+        const headerAvatar = _attachAvatarInteraction(avatarEl, targetAccount, currentUser);
+        if (headerHadFocus && document.activeElement === document.body) headerAvatar.focus({ preventScroll: true });
 
-        const cacheKey = getChatHistoryKey(currentUser.account, targetAccount);
+        removeLegacy(getChatHistoryKey(currentUser.account, targetAccount));
+        removeLegacy(getDraftKey(currentUser.account, targetAccount));
         const clearKey = getChatClearKey(currentUser.account, targetAccount);
-        
-        const cachedStr = localStorage.getItem(cacheKey);
-        if (cachedStr) { try { renderMsgs(JSON.parse(cachedStr), avatar); } catch(e){} }
-
-        // 🚀 P1-4: 恢复草稿
-        restoreDraft(targetAccount);
-        
-        try {
-            const res = await api.getChatHistory(currentUser.account, targetAccount);
-            const cloudMsgs = res.data || [];
-            
-            const clearTimeStr = localStorage.getItem(clearKey);
-            const clearTime = clearTimeStr ? parseInt(clearTimeStr) : 0;
-            
-            let localMsgs = [];
-            if (cachedStr) { try { localMsgs = JSON.parse(cachedStr); } catch(e){} }
-            
-            // 🚀 P2-5: 确定性ID生成（替代 Math.random()，确保Map能正确去重）
-            const generateMsgId = (msg) => {
-                const base = `${msg.sender || ''}_${msg.receiver || ''}_${msg.created_at || ''}_${(msg.content || '').substring(0, 20)}`;
-                let hash = 0;
-                for (let i = 0; i < base.length; i++) {
-                    const char = base.charCodeAt(i);
-                    hash = ((hash << 5) - hash) + char;
-                    hash = hash & hash;
-                }
-                return 'local_' + Math.abs(hash).toString(36);
-            };
-
-            const map = new Map();
-            // 🚀 P0-4：统一时间戳格式为毫秒，本地和云端消息均过滤清空时间之前的消息
-            // P2-5: 先放本地消息，再由云端消息覆盖（云端为真值源）
-            // 🚀 P2-2: 统一合并去重函数
-            const _mergeMessagesToMap = (msgs, map, clearTime, generateId) => {
-                msgs.forEach(m => {
-                    if (generateId && !m.id) m.id = generateId(m);
-                    if (_normalizeTs(m.created_at) > clearTime) { map.set(m.id, m); }
-                });
-            };
-            _mergeMessagesToMap(localMsgs, map, clearTime, generateMsgId);
-            _mergeMessagesToMap(cloudMsgs, map, clearTime, null);
-            
-            const merged = Array.from(map.values()).sort((a, b) => a.created_at - b.created_at);
-            localStorage.setItem(cacheKey, JSON.stringify(merged));
-            renderMsgs(merged, avatar);
-        } catch(e) {
-            // 🚀 P1-7: loadChatHistory 错误处理
-            console.error('[私信] 加载消息失败:', e);
-            showToast(t('chat.load_history_failed'), 'error');
-            messagesArea.innerHTML = `<div style="text-align:center; padding:40px; color:#888;">
-                <div style="margin-bottom:10px;">${t('chat.load_failed_hint')}</div>
-                <button id="btn-retry-chat" style="padding:6px 16px; border-radius:4px; border:1px solid #555; background:var(--comfy-input-bg); color:#fff; cursor:pointer;">
-                    ${t('chat.retry')}
-                </button>
-            </div>`;
-            const retryBtn = messagesArea.querySelector('#btn-retry-chat');
-            if (retryBtn) retryBtn.onclick = () => loadChatHistory(targetAccount, targetName, targetAvatar);
+        if (!clearTimes.has(targetAccount)) {
+            let value = 0; try { value = Number(localStorage.getItem(clearKey)); } catch (_) {}
+            clearTimes.set(targetAccount, Number.isFinite(value) && value >= 0 ? value : 0);
         }
-
-        // 🚀 绑定顶部清空消息按钮事件
+        if (switched) restoreDraft(targetAccount);
+        clearBtnTop.disabled = false;
         clearBtnTop.onclick = async () => {
-            if (await showConfirm(t('chat.confirm_clear'))) {
-                localStorage.setItem(clearKey, Date.now().toString());
-                localStorage.setItem(cacheKey, "[]");
-                renderMsgs([], avatar);
-                showToast(t('chat.cleared'), "success");
-            }
+            if (!current() || clearBtnTop.disabled) return;
+            clearBtnTop.disabled = true;
+            try {
+                if (!await showConfirm(t('chat.confirm_clear')) || !current()) return;
+                const time = Date.now(); clearTimes.set(targetAccount, time);
+                try { localStorage.setItem(clearKey, String(time)); } catch (_) {}
+                renderMsgs([], avatar); showToast(t('chat.cleared'), 'success');
+            } catch (_) { if (current()) showToast(t('common.error'), 'error'); }
+            finally { if (current()) clearBtnTop.disabled = false; }
         };
-    }
-    
+        try {
+            const res = await api.getChatHistory(currentUser.account, targetAccount, { ...options, componentId: `${componentId}-history` });
+            if (!current()) return;
+            if (res?.status !== 'success' || !Array.isArray(res.data)) throw new Error('Invalid chat history');
+            const messages = res.data.filter(msg => msg && typeof msg === 'object' && typeof msg.content === 'string'
+                && Number.isFinite(msg.created_at) && Number.isFinite(new Date(_normalizeTs(msg.created_at)).getTime())
+                && _normalizeTs(msg.created_at) > clearTimes.get(targetAccount)
+                && ((msg.sender === currentUser.account && msg.receiver === targetAccount)
+                    || (msg.sender === targetAccount && msg.receiver === currentUser.account)))
+                .map(msg => ({ ...msg })).sort((a, b) => _normalizeTs(a.created_at) - _normalizeTs(b.created_at));
+            renderMsgs(messages, avatar);
+            acknowledgedReads.set(targetAccount, ++readRevision);
+            for (const button of chatListContainer.querySelectorAll('.chat-list-item')) {
+                if (button.dataset.account === targetAccount) button.querySelector('.chat-unread')?.remove();
+            }
+            window.dispatchEvent(new CustomEvent('comfy-chat-unread-changed'));
+        } catch (_) {
+            if (!current()) return;
+            showToast(t('chat.load_history_failed'), 'error');
+            if (allMessages.length) return;
+            messagesArea.innerHTML = `<div class="chat-status" role="alert">${t("chat.load_failed_hint")}</div>`;
+            const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'chat-button'; retry.textContent = t('chat.retry');
+            retry.onclick = () => { if (current()) void loadChatHistory(targetAccount, targetName, targetAvatar); };
+            messagesArea.appendChild(retry);
+        }
+    };
+
     // 🚀 P0-2：发送消息带输入校验
     sendBtn.onclick = async () => {
-        const txt = inputField.value.trim();
+        if (!scope.isCurrent() || sending || !currentChatTarget) return;
+        const originalInput = inputField.value, txt = originalInput.trim();
         if (!txt) return;
-        if (txt.length > MAX_MSG_LENGTH) {
-            showToast(t('chat.msg_too_long'), "warning");
-            return;
-        }
-        if (!currentChatTarget) return;
-        sendBtn.disabled = true; sendBtn.innerText = "✉️";
+        if (txt.length > MAX_MSG_LENGTH) { showToast(t('chat.msg_too_long'), 'warning'); return; }
+        const target = currentChatTarget, generation = conversationGeneration;
+        const current = () => scope.isCurrent() && currentChatTarget === target && generation === conversationGeneration;
+        sending = true; sendBtn.disabled = true; sendBtn.setAttribute('aria-busy', 'true');
         try {
-            await api.sendPrivateMessage(currentUser.account, currentChatTarget, txt);
-            inputField.value = "";
-            adjustHeight();
-            clearDraft(); // 🚀 P1-4: 发送成功后清除草稿
-            loadChatHistory(currentChatTarget, currentTargetInfo?.name, currentTargetInfo?.avatar); 
-            loadChatList(); 
-        } catch(e) { showToast(t('chat.send_failed', { msg: e.message }), "error"); }
-        sendBtn.disabled = false; sendBtn.innerText = t('common.send');
+            let pending = pendingMessages.get(target);
+            if (!pending || pending.content !== txt) {
+                const bytes = new Uint8Array(16);
+                crypto.getRandomValues(bytes);
+                pending = { id: Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join(''), content: txt };
+                pendingMessages.set(target, pending);
+            }
+            const result = await api.sendPrivateMessage(currentUser.account, target, txt, pending.id);
+            if (!current()) return;
+            if (result?.status !== 'success' || typeof result.data?.id !== 'string' || !result.data.id
+                || result.data.client_request_id !== pending.id) throw new Error('Unconfirmed message');
+            if (pendingMessages.get(target) === pending) pendingMessages.delete(target);
+            if (inputField.value === originalInput) { inputField.value = ''; drafts.delete(target); adjustHeight(); }
+            await Promise.allSettled([loadChatHistory(target, currentTargetInfo?.name, currentTargetInfo?.avatar), loadChatList()]);
+        } catch (error) {
+            if (current()) {
+                const message = error?.status === 404 ? t('chat.send_service_unavailable')
+                    : error?.status === 409 ? t('chat.send_request_conflict')
+                    : error?.status >= 400 && error?.status < 500 ? t('chat.send_rejected') : t('chat.send_unconfirmed');
+                showToast(message, 'error');
+            }
+        }
+        finally {
+            sending = false;
+            if (scope.isCurrent()) { sendBtn.disabled = false; sendBtn.setAttribute('aria-busy', 'false'); }
+        }
     };
-    
+
     // 🚀 P1-2: Enter 发送，Shift+Enter 换行
     inputField.onkeydown = (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
             e.preventDefault();
             sendBtn.click();
         }
     };
     
-    // 🚀 P0-1：消息轮询机制
-    const startPolling = () => {
-        if (!CACHE.MESSAGE_POLL || !CACHE.MESSAGE_POLL.ENABLED) return;
-        pollTimer = setInterval(async () => {
-            try {
-                // 🔔 私信未读以会话列表为准：铃铛的 getUnreadCount(count_only) 已不再计入 private，
-                //    聊天内轮询改用 getChatList 汇总各会话未读，语义正确且不受铃铛过滤影响
-                const res = await api.getChatList(currentUser.account);
-                const list = res.data || [];
-                if (list.some(c => (c.unread_count || 0) > 0)) {
-                    loadChatList();
-                    // 如果当前有打开的对话，也刷新消息
-                    if (currentChatTarget) {
-                        loadChatHistory(currentChatTarget, currentTargetInfo?.name, currentTargetInfo?.avatar);
-                    }
-                }
-            } catch(e) { console.warn('[私信轮询]', e); }
-        }, CACHE.MESSAGE_POLL.INTERVAL);
+    // 每轮完成后续排，慢网络不叠加读取；页面销毁后不再续排。
+    const poll = async () => {
+        if (!scope.isCurrent()) return;
+        const list = await loadChatList();
+        if (scope.isCurrent() && currentChatTarget && list.some(chat => (chat.target_account || chat.account || chat.receiver || chat.sender) === currentChatTarget
+            && validUnreadCount(chat.unread_count) > 0)) {
+            await loadChatHistory(currentChatTarget, currentTargetInfo?.name, currentTargetInfo?.avatar);
+        }
+        if (scope.isCurrent()) pollTimer = setTimeout(poll, CACHE.MESSAGE_POLL.INTERVAL);
     };
-
-    loadChatList();
-    startPolling();
-
-    // 🚀 新增：默认展开上次的对话
-    if (targetAccount) {
-        loadChatHistory(targetAccount, targetAccount, null);
-    } else {
-        // 尝试加载上次聊天对象
-        const lastChatStr = localStorage.getItem(getLastChatKey(currentUser.account));
-        if (lastChatStr) {
-            try {
-                const lastChat = JSON.parse(lastChatStr);
-                if (lastChat.account) {
-                    loadChatHistory(lastChat.account, lastChat.name, lastChat.avatar);
-                }
-            } catch(e) {}
-        }
+    window.dispatchEvent(new CustomEvent('comfy-route-view', { detail: { view: container } }));
+    constructing = false;
+    if (!scope.isCurrent()) return;
+    observer = new MutationObserver(() => { if (!container.isConnected) cleanup(); });
+    observer.observe(document.body, { childList: true, subtree: true });
+    void loadChatList();
+    if (CACHE.MESSAGE_POLL?.ENABLED) pollTimer = setTimeout(poll, CACHE.MESSAGE_POLL.INTERVAL);
+    if (targetAccount) void loadChatHistory(targetAccount, targetAccount, null);
+    else {
+        try {
+            const lastChat = JSON.parse(localStorage.getItem(getLastChatKey(currentUser.account)) || 'null');
+            if (typeof lastChat?.account === 'string') void loadChatHistory(lastChat.account, lastChat.account, null);
+        } catch (_) {}
     }
-    
-    // 🚀 P2-3: 使用 MutationObserver 替代已废弃的 DOMNodeRemovedFromDocument
-    const observer = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-            for (const removed of mutation.removedNodes) {
-                if (removed === container || removed.contains(container)) {
-                    cleanup();
-                    observer.disconnect();
-                    return;
-                }
-            }
-        }
-    });
-    setTimeout(() => {
-        if (container.parentNode) {
-            observer.observe(container.parentNode, { childList: true });
-        }
-    }, 0);
 
-    window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view: container } }));
 }
 
 // 🔔 聊天未读红点：汇总 chats.json 各会话未读数，驱动顶部导航 ✉️ 按钮的红点。
 //    私信提醒已从铃铛(🔔)迁移至此——铃铛未读数不再计入 private，避免同一提醒重复出现。
 //    与 loadUnreadCount(通知中心) 保持一致的写法：从传入按钮内查询徽标元素并回写。
 export async function loadChatUnreadCount(currentUser, chatBtn) {
-    const badge = chatBtn ? chatBtn.querySelector("#chat-unread-badge") : null;
-    if (!currentUser) { if (badge) badge.style.display = "none"; return 0; }
+    const update = createUnreadBadgeUpdate(chatBtn, '#chat-unread-badge', currentUser?.account);
+    if (!currentUser?.account || !chatBtn?.querySelector("#chat-unread-badge")) return 0;
     try {
         const res = await api.getChatList(currentUser.account);
-        const list = res.data || [];
-        const total = list.reduce((sum, c) => sum + (c.unread_count || 0), 0);
-        if (badge) {
-            if (total > 0) {
-                badge.innerText = total > 99 ? "99+" : total;
-                badge.style.display = "flex";
-            } else {
-                badge.style.display = "none";
-            }
-        }
-        return total;
-    } catch(e) {
-        if (badge) badge.style.display = "none";
-        return 0;
-    }
+        if (res?.status !== "success" || !Array.isArray(res.data)
+            || res.data.some(chat => !chat || !Number.isSafeInteger(chat.unread_count) || chat.unread_count < 0)) return 0;
+        const list = res.data;
+        const total = list.reduce((sum, chat) => Math.min(Number.MAX_SAFE_INTEGER,
+            sum + validUnreadCount(chat?.unread_count)), 0);
+        if (!update.isCurrent()) return 0;
+        update.render(total); return total;
+    } catch (_) { return 0; }
 }

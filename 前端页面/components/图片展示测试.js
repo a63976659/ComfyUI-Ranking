@@ -7,6 +7,7 @@
 // ==========================================
 
 import { escapeHtml } from "../core/全局配置.js";
+import { t } from "./用户体验增强.js";
 
 // ==========================================
 // 🎨 CSS样式定义（CSS-in-JS模式）
@@ -176,10 +177,22 @@ const VIEWER_STYLES = `
     opacity: 0;
     transition: opacity 0.3s ease;
     z-index: 15;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
 }
 
 .cyber-nav-zone:hover {
     opacity: 1;
+}
+
+.cyber-nav-zone:focus-visible,
+.cyber-close-btn:focus-visible,
+.cyber-autoplay-btn:focus-visible {
+    opacity: 1;
+    outline: 3px solid #00ff96;
+    outline-offset: -4px;
 }
 
 .cyber-nav-zone.left {
@@ -256,6 +269,9 @@ const VIEWER_STYLES = `
     border-radius: 4px;
     overflow: hidden;
     cursor: pointer;
+    border: 0;
+    padding: 0;
+    background: transparent;
     border: 2px solid transparent;
     transition: all 0.3s ease;
     opacity: 0.5;
@@ -275,6 +291,11 @@ const VIEWER_STYLES = `
 .cyber-thumb.active {
     border-color: #fff;
     opacity: 1;
+}
+
+.cyber-thumb:focus-visible {
+    outline: 3px solid #00ff96;
+    outline-offset: 2px;
 }
 
 /* 键盘提示 */
@@ -393,6 +414,7 @@ class CyberImageViewer {
         this._autoPlayTimerId = null;
         this._autoPlayInterval = 1000; // 默认1秒展示时间
         this._autoPlayStateChangeCallbacks = []; // 状态变化回调
+        this._returnFocus = document.activeElement;
     }
 
     /**
@@ -436,11 +458,15 @@ class CyberImageViewer {
         // 创建主容器
         this.container = document.createElement('div');
         this.container.className = 'cyber-image-viewer';
+        this.container.setAttribute('role', 'dialog');
+        this.container.setAttribute('aria-modal', 'true');
+        this.container.setAttribute('aria-label', t('image.viewer.dialog'));
+        this.container.tabIndex = -1;
         this.container.style.background = background;
 
         this.container.innerHTML = `
             <!-- 关闭按钮 -->
-            <button class="cyber-close-btn" title="关闭 (ESC)">×</button>
+            <button type="button" class="cyber-close-btn" title="${escapeHtml(t('image.viewer.close'))}" aria-label="${escapeHtml(t('image.viewer.close'))}">×</button>
 
             <!-- 图片主容器 -->
             <div class="cyber-image-container">
@@ -451,23 +477,23 @@ class CyberImageViewer {
             </div>
 
             <!-- 左右导航区域 -->
-            <div class="cyber-nav-zone left" title="上一张 (←)">
+            <button type="button" class="cyber-nav-zone left" title="${escapeHtml(t('image.viewer.previous'))}" aria-label="${escapeHtml(t('image.viewer.previous'))}">
                 <div class="cyber-nav-arrow">❮</div>
-            </div>
-            <div class="cyber-nav-zone right" title="下一张 (→)">
+            </button>
+            <button type="button" class="cyber-nav-zone right" title="${escapeHtml(t('image.viewer.next'))}" aria-label="${escapeHtml(t('image.viewer.next'))}">
                 <div class="cyber-nav-arrow">❯</div>
-            </div>
+            </button>
 
             <!-- 底部信息栏 -->
             <div class="cyber-info-bar">
-                <div class="cyber-counter">
+                <div class="cyber-counter" role="status" aria-live="polite" aria-atomic="true">
                     <span class="current">1</span>
                     <span class="separator"> / </span>
                     <span class="total">${this.imageUrls.length}</span>
                 </div>
                 <div class="cyber-thumbnails"></div>
                 <div style="display: flex; align-items: center; gap: 15px;">
-                    <button class="cyber-autoplay-btn" title="自动播放 (空格)">
+                    <button type="button" class="cyber-autoplay-btn" title="${escapeHtml(t('image.viewer.autoplay'))}" aria-label="${escapeHtml(t('image.viewer.autoplay'))}">
                         <svg viewBox="0 0 24 24" class="autoplay-icon-play">
                             <path d="M8 5v14l11-7z"/>
                         </svg>
@@ -476,9 +502,7 @@ class CyberImageViewer {
                         </svg>
                     </button>
                     <div class="cyber-keyboard-hint">
-                        <span><span class="cyber-key">←</span> 上一张</span>
-                        <span><span class="cyber-key">→</span> 下一张</span>
-                        <span><span class="cyber-key">ESC</span> 关闭</span>
+                        <span><span class="cyber-key">ESC</span> ${escapeHtml(t('image.viewer.close_short'))}</span>
                     </div>
                 </div>
             </div>
@@ -587,16 +611,18 @@ class CyberImageViewer {
         
         if (this._autoPlayEnabled) {
             btn.classList.add('active');
-            btn.title = '暂停自动播放 (空格)';
+            btn.title = t('image.viewer.pause');
             playIcon.style.display = 'none';
             pauseIcon.style.display = 'block';
         } else {
             btn.classList.remove('active');
-            btn.title = '自动播放 (空格)';
+            btn.title = t('image.viewer.autoplay');
             playIcon.style.display = 'block';
             pauseIcon.style.display = 'none';
         }
         
+        btn.setAttribute('aria-label', btn.title);
+
         // 触发状态变化回调
         this._autoPlayStateChangeCallbacks.forEach(cb => cb(this._autoPlayEnabled));
     }
@@ -736,23 +762,28 @@ class CyberImageViewer {
     _bindEvents() {
         // 键盘导航
         this._keydownHandler = (e) => {
+            if (e.defaultPrevented || e.isComposing || e.keyCode === 229
+                    || e.ctrlKey || e.metaKey || e.altKey || (e.shiftKey && e.key !== 'Tab')) return;
+            if (e.key === 'Tab') {
+                const controls = [...this.container.querySelectorAll('button:not([disabled]), [tabindex="0"]')];
+                if (!controls.length) { e.preventDefault(); this.container.focus(); return; }
+                const first = controls[0];
+                const last = controls[controls.length - 1];
+                if (e.shiftKey && (document.activeElement === first || !this.container.contains(document.activeElement))) {
+                    e.preventDefault(); last.focus();
+                } else if (!e.shiftKey && (document.activeElement === last || !this.container.contains(document.activeElement))) {
+                    e.preventDefault(); first.focus();
+                }
+                return;
+            }
             if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
                 this.close();
-            } else if (e.key === 'ArrowLeft') {
-                // 键盘导航使用屏幕中心作为波浪起点
-                this._stopAutoPlay(); // 手动切换时停止自动播放
-                this.prev(window.innerWidth / 2, window.innerHeight / 2);
-            } else if (e.key === 'ArrowRight') {
-                // 键盘导航使用屏幕中心作为波浪起点
-                this._stopAutoPlay(); // 手动切换时停止自动播放
-                this.next(window.innerWidth / 2, window.innerHeight / 2);
-            } else if (e.key === ' ') {
-                // 空格键切换自动播放状态
-                e.preventDefault(); // 阻止页面滚动
-                this.toggleAutoPlay();
+
             }
         };
-        document.addEventListener('keydown', this._keydownHandler);
+        this.container.addEventListener('keydown', this._keydownHandler);
 
         // 点击导航区域 - 传递点击位置用于波浪效果
         this.elements.navLeft.addEventListener('click', (e) => {
@@ -785,8 +816,11 @@ class CyberImageViewer {
         const maxThumbs = Math.min(this.imageUrls.length, 7);
         
         for (let i = 0; i < maxThumbs; i++) {
-            const thumb = document.createElement('div');
+            const thumb = document.createElement('button');
+            thumb.type = 'button';
             thumb.className = 'cyber-thumb' + (i === this.currentIndex ? ' active' : '');
+            thumb.setAttribute('aria-label', t('image.viewer.image_position', { current: i + 1, total: this.imageUrls.length }));
+            thumb.setAttribute('aria-current', i === this.currentIndex ? 'true' : 'false');
             // 🔒 XSS防护：图片 URL 来自其他用户发布的内容，写入 innerHTML 前必须转义
             thumb.innerHTML = `<img src="${escapeHtml(this.imageUrls[i])}" alt="">`;
             thumb.addEventListener('click', (e) => {
@@ -812,6 +846,7 @@ class CyberImageViewer {
         const thumbs = this.elements.thumbnails.querySelectorAll('.cyber-thumb');
         thumbs.forEach((thumb, index) => {
             thumb.classList.toggle('active', index === this.currentIndex);
+            thumb.setAttribute('aria-current', index === this.currentIndex ? 'true' : 'false');
         });
     }
 
@@ -851,6 +886,7 @@ class CyberImageViewer {
 
         // 更新计数器
         this.elements.counterCurrent.textContent = index + 1;
+        this.elements.mainImage.alt = t('image.viewer.image_position', { current: index + 1, total: this.imageUrls.length });
         this._updateThumbnails();
 
         // 预加载相邻图片
@@ -863,13 +899,13 @@ class CyberImageViewer {
     _loadImageAsync(url) {
         return new Promise((resolve, reject) => {
             const img = new Image();
-            console.log('📥 开始加载图片:', url?.substring(0, 100) + '...');
+            console.log('📥 开始加载图片');
             img.onload = () => {
-                console.log('✅ 图片加载成功:', url?.substring(0, 100) + '...');
+                console.log('✅ 图片加载成功');
                 resolve(img);
             };
             img.onerror = (err) => {
-                console.error('❌ 图片加载失败:', url?.substring(0, 100) + '...', err);
+                console.error('❌ 图片加载失败:', err?.name || 'Error');
                 reject(new Error('图片加载失败'));
             };
             img.src = url;
@@ -911,7 +947,7 @@ class CyberImageViewer {
         const imgSrc = img.src;
 
         // 调试日志
-        console.log('🎬 方块聚合动画开始 - 图片URL:', imgSrc?.substring(0, 100) + '...');
+        console.log('🎬 方块聚合动画开始');
 
         // 获取wrapper的实际尺寸
         const rect = wrapper.getBoundingClientRect();
@@ -1530,11 +1566,13 @@ class CyberImageViewer {
      * 关闭查看器
      */
     close() {
+        if (this._isClosing) return;
+        this._isClosing = true;
         // 停止自动播放并清除定时器
         this._stopAutoPlay();
         
         // 清理事件监听
-        document.removeEventListener('keydown', this._keydownHandler);
+        this.container.removeEventListener('keydown', this._keydownHandler);
 
         // 添加关闭动画
         this.container.style.opacity = '1';
@@ -1546,6 +1584,7 @@ class CyberImageViewer {
                 if (this.container.parentNode) {
                     this.container.parentNode.removeChild(this.container);
                 }
+                if (this._returnFocus?.isConnected && typeof this._returnFocus.focus === 'function') this._returnFocus.focus();
             }, 300);
         });
     }
@@ -1571,13 +1610,13 @@ export function openImageViewer(imageUrls, startIndex = 0, options = {}) {
     }
 
     console.log('🎬 openImageViewer 被调用:', 'URL数量:', imageUrls.length, '起始索引:', startIndex);
-    console.log('🖼️ 图片URLs:', imageUrls.map(u => u?.substring(0, 80) + '...'));
 
     const viewer = new CyberImageViewer(imageUrls, startIndex);
     const container = viewer.create(options);
 
     // 添加到body
     document.body.appendChild(container);
+    viewer.elements.closeBtn.focus();
 
     // 添加入场动画
     requestAnimationFrame(() => {

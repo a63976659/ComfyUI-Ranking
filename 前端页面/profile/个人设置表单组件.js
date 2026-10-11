@@ -1,11 +1,20 @@
 // 前端页面/profile/个人设置表单组件.js
-import { api } from "../core/网络请求API.js";
+import { api, captureRequestSession } from "../core/网络请求API.js";
 import { regionData, getSortedCountries } from "../auth/国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { uploadFile } from "../market/发布内容_提交引擎.js";
 import { openImageCropper } from "../components/图片裁剪组件.js";
-import { CACHE, getBackgroundKey, getBannerCacheKey, PLACEHOLDERS, escapeHtml } from "../core/全局配置.js";
+import { CACHE, IMAGE_PROCESS, getBackgroundKey, getBannerCacheKey, PLACEHOLDERS, escapeHtml } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
+import { normalizeProfileData, mergeStoredProfile } from "./个人资料工具.js";
+
+function _safeStorageGet(storageName, key) {
+    try { return window[storageName].getItem(key); } catch { return null; }
+}
+
+function _safeLocalStorageRemove(key) {
+    try { window.localStorage.removeItem(key); return true; } catch { return false; }
+}
 
 // 计算年龄工具函数
 function calculateAge(birthDate) {
@@ -21,24 +30,56 @@ function calculateAge(birthDate) {
 }
 
 // 图像上传处理通用函数：绑定触发按钮 → 文件选择 → 裁剪 → 回调
-function _createImageUploadHandler(inputEl, triggerEl, cropRatio, cropTitle, qualityLevel, onCropped) {
-    triggerEl.onclick = () => inputEl.click();
+function _createImageUploadHandler(inputEl, triggerEl, cropRatio, cropTitle, qualityLevel, onCropped, current, cropControllers, refreshSave) {
+    let busy = false, generation = 0, activeController = null;
+    triggerEl.onclick = () => { if (current() && !busy) inputEl.click(); };
     inputEl.onchange = async (e) => {
+        if (!current() || busy) return;
         const file = e.target.files[0];
         if (!file) return;
         inputEl.value = "";
-        const croppedFile = await openImageCropper(file, cropRatio, cropTitle, qualityLevel);
-        if (!croppedFile) return;
-        await onCropped(croppedFile);
+        busy = true;
+        const token = ++generation;
+        const operationCurrent = () => current() && token === generation;
+        const controller = new AbortController(); activeController = controller; cropControllers.add(controller); refreshSave();
+        try {
+            const croppedFile = await openImageCropper(file, cropRatio, cropTitle, qualityLevel, { signal: controller.signal });
+            if (!operationCurrent() || !croppedFile) return;
+            await onCropped(croppedFile, operationCurrent, controller.signal);
+        } catch (_) {
+            if (operationCurrent()) showToast(t('settings_form.image_process_failed'), 'error');
+        } finally { cropControllers.delete(controller); if (activeController === controller) activeController = null; busy = false; refreshSave(); }
     };
+    return () => { generation++; try { activeController?.abort(); } catch (_) {} };
 }
 
 // FileReader读取图片并预览到目标元素，可选保存到localStorage
-function _readAndPreviewImage(file, previewElement, cacheKey) {
+function _readAndPreviewImage(file, previewElement, cacheKey, current, readers, signal) {
+    if (!current() || signal?.aborted) return Promise.resolve(null);
     return new Promise((resolve) => {
         const reader = new FileReader();
+        let settled = false, timer = null;
+        const finish = value => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer); signal?.removeEventListener('abort', cancel);
+            reader.onload = reader.onerror = reader.onabort = null;
+            readers.delete(reader);
+            if (reader.readyState === FileReader.LOADING) { try { reader.abort(); } catch (_) {} }
+            resolve(value);
+        };
+        const cancel = () => finish(null);
+        const fail = () => {
+            if (settled) return;
+            if (current() && !signal?.aborted) showToast(t('settings_form.file_read_failed'), "error");
+            finish(null);
+        };
+        readers.add(reader);
         reader.onload = (ev) => {
+            if (settled) return;
+            if (!current() || signal?.aborted || !previewElement.isConnected) { finish(null); return; }
             const base64 = ev.target.result;
+            if (typeof base64 !== 'string' || !base64.startsWith('data:image/') || !base64.includes(',')) { fail(); return; }
             if (cacheKey) {
                 try {
                     localStorage.setItem(cacheKey, base64);
@@ -63,20 +104,37 @@ function _readAndPreviewImage(file, previewElement, cacheKey) {
             previewElement.style.backgroundImage = `url(${base64})`;
             previewElement.style.backgroundSize = "cover";
             previewElement.style.backgroundPosition = "center";
-            resolve(base64);
+            finish(base64);
         };
-        reader.onerror = () => {
-            showToast("❌ 文件读取失败，请重试", "error");
-            resolve(null);
-        };
-        reader.readAsDataURL(file);
+        reader.onerror = fail;
+        reader.onabort = cancel;
+        signal?.addEventListener('abort', cancel, { once: true });
+        if (signal?.aborted) { cancel(); return; }
+        timer = setTimeout(fail, IMAGE_PROCESS.TIMEOUT);
+        try { reader.readAsDataURL(file); } catch (_) { fail(); }
     });
 }
 
-export function createSettingsForm(initialUserData, onCancelCallback, onSaveSuccessCallback) {
+export function createSettingsForm(initialUserData, onCancelCallback, onSaveSuccessCallback, options = {}) {
     const container = document.createElement("div");
     let userData = { ...initialUserData };
-    const isAdmin = userData.isAdmin === true;  // 🔒 管理员标识
+    container.className = 'ranking-settings-form';
+    const sessionMatches = captureRequestSession();
+    let disposed = false, saving = false;
+    const readers = new Set(), cropControllers = new Set();
+    const current = () => !disposed && container.isConnected && sessionMatches() && (options.isCurrent?.() ?? true);
+    container._cleanup = () => {
+        if (disposed) return;
+        disposed = true;
+        for (const controller of cropControllers) { try { controller.abort(); } catch (_) {} }
+        cropControllers.clear();
+        for (const reader of readers) { try { reader.abort(); } catch (_) {} }
+        readers.clear();
+        container.querySelectorAll('input, textarea').forEach(input => { input.value = ''; });
+        pendingBannerFile = pendingBannerDataUrl = null;
+        userData = {};
+    };
+    const isAdmin = userData.is_admin === true || userData.isAdmin === true;  // 🔒 管理员标识
 
     // 从用户数据的 privacy 对象中读取真实状态
     const privacy = userData.privacy || {};
@@ -262,52 +320,57 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     if (isAdmin) {
         setTimeout(async () => {
             const moderationToggle = container.querySelector('#admin-image-moderation');
+            if (!current()) return;
             const statusDiv = container.querySelector('#moderation-status');
             if (!moderationToggle) return;
             
             try {
                 // 获取当前审核状态
                 const res = await api.getSystemConfig('image_moderation');
+                if (!current()) return;
                 const enabled = res?.data?.enabled === true;
                 moderationToggle.checked = enabled;
                 
                 if (statusDiv) {
                     const quota = res?.data?.quota || {};
-                    statusDiv.innerHTML = enabled 
-                        ? `<span style="color: #4CAF50;">✅ 已启用</span> | 本月已用: 阿里云 ${quota.aliyun || 0}/3000, 腾讯云 ${quota.tencent || 0}/10000`
-                        : `<span style="color: #888;">⚪ 未启用</span> | 上传图片将跳过审核`;
+                    statusDiv.innerHTML = enabled
+                        ? `<span style="color: #4CAF50;">✅ ${escapeHtml(t('settings_form.enabled'))}</span> | ${escapeHtml(t('settings_form.moderation_quota', { aliyun: quota.aliyun || 0, tencent: quota.tencent || 0 }))}`
+                        : `<span style="color: #888;">⚪ ${escapeHtml(t('settings_form.disabled'))}</span> | ${escapeHtml(t('settings_form.moderation_skipped'))}`;
                 }
             } catch (e) {
-                console.warn('获取审核状态失败:', e);
+                console.warn('获取审核状态失败:', e?.name || 'Error');
             }
             
             // 开关变化事件
             moderationToggle.onchange = async () => {
+                if (!current() || moderationToggle.disabled) return;
                 const newState = moderationToggle.checked;
                 moderationToggle.disabled = true;
                 
                 try {
                     await api.setSystemConfig('image_moderation', { enabled: newState });
-                    showToast(newState ? '✅ 图像审核已启用' : '⚪ 图像审核已关闭', 'success');
+                    if (!current()) return;
+                    showToast(newState ? t('settings_form.moderation_enabled') : t('settings_form.moderation_disabled'), 'success');
                     
                     if (statusDiv) {
-                        statusDiv.innerHTML = newState 
-                            ? `<span style="color: #4CAF50;">✅ 已启用</span>`
-                            : `<span style="color: #888;">⚪ 未启用</span> | 上传图片将跳过审核`;
+                        statusDiv.innerHTML = newState
+                            ? `<span style="color: #4CAF50;">✅ ${escapeHtml(t('settings_form.enabled'))}</span>`
+                            : `<span style="color: #888;">⚪ ${escapeHtml(t('settings_form.disabled'))}</span> | ${escapeHtml(t('settings_form.moderation_skipped'))}`;
                     }
                 } catch (e) {
-                    showToast(t('settings_form.save_failed') + ': ' + e.message, 'error');
+                    if (!current()) return;
+                    showToast(t('settings_form.save_failed'), 'error');
                     moderationToggle.checked = !newState;  // 回滚
                 } finally {
-                    moderationToggle.disabled = false;
+                    if (current()) moderationToggle.disabled = false;
                 }
             };
         }, 100);
     }
 
     // 加载本地界面背景预览（使用账号区分键）
-    const savedUiBg = localStorage.getItem(getBackgroundKey(userData.account));
-    if (savedUiBg) {
+    const savedUiBg = _safeStorageGet('localStorage', getBackgroundKey(userData.account));
+    if (typeof savedUiBg === "string" && /^data:image\/(?:png|jpeg|webp);base64,/i.test(savedUiBg)) {
         uiBgPreview.style.backgroundImage = `url(${savedUiBg})`;
         uiBgPreview.style.backgroundSize = "cover";
         uiBgPreview.style.backgroundPosition = "center";
@@ -317,7 +380,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     birthdayInput.onchange = () => {
         const age = calculateAge(birthdayInput.value);
         if (age !== null) {
-            ageDisplay.textContent = `${age} 岁`;
+            ageDisplay.textContent = `${age} ${t('profile.age_years')}`;
             ageDisplay.style.color = "#4CAF50";
         } else {
             ageDisplay.textContent = "";
@@ -333,43 +396,52 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     // 头像上传逻辑（1:1 裁剪）
     _createImageUploadHandler(
         settingAvatarInput, container.querySelector("#btn-trigger-avatar"),
-        1, "裁剪头像", 1,
+        1, t('settings_form.crop_avatar'), 1,
         async (croppedFile) => {
+            if (!current()) return;
             const btnTrigger = container.querySelector("#btn-trigger-avatar");
             const originalText = btnTrigger.innerText;
-            btnTrigger.innerText = "上传中...";
+            btnTrigger.innerText = t('settings_form.uploading');
             btnTrigger.disabled = true;
             try {
                 const cloudImageUrl = await uploadFile(croppedFile, "avatar");
+                if (!current()) return;
                 if (cloudImageUrl) {
                     avatarDataUrl = cloudImageUrl;
                     container.querySelector("#setting-avatar-preview").src = cloudImageUrl;
                     showToast(`✅ ${t('settings_form.avatar_upload_success')}`, "success");
                 }
             } catch (err) {
-                showToast("❌ 头像处理失败: " + err.message, "error");
+                if (current()) showToast(t('settings_form.avatar_process_failed'), "error");
             } finally {
-                btnTrigger.innerText = originalText;
-                btnTrigger.disabled = false;
+                if (current()) { btnTrigger.innerText = originalText; btnTrigger.disabled = false; }
             }
-        }
+        }, () => current() && !saving, cropControllers, refreshSaveAvailability
     );
+
+    function refreshSaveAvailability() {
+        const saveButton = container.querySelector('#btn-save-settings');
+        if (saveButton) saveButton.disabled = saving || cropControllers.size > 0;
+    }
 
     // 个人资料卡背景图上传逻辑（16:9 裁剪）
     // 🚀 优化：裁剪后只预览，点击保存时才上传到云端
-    _createImageUploadHandler(
+    const cancelBannerSelection = _createImageUploadHandler(
         settingBannerInput, container.querySelector("#btn-trigger-banner"),
-        16/9, "裁剪个人资料卡背景", 3,
-        async (croppedFile) => {
-            pendingBannerFile = croppedFile;
-            const dataUrl = await _readAndPreviewImage(croppedFile, bannerPreview, null);
+        16/9, t('settings_form.crop_banner'), 3,
+        async (croppedFile, operationCurrent, signal) => {
+            if (!operationCurrent()) return;
+            const dataUrl = await _readAndPreviewImage(croppedFile, bannerPreview, null, operationCurrent, readers, signal);
+            if (!operationCurrent()) return;
             if (dataUrl) {
+                pendingBannerFile = croppedFile;
                 pendingBannerDataUrl = dataUrl;
-                showToast("✅ 背景图已选择，点击底部保存设置后才会上传。", "info");
+                showToast(t('settings_form.banner_selected'), "info");
             }
-        }
+        }, () => current() && !saving, cropControllers, refreshSaveAvailability
     );
     container.querySelector("#btn-clear-banner").onclick = () => {
+        if (!current() || saving) return;
         // 🔧 清除必须传空串而非 null：云端 PUT /api/users/{account} 的更新循环只写非 None 值
         // （见 router_users_profile.py「遍历请求中的字段，只更新非空值」），传 null 等同于
         // 「本次没改这个字段」而被跳过，云端旧图残留 —— 表现为点清除并保存后提示成功，
@@ -377,87 +449,64 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         // 且下游 hasBanner / bannerImageUrl 等判断都按 falsy 正确处理。
         // 注意上方 `let bannerUrl = userData.bannerUrl || null` 的初值仍保持 null：那是「本次未涉及该字段」
         // 的语义，可防止 userData 恰好缺 bannerUrl 时把云端图误清掉。
+        cancelBannerSelection();
         bannerUrl = "";
         pendingBannerFile = null;
         pendingBannerDataUrl = null;
         bannerPreview.style.backgroundImage = "none";
         bannerPreview.style.background = "#1a1a1a";
         // 同时清除本地缓存（使用账号区分键）
-        localStorage.removeItem(getBannerCacheKey(userData.account));
+        if (!_safeLocalStorageRemove(getBannerCacheKey(userData.account))) {
+            showToast(t('settings_form.local_storage_unavailable'), "warning");
+        }
         showToast(`✅ ${t('settings_form.banner_cleared')}`, "success");
     };
 
     // 界面背景上传逻辑（9:16 裁剪，仅本地）
-    _createImageUploadHandler(
+    const cancelUiBgSelection = _createImageUploadHandler(
         settingUiBgInput, container.querySelector("#btn-trigger-ui-bg"),
-        9/16, "裁剪界面背景", 3,
-        async (croppedFile) => {
-            const dataUrl = await _readAndPreviewImage(croppedFile, uiBgPreview, getBackgroundKey(userData.account));
+        9/16, t('settings_form.crop_ui_bg'), 3,
+        async (croppedFile, operationCurrent, signal) => {
+            const dataUrl = await _readAndPreviewImage(croppedFile, uiBgPreview, getBackgroundKey(userData.account), operationCurrent, readers, signal);
+            if (!operationCurrent()) return;
             if (dataUrl) {
                 window.dispatchEvent(new CustomEvent("comfy-sidebar-bg-update"));
-                showToast("✅ 界面背景设置成功，已立即生效！", "success");
+                showToast(t('settings_form.ui_bg_applied'), "success");
             }
-        }
+        }, () => current() && !saving, cropControllers, refreshSaveAvailability
     );
     container.querySelector("#btn-clear-ui-bg").onclick = () => {
+        if (!current() || saving) return;
+        cancelUiBgSelection();
         // 使用账号区分键清除
-        localStorage.removeItem(getBackgroundKey(userData.account));
+        if (!_safeLocalStorageRemove(getBackgroundKey(userData.account))) {
+            showToast(t('settings_form.local_storage_unavailable'), "error");
+            return;
+        }
         uiBgPreview.style.backgroundImage = "none";
         uiBgPreview.style.background = "#1a1a1a";
         // 立即应用到侧边栏
         window.dispatchEvent(new CustomEvent("comfy-sidebar-bg-update"));
-        showToast("✅ 已清除界面背景，已立即生效。", "success");
+        showToast(t('settings_form.ui_bg_cleared'), "success");
     };
 
-    container.querySelector("#btn-cancel-settings").onclick = () => { if (onCancelCallback) onCancelCallback(); };
+    container.querySelector("#btn-cancel-settings").onclick = () => { if (current() && onCancelCallback) onCancelCallback(); };
 
     container.querySelector("#btn-save-settings").onclick = async (e) => {
-        const btn = e.target;
-        btn.innerHTML = "⏳ 保存中..."; 
-        btn.disabled = true;
+        if (!current() || saving || cropControllers.size > 0) return;
+        saving = true;
+        const btn = e.currentTarget;
+        btn.innerHTML = `⏳ ${escapeHtml(t('settings_form.saving'))}`;
+        const lockedControls = Array.from(container.querySelectorAll('input, select, textarea, button'))
+            .filter(control => control.id !== 'btn-cancel-settings')
+            .map(control => [control, control.disabled]);
+        for (const [control] of lockedControls) control.disabled = true;
+        const unlock = () => {
+            for (const [control, disabled] of lockedControls) control.disabled = disabled;
+            saving = false; refreshSaveAvailability();
+        };
 
         try {
-            // 🚀 优化：如果有待上传的背景图，先上传
-            if (pendingBannerFile) {
-                btn.innerHTML = "⏳ 上传背景图...";
-                try {
-                    const cloudImageUrl = await uploadFile(pendingBannerFile, "banner");
-                    if (cloudImageUrl) {
-                        bannerUrl = cloudImageUrl;
-                        // 保存到本地缓存
-                        if (pendingBannerDataUrl) {
-                            const bannerCacheKey = getBannerCacheKey(userData.account);
-                            try {
-                                localStorage.setItem(bannerCacheKey, pendingBannerDataUrl);
-                            } catch (storageErr) {
-                                // 配额溢出：清理其他用户的旧 banner 缓存后重试
-                                if (storageErr.name === "QuotaExceededError") {
-                                    try {
-                                        for (let i = localStorage.length - 1; i >= 0; i--) {
-                                            const key = localStorage.key(i);
-                                            if (key && key.startsWith("ComfyRanking_ProfileBannerCache_") && key !== bannerCacheKey) {
-                                                localStorage.removeItem(key);
-                                            }
-                                        }
-                                        localStorage.setItem(bannerCacheKey, pendingBannerDataUrl);
-                                    } catch (_) {
-                                        // 仍然失败则放弃本地缓存（不影响云端保存）
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    pendingBannerFile = null;
-                    pendingBannerDataUrl = null;
-                } catch (uploadErr) {
-                    showToast("❌ 背景图上传失败: " + uploadErr.message, "error");
-                    btn.innerHTML = "保存所有设置"; 
-                    btn.disabled = false;
-                    return;
-                }
-            }
-            
-            btn.innerHTML = "⏳ 保存设置...";
             const birthday = birthdayInput.value || null;
             const updateData = {
                 name: container.querySelector("#setting-name").value.trim(),
@@ -470,39 +519,89 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
                 avatarDataUrl: avatarDataUrl,
                 bannerUrl: bannerUrl
             };
-
-            const res = await api.updateUserProfile(userData.account, updateData);
-            
-            // 收集隐私设置并发送到后端
             const privacySettings = {
                 follows: container.querySelector("#hide-follows").checked,
                 likes: container.querySelector("#hide-likes").checked,
                 favorites: container.querySelector("#hide-favorites").checked,
                 downloads: container.querySelector("#hide-downloads").checked
             };
-            await api.updatePrivacy(userData.account, privacySettings);
 
-            const newUserData = { ...userData, ...res.data, privacy: privacySettings };
-
-            const storage = localStorage.getItem("ComfyCommunity_User") ? localStorage : sessionStorage;
-            try {
-                const savedStr = storage.getItem("ComfyCommunity_User");
-                if (savedStr) {
-                    const savedObj = JSON.parse(savedStr);
-                    savedObj.user = newUserData;
-                    storage.setItem("ComfyCommunity_User", JSON.stringify(savedObj));
+            const bannerDataToCache = pendingBannerDataUrl;
+            // 🚀 优化：如果有待上传的背景图，先上传
+            if (pendingBannerFile) {
+                btn.innerHTML = `⏳ ${escapeHtml(t('settings_form.uploading_banner'))}`;
+                try {
+                    const cloudImageUrl = await uploadFile(pendingBannerFile, "banner", { isCurrent: current, silent: true });
+                    if (!current()) return;
+                    if (typeof cloudImageUrl !== "string" || !cloudImageUrl.trim()) throw new Error("Invalid banner upload");
+                    bannerUrl = cloudImageUrl;
+                    updateData.bannerUrl = cloudImageUrl;
+                    pendingBannerFile = null;
+                } catch (uploadErr) {
+                    if (!current()) return;
+                    unlock();
+                    showToast(t('settings_form.banner_upload_failed'), "error");
+                    btn.innerHTML = escapeHtml(t('settings_form.save_all'));
+                    btn.disabled = false;
+                    return;
                 }
-            } catch(e){}
+            }
+
+            btn.innerHTML = `⏳ ${escapeHtml(t('settings_form.saving_settings'))}`;
+
+
+            const res = await api.updateUserSettings(userData.account, { ...updateData, privacy: privacySettings });
+            if (!current()) return;
+            if (res?.status !== 'success' || !res.data || typeof res.data !== 'object' || Array.isArray(res.data) || res.data.account !== userData.account) throw new Error('Invalid settings response');
+
+            if (!res.data.privacy || Object.keys(privacySettings).some(key => res.data.privacy[key] !== privacySettings[key])) {
+                throw new Error('Invalid settings privacy confirmation');
+            }
+
+            // 保存到本地缓存
+            if (bannerDataToCache) {
+                const bannerCacheKey = getBannerCacheKey(userData.account);
+                try {
+                    localStorage.setItem(bannerCacheKey, bannerDataToCache);
+                } catch (storageErr) {
+                    // 配额溢出：清理其他用户的旧 banner 缓存后重试
+                    if (storageErr.name === "QuotaExceededError") {
+                        try {
+                            for (let i = localStorage.length - 1; i >= 0; i--) {
+                                const key = localStorage.key(i);
+                                if (key && key.startsWith("ComfyRanking_ProfileBannerCache_") && key !== bannerCacheKey) {
+                                    localStorage.removeItem(key);
+                                }
+                            }
+                            localStorage.setItem(bannerCacheKey, bannerDataToCache);
+                        } catch (_) {
+                            // 仍然失败则放弃本地缓存（不影响云端保存）
+                        }
+                    }
+                }
+            }
+            pendingBannerDataUrl = null;
+
+            const newUserData = normalizeProfileData({ ...userData, ...res.data, privacy: privacySettings }, userData.account, true);
+
+            const storages = ['localStorage', 'sessionStorage'].map(name => {
+                try { return window[name]; } catch (_) { return null; }
+            });
+            mergeStoredProfile(userData.account, newUserData, storages, CACHE.LEGACY_KEYS.USER);
 
             // 主动清除该用户的 SWR 缓存，确保头像等信息立即刷新
             const profileCacheKey = "ComfyCommunity_ProfileCache_" + userData.account;
-            localStorage.removeItem(profileCacheKey);
+            if (!_safeLocalStorageRemove(profileCacheKey)) {
+                showToast(t('settings_form.local_storage_unavailable'), "warning");
+            }
 
-            showToast("设置已保存并同步至云端！", "success");
+            showToast(t('settings_form.settings_saved'), "success");
             if (onSaveSuccessCallback) onSaveSuccessCallback(newUserData);
         } catch (err) {
-            showToast("保存失败：" + err.message, "error"); 
-            btn.innerHTML = "保存所有设置"; 
+            if (!current()) return;
+            unlock();
+            showToast(t('settings_form.settings_save_failed'), "error");
+            btn.innerHTML = escapeHtml(t('settings_form.save_all'));
             btn.disabled = false;
         }
     };

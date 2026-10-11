@@ -9,18 +9,33 @@
 //   - 打赏等级工具.js (打赏榜单)
 // ==========================================
 
-import { api, proxyImages } from "../core/网络请求API.js";
+import { api, proxyImages, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
 import { getVideoPlayerHTML, setupVideoPlayerEvents, cleanupVideoPlayer } from "../components/视频播放器组件.js";
 import { renderTipLevelHTML } from "../components/打赏等级工具.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t } from "../components/用户体验增强.js";
-import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR, IS_WEB_MODE } from "../core/全局配置.js";
+import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR, IS_WEB_MODE, API, CACHE } from "../core/全局配置.js";
 import { removeCache, findInListCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml, formatTime } from "../components/互动工具函数.js";  // 🧹 P2归一：局部 formatTime 已移除
-import { createRatingStars } from "../social/评论与互动组件.js";
+import { createRatingStars, isValidRatingResponse } from "../social/评论与互动组件.js";
+
+import { getUser, eventBus, EVENTS } from "../core/状态管理.js";
+import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
+
+const viewContexts = new WeakMap();
+let postViewSequence = 0;
+const isCurrent = node => !!viewContexts.get(node)?.scope.isCurrent();
+function openOwnedModal(node, title, content, options) {
+    const context = viewContexts.get(node);
+    if (!context?.scope.isCurrent()) return null;
+    const modal = globalModal.openModal(title, content, options);
+    const removeCleanup = context.scope.addCleanup(() => globalModal.closeModal(modal));
+    content._cleanup = removeCleanup;
+    return modal;
+}
 
 /**
  * 🖼️ 生成头像 HTML 字符串
@@ -90,24 +105,40 @@ export function createPostDetailView(postId, currentUser) {
         </div>
     `;
     
-    // 返回按钮
-    container.querySelector("#btn-back-detail").onclick = () => {
-        const contentArea = container.querySelector("#post-content");
-        if (contentArea) {
-            cleanupVideoPlayer(contentArea);
-        }
-        window.dispatchEvent(new CustomEvent("comfy-route-back"));
-    };
-
-    // 防御性清理：监听 comfy-route-back 事件（防止其他地方直接派发导致遗漏）
-    const handleRouteBack = () => {
-        const contentArea = container.querySelector("#post-content");
-        if (contentArea) {
-            cleanupVideoPlayer(contentArea);
-        }
+    const contentArea = container.querySelector("#post-content");
+    const owner = currentUser?.account || null;
+    const sessionMatches = captureRequestSession();
+    const componentId = `post-detail-${++postViewSequence}`;
+    let constructing = true, observer;
+    const scope = createTaskViewScope({
+        sessionMatches: () => sessionMatches() && (getUser()?.account || null) === owner,
+        connected: () => constructing || container.isConnected,
+        subscribe: notify => subscribeTaskSessionChanges(notify, { target: window, eventBus, events: EVENTS,
+            userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN }),
+        cancelReads: () => requestCancelManager.cancelAll(componentId),
+        invalidate: () => contentArea.replaceChildren()
+    });
+    const context = { scope, tipPending: false,
+        readOptions: { componentId, noCache: true, timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES } };
+    viewContexts.set(container, context); viewContexts.set(contentArea, context);
+    const handleRouteBack = () => scope.dispose();
+    scope.addCleanup(() => {
+        cleanupVideoPlayer(contentArea);
+        contentArea.querySelectorAll('audio').forEach(audio => { audio.pause(); audio.removeAttribute('src'); audio.load(); });
+        contentArea.replaceChildren(); observer?.disconnect();
         window.removeEventListener("comfy-route-back", handleRouteBack);
+    });
+    container._cleanup = () => scope.dispose();
+    container.querySelector("#btn-back-detail").onclick = () => {
+        scope.dispose(); window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
-    window.addEventListener("comfy-route-back", handleRouteBack, { once: true });
+    window.addEventListener("comfy-route-back", handleRouteBack);
+    queueMicrotask(() => {
+        constructing = false;
+        if (!scope.isCurrent()) return;
+        observer = new MutationObserver(() => { if (!container.isConnected) scope.dispose(); });
+        observer.observe(document.body, { childList: true, subtree: true });
+    });
 
     // 加载帖子详情
     loadPostDetail(container, postId, currentUser);
@@ -120,6 +151,10 @@ export function createPostDetailView(postId, currentUser) {
  */
 async function loadPostDetail(container, postId, currentUser) {
     const contentArea = container.querySelector("#post-content");
+    if (!isCurrent(container)) return;
+    const context = viewContexts.get(container);
+    const generation = context.loadGeneration = (context.loadGeneration || 0) + 1;
+    const current = () => isCurrent(container) && context.loadGeneration === generation;
     
     // 先清理旧的视频播放器全局事件（如果存在）
     if (contentArea) {
@@ -130,14 +165,16 @@ async function loadPostDetail(container, postId, currentUser) {
     let fromCache = false;
     
     try {
-        const res = await api.getPostDetail(postId);
+        const res = await api.getPostDetail(postId, { ...context.readOptions, noCache: false });
+        if (!current()) return;
         post = res.data;
+        if (!post || typeof post !== "object" || Array.isArray(post) || post.id !== postId) post = null;
     } catch (err) {
-        console.error("加载帖子详情失败:", err);
+        if (!current()) return;
         // 📴 从列表缓存回退
         const cached = findInListCache("PostsCache_", postId);
         if (cached) {
-            console.warn("📴 从列表缓存回退加载帖子详情:", postId);
+
             post = cached;
             fromCache = true;
         }
@@ -266,7 +303,7 @@ async function loadPostDetail(container, postId, currentUser) {
             const videoEl = contentArea.querySelector('video');
             if (videoEl) {
                 videoEl.addEventListener('error', () => {
-                    console.warn('[VideoPlayer] 视频加载失败:', post.video_url);
+                    console.warn('[VideoPlayer] 视频加载失败');
                 });
             }
         }
@@ -291,6 +328,7 @@ async function loadPostDetail(container, postId, currentUser) {
             
             // 后台静默校对
             getProfileWithSWR(account, api.getUserProfile, (profile) => {
+                if (!current()) return;
                 const avatarEl = avatarContainer?.querySelector('.swr-avatar');
                 _updateAvatarElement(avatarEl, profile, 40, 'border: 2px solid #444;');
                 if (nameEl && profile.name) nameEl.textContent = profile.name;
@@ -299,6 +337,7 @@ async function loadPostDetail(container, postId, currentUser) {
         
         // 绑定作者点击
         contentArea.querySelector("#author-row").onclick = (e) => {
+                if (!current()) return;
             // 如果点击的是编辑/删除按钮，不触发作者资料弹窗
             if (e.target.id === 'btn-edit-post' || e.target.id === 'btn-delete-post') return;
             openOtherUserProfileModal(post.author, currentUser);
@@ -308,6 +347,7 @@ async function loadPostDetail(container, postId, currentUser) {
         const btnEdit = contentArea.querySelector("#btn-edit-post");
         if (btnEdit) {
             btnEdit.onclick = (e) => {
+                if (!current()) return;
                 e.stopPropagation();
                 window.dispatchEvent(new CustomEvent("comfy-route-edit-post", { 
                     detail: { postData: post, currentUser } 
@@ -319,6 +359,7 @@ async function loadPostDetail(container, postId, currentUser) {
         const btnDelete = contentArea.querySelector("#btn-delete-post");
         if (btnDelete) {
             btnDelete.onclick = (e) => {
+                if (!current()) return;
                 e.stopPropagation();
                 showDeleteConfirmDialog(post, container);
             };
@@ -339,9 +380,12 @@ async function loadPostDetail(container, postId, currentUser) {
                 },
                 currentUser: currentUser,
                 authorAccount: post.author,
+                isCurrent: current,
                 onRate: async (score) => {
+                    if (!current()) return null;
                     const res = await api.ratePost(post.id, score);
-                    if (res && res.status === "success") {
+                    if (!current()) return null;
+                    if (isValidRatingResponse(res, score)) {
                         post.rating_avg = res.rating_avg;
                         post.rating_count = res.rating_count;
                         post.rating_dist = res.rating_dist;
@@ -374,7 +418,9 @@ async function loadPostDetail(container, postId, currentUser) {
  * 👀 记录帖子浏览量（带60秒防抖）- 使用公共工具函数
  */
 async function recordPostView(contentArea, postId) {
+    if (!isCurrent(contentArea)) return;
     await recordView(api.recordPostView, postId, 'post', (res) => {
+        if (!isCurrent(contentArea)) return;
         updatePostViewStats(contentArea, res.views, res.daily_views);
     });
 }
@@ -401,16 +447,17 @@ function bindInteractionEvents(container, post, currentUser) {
     
     // 点赞 - 使用公共工具函数
     btnLike.onclick = () => {
-        handleToggleLike(api.togglePostLike, post.id, btnLike, likeCount, currentUser);
+        handleToggleLike(api.togglePostLike, post.id, btnLike, likeCount, currentUser, { isCurrent: () => isCurrent(container) });
     };
     
     // 收藏 - 使用公共工具函数
     btnFavorite.onclick = () => {
-        handleToggleFavorite(api.togglePostFavorite, post.id, btnFavorite, favoriteCount, currentUser);
+        handleToggleFavorite(api.togglePostFavorite, post.id, btnFavorite, favoriteCount, currentUser, { isCurrent: () => isCurrent(container) });
     };
     
     // 打赏
     btnTip.onclick = async () => {
+        if (!isCurrent(container)) return;
         if (!currentUser) {
             showToast(t('auth.login_required'), "warning");
             return;
@@ -427,24 +474,25 @@ function bindInteractionEvents(container, post, currentUser) {
  * 🎁 显示打赏对话框
  */
 async function showTipDialog(post, currentUser, container) {
-    // ==========================================
-    // 刷新钱包余额，避免使用缓存的旧值
-    // ==========================================
+    const context = viewContexts.get(container);
+    if (!isCurrent(container) || context.tipPending) return;
+    context.tipPending = true;
+    let balance;
     try {
-        const walletRes = await api.getWallet(currentUser.account);
-        if (walletRes && walletRes.status === "success") {
-            currentUser.balance = walletRes.balance || 0;
-        }
-    } catch (err) {
-        console.warn("刷新钱包余额失败，使用缓存值:", err);
-        // 失败时继续使用缓存值，不阻断打赏流程
+        const res = await api.getWallet(currentUser.account, viewContexts.get(container).readOptions);
+        if (!isCurrent(container)) return;
+        if (res?.status !== "success" || !Number.isSafeInteger(res.balance) || res.balance < 0) throw new Error();
+        balance = res.balance;
+    } catch (_) {
+        if (isCurrent(container)) { context.tipPending = false; showToast(t('common.error'), "error"); }
+        return;
     }
 
     const content = document.createElement("div");
     content.style.color = "#ccc";
     content.innerHTML = `
         <div style="margin-bottom: 12px; background: rgba(255,152,0,0.1); padding: 10px; border-radius: 4px; border: 1px solid #FF9800; text-align: center;">
-            ${t('wallet.current_balance')}: <strong style="color:#FF9800;">${currentUser.balance || 0}</strong> ${t('wallet.credits')}
+            ${t('wallet.current_balance')}: <strong style="color:#FF9800;">${balance}</strong> ${t('wallet.credits')}
         </div>
         <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
             <button class="tip-amount" data-amount="10" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
@@ -457,30 +505,37 @@ async function showTipDialog(post, currentUser, container) {
         </div>
     `;
 
-    globalModal.openModal(`🎁 ${t('post.tip_dialog_title')}`, content, { width: "300px" });
+    const modal = openOwnedModal(container, `🎁 ${t('post.tip_dialog_title')}`, content, { width: "300px" });
 
-    // 取消按钮
-    content.querySelector("#tip-cancel").onclick = () => globalModal.closeTopModal();
+    content.querySelector("#tip-cancel").onclick = () => globalModal.closeModal(modal);
+    let submitted = false;
+    const release = content._cleanup;
+    content._cleanup = () => { release?.(); if (!submitted) context.tipPending = false; };
 
-    // 打赏金额按钮
     content.querySelectorAll(".tip-amount").forEach(btn => {
         btn.onclick = async () => {
+            if (submitted || !isCurrent(container) || !modal?.isConnected) return;
             const amount = parseInt(btn.dataset.amount);
-            
+
             // 本地前置余额校验
-            if ((currentUser.balance || 0) < amount) {
+            if (balance < amount) {
                 showToast(t('wallet.insufficient_balance'), "warning");
                 return;
             }
-            
+
             try {
-                await api.tipPost(post.id, amount, false);
+                submitted = true;
+                content.querySelectorAll(".tip-amount").forEach(button => { button.disabled = true; });
+                const res = await api.tipPost(post.id, amount, false);
+                if (!isCurrent(container)) return;
+                if (res?.status !== "success") throw new Error();
+                context.tipPending = false;
                 showToast(t('post.tip_success', { amount }), "success");
-                globalModal.closeTopModal();
+                globalModal.closeModal(modal);
                 // 刷新页面
                 loadPostDetail(container.parentElement, post.id, currentUser);
             } catch (err) {
-                showToast(t('post.tip_failed') + ": " + err.message, "error");
+                if (isCurrent(container)) showToast(t('post.tip_failed'), "error");
             }
         };
     });
@@ -493,12 +548,19 @@ async function loadComments(container, postId, currentUser) {
     const commentsList = container.querySelector("#comments-list");
     const commentInput = container.querySelector("#comment-input");
     const sendBtn = container.querySelector("#btn-send-comment");
-    
+    if (!isCurrent(container)) return;
+    const context = viewContexts.get(container);
+    const generation = context.commentGeneration = (context.commentGeneration || 0) + 1;
+    const current = () => isCurrent(container) && context.commentGeneration === generation && commentsList.isConnected;
+
     try {
-        const res = await api.getPostComments(postId);
-        let comments = res.data || [];
-        comments = proxyImages(comments);  // 新增：对评论数据应用图片代理
-        
+        const res = await api.getPostComments(postId, viewContexts.get(container).readOptions);
+        if (!current()) return;
+        if (res?.status !== "success" || !Array.isArray(res.data)) throw new Error();
+        let comments = res.data.filter(value => value && typeof value === "object" && !Array.isArray(value)
+            && typeof value.author === "string" && typeof value.content === "string");
+        comments = proxyImages(comments);
+
         if (comments.length === 0) {
             commentsList.innerHTML = `
                 <div style="text-align: center; padding: 30px; color: #666; font-size: 13px;">
@@ -511,10 +573,9 @@ async function loadComments(container, postId, currentUser) {
                 const cached = getCachedProfile(c.author);
                 const avatar = cached?.avatar || c.author_avatar || '';
                 const name = cached?.name || c.author_name || c.author || '';
-                const initial = (name || 'U')[0].toUpperCase();
-                
+
                 const avatarHtml = _generateAvatarHtml(avatar, name, 24, 'background: var(--comfy-input-bg);');
-                
+
                 return `
                     <div id="comment-${idx}" data-account="${escapeHtml(c.author)}" style="background: #1a1a1a; padding: 12px; border-radius: 8px;">
                         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
@@ -528,10 +589,11 @@ async function loadComments(container, postId, currentUser) {
                     </div>
                 `;
             }).join("");
-            
+
             // 后台静默校对每个评论作者的头像
             comments.forEach((c, idx) => {
                 getProfileWithSWR(c.author, api.getUserProfile, (profile) => {
+                    if (!current()) return;
                     const commentEl = commentsList.querySelector(`#comment-${idx}`);
                     if (!commentEl) return;
                     const avatarContainer = commentEl.querySelector('.swr-avatar-container');
@@ -543,15 +605,17 @@ async function loadComments(container, postId, currentUser) {
             });
         }
     } catch (err) {
+        if (!current()) return;
         commentsList.innerHTML = `
             <div style="text-align: center; padding: 20px; color: #F44336; font-size: 12px;">
                 ${t('post.comment_load_failed')}
             </div>
         `;
     }
-    
+
     // 发送评论
     sendBtn.onclick = async () => {
+        if (!isCurrent(container) || !sendBtn.isConnected || sendBtn.disabled) return;
         if (!currentUser) {
             showToast(t('auth.login_required'), "warning");
             return;
@@ -563,22 +627,25 @@ async function loadComments(container, postId, currentUser) {
         }
         try {
             sendBtn.disabled = true;
-            sendBtn.textContent = t('post.comment_sending');
-            await api.addPostComment(postId, content);
-            commentInput.value = "";
+            sendBtn.textContent = t('common.sending');
+            const result = await api.addPostComment(postId, content);
+            if (!isCurrent(container) || !sendBtn.isConnected) return;
+            if (result?.status !== "success") throw new Error();
+            if (commentInput.value.trim() === content) commentInput.value = "";
             showToast(t('post.comment_success'), "success");
             loadComments(container, postId, currentUser);
         } catch (err) {
-            showToast(t('post.comment_failed') + ": " + err.message, "error");
+            if (isCurrent(container) && sendBtn.isConnected) showToast(t('post.comment_failed'), "error");
         } finally {
+            if (!isCurrent(container) || !sendBtn.isConnected) return;
             sendBtn.disabled = false;
             sendBtn.textContent = t('common.send');
         }
     };
-    
+
     // 回车发送
     commentInput.onkeydown = (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
+        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
             e.preventDefault();
             sendBtn.click();
         }
@@ -596,6 +663,7 @@ function renderTipBoard(tipBoard) {
  * 🗑️ 显示删除确认对话框
  */
 function showDeleteConfirmDialog(post, container) {
+    if (!isCurrent(container)) return;
     const content = document.createElement("div");
     content.style.color = "#ccc";
     content.innerHTML = `
@@ -610,26 +678,33 @@ function showDeleteConfirmDialog(post, container) {
         </div>
     `;
 
-    globalModal.openModal(t('post.delete_confirm_title'), content, { width: "300px" });
+    const modal = openOwnedModal(container, t('post.delete_confirm_title'), content, { width: "300px" });
 
     // 取消按钮
-    content.querySelector("#delete-cancel").onclick = () => globalModal.closeTopModal();
+    content.querySelector("#delete-cancel").onclick = () => globalModal.closeModal(modal);
+    let submitted = false;
 
     // 确认删除按钮
     content.querySelector("#delete-confirm").onclick = async () => {
+        if (submitted || !isCurrent(container) || !modal?.isConnected) return;
+        submitted = true;
         try {
             const confirmBtn = content.querySelector("#delete-confirm");
             confirmBtn.disabled = true;
             confirmBtn.textContent = t('common.deleting');
 
-            await api.deletePost(post.id);
+            const res = await api.deletePost(post.id);
+            if (!isCurrent(container)) return;
+            if (res?.status !== "success") throw new Error();
             showToast(t('post.delete_success'), "success");
-            globalModal.closeTopModal();
+            globalModal.closeModal(modal);
 
             // 返回列表页
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
         } catch (err) {
-            showToast(t('post.delete_failed') + ": " + err.message, "error");
+            if (!isCurrent(container)) return;
+            showToast(t('post.delete_failed'), "error");
+            submitted = false;
             const confirmBtn = content.querySelector("#delete-confirm");
             confirmBtn.disabled = false;
             confirmBtn.textContent = t('common.delete');

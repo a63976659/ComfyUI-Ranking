@@ -1,4 +1,8 @@
+import { processImageCore as _processImageCore } from "./有界图片处理.js";
+import { validateImageFile } from "./图片文件检查.js";
+import { IMAGE_PROCESS } from "../core/全局配置.js";
 // 前端页面/market/发布内容_提交引擎.js
+import { createPublishSubmissionScope } from "./发布提交生命周期.js";
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
@@ -47,119 +51,14 @@ function clearItemCacheByType(type) {
 }
 
 /**
- * 通用图片处理核心函数：加载图片 → Canvas绘制 → 转换为JPG文件
- * @param {File} file - 原始图片文件
- * @param {Object} options - 配置选项
- * @param {boolean} options.cropToSquare - 是否中心裁剪为正方形
- * @param {number|null} options.targetSize - 目标尺寸（正方形边长），null则保持原始尺寸
- * @param {number} options.quality - 初始JPG质量 (0-1)
- * @param {string|null} options.fillBackground - 背景填充颜色，null则不填充
- * @param {number|null} options.maxFileSize - 最大文件大小（字节），超限则迭代降低质量
- * @param {boolean} options.skipIfSmallJpeg - 是否跳过已是小体积JPEG的文件
- * @param {string} options.suffix - 输出文件名后缀
- * @returns {Promise<File>} 处理后的文件
- */
-function _processImageCore(file, options = {}) {
-    const {
-        cropToSquare = false,
-        targetSize = null,
-        quality = 0.85,
-        fillBackground = null,
-        maxFileSize = null,
-        skipIfSmallJpeg = false,
-        suffix = '.jpg'
-    } = options;
-
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        const url = URL.createObjectURL(file);
-
-        img.onload = () => {
-            URL.revokeObjectURL(url);
-
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-
-            let sourceX = 0, sourceY = 0;
-            let sourceW = img.naturalWidth, sourceH = img.naturalHeight;
-            let destW = img.naturalWidth, destH = img.naturalHeight;
-
-            // 中心裁剪为正方形
-            if (cropToSquare) {
-                const sourceMin = Math.min(sourceW, sourceH);
-                sourceX = (sourceW - sourceMin) / 2;
-                sourceY = (sourceH - sourceMin) / 2;
-                sourceW = sourceMin;
-                sourceH = sourceMin;
-                destW = sourceMin;
-                destH = sourceMin;
-            }
-
-            // 指定目标尺寸时缩放
-            if (targetSize) {
-                destW = targetSize;
-                destH = targetSize;
-            }
-
-            canvas.width = destW;
-            canvas.height = destH;
-
-            // 填充背景色
-            if (fillBackground) {
-                ctx.fillStyle = fillBackground;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-            }
-
-            ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, 0, 0, destW, destH);
-
-            // 跳过已是小体积JPEG的文件
-            if (skipIfSmallJpeg && maxFileSize &&
-                (file.type === 'image/jpeg' || file.type === 'image/jpg') &&
-                file.size <= maxFileSize) {
-                resolve(file);
-                return;
-            }
-
-            // 转换为JPG Blob，超限时迭代降低质量
-            let currentQuality = quality;
-            const tryCompress = () => {
-                canvas.toBlob((blob) => {
-                    if (!blob) {
-                        reject(new Error('Canvas 转换 Blob 失败'));
-                        return;
-                    }
-
-                    if (maxFileSize && blob.size > maxFileSize && currentQuality > 0.3) {
-                        currentQuality -= 0.1;
-                        tryCompress();
-                        return;
-                    }
-
-                    const newFileName = file.name.replace(/\.[^/.]+$/, '') + suffix;
-                    resolve(new File([blob], newFileName, { type: 'image/jpeg' }));
-                }, 'image/jpeg', currentQuality);
-            };
-
-            tryCompress();
-        };
-
-        img.onerror = () => {
-            URL.revokeObjectURL(url);
-            reject(new Error('图片加载失败'));
-        };
-
-        img.src = url;
-    });
-}
-
-/**
  * 🟢 利用 HTML5 Canvas 纯前端裁剪并压缩头像
  * 功能：强制 1:1 比例中心裁剪，缩放到 512x512，转换为 JPG 格式。
  */
 function processAvatar(file) {
     return _processImageCore(file, {
         cropToSquare: true,
-        targetSize: 512,
+        maxFileSize: IMAGE_PROCESS.AVATAR_MAX_BYTES,
+        targetSize: IMAGE_PROCESS.AVATAR_SIZE,
         quality: 0.85,
         suffix: '_cropped.jpg'
     }).then(processedFile => {
@@ -171,7 +70,7 @@ function processAvatar(file) {
 /**
  * 上传前图片压缩处理
  * - 转为 JPG 格式
- * - 超过 5MB 时进行质量压缩，不改变宽高比例
+ * - 最长边至多4096并保持比例；质量压缩后仍超过5MB则拒绝
  * @param {File} file - 原始图片文件
  * @returns {Promise<File>} - 处理后的文件
  */
@@ -181,65 +80,54 @@ export async function compressImageForUpload(file) {
         return file;
     }
 
-    // GIF 动图保留原始格式，不转换为 JPG
-    if (file.type === 'image/gif') {
-        const GIF_MAX_SIZE = 50 * 1024 * 1024; // 50MB
-        if (file.size > GIF_MAX_SIZE) {
-            throw new Error(`GIF文件过大（${(file.size/1024/1024).toFixed(1)}MB），最大允许50MB`);
-        }
-        console.log(`🎞️ GIF动图保留原始格式: ${(file.size/1024/1024).toFixed(2)}MB`);
-        return file;
+    if (!Number.isFinite(file.size) || file.size < 0 || file.size > IMAGE_PROCESS.MAX_INPUT_BYTES) {
+        throw new Error('Image exceeds upload budget');
     }
-
-    try {
-        const processedFile = await _processImageCore(file, {
-            quality: 0.92,
-            fillBackground: '#FFFFFF',
-            maxFileSize: 5 * 1024 * 1024,
-            skipIfSmallJpeg: true,
-            suffix: '.jpg'
-        });
-        console.log(`📦 图片压缩: ${(file.size/1024/1024).toFixed(2)}MB → ${(processedFile.size/1024/1024).toFixed(2)}MB`);
-        return processedFile;
-    } catch (e) {
-        // 加载失败，返回原文件
-        return file;
-    }
+    // 动图保持原格式；不由Canvas变为静态图片。
+    if (file.type === 'image/gif') { await validateImageFile(file); return file; }
+    return _processImageCore(file, {
+        quality: 0.92, fillBackground: '#FFFFFF', maxFileSize: IMAGE_PROCESS.MAX_OUTPUT_BYTES,
+        skipIfSmallJpeg: true, suffix: '.jpg'
+    });
 }
 
 /**
  * 🟢 新增：全局统一的文件上传包装器（供个人设置等其它组件调用）
  * 会在上传前自动拦截并处理头像图片
  */
-export async function uploadFile(file, file_type) {
+export async function uploadFile(file, file_type, options = {}) {
+    const current = options.isCurrent || (() => true);
+    const feedback = (message, level) => { if (!options.silent && current()) showToast(message, level); };
+    if (!current()) return null;
     try {
         let fileToUpload = file;
         
         // 拦截点：如果是头像，就在纯内存中先进行裁剪、缩放、压缩
         if (file_type === "avatar" && file.type && file.type.startsWith("image/")) {
-            showToast(`🖼️ ${t('publish.processing_avatar')}`);
+            feedback(`🖼️ ${t('publish.processing_avatar')}`);
             fileToUpload = await processAvatar(file);
         }
 
-        showToast(`🌐 ${t('publish.uploading_file', { size: (fileToUpload.size/1024).toFixed(1) })}`);
+        feedback(`🌐 ${t('publish.uploading_file', { size: (fileToUpload.size/1024).toFixed(1) })}`);
+        if (!current()) return null;
         const res = await api.uploadFile(fileToUpload, file_type);
         
+        if (!current()) return null;
         if (res.status === "success") {
-            showToast(`✅ ${t('publish.upload_success')}`);
+            feedback(`✅ ${t('publish.upload_success')}`);
             return res.url; 
         } else {
-            showToast(`❌ ${t('publish.upload_failed')}: ${res.error || res.message}`, "error");
+            feedback(t('publish.upload_failed'), 'error');
             return null;
         }
     } catch (error) {
-        console.error("Upload Error:", error);
-        showToast(`❌ ${t('publish.upload_error')}: ${error.message}`, "error");
+        feedback(t('publish.upload_error'), 'error');
         return null;
     }
 }
 
 // ==========================================
-// 原有的发布表单提交逻辑 (完美保留，无任何删减)
+// 发布表单提交：原会话范围与保存结果核实
 // ==========================================
 export async function handlePublishSubmit(params) {
     const {
@@ -247,6 +135,13 @@ export async function handlePublishSubmit(params) {
         imageFiles, jsonFile, onSuccessCallback, submitBtn, submitBtnText  // 🖼️ imageFiles 替换 coverFile
     } = params;
 
+    const scope = params.submissionScope || createPublishSubmissionScope(container, submitBtn, currentUser?.account);
+    if (!scope.isCurrent()) return;
+    const expectedRevision = isEditMode ? (editItemData?.edit_revision === undefined ? 0 : editItemData.edit_revision) : null;
+    if (isEditMode && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)) {
+        showToast(t('common.operation_failed'), 'error'); return;
+    }
+    const selectedImages = Array.from(imageFiles || []);
     const typeSelect = container.querySelector("#pub-type");
     const recommendTypeSelect = container.querySelector("#pub-recommend-type");
     const resTypeSelect = container.querySelector("#pub-resource-type");
@@ -264,7 +159,8 @@ export async function handlePublishSubmit(params) {
     const title = container.querySelector("#pub-title").value.trim();
     const shortDesc = container.querySelector("#pub-short").value.trim();
     const fullDesc = container.querySelector("#pub-full").value.trim();
-    const price = rules.price ? (parseFloat(container.querySelector("#pub-price").value) || 0) : 0;
+    const price = rules.price ? Number(container.querySelector("#pub-price").value) : 0;
+    if (!Number.isSafeInteger(price) || price < 0) return showToast(t('common.operation_failed'), "warning");
     
     let finalLink = inputLink.value.trim();
     let isJsonUpload = (resTypeSelect.value === "json") || (type === "recommend_app");
@@ -315,15 +211,18 @@ export async function handlePublishSubmit(params) {
     const allowRefundCheckbox = container.querySelector("#allow-refund-checkbox");
     const allowRefund = rules.refund ? (allowRefundCheckbox?.checked ?? true) : null;
 
+    if (!scope.begin()) return;
+    let committed = false, saveAttempted = false, outcomeUnknown = false;
     submitBtn.innerHTML = `⏳ ${t('publish.connecting')}`;
     submitBtn.disabled = true; 
-    submitBtn.style.background = "#555";
 
     try {
         if (isJsonUpload && jsonFile) {
             submitBtn.innerHTML = `⏳ ${t('publish.uploading_secure')}`;
             const uploadType = type.includes("app") ? "app" : (type.includes("tool") || type === "skill" ? "tool" : "recommend");
             const jsonUploadRes = await api.uploadFile(jsonFile, uploadType);
+            if (!scope.isCurrent()) return;
+            if (jsonUploadRes?.status !== "success" || typeof jsonUploadRes.url !== "string" || !jsonUploadRes.url.trim()) throw new Error("Invalid upload result");
             finalLink = jsonUploadRes.url; 
         }
 
@@ -331,19 +230,21 @@ export async function handlePublishSubmit(params) {
         let coverUrl = isEditMode ? editItemData.coverUrl : null;
         let imageUrls = isEditMode ? (editItemData.imageUrls || []) : [];
         
-        if (imageFiles && imageFiles.length > 0) {
-            submitBtn.innerHTML = `⏳ ${t('publish.uploading_images', { current: 0, total: imageFiles.length })}`;
+        if (selectedImages.length > 0) {
+            submitBtn.innerHTML = `⏳ ${t('publish.uploading_images', { current: 0, total: selectedImages.length })}`;
             const uploadedUrls = [];
             
-            for (let i = 0; i < imageFiles.length; i++) {
-                submitBtn.innerHTML = `⏳ ${t('publish.uploading_images', { current: i + 1, total: imageFiles.length })}`;
+            for (let i = 0; i < selectedImages.length; i++) {
+                submitBtn.innerHTML = `⏳ ${t('publish.uploading_images', { current: i + 1, total: selectedImages.length })}`;
                 // 上传前压缩：转JPG，超5MB压缩
-                const processedFile = await compressImageForUpload(imageFiles[i]);
+                const processedFile = await compressImageForUpload(selectedImages[i]);
+                if (!scope.isCurrent()) return;
                 const uploadRes = await api.uploadFile(processedFile, "cover");
-                if (uploadRes && uploadRes.url) {
+                if (!scope.isCurrent()) return;
+                if (uploadRes?.status === "success" && typeof uploadRes.url === "string" && uploadRes.url.trim()) {
                     uploadedUrls.push(uploadRes.url);
                 } else {
-                    throw new Error(`图片上传失败: ${uploadRes?.error || '未知错误'}`);
+                    throw new Error("Invalid image upload result");
                 }
             }
             
@@ -351,12 +252,15 @@ export async function handlePublishSubmit(params) {
             imageUrls = uploadedUrls;     // 全部图片URL
         }
 
+        if (!scope.isCurrent()) return;
         submitBtn.innerHTML = `⏳ ${t('publish.syncing')}`;
         // 🖼️ 统一封面逻辑：第一张图片始终作为封面（兑容拖拽排序后的顺序变化）
         if (imageUrls && imageUrls.length > 0) {
             coverUrl = imageUrls[0];
         }
         const submitData = {
+            ...(!isEditMode && scope.publicationId ? { request_id: scope.publicationId } : {}),
+            ...(isEditMode ? { expected_revision: expectedRevision } : {}),
             type, title, shortDesc, fullDesc, price, link: finalLink, coverUrl, imageUrls,  // 🖼️ 添加 imageUrls
             author: currentUser.account, github_token,
             netdisk_password,  // ☁️ 网盘密码（后端加密存储）
@@ -369,22 +273,40 @@ export async function handlePublishSubmit(params) {
             submitData.allow_refund = allowRefund;
         }
 
-        if (isEditMode) {
-            await api.updateItem(editItemData.id, currentUser.account, submitData);
-            showToast(`✅ ${t('publish.save_success')}`, "success");
-        } else {
-            await api.publishItem(submitData);
-            showToast(`🎉 ${t('publish.publish_success')}`, "success");
+        saveAttempted = true;
+        const result = isEditMode
+            ? await api.updateItem(editItemData.id, currentUser.account, submitData)
+            : await api.publishItem(submitData);
+        if (!scope.isCurrent()) return;
+        if (result?.status !== "success") throw new Error("Invalid save result");
+        committed = true;
+        showToast(isEditMode ? `✅ ${t('publish.save_success')}` : `🎉 ${t('publish.publish_success')}`, "success");
+        // 主保存已确认；派生缓存或界面回调异常不重新开放提交。
+        try { clearItemCacheByType(type); } catch (_) {}
+        if (scope.isCurrent() && onSuccessCallback) {
+            try { await onSuccessCallback(); } catch (_) {}
         }
-        
-        // 🚀 精确清除：只清除当前发布类型的缓存
-        clearItemCacheByType(type);
-        
-        if (onSuccessCallback) onSuccessCallback();
     } catch (err) {
-        showToast(`${t('common.operation_failed')}: ` + err.message, "error");
+        if (!scope.isCurrent() || committed) return;
+        if (isEditMode && err?.status === 409 && err?.code === 'resource_revision_conflict') {
+            outcomeUnknown = true; // 保持入口锁，要求重开取得新版本；不自动覆盖。
+            showToast(t('publish.edit_conflict'), 'warning');
+            submitBtn.disabled = true; submitBtn.innerHTML = t('publish.edit_reopen');
+            return;
+        }
+        // 已发出的保存可能在服务端提交；仅已知前置拒绝允许原表单重试。
+        const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+        outcomeUnknown = saveAttempted && !rejected;
+        if (outcomeUnknown) {
+            showToast(t('publish.save_unconfirmed'), "warning");
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = t('publish.result_pending');
+            return;
+        }
+        showToast(t('common.operation_failed'), "error");
         submitBtn.disabled = false;
         submitBtn.innerHTML = submitBtnText;
-        submitBtn.style.background = "#2196F3";
+    } finally {
+        scope.finish(committed, outcomeUnknown);
     }
 }

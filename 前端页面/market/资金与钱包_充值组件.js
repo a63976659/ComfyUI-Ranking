@@ -1,9 +1,14 @@
 // 前端页面/market/资金与钱包_充值组件.js
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
-import { api } from "../core/网络请求_业务API.js";
+import { api, request, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
 import { t } from "../components/用户体验增强.js";
-import { API } from "../core/全局配置.js";
+import { API, UI, CACHE } from "../core/全局配置.js";
+
+import { eventBus, EVENTS } from "../core/状态管理.js";
+import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
+import { normalizeWalletData } from "../profile/个人资料工具.js";
+let rechargeSequence = 0;
 
 /**
  * 充值弹窗组件 (真实拉起支付宝网关)
@@ -19,23 +24,39 @@ import { API } from "../core/全局配置.js";
  */
 function _setButtonLoading(btn, isLoading, loadingText, normalText) {
     btn.disabled = isLoading;
+    btn.setAttribute('aria-busy', String(isLoading));
     btn.innerText = isLoading ? loadingText : normalText;
     btn.style.background = isLoading ? "#888" : "#4CAF50";
     btn.style.cursor = isLoading ? "not-allowed" : "pointer";
 }
 
 export async function openRechargeModal(currentUser, onBalanceChange) {
-    // 🔄 打开充值弹窗时主动拉取最新余额，避免显示过期数据
-    try {
-        const freshWallet = await api.getWallet(currentUser.account, { noCache: true });
-        if (freshWallet && freshWallet.balance !== undefined) {
-            currentUser.balance = freshWallet.balance;
-        }
-    } catch (e) {
-        // 获取失败则使用本地值，不阻塞弹窗打开
-    }
-
+    if (!currentUser?.account) return;
     const container = document.createElement("div");
+    const account = currentUser.account;
+    const componentId = `recharge-${++rechargeSequence}`;
+    let constructing = true, modalElement = null, pollingTimer = null;
+    const scope = createTaskViewScope({
+        sessionMatches: captureRequestSession(), connected: () => constructing || container.isConnected,
+        subscribe: notify => subscribeTaskSessionChanges(notify, { target: window, eventBus, events: EVENTS,
+            userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN }),
+        cancelReads: () => requestCancelManager.cancelAll(componentId),
+        invalidate: () => { container.replaceChildren(); if (modalElement) globalModal.closeModal(modalElement); }
+    });
+    const readOptions = { noCache: true, componentId, timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES };
+    scope.addCleanup(() => {
+        clearTimeout(pollingTimer);
+        container.querySelectorAll('input').forEach(input => { input.value = ''; });
+        container.querySelector('#qr-image')?.removeAttribute('src');
+    });
+    container._cleanup = () => scope.dispose();
+    let balanceText = t('wallet.recharge.balance_unavailable');
+    try {
+        const wallet = normalizeWalletData(await api.getWallet(account, readOptions));
+        if (!scope.isCurrent()) return;
+        if (Number.isSafeInteger(wallet.balance)) balanceText = String(wallet.balance);
+    } catch (_) { if (!scope.isCurrent()) return; }
+
     container.style.color = "#ccc";
 
     const rechargeOptions = [
@@ -49,7 +70,7 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
     let paymentMethod = "alipay"; 
 
     function _rechargeOptionWrapper(isSelected, index, innerHtml) {
-        return `<div class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : 'var(--comfy-input-bg)'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">${innerHtml}</div>`;
+        return `<button type="button" aria-pressed="${isSelected}" class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : 'var(--comfy-input-bg)'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">${innerHtml}</button>`;
     }
 
     const renderOptions = () => rechargeOptions.map((opt, index) => {
@@ -66,7 +87,7 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
     container.innerHTML = `
         <div style="margin-bottom: 20px; text-align: center;">
             <div style="font-size: 14px; color: #aaa;">${t('wallet.recharge.current_balance')}</div>
-            <div style="font-size: 28px; font-weight: bold; color: #FF9800; margin-top: 5px;">${currentUser.balance || 0} <span style="font-size: 14px;">${t('wallet.recharge.points_suffix')}</span></div>
+            <div style="font-size: 28px; font-weight: bold; color: #FF9800; margin-top: 5px;">${balanceText} <span style="font-size: 14px;">${t('wallet.recharge.points_suffix')}</span></div>
         </div>
         
         <div style="margin-bottom: 15px;">
@@ -109,6 +130,7 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
     const bindGridEvents = () => {
         container.querySelectorAll('.recharge-opt').forEach(el => {
             el.onclick = () => {
+                if (!scope.isCurrent() || submitting) return;
                 selectedOption = rechargeOptions[parseInt(el.getAttribute('data-index'))];
                 container.querySelector('#recharge-grid').innerHTML = renderOptions();
                 
@@ -133,128 +155,92 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
     const qrContainer = container.querySelector("#qr-container");
     const qrImage = container.querySelector("#qr-image");
     const qrLoading = container.querySelector("#qr-loading");
-    let pollingInterval = null;
-    let pollCount = 0;
-    let paymentConfirmed = false; // 🔒 源头防重：确保成功逻辑只执行一次
-    const MAX_POLL_COUNT = 100; // 最多轮询 100 次（约 5 分钟）
+    let submitting = false, pollCount = 0, paymentConfirmed = false;
+    qrImage.alt = t('wallet.recharge.scan_to_pay');
+    customAmountInput.setAttribute('aria-label', t('wallet.recharge.select_amount'));
+    qrLoading.setAttribute('role', 'status');
 
     btnCreateOrder.onclick = async () => {
-        if (btnCreateOrder.disabled) return;
-        let finalPoints = 0;
-        let finalPrice = 0;
-
-        if (selectedOption.isCustom) {
-            const customVal = Number(customAmountInput.value);
-            if (!Number.isInteger(customVal) || customVal <= 0) {
-                return showToast(t('wallet.recharge.invalid_amount'), "warning");
-            }
-            if (customVal > 10000) {
-                return showToast(t('wallet.recharge.max_amount_exceeded'), "warning");
-            }
-            finalPoints = customVal;
-            finalPrice = customVal;
-        } else {
-            finalPoints = selectedOption.points;
-            finalPrice = selectedOption.price;
-        }
-
-        // 💳 充值二次确认
-        const confirmMsg = `确认充值 ${finalPoints} 积分（¥${finalPrice.toFixed(2)}）？`;
-        const confirmed = await showConfirm(confirmMsg, {
-            title: t('wallet.recharge.title'),
-            confirmText: t('wallet.recharge.get_qr'),
-            type: 'warning'
-        });
-        if (!confirmed) return;
-
+        if (!scope.isCurrent() || submitting) return;
+        const points = selectedOption.isCustom ? Number(customAmountInput.value) : selectedOption.points;
+        if (!Number.isSafeInteger(points) || points < 1) return showToast(t('wallet.recharge.invalid_amount'), 'warning');
+        if (points > 10000) return showToast(t('wallet.recharge.max_amount_exceeded'), 'warning');
+        submitting = true;
         _setButtonLoading(btnCreateOrder, true, t('wallet.recharge.processing'), t('wallet.recharge.get_qr'));
-        qrContainer.style.display = "block";
-        qrLoading.style.display = "block";
-        qrImage.style.display = "none";
-        
+        let confirmed;
+        try { confirmed = await showConfirm(t('wallet.recharge.confirm_amount', { points, price: points.toFixed(2) }), {
+            title: t('wallet.recharge.title'), confirmText: t('wallet.recharge.get_qr'), type: 'warning'
+        }); } catch (_) {
+            if (!scope.isCurrent()) return;
+            submitting = false;
+            _setButtonLoading(btnCreateOrder, false, t('wallet.recharge.processing'), t('wallet.recharge.get_qr'));
+            return;
+        }
+        if (!scope.isCurrent()) return;
+        if (!confirmed) {
+            submitting = false;
+            _setButtonLoading(btnCreateOrder, false, t('wallet.recharge.processing'), t('wallet.recharge.get_qr'));
+            return;
+        }
+        qrContainer.style.display = 'block';
+        qrLoading.style.display = 'block';
+        qrImage.style.display = 'none';
         try {
-            // 封装带有 Token 的请求头
-            const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
-            const headers = { "Content-Type": "application/json" };
-            if (token) headers["Authorization"] = `Bearer ${token}`;
-
-            // 1. 发起真实创建订单请求
-            const res = await fetch(`${API.BASE_URL}/api/wallet/create_recharge_order`, {
-                method: "POST", headers: headers,
-                body: JSON.stringify({ account: currentUser.account, amount: finalPoints })
-            }).then(async r => {
-                const data = await r.json();
-                if (!r.ok) throw new Error(data.detail || data.error || "请求被拒绝");
-                return data;
+            const order = await request('/api/wallet/create_recharge_order', {
+                method: 'POST', body: { account, amount: points }, retries: 0
             });
-            
-            qrLoading.style.display = "none";
-            
-            // 2. 利用免费接口将返回的支付字符串转成真实二维码图片
-qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(res.qr_code)}`;
-            qrImage.style.display = "block";
-            container.querySelector("#pay-price-text").innerText = finalPrice.toFixed(2);
-
-            // 3. 开启真实轮询查单，监听回调
-            pollingInterval = setInterval(async () => {
-                pollCount++;
-                if (pollCount >= MAX_POLL_COUNT) {
-                    clearInterval(pollingInterval);
-                    pollingInterval = null;
-                    showToast(t('wallet.recharge.timeout'), "warning");
-                    return;
+            if (!scope.isCurrent()) return;
+            if (order?.status !== 'success' || typeof order.order_id !== 'string' || !/^PAY_[a-zA-Z0-9_-]{1,128}$/.test(order.order_id)
+                || typeof order.qr_code !== 'string' || order.qr_code.length > 4096) throw new Error('invalid order');
+            const { createPaymentQRCode } = await import("./支付二维码工具.js");
+            if (!scope.isCurrent()) return;
+            qrImage.src = createPaymentQRCode(order.qr_code, UI.RECHARGE_QR_MAX_BYTES);
+            qrLoading.style.display = 'none';
+            qrImage.style.display = 'block';
+            container.querySelector('#pay-price-text').textContent = points.toFixed(2);
+            // 一次查询结束后再安排下一次，避免慢网络下并行查单。
+            const pollUntil = Date.now() + UI.RECHARGE_POLL_INTERVAL * UI.RECHARGE_POLL_LIMIT;
+            const poll = async () => {
+                if (!scope.isCurrent() || paymentConfirmed) return;
+                if (++pollCount > UI.RECHARGE_POLL_LIMIT || Date.now() >= pollUntil) {
+                    showToast(t('wallet.recharge.timeout'), 'warning'); return;
                 }
                 try {
-                    const checkRes = await fetch(`${API.BASE_URL}/api/wallet/check_order/${res.order_id}?account=${currentUser.account}`, { headers })
-                      .then(r => r.json());
-                                          
-                    if (checkRes.status === "SUCCESS") {
-                        if (paymentConfirmed) return; // 🔒 已确认过，跳过（防止多个在途请求重复触发）
+                    const checked = await request(`/api/wallet/check_order/${encodeURIComponent(order.order_id)}`, readOptions);
+                    if (!scope.isCurrent()) return;
+                    if (checked?.status === 'SUCCESS') {
                         paymentConfirmed = true;
-                        clearInterval(pollingInterval);
-
-                        // 先获取真实余额
+                        let balance;
                         try {
-                            const walletRes = await api.getWallet(currentUser.account);
-                            if (walletRes && walletRes.balance !== undefined) {
-                                currentUser.balance = walletRes.balance;
-                            } else {
-                                currentUser.balance = (currentUser.balance || 0) + finalPoints;
-                            }
-                        } catch(e) {
-                            currentUser.balance = (currentUser.balance || 0) + finalPoints;
-                        }
-
-                        // 再触发余额变更回调
-                        if (onBalanceChange) {
-                            onBalanceChange(currentUser.balance);
-                        }
-
-                        // 最后关闭弹窗和提示
-                        showToast(t('wallet.recharge.success', { points: finalPoints }), "success");
-                        globalModal.closeTopModal();
+                            const wallet = normalizeWalletData(await api.getWallet(account, readOptions));
+                            if (Number.isSafeInteger(wallet.balance)) balance = wallet.balance;
+                        } catch (_) {}
+                        if (!scope.isCurrent()) return;
+                        showToast(t('wallet.recharge.success', { points }), 'success');
+                        if (balance === undefined) showToast(t('wallet.recharge.balance_unavailable'), 'warning');
+                        scope.dispose(); globalModal.closeModal(modalElement);
+                        if (balance !== undefined && onBalanceChange) onBalanceChange(balance);
+                        return;
                     }
-                } catch (e) {
-                    // 查单接口网络波动不中断主流程
-                    console.warn("轮询波动...", e);
-                }
-            }, 3000);
-
+                } catch (_) { if (!scope.isCurrent()) return; }
+                pollingTimer = setTimeout(poll, UI.RECHARGE_POLL_INTERVAL);
+            };
+            pollingTimer = setTimeout(poll, UI.RECHARGE_POLL_INTERVAL);
         } catch (error) {
-            qrLoading.innerText = t('wallet.recharge.order_failed') + error.message;
-            qrLoading.style.color = "#F44336";
-        } finally {
-            _setButtonLoading(btnCreateOrder, false, t('wallet.recharge.processing'), t('wallet.recharge.get_qr'));
+            if (!scope.isCurrent()) return;
+            const rejected = [400, 401, 403, 404, 422, 429].includes(error.status);
+            qrLoading.textContent = t(rejected ? 'wallet.recharge.order_failed' : 'wallet.recharge.order_uncertain');
+            if (rejected) {
+                submitting = false;
+                _setButtonLoading(btnCreateOrder, false, t('wallet.recharge.processing'), t('wallet.recharge.get_qr'));
+            }
         }
     };
-
-    // 5分钟兆底清理轮询
-    setTimeout(() => {
-        if (pollingInterval) {
-            clearInterval(pollingInterval);
-            pollingInterval = null;
-        }
-    }, 300000);
-
-    globalModal.openModal(t('wallet.recharge.title'), container, { width: "400px" });
+    if (!scope.isCurrent()) return;
+    const observer = new MutationObserver(() => { if (!container.isConnected) scope.dispose(); });
+    scope.addCleanup(() => observer.disconnect());
+    globalModal.openModal(t('wallet.recharge.title'), container, { width: '400px' });
+    modalElement = globalModal.activeModals.find(modal => modal.contains(container));
+    constructing = false;
+    observer.observe(document.body, { childList: true, subtree: true });
 }

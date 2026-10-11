@@ -2,18 +2,21 @@
 import { createAuthView } from "../auth/用户注册登录组件.js";
 import { openUserProfileModal } from "../profile/个人中心视图.js";
 import { openChatModal, loadChatUnreadCount } from "../social/私信聊天组件.js";
-import { api } from "../core/网络请求API.js"; 
+import { api, captureRequestSession } from "../core/网络请求API.js";
 import { showToast } from "./UI交互提示组件.js";
 import { showAboutInfo } from "./关于插件组件.js";
 import { openNotificationCenter, loadUnreadCount } from "../social/通知中心组件.js";
 import { openSettingsPage } from "./全局设置组件.js";  // ⚙️ 新增
-import { CACHE, escapeHtml } from "../core/全局配置.js";
+import { setUser, updateUser, initUserState } from "../core/状态管理.js";
+import { readUserSession, sessionProfile } from "../core/用户会话存储.js";
+import { API, CACHE, PLACEHOLDERS } from "../core/全局配置.js";
 import { t } from "./用户体验增强.js";  // 🌐 多语言支持
 import { createTopBanner } from "./顶部广告组件.js";
 import { uploadFile } from "../market/发布内容_提交引擎.js";  // 🖼️ 带压缩管线的统一上传包装器
 
 // 🚀 新增：消息轮询定时器
 let messagePollingTimer = null;
+let pollingGeneration = 0;
 let isPollingActive = false;  // 🔧 P3优化：防止重复启动轮询
 
 // 🔧 P1修复：window 监听只安装一次并始终指向最新导航实例
@@ -37,89 +40,70 @@ function _registerNavWindowListeners() {
 }
 
 export function createTopNav() {
+    stopMessagePolling();
     const userHeader = document.createElement("div");
-    Object.assign(userHeader.style, {
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        padding: "15px 10px", backgroundColor: "#1a1a1a", borderBottom: "1px solid var(--border-color, #333)"
-    });
+    userHeader.className = "top-nav";
 
-    const titleSpan = document.createElement("div");
-    titleSpan.innerHTML = `<strong style='color:#4CAF50;'>ComfyUI</strong> ${t('nav.community')}`;
-    
-    Object.assign(titleSpan.style, { fontSize: "16px", cursor: "pointer", transition: "opacity 0.2s" });
-    titleSpan.title = "查看关于本插件与作者信息";
-    titleSpan.onmouseover = () => titleSpan.style.opacity = "0.8";
-    titleSpan.onmouseout = () => titleSpan.style.opacity = "1";
+    const titleSpan = document.createElement("button");
+    titleSpan.type = "button";
+    titleSpan.className = "top-nav__brand";
+    titleSpan.innerHTML = `<strong>ComfyUI</strong> ${t('nav.community')}`;
+    titleSpan.title = t('nav.about_title');
+    titleSpan.setAttribute("aria-label", t('nav.about_title'));
     titleSpan.onclick = () => showAboutInfo(currentUser);
 
-    // ⚙️ 设置按钮（放在社区精选旁边）
     const settingsBtn = document.createElement("button");
-    Object.assign(settingsBtn.style, {
-        background: "transparent",
-        border: "none",
-        color: "#888",
-        cursor: "pointer",
-        fontSize: "16px",
-        marginLeft: "8px",
-        padding: "4px",
-        transition: "0.2s",
-        verticalAlign: "middle"
-    });
-    settingsBtn.innerHTML = "⚙️";
+    settingsBtn.type = "button";
+    settingsBtn.className = "top-nav__icon";
+    settingsBtn.textContent = "⚙️";
     settingsBtn.title = t('nav.settings');
-    settingsBtn.onmouseover = () => { settingsBtn.style.color = "#4CAF50"; settingsBtn.style.transform = "rotate(30deg)"; };
-    settingsBtn.onmouseout = () => { settingsBtn.style.color = "#888"; settingsBtn.style.transform = "rotate(0deg)"; };
+    settingsBtn.setAttribute("aria-label", t('nav.settings'));
     settingsBtn.onclick = (e) => { e.stopPropagation(); openSettingsPage(); };
 
-    // 📦 将标题和设置按钮包裹在一起
     const titleWrapper = document.createElement("div");
-    titleWrapper.style.display = "flex";
-    titleWrapper.style.alignItems = "center";
+    titleWrapper.className = "top-nav__heading";
     titleWrapper.appendChild(titleSpan);
     titleWrapper.appendChild(settingsBtn);
 
     const userActionBtn = document.createElement("button");
-    Object.assign(userActionBtn.style, { padding: "6px 12px", backgroundColor: "#333", color: "#fff", border: "1px solid #555", borderRadius: "4px", cursor: "pointer", fontSize: "12px", transition: "background 0.2s" });
+    userActionBtn.type = "button";
+    userActionBtn.className = "top-nav__identity";
 
     const chatEntryBtn = document.createElement("button");
-    Object.assign(chatEntryBtn.style, { background: "transparent", border: "none", color: "#aaa", cursor: "pointer", fontSize: "18px", marginRight: "10px", transition: "0.2s", position: "relative" });
-    // 🔔 私信未读红点：与铃铛 #unread-badge 同款样式，数据源为 chats.json 各会话未读汇总
-    chatEntryBtn.innerHTML = `✉️<span id="chat-unread-badge" style="display:none; position:absolute; top:-4px; right:-8px; background:#F44336; color:white; font-size:10px; font-weight:bold; padding:2px 5px; border-radius:10px; line-height:1;">0</span>`;
+    chatEntryBtn.type = "button";
+    chatEntryBtn.className = "top-nav__icon";
+    chatEntryBtn.innerHTML = `✉️<span id="chat-unread-badge" class="top-nav__badge" style="display:none">0</span>`;
     chatEntryBtn.title = t('social.chat');
+    chatEntryBtn.setAttribute("aria-label", t('social.chat'));
 
     const bellBtn = document.createElement("button");
-    Object.assign(bellBtn.style, { background: "transparent", border: "none", color: "#aaa", cursor: "pointer", fontSize: "18px", position: "relative", marginRight: "15px" });
-    bellBtn.innerHTML = `🔔<span id="unread-badge" style="display:none; position:absolute; top:-4px; right:-8px; background:#F44336; color:white; font-size:10px; font-weight:bold; padding:2px 5px; border-radius:10px; line-height:1;">0</span>`;
-    
-    let currentUser = null; 
-    try {
-        const savedUserStr = localStorage.getItem("ComfyCommunity_User");
-        if (savedUserStr) {
-            const data = JSON.parse(savedUserStr);
-            if (data.expireAt && Date.now() < data.expireAt) { currentUser = data.user; } 
-            else { localStorage.removeItem("ComfyCommunity_User"); localStorage.removeItem("ComfyCommunity_Token"); }
-        } else {
-            const tempUserStr = sessionStorage.getItem("ComfyCommunity_User");
-            if (tempUserStr) { currentUser = JSON.parse(tempUserStr).user; }
-        }
-    } catch (e) {}
+    bellBtn.type = "button";
+    bellBtn.className = "top-nav__icon";
+    bellBtn.innerHTML = `🔔<span id="unread-badge" class="top-nav__badge" style="display:none">0</span>`;
+    bellBtn.title = t('social.notifications');
+    bellBtn.setAttribute("aria-label", t('social.notifications'));
 
-    // 🔧 P1修复：登出/token失效/storage 监听已提升至模块级统一注册（见 _registerNavWindowListeners），
-    // 避免每次 createTopNav 重复 addEventListener 导致闭包累积与轮询失效
-
-    chatEntryBtn.onclick = () => {
-        if (!currentUser) return showToast(t('auth.login_required'), "warning");
-        openChatModal(currentUser);
-    };
-
-    // 【核心瘦身】：直接调用拆分出去的独立组件模块
+    let currentUser = null;
+    chatEntryBtn.onclick = () => openChatModal(currentUser);
     bellBtn.onclick = () => openNotificationCenter(currentUser, bellBtn);
+    const sessionStorages = () => ['localStorage', 'sessionStorage'].map(name => { try { return window[name]; } catch (_) { return null; } });
+    const restoredSession = readUserSession(sessionStorages(), CACHE.LEGACY_KEYS);
+    currentUser = restoredSession?.user || null;
 
     const updateUserButtonState = () => {
         if (currentUser) {
-            userActionBtn.innerHTML = `👤 ${escapeHtml(currentUser.name || currentUser.account || t('common.unknown_user'))}`;
-            userActionBtn.style.backgroundColor = "#2196F3";
-            userActionBtn.style.borderColor = "#2196F3";
+            const avatar = document.createElement("img");
+            avatar.className = "top-nav__avatar";
+            avatar.alt = "";
+            avatar.src = currentUser.avatarDataUrl || currentUser.avatar || PLACEHOLDERS.AVATAR_SMALL;
+            avatar.onerror = () => {
+                avatar.onerror = null;
+                avatar.src = PLACEHOLDERS.AVATAR_SMALL;
+            };
+            userActionBtn.replaceChildren(avatar);
+            userActionBtn.setAttribute("aria-label", t('nav.profile'));
+            userActionBtn.dataset.authenticated = "true";
+            userActionBtn.title = t('nav.profile');
             userActionBtn.onclick = () => openUserProfileModal(currentUser);
             loadUnreadCount(currentUser, bellBtn);
             loadChatUnreadCount(currentUser, chatEntryBtn);
@@ -131,85 +115,84 @@ export function createTopNav() {
             stopMessagePolling();
             
             userActionBtn.innerHTML = `🔑 ${t('nav.login')}`;
-            userActionBtn.style.backgroundColor = "#333";
-            userActionBtn.style.borderColor = "#555";
+            userActionBtn.dataset.authenticated = "false";
+            userActionBtn.title = t('nav.login');
+            userActionBtn.setAttribute("aria-label", t('nav.login'));
             bellBtn.querySelector("#unread-badge").style.display = "none";
             chatEntryBtn.querySelector("#chat-unread-badge").style.display = "none";
             
             userActionBtn.onclick = () => {
-                const view = createAuthView(async (formData) => {
+                const view = createAuthView(async (formData, context) => {
+                    const originalSession = captureRequestSession();
+                    const current = () => context.isCurrent() && userHeader.isConnected
+                        && _navInstance?.dom === userHeader && originalSession();
+                    if (!current()) return;
                     try {
-                        userActionBtn.innerHTML = `⏳ ${t('common.loading')}`;
-                        let userData; let token; let isRemember = false;
-                        
-                        if (formData.type === "reset") {
-                            userActionBtn.innerHTML = `⏳ ${t('auth.resetting_password')}`;
-                            
-                            // 🚀 核心修复：停止错误地拆解字段导致 undefined，直接将包含所有数据的 formData 对象完整传给 API 装甲！
-                            await api.resetPassword(formData);
-                            
-                            showToast(t('auth.password_reset_success'), "success");
-                            window.dispatchEvent(new CustomEvent("comfy-route-back")); updateUserButtonState(); return; 
+                        if (formData.type === 'reset') {
+                            const reset = await api.resetPassword(formData);
+                            if (reset?.status !== 'success') throw new Error('Unconfirmed reset');
+                            if (!current()) return;
+                            showToast(t('auth.password_reset_success'), 'success');
+                            window.dispatchEvent(new CustomEvent('comfy-route-back')); updateUserButtonState(); return;
                         }
-                        if (formData.type === "register") {
-                            // 🚀 核心修复：/api/upload 需要登录凭证，注册时尚无 token 必然 401。
-                            // 调整时序为：先注册（不带头像）→ 自动登录拿到 token → 再上传头像并写入资料。
-                            const pendingAvatarFile = formData.avatarFile || null;
-                            delete formData.avatarFile;
-                            delete formData.avatarDataUrl;  // base64 预览值会被后端拒绝，不随注册提交
-
-                            userActionBtn.innerHTML = `⏳ ${t('auth.registering')}`;
-                            await api.register(formData);
-                            showToast(t('auth.register_success') + t('auth.auto_login'), "success");
-                            // 注册后自动登录，默认保持登录
-                            const res = await api.login(formData.account, formData.password, true);
-                            userData = { account: formData.account, name: formData.name, avatar: res.avatar, ...res }; 
-                            token = res.token; isRemember = true; 
-
-                            // 🖼️ 登录成功后再上传头像（此时请求可携带 Authorization）
-                            if (pendingAvatarFile && token) {
-                                userActionBtn.innerHTML = `⏳ ${t('auth.uploading_avatar')}`;
-                                // 提前写入 token，确保上传与资料更新请求能通过认证
-                                localStorage.setItem("ComfyCommunity_Token", token);
-                                try {
-                                    // 统一走带 processAvatar 压缩的包装器，规避后端 2MB 头像限制
-                                    const cloudAvatarUrl = await uploadFile(pendingAvatarFile, "avatar");
-                                    if (cloudAvatarUrl) {
-                                        const updateRes = await api.updateUserProfile(formData.account, { avatarDataUrl: cloudAvatarUrl });
-                                        userData = { ...userData, ...(updateRes.data || {}) };
-                                        if (userData.avatarDataUrl) userData.avatar = userData.avatarDataUrl;
-                                    } else {
-                                        showToast(t('auth.avatar_set_failed'), "warning");
-                                    }
-                                } catch (avatarErr) {
-                                    console.warn("注册后设置头像失败:", avatarErr.message || avatarErr);
-                                    showToast(t('auth.avatar_set_failed'), "warning");
-                                }
-                            }
-                        } else if (formData.type === "login") {
-                            const res = await api.login(formData.account, formData.password, formData.remember);
-                            token = res.token; isRemember = formData.remember;
-                            try {
-                                if (isRemember) localStorage.setItem("ComfyCommunity_Token", token); 
-                                else sessionStorage.setItem("ComfyCommunity_Token", token);
-                                const profileRes = await api.getUserProfile(formData.account);
-                                userData = { account: formData.account, ...profileRes.data };
-                            } catch (e) {
-                                userData = { account: formData.account, name: res.name || res.data?.name || formData.account, avatar: res.avatar || res.data?.avatar };
-                            }
-                            showToast(t('auth.login_success'), "success");
+                        const account = formData.account;
+                        const isRegister = formData.type === 'register';
+                        if (!isRegister && formData.type !== 'login') return;
+                        const pendingAvatarFile = isRegister ? formData.avatarFile : null;
+                        if (isRegister) {
+                            const registration = { ...formData }; delete registration.avatarFile; delete registration.avatarDataUrl;
+                            const registered = await api.register(registration);
+                            if (registered?.status !== 'success') throw new Error('Unconfirmed registration');
+                            if (!current()) return;
                         }
-                        
-                        currentUser = userData;
-                        const sessionData = JSON.stringify({ user: currentUser, expireAt: Date.now() + 30 * 24 * 60 * 60 * 1000 });
-                        if (isRemember) { localStorage.setItem("ComfyCommunity_User", sessionData); localStorage.setItem("ComfyCommunity_Token", token); } 
-                        else { sessionStorage.setItem("ComfyCommunity_User", sessionData); sessionStorage.setItem("ComfyCommunity_Token", token); }
-
-                        window.dispatchEvent(new CustomEvent("comfy-route-back"));
-                        updateUserButtonState();
-                        window.dispatchEvent(new CustomEvent("comfy-user-login")); 
-                    } catch (err) {
-                        showToast(`${t('common.error')}: ` + err.message, "error"); updateUserButtonState(); 
+                        const remember = isRegister || formData.remember === true;
+                        const result = await api.login(account, formData.password, remember);
+                        if (!current()) return;
+                        if (result?.status !== 'success' || typeof result.token !== 'string' || !result.token
+                            || (result.account && result.account !== account)) throw new Error('Invalid login response');
+                        currentUser = setUser({ account, name: result.name || formData.name || account, avatar: result.avatar }, result.token, remember);
+                        const authenticatedSession = captureRequestSession();
+                        const sameLogin = () => authenticatedSession() && userHeader.isConnected
+                            && _navInstance?.dom === userHeader && currentUser?.account === account;
+                        showToast(t(isRegister ? 'auth.register_success' : 'auth.login_success'), 'success');
+                        // 凭证已发布即完成登录，资料补充不阻塞页面返回。
+                        window.dispatchEvent(new CustomEvent('comfy-route-back'));
+                        updateUserButtonState(); window.dispatchEvent(new CustomEvent('comfy-user-login'));
+                        const applyProfile = data => {
+                            if (!sameLogin() || data?.account !== account) return;
+                            currentUser = sessionProfile({ ...currentUser, ...data });
+                            if (currentUser.avatarDataUrl) currentUser.avatar = currentUser.avatarDataUrl;
+                            updateUser(currentUser); updateUserButtonState();
+                        };
+                        try {
+                            const profile = await api.getUserProfile(account, { timeout: API.BACKGROUND_TIMEOUT,
+                                retries: API.BACKGROUND_RETRIES, componentId: `login-profile-${account}` });
+                            if (profile?.status === 'success') applyProfile(profile.data);
+                        } catch (_) {}
+                        if (!sameLogin() || !pendingAvatarFile) return;
+                        try {
+                            const avatar = await uploadFile(pendingAvatarFile, 'avatar', { isCurrent: sameLogin, silent: true });
+                            if (!sameLogin()) return;
+                            if (!avatar) { showToast(t('auth.avatar_set_failed'), 'warning'); return; }
+                            const updated = await api.updateUserProfile(account, { avatarDataUrl: avatar });
+                            if (!sameLogin()) return;
+                            if (updated?.status === 'success') applyProfile(updated.data);
+                            else showToast(t('auth.avatar_set_failed'), 'warning');
+                        } catch (_) { if (sameLogin()) showToast(t('auth.avatar_set_failed'), 'warning'); }
+                    } catch (error) {
+                        if (current()) {
+                            let messageKey = 'common.error';
+                            if (formData.type === 'login') {
+                                messageKey = 'auth.login_failed';
+                                if (error?.status === 401 || error?.status === 404) messageKey = 'auth.login_credentials_invalid';
+                                else if (error?.status === 429) messageKey = 'auth.login_rate_limited';
+                                else if (error?.status === 422) messageKey = 'auth.login_input_invalid';
+                                else if (error?.status >= 500) messageKey = 'auth.login_service_unavailable';
+                                else if (error?.code === 'network_timeout') messageKey = 'auth.login_timeout';
+                                else if (error?.code === 'network_unavailable' || error?.name === 'CloudUnavailableError') messageKey = 'common.network_error_retry';
+                            }
+                            showToast(t(messageKey), 'error'); updateUserButtonState();
+                        }
                     }
                 });
                 window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
@@ -219,31 +202,19 @@ export function createTopNav() {
 
     // 🔄 跨标签页登录状态同步：其他标签页修改 localStorage 时触发
     // 🔧 P1修复：改为模块级统一注册的 storage 监听回调（onStorage），不再逐实例 addEventListener
-    const handleCrossTabStorage = (event) => {
-        if (event.key === 'ComfyCommunity_Token' || event.key === 'ComfyCommunity_User') {
-            if (!event.newValue) {
-                // 其他标签页登出 → 本标签页也同步登出
-                if (currentUser) {
-                    currentUser = null;
-                    updateUserButtonState();
-                }
-            } else if (event.key === 'ComfyCommunity_User') {
-                // 其他标签页登入了不同账号 → 刷新本标签页用户状态
-                try {
-                    const data = JSON.parse(event.newValue);
-                    if (data.user && data.user.account !== (currentUser && currentUser.account)) {
-                        currentUser = data.user;
-                        updateUserButtonState();
-                    }
-                } catch (e) {}
-            }
+    const handleCrossTabStorage = event => {
+        if (event.key === null || [CACHE.LEGACY_KEYS.USER, CACHE.LEGACY_KEYS.TOKEN].includes(event.key)) {
+            currentUser = readUserSession(sessionStorages(), CACHE.LEGACY_KEYS)?.user || null;
+            stopMessagePolling();
+            initUserState(); updateUserButtonState();
         }
     };
-    
+
     updateUserButtonState();
 
     // 🔧 P1修复：注册为当前活跃实例，模块级监听将路由到本实例的回调
     _navInstance = {
+        dom: userHeader,
         onLogout: () => { currentUser = null; updateUserButtonState(); },
         onStorage: handleCrossTabStorage,
         onChatUnreadChanged: () => loadChatUnreadCount(currentUser, chatEntryBtn)
@@ -251,16 +222,16 @@ export function createTopNav() {
     _registerNavWindowListeners();
 
     const actionWrapper = document.createElement("div");
-    actionWrapper.style.display = "flex"; actionWrapper.style.alignItems = "center";
+    actionWrapper.className = "top-nav__actions";
     actionWrapper.appendChild(chatEntryBtn); 
     actionWrapper.appendChild(bellBtn);
     actionWrapper.appendChild(userActionBtn);
     
-    userHeader.appendChild(titleWrapper);  // ⚙️ 改为 titleWrapper
-    // 顶部广告横幅
+    userHeader.appendChild(titleWrapper);
+    userHeader.appendChild(actionWrapper);
+    // 广告独占下一行，DOM/键盘顺序与视觉顺序一致。
     const banner = createTopBanner();
     if (banner) userHeader.appendChild(banner);
-    userHeader.appendChild(actionWrapper);
 
     return {
         dom: userHeader,
@@ -270,37 +241,31 @@ export function createTopNav() {
 
 // 🚀 新增：启动消息定时轮询
 function startMessagePolling(currentUser, bellBtn, chatEntryBtn) {
-    if (!CACHE.MESSAGE_POLL.ENABLED) return;
-    if (isPollingActive) return;  // 🔧 P3优化：防止重复启动
-    
-    // 清除旧的定时器
+    if (!CACHE.MESSAGE_POLL.ENABLED || isPollingActive) return;
     stopMessagePolling();
     isPollingActive = true;
-    
-    // 创建新的定时器，每隔一定时间检查新消息
-    messagePollingTimer = setInterval(async () => {
-        // 🔧 P3优化：双重检查，确保用户仍在线
-        if (!currentUser || !isPollingActive) {
-            stopMessagePolling();
+    const generation = pollingGeneration;
+    const sessionMatches = captureRequestSession();
+    const current = () => isPollingActive && generation === pollingGeneration
+        && sessionMatches() && _navInstance?.dom?.contains(bellBtn) && bellBtn.isConnected && chatEntryBtn.isConnected;
+    const poll = async () => {
+        if (!current()) {
+            if (generation === pollingGeneration) stopMessagePolling();
             return;
         }
-        try {
-            // 🔔 铃铛未读（点赞/评论/购买/任务/系统公告等）与 ✉️ 私信未读分别刷新
-            await loadUnreadCount(currentUser, bellBtn);
-            await loadChatUnreadCount(currentUser, chatEntryBtn);
-        } catch (e) {
-            // 静默失败，不影响用户体验
-        }
-    }, CACHE.MESSAGE_POLL.INTERVAL);
-    
-    console.log(`📨 消息轮询已启动，间隔 ${CACHE.MESSAGE_POLL.INTERVAL / 1000} 秒`);
+        await Promise.allSettled([loadUnreadCount(currentUser, bellBtn), loadChatUnreadCount(currentUser, chatEntryBtn)]);
+        if (current()) messagePollingTimer = setTimeout(poll, CACHE.MESSAGE_POLL.INTERVAL);
+        else if (generation === pollingGeneration) stopMessagePolling();
+    };
+    messagePollingTimer = setTimeout(poll, CACHE.MESSAGE_POLL.INTERVAL);
 }
 
 // 🚀 新增：停止消息定时轮询
 function stopMessagePolling() {
+    pollingGeneration++;
     isPollingActive = false;  // 🔧 P3优化：先标记为停止
     if (messagePollingTimer) {
-        clearInterval(messagePollingTimer);
+        clearTimeout(messagePollingTimer);
         messagePollingTimer = null;
         console.log('📨 消息轮询已停止');
     }

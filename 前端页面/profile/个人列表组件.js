@@ -4,7 +4,8 @@ import { createItemCard } from "../market/列表卡片组件.js";
 import { getAcquiredItems } from "../market/资源安装引擎.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t, tIfExists, getLanguage } from "../components/用户体验增强.js";
-import { PLACEHOLDERS, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { PLACEHOLDERS, PAGINATION, CACHE, API, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { beginProfileListView, normalizeProfileItems, normalizeCollectedProfile, profileItemsFromResponse, readProfileListCache, writeProfileListCache } from './个人列表缓存.js';
 import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 /**
@@ -14,48 +15,39 @@ import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归
  * @param {Function} openOtherUserModalCb - 打开用户详情回调
  * @returns {HTMLElement} 用户卡片元素
  */
+let nextUserCardId = 0;
+
 function renderUserCard(account, currentUser, openOtherUserModalCb) {
-    const card = document.createElement("div");
-    card.id = `user-card-${account}`;
-    card.style.cssText = "padding: 12px; background: var(--comfy-input-bg); border-radius: 8px; border: 1px solid #444; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: all 0.2s;";
-    card.onmouseover = () => { card.style.borderColor = "#666"; card.style.transform = "translateX(3px)"; };
-    card.onmouseout = () => { card.style.borderColor = "#444"; card.style.transform = "translateX(0)"; };
+    const card = document.createElement("button");
+    const cardId = `ranking-profile-user-${++nextUserCardId}`;
+    card.type = 'button';
+    card.id = cardId;
+    card.className = 'profile-user-card';
+    card.setAttribute('aria-labelledby', `${cardId}-name ${cardId}-action`);
+    card.setAttribute('aria-describedby', `${cardId}-intro`);
     card.onclick = () => openOtherUserModalCb(account, currentUser);
 
-    // 先从缓存获取数据快速渲染
     const cached = getCachedProfile(account);
     const avatar = cached?.avatar || PLACEHOLDERS.AVATAR;
     const name = cached?.name || account;
     const intro = cached?.intro || '';
-
-    // 🔒 XSS防护：头像/昵称/简介均来自用户可修改的资料（下方 SWR 刷新路径用的是
-    // .src / .textContent，本身就是安全的，仅初次渲染的模板串需要转义）
     card.innerHTML = `
-        <img id="user-avatar-${account}" src="${escapeHtml(avatar)}" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid #4CAF50; flex-shrink: 0;">
-        <div style="flex: 1; min-width: 0;">
-            <div id="user-name-${account}" style="font-weight: bold; color: #4CAF50; font-size: 14px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">@${escapeHtml(name)}</div>
-            <div id="user-intro-${account}" style="font-size: 12px; color: #888; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(intro || t('profile.no_intro'))}</div>
-        </div>
-        <button style="padding: 6px 12px; background: #2196F3; border: none; border-radius: 4px; color: white; cursor: pointer; font-size: 12px; flex-shrink: 0;">${t('profile.homepage')}</button>
+        <img class="profile-user-card__avatar" alt="" src="${escapeHtml(avatar)}">
+        <span class="profile-user-card__body">
+            <span class="profile-user-card__name" id="${cardId}-name">@${escapeHtml(name)}</span>
+            <span class="profile-user-card__intro" id="${cardId}-intro">${escapeHtml(intro || t('profile.no_intro'))}</span>
+        </span>
+        <span class="profile-user-card__action" id="${cardId}-action">${t('profile.homepage')}</span>
     `;
-
-    // SWR：后台静默更新
-    getProfileWithSWR(account, api.getUserProfile, (profile) => {
-        const avatarImg = card.querySelector(`#user-avatar-${account}`);
-        const nameDiv = card.querySelector(`#user-name-${account}`);
-        const introDiv = card.querySelector(`#user-intro-${account}`);
-
-        if (avatarImg && profile.avatar) {
-            avatarImg.src = profile.avatar;
-        }
-        if (nameDiv && profile.name) {
-            nameDiv.textContent = `@${profile.name}`;
-        }
-        if (introDiv && profile.intro !== undefined) {
-            introDiv.textContent = profile.intro || t('profile.no_intro');
-        }
+    const avatarImg = card.querySelector('.profile-user-card__avatar');
+    const nameDiv = card.querySelector('.profile-user-card__name');
+    const introDiv = card.querySelector('.profile-user-card__intro');
+    getProfileWithSWR(account, api.getUserProfile, profile => {
+        if (!card.isConnected || card.querySelector('.profile-user-card__name') !== nameDiv) return;
+        if (profile.avatar) avatarImg.src = profile.avatar;
+        if (profile.name) nameDiv.textContent = `@${profile.name}`;
+        if (profile.intro !== undefined) introDiv.textContent = profile.intro || t('profile.no_intro');
     });
-
     return card;
 }
 
@@ -70,9 +62,7 @@ function renderUserCard(account, currentUser, openOtherUserModalCb) {
 function _renderUserListTab(listData, domElement, currentUser, openOtherUserModalCb, emptyMsg) {
     domElement.innerHTML = "";
     const containerDiv = document.createElement("div");
-    containerDiv.style.display = "flex";
-    containerDiv.style.flexDirection = "column";
-    containerDiv.style.gap = "8px";
+    containerDiv.className = 'profile-user-list';
     domElement.appendChild(containerDiv);
     renderPaginatedUserList(listData, containerDiv, currentUser, openOtherUserModalCb, emptyMsg);
 }
@@ -86,50 +76,58 @@ function _renderUserListTab(listData, domElement, currentUser, openOtherUserModa
  * {string} emptyMessage - 空列表提示消息
  */
 function renderPaginatedUserList(userList, containerDiv, currentUser, openOtherUserModalCb, emptyMessage) {
-    containerDiv.innerHTML = "";
-    
-    if (userList.length === 0) {
-        containerDiv.innerHTML = `<div style='text-align:center; padding: 20px; color:#666;'>${escapeHtml(emptyMessage)}</div>`;
+    containerDiv.replaceChildren();
+    const accounts = Array.isArray(userList) ? userList.filter(account => typeof account === 'string' && account.trim()) : [];
+    if (!accounts.length) {
+        const empty = document.createElement('div');
+        empty.className = 'profile-user-list__empty';
+        empty.setAttribute('role', 'status');
+        empty.textContent = emptyMessage;
+        containerDiv.appendChild(empty);
         return;
     }
-
-    // 分页逻辑：先加载前20个
-    const PAGE_SIZE = 20;
-    let displayedCount = Math.min(PAGE_SIZE, userList.length);
-
-    // 渲染当前页的用户
-    const renderPage = () => {
-        // 保留容器但清空内容
-        containerDiv.innerHTML = "";
-        
-        const pageAccounts = userList.slice(0, displayedCount);
-        
-        pageAccounts.forEach((account) => {
+    let displayedCount = 0;
+    const loadMoreBtn = document.createElement('button');
+    loadMoreBtn.type = 'button';
+    loadMoreBtn.className = 'profile-user-list__more';
+    containerDiv.appendChild(loadMoreBtn);
+    const appendPage = (fromUser = false) => {
+        const nextCount = Math.min(displayedCount + PAGINATION.PROFILE_USERS_PAGE_SIZE, accounts.length);
+        let firstAdded;
+        for (const account of accounts.slice(displayedCount, nextCount)) {
             const card = renderUserCard(account, currentUser, openOtherUserModalCb);
-            containerDiv.appendChild(card);
-        });
-
-        // 如果有更多，显示"加载更多"按钮
-        if (displayedCount < userList.length) {
-            const loadMoreBtn = document.createElement("button");
-            loadMoreBtn.textContent = t('profile.load_more', { count: userList.length - displayedCount });
-            loadMoreBtn.style.cssText = "width: 100%; padding: 12px; background: var(--comfy-input-bg); border: 1px solid #555; border-radius: 6px; color: #4CAF50; cursor: pointer; font-size: 13px; margin-top: 8px; transition: all 0.2s;";
-            loadMoreBtn.onmouseover = () => { loadMoreBtn.style.background = "#3a3a3a"; };
-            loadMoreBtn.onmouseout = () => { loadMoreBtn.style.background = "var(--comfy-input-bg)"; };
-            loadMoreBtn.onclick = () => {
-                displayedCount = Math.min(displayedCount + PAGE_SIZE, userList.length);
-                renderPage();
-            };
-            containerDiv.appendChild(loadMoreBtn);
+            firstAdded ||= card;
+            containerDiv.insertBefore(card, loadMoreBtn);
+        }
+        displayedCount = nextCount;
+        if (displayedCount < accounts.length) {
+            loadMoreBtn.textContent = t('profile.load_more', { count: accounts.length - displayedCount });
+        } else {
+            loadMoreBtn.remove();
+            if (fromUser) firstAdded?.focus();
         }
     };
+    loadMoreBtn.onclick = () => appendPage(true);
+    appendPage();
+}
 
-    renderPage();
+function setProfileListState(element, message, role = 'status') {
+    const state = document.createElement('div');
+    state.className = 'profile-user-list__empty';
+    state.setAttribute('role', role);
+    state.textContent = message;
+    element.replaceChildren(state);
 }
 
 export async function renderProfileListContent(tabId, domElement, userData, currentUser, openOtherUserModalCb) {
+    const isCurrent = beginProfileListView(domElement, domElement._profileSessionCurrent);
     const isMe = currentUser && currentUser.account === userData.account;
     const privacy = userData.privacy || {};
+
+    if (!isMe && ['acquired', 'my_tasks', 'transactions', 'my_posts', 'my_prompts'].includes(tabId)) {
+        domElement.innerHTML = `<div role="status" class="profile-user-list__empty">${t('profile.privacy_hidden')}</div>`;
+        return;
+    }
 
     // 【修复】：从底层杜绝隐私被穿透抓取
     if (!isMe) {
@@ -137,7 +135,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             (tabId === "liked" && privacy.likes) ||
             (tabId === "followers" && privacy.follows) ||
             (tabId === "collected" && privacy.favorites)) {
-            domElement.innerHTML = `<div style='text-align:center; padding: 30px; color:#888;'>🔒 ${t('profile.privacy_hidden')}</div>`;
+            setProfileListState(domElement, t('profile.privacy_hidden'), 'status');
             return;
         }
     }
@@ -154,98 +152,70 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
         return;
     }
 
-    // 🚀 已获取的资源列表（使用标准 createItemCard 组件）
-    if (tabId === "acquired") {
-        let acquiredItemIds = [];
-        let useCloudData = false;
-
-        // 优先从云端获取购买记录
+    // 已获取资源先显示本地记录，再校对云端所有权与详情。
+    if (tabId === 'acquired') {
+        let localItems = [];
+        try { localItems = normalizeProfileItems(getAcquiredItems()); } catch {}
+        const renderAcquired = (items, hasOwnership = false) => {
+            if (!isCurrent()) return;
+            if (!items.length) {
+                if (hasOwnership) {
+                    const error = document.createElement('div');
+                    error.className = 'profile-user-list__empty';
+                    error.setAttribute('role', 'alert');
+                    error.textContent = t('profile.load_failed');
+                    domElement.replaceChildren(error);
+                } else domElement.innerHTML = _renderEmptyState('📦', t('profile.no_purchased_resources'), t('profile.discover_resources'));
+                return;
+            }
+            const list = document.createElement('div');
+            list.className = 'profile-content-list';
+            for (const item of items) list.appendChild(createItemCard(item, currentUser, 'acquired'));
+            domElement.replaceChildren(list);
+        };
+        if (localItems.length) renderAcquired(localItems.map(item => ({ ...item, _isOffline: true })));
+        else domElement.innerHTML = `<div role="status" class="profile-user-list__empty">${t('profile.loading_resources')}</div>`;
+        let acquiredIds = localItems.map(item => String(item.id));
         try {
             if (currentUser?.account) {
-                const purchasesRes = await api.getUserPurchases(currentUser.account);
-                if (purchasesRes?.status === "success" && purchasesRes.data) {
-                    acquiredItemIds = purchasesRes.data.map(p => p.item_id);
-                    useCloudData = true;
-                }
+                const response = await api.getUserPurchases(currentUser.account);
+                if (!isCurrent()) return;
+                if (response?.status !== 'success' || !Array.isArray(response.data)) throw new Error('Invalid purchases');
+                const cloudIds = response.data.filter(record => record && typeof record === 'object'
+                    && typeof record.item_id === 'string' && record.item_id).map(record => record.item_id);
+                if (response.data.length && !cloudIds.length) throw new Error('Invalid purchase entries');
+                acquiredIds = cloudIds;
             }
-        } catch (e) {
-            console.warn("云端购买记录获取失败，降级使用本地缓存:", e);
+        } catch {
+            if (!isCurrent()) return;
+            console.warn('购买记录暂不可用，保留本地资源');
         }
-
-        // 降级：从 localStorage 获取
-        if (!useCloudData) {
-            const localItems = getAcquiredItems();
-            acquiredItemIds = localItems.map(item => item.id);
-        }
-
-        if (acquiredItemIds.length === 0) {
-            domElement.innerHTML = _renderEmptyState('📦', '还没有购买任何资源', '去榜单页面发现优秀插件吧！');
-            return;
-        }
-
-        domElement.innerHTML = `<div style='padding: 20px; color:#888;'>⏳ 正在加载...</div>`;
-
+        if (!acquiredIds.length) { renderAcquired([]); return; }
+        const localMap = new Map(localItems.map(item => [String(item.id), item]));
+        const cloudMap = new Map();
+        const controller = new AbortController();
+        const release = domElement._profileAddCleanup?.(() => controller.abort());
+        let timer;
         try {
-            // 获取资源详情（用于完整显示卡片，5秒超时）
-            let cloudItems = [];
-            const timeoutMs = 5000;
-            const fetchPromise = Promise.all([
-                api.getItems("tool", "time", 200),
-                api.getItems("skill", "time", 200),
-                api.getItems("app", "time", 200)
-            ]);
-            const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs));
-            const result = await Promise.race([fetchPromise, timeoutPromise]);
-
-            if (result) {
-                const [toolsRes, skillsRes, appsRes] = result;
-                cloudItems = [...(toolsRes?.data || []), ...(skillsRes?.data || []), ...(appsRes?.data || [])];
-            }
-
-            const cloudMap = {};
-            cloudItems.forEach(item => { cloudMap[item.id] = item; });
-
-            // 用 acquiredItemIds 过滤出已购买的资源
-            const enrichedItems = acquiredItemIds.map(itemId => {
-                const cloudItem = cloudMap[itemId];
-                if (cloudItem) return cloudItem;
-                // 云端资源列表中找不到（可能已下架），尝试从本地缓存恢复
-                const localItems = getAcquiredItems();
-                const localItem = localItems.find(l => l.id === itemId);
-                return localItem ? { ...localItem, _isOffline: true } : null;
-            }).filter(Boolean);
-
-            // 使用 createItemCard 渲染（与 published 一致）
-            const listDiv = document.createElement("div");
-            listDiv.style.cssText = "display:flex;flex-direction:column;gap:10px;";
-
-            enrichedItems.forEach(item => {
-                const card = createItemCard(item, currentUser, "acquired");
-                listDiv.appendChild(card);
+            const fetches = ['tool', 'skill', 'app'].map(async type => {
+                const response = await api.getItems(type, 'time', PAGINATION.PROFILE_RESOURCE_FETCH_LIMIT, { signal: controller.signal });
+                for (const item of profileItemsFromResponse(response)) cloudMap.set(String(item.id), item);
             });
-
-            domElement.innerHTML = "";
-            domElement.appendChild(listDiv);
-
-        } catch (e) {
-            console.warn("获取云端资源超时或失败，使用本地数据:", e);
-            // 网络失败时也用 createItemCard 渲染本地数据
-            const localItems = getAcquiredItems();
-            const listDiv = document.createElement("div");
-            listDiv.style.cssText = "display:flex;flex-direction:column;gap:10px;";
-            localItems.forEach(item => {
-                const card = createItemCard(item, currentUser, "acquired");
-                listDiv.appendChild(card);
+            const deadline = new Promise(resolve => {
+                timer = setTimeout(() => { controller.abort(); resolve(); }, API.PROFILE_RESOURCE_TIMEOUT);
             });
-            domElement.innerHTML = "";
-            domElement.appendChild(listDiv);
-        }
+            await Promise.race([Promise.allSettled(fetches), deadline]);
+            if (!isCurrent()) return;
+            const enriched = [...new Set(acquiredIds)].map(id => cloudMap.get(id)
+                || (localMap.has(id) ? { ...localMap.get(id), _isOffline: true } : null)).filter(Boolean);
+            renderAcquired(enriched, true);
+        } finally { clearTimeout(timer); release?.(); }
         return;
     }
 
     // 📝 新增：我的任务列表
     if (tabId === "my_tasks") {
-        domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#888;'>⏳ 加载任务中...</div>";
+        setProfileListState(domElement, t('profile.loading_tasks'), 'status');
         
         try {
             // 并行获取我发布的 + 我接的任务
@@ -254,11 +224,12 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                 api.getMyTasks("assignee")
             ]);
             
+            if (!isCurrent()) return;
             const publishedTasks = publishedRes.data || [];
             const assignedTasks = assignedRes.data || [];
             
             if (publishedTasks.length === 0 && assignedTasks.length === 0) {
-                domElement.innerHTML = _renderEmptyState('📝', '还没有任何任务记录', '去任务榜发布或接受任务吧！');
+                domElement.innerHTML = _renderEmptyState('📝', t('profile.no_task_records'), t('profile.go_tasks'));
                 return;
             }
             
@@ -267,8 +238,8 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                 completed: "#9E9E9E", disputed: "#F44336", cancelled: "#757575"
             };
             const statusLabels = {
-                open: "开放接单", in_progress: "进行中", submitted: "待验收",
-                completed: "已完成", disputed: "争议中", cancelled: "已取消"
+                open: t('task.status_open'), in_progress: t('task.status_in_progress'), submitted: t('task.status_submitted'),
+                completed: t('task.status_completed'), disputed: t('task.status_disputed'), cancelled: t('task.status_cancelled')
             };
             
             const listDiv = document.createElement("div");
@@ -280,7 +251,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             if (publishedTasks.length > 0) {
                 const sectionTitle = document.createElement("div");
                 sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #FF9800; margin-bottom: 5px; padding: 5px 0;";
-                sectionTitle.textContent = `📤 我发布的任务 (${publishedTasks.length})`;
+                sectionTitle.textContent = `📤 ${t('profile.published_tasks')} (${publishedTasks.length})`;
                 listDiv.appendChild(sectionTitle);
                 
                 publishedTasks.forEach(task => {
@@ -293,7 +264,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             if (assignedTasks.length > 0) {
                 const sectionTitle = document.createElement("div");
                 sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #2196F3; margin-bottom: 5px; padding: 5px 0; margin-top: 15px;";
-                sectionTitle.textContent = `📥 我接的任务 (${assignedTasks.length})`;
+                sectionTitle.textContent = `📥 ${t('profile.assigned_tasks')} (${assignedTasks.length})`;
                 listDiv.appendChild(sectionTitle);
                 
                 assignedTasks.forEach(task => {
@@ -306,15 +277,16 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             domElement.appendChild(listDiv);
             
         } catch (e) {
-            console.error("加载任务失败:", e);
-            domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#F44336;'>任务加载失败</div>`;
+            if (!isCurrent()) return;
+            console.error("加载任务失败");
+            setProfileListState(domElement, t('profile.load_tasks_failed'), 'alert');
         }
         return;
     }
     
     // 💳 P6支付增强：交易明细列表
     if (tabId === "transactions") {
-        domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#888;'>⏳ 加载交易记录中...</div>";
+        setProfileListState(domElement, t('profile.loading_transactions'), 'status');
         
         try {
             // 并行获取任务统计、交易明细、打赏统计和销售统计
@@ -325,6 +297,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                 api.getSalesStats(currentUser.account).catch(() => ({ data: {} }))  // 新增，带容错
             ]);
             
+            if (!isCurrent()) return;
             const stats = statsRes.data || {};
             const transactions = txRes.data || [];
             const tipStats = tipStatsRes.data || {};
@@ -348,11 +321,11 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
 
             // 📊 任务收益统计卡片
             containerDiv.appendChild(_createStatsCard(
-                '📊 任务收益统计',
+                `📊 ${t('profile.task_earnings_stats')}`,
                 [
-                    { value: `+${stats.total_income || 0}`,   color: '#4CAF50', bgRgb: '76,175,80',  label: `任务收入 (${stats.income_count || 0}笔)` },
-                    { value: `-${stats.total_payment || 0}`,  color: '#F44336', bgRgb: '244,67,54', label: `任务支出 (${stats.payment_count || 0}笔)` },
-                    { value: `${stats.net_earnings > 0 ? '+' : ''}${stats.net_earnings || 0}`, color: '#2196F3', bgRgb: '33,150,243', label: '净收益' }
+                    { value: `+${stats.total_income || 0}`,   color: '#4CAF50', bgRgb: '76,175,80',  label: `${t('profile.task_income')} (${stats.income_count || 0}${t('profile.transactions_unit')})` },
+                    { value: `-${stats.total_payment || 0}`,  color: '#F44336', bgRgb: '244,67,54', label: `${t('profile.task_expense')} (${stats.payment_count || 0}${t('profile.transactions_unit')})` },
+                    { value: `${stats.net_earnings > 0 ? '+' : ''}${stats.net_earnings || 0}`, color: '#2196F3', bgRgb: '33,150,243', label: t('profile.net_earnings') }
                 ]
             ));
 
@@ -372,7 +345,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             txListDiv.style.cssText = "display: flex; flex-direction: column; gap: 8px;";
             
             if (transactions.length === 0) {
-                txListDiv.innerHTML = _renderEmptyState('💰', '暂无交易记录');
+                txListDiv.innerHTML = _renderEmptyState('💰', t('profile.no_transactions'));
             } else {
                 transactions.forEach(tx => {
                     try {
@@ -389,22 +362,24 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             domElement.appendChild(containerDiv);
             
         } catch (e) {
-            console.error("加载交易记录失败:", e);
-            domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#F44336;'>交易记录加载失败</div>`;
+            if (!isCurrent()) return;
+            console.error("加载交易记录失败");
+            setProfileListState(domElement, t('profile.load_transactions_failed'), 'alert');
         }
         return;
     }
     
     // 💬 新增：我的帖子列表
     if (tabId === "my_posts") {
-        domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#888;'>⏳ 加载帖子中...</div>";
+        setProfileListState(domElement, t('profile.loading_posts'), 'status');
 
         try {
             const res = await api.getMyPosts();
+            if (!isCurrent()) return;
             const posts = res.data || [];
 
             if (posts.length === 0) {
-                domElement.innerHTML = _renderEmptyState('💬', '还没有发布任何帖子', '去讨论区分享你的想法吧！');
+                domElement.innerHTML = _renderEmptyState('💬', t('profile.no_posts'), t('profile.go_posts'));
                 return;
             }
 
@@ -422,22 +397,24 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             domElement.appendChild(listDiv);
 
         } catch (e) {
-            console.error("加载帖子失败:", e);
-            domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#F44336;'>帖子加载失败</div>`;
+            if (!isCurrent()) return;
+            console.error("加载帖子失败");
+            setProfileListState(domElement, t('profile.load_posts_failed'), 'alert');
         }
         return;
     }
 
     // 🧩 新增：我的提示词列表
     if (tabId === "my_prompts") {
-        domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#888;'>⏳ 加载提示词中...</div>";
+        setProfileListState(domElement, t('profile.loading_prompts'), 'status');
 
         try {
             const res = await api.getMyPrompts();
+            if (!isCurrent()) return;
             const prompts = res.data || [];
 
             if (prompts.length === 0) {
-                domElement.innerHTML = _renderEmptyState('🧩', '还没有发布任何提示词', '去提示词广场分享你的创作吧！');
+                domElement.innerHTML = _renderEmptyState('🧩', t('profile.no_prompts'), t('profile.go_prompts'));
                 return;
             }
 
@@ -455,18 +432,21 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             domElement.appendChild(listDiv);
 
         } catch (e) {
-            console.error("加载提示词失败:", e);
-            domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#F44336;'>提示词加载失败</div>`;
+            if (!isCurrent()) return;
+            console.error("加载提示词失败");
+            setProfileListState(domElement, t('profile.load_prompts_failed'), 'alert');
         }
         return;
     }
 
     // ⭐ 新增：我的收藏列表（资源 + 帖子 + 提示词）
     if (tabId === "collected") {
-        const cacheKey = `ProfileList_${userData.account}_collected`;
-        const cachedStr = localStorage.getItem(cacheKey);
+        const cacheKey = `${CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX}${userData.account}_collected`;
+        const cached = readProfileListCache(cacheKey, normalizeCollectedProfile);
+        const cachedStr = cached ? JSON.stringify(cached) : null;
 
         const applyDOM = (items, posts, prompts) => {
+            if (!isCurrent()) return;
             domElement.innerHTML = "";
             if ((!items || items.length === 0) && (!posts || posts.length === 0) && (!prompts || prompts.length === 0)) {
                 domElement.innerHTML = _renderEmptyState('🔖', t('profile.no_collected'), t('profile.go_discover'));
@@ -502,13 +482,10 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             domElement.appendChild(listDiv);
         };
 
-        if (cachedStr) {
-            try {
-                const cached = JSON.parse(cachedStr);
-                applyDOM(cached.items, cached.posts, cached.prompts);
-            } catch(e) { localStorage.removeItem(cacheKey); }
+        if (cached) {
+            applyDOM(cached.items, cached.posts, cached.prompts);
         } else {
-            domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#888;'>⏳ 正在拉取数据...</div>";
+            setProfileListState(domElement, t('profile.fetching_data'), 'status');
         }
 
         try {
@@ -519,56 +496,62 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                 api.getPosts(1, 200, "latest"),
                 api.getPrompts(null, null, 1, 200, "latest")
             ]);
-            const allItems = [...(toolsRes.data || []), ...(skillsRes.data || []), ...(appsRes.data || [])];
-            const allPosts = postsRes.data || [];
-            const allPrompts = promptsRes.data || [];
-            const collectedItems = allItems.filter(item => item.favorited_by && item.favorited_by.includes(userData.account));
-            const collectedPosts = allPosts.filter(post => post.favorited_by && post.favorited_by.includes(userData.account));
-            const collectedPrompts = allPrompts.filter(prompt => prompt.favorited_by && prompt.favorited_by.includes(userData.account));
+            if (!isCurrent()) return;
+        const allItems = [toolsRes, skillsRes, appsRes].flatMap(profileItemsFromResponse);
+            const allPosts = profileItemsFromResponse(postsRes);
+            const allPrompts = profileItemsFromResponse(promptsRes);
+            const collectedItems = allItems.filter(item => Array.isArray(item.favorited_by) && item.favorited_by.includes(userData.account));
+            const collectedPosts = allPosts.filter(post => Array.isArray(post.favorited_by) && post.favorited_by.includes(userData.account));
+            const collectedPrompts = allPrompts.filter(prompt => Array.isArray(prompt.favorited_by) && prompt.favorited_by.includes(userData.account));
 
             const freshData = { items: collectedItems, posts: collectedPosts, prompts: collectedPrompts };
             const freshStr = JSON.stringify(freshData);
             if (freshStr !== cachedStr) {
-                localStorage.setItem(cacheKey, freshStr);
+                writeProfileListCache(cacheKey, freshData);
                 applyDOM(collectedItems, collectedPosts, collectedPrompts);
             }
         } catch (error) {
-            console.error("加载收藏失败:", error);
-            if (!cachedStr) domElement.innerHTML = `<div style='text-align:center; padding: 20px; color:#F44336;'>${t('profile.load_collected_failed')}</div>`;
+            if (!isCurrent()) return;
+            console.error("加载收藏失败");
+            if (!cachedStr) setProfileListState(domElement, t('profile.load_collected_failed'), 'alert');
         }
         return;
     }
 
-    const cacheKey = `ProfileList_${userData.account}_${tabId}`;
-    const cachedStr = localStorage.getItem(cacheKey);
+    const cacheKey = `${CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX}${userData.account}_${tabId}`;
+    const cached = readProfileListCache(cacheKey);
+    const cachedStr = cached ? JSON.stringify(cached) : null;
     
     const applyDOM = (items) => {
+        if (!isCurrent()) return;
         domElement.innerHTML = "";
-        if (items.length === 0) { domElement.innerHTML = _renderEmptyState('📋', '暂无记录'); return; }
+        if (items.length === 0) { domElement.innerHTML = _renderEmptyState('📋', t('profile.no_records')); return; }
         items.forEach(item => { domElement.appendChild(createItemCard(item, currentUser)); });
     };
 
-    if (cachedStr) {
-        try { applyDOM(JSON.parse(cachedStr)); } catch(e) { localStorage.removeItem(cacheKey); }
+    if (cached) {
+        applyDOM(cached);
     } else {
-        domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#888;'>⏳ 正在拉取数据...</div>"; 
+        setProfileListState(domElement, t('profile.fetching_data'), 'status');
     }
 
     try {
         const [toolsRes, skillsRes, appsRes] = await Promise.all([ api.getItems("tool", "time", 100), api.getItems("skill", "time", 100), api.getItems("app", "time", 100) ]);
-        const allItems = [...(toolsRes.data || []), ...(skillsRes.data || []), ...(appsRes.data || [])];
+        if (!isCurrent()) return;
+        const allItems = [toolsRes, skillsRes, appsRes].flatMap(profileItemsFromResponse);
         let filteredItems = [];
 
         if (tabId === "published") filteredItems = allItems.filter(item => item.author === userData.account);
-        else if (tabId === "liked") filteredItems = allItems.filter(item => item.liked_by && item.liked_by.includes(userData.account));
+        else if (tabId === "liked") filteredItems = allItems.filter(item => Array.isArray(item.liked_by) && item.liked_by.includes(userData.account));
 
         const freshStr = JSON.stringify(filteredItems);
         if (freshStr !== cachedStr) {
-            localStorage.setItem(cacheKey, freshStr);
+            writeProfileListCache(cacheKey, filteredItems);
             applyDOM(filteredItems);
         }
-    } catch (error) { 
-        if (!cachedStr) domElement.innerHTML = "<div style='text-align:center; padding: 20px; color:#F44336;'>数据加载失败</div>"; 
+    } catch (error) {
+        if (!isCurrent()) return;
+        if (!cachedStr) setProfileListState(domElement, t('profile.load_failed'), 'alert');
     }
 }
 
@@ -581,11 +564,11 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
  */
 function _renderEmptyState(icon, title, subtitle = '') {
     const subtitleHtml = subtitle
-        ? `<div style="font-size: 12px; color: #888; margin-top: 5px;">${subtitle}</div>`
+        ? `<div class="profile-list-empty__subtitle">${escapeHtml(subtitle)}</div>`
         : '';
-    return `<div style='text-align:center; padding: 30px; color:#666;'>
-        <div style="font-size: 40px; margin-bottom: 10px;">${icon}</div>
-        <div>${title}</div>
+    return `<div class="profile-list-empty" role="status">
+        <div class="profile-list-empty__icon" aria-hidden="true">${escapeHtml(icon)}</div>
+        <div>${escapeHtml(title)}</div>
         ${subtitleHtml}
     </div>`;
 }
@@ -627,17 +610,17 @@ function createTaskItem(task, statusColors, statusLabels, currentUser) {
     });
     
     const statusColor = statusColors[task.status] || "#666";
-    const statusLabel = statusLabels[task.status] || "未知";
+    const statusLabel = statusLabels[task.status] || t('task.status_unknown');
     
     taskDiv.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <span style="background: ${statusColor}; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 11px;">${statusLabel}</span>
-            <span style="color: #FF9800; font-weight: bold;">💰 ${task.total_price} 积分</span>
+            <span style="color: #FF9800; font-weight: bold;">💰 ${task.total_price} ${t('task.points')}</span>
         </div>
         <div style="font-weight: bold; color: #eee; margin-bottom: 6px; font-size: 14px;">${escapeHtml(task.title)}</div>
         <div style="font-size: 11px; color: #888; display: flex; gap: 15px;">
             <span>✈️ ${formatDeadline(task.deadline)}</span>
-            ${task.status === "open" ? `<span>👥 ${(task.applicants || []).length}人申请</span>` : ""}
+            ${task.status === "open" ? `<span>👥 ${(task.applicants || []).length} ${t('task.applicants')}</span>` : ""}
         </div>
     `;
     
@@ -660,16 +643,16 @@ function createTaskItem(task, statusColors, statusLabels, currentUser) {
  * 📅 格式化截止日期
  */
 function formatDeadline(deadline) {
-    if (!deadline) return "无限期";
+    if (!deadline) return t('time.unlimited');
     try {
         const date = new Date(deadline);
         const now = new Date();
         const diff = date - now;
-        if (diff < 0) return "已截止";
+        if (diff < 0) return t('time.deadline_ended');
         const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-        if (days === 0) return "今天截止";
-        if (days === 1) return "明天截止";
-        if (days < 7) return `${days}天后`;
+        if (days === 0) return t('time.deadline_today');
+        if (days === 1) return t('time.deadline_tomorrow');
+        if (days < 7) return t('time.deadline_days', { n: days });
         return `${date.getMonth() + 1}/${date.getDate()}`;
     } catch { return deadline; }
 }
@@ -745,7 +728,7 @@ function createPostItem(post, currentUser) {
             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
         }).catch(err => {
             console.error("加载帖子详情组件失败:", err);
-            showToast("加载帖子详情失败", "error");
+            showToast(t('profile.post_detail_load_failed'), "error");
         });
     };
     
@@ -821,7 +804,7 @@ function createPromptItem(prompt, currentUser) {
             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
         }).catch(err => {
             console.error("加载提示词详情组件失败:", err);
-            showToast("加载提示词详情失败", "error");
+            showToast(t('profile.prompt_detail_load_failed'), "error");
         });
     };
 
@@ -837,10 +820,10 @@ function formatPostTime(timestamp) {
     const now = new Date();
     const diff = now - date;
     
-    if (diff < 60 * 1000) return "刚刚";
-    if (diff < 60 * 60 * 1000) return `${Math.floor(diff / 60000)}分钟前`;
-    if (diff < 24 * 60 * 60 * 1000) return `${Math.floor(diff / 3600000)}小时前`;
-    if (diff < 7 * 24 * 60 * 60 * 1000) return `${Math.floor(diff / 86400000)}天前`;
+    if (diff < 60 * 1000) return t('time.just_now');
+    if (diff < 60 * 60 * 1000) return t('time.minutes_ago', { n: Math.floor(diff / 60000) });
+    if (diff < 24 * 60 * 60 * 1000) return t('time.hours_ago', { n: Math.floor(diff / 3600000) });
+    if (diff < 7 * 24 * 60 * 60 * 1000) return t('time.days_ago', { n: Math.floor(diff / 86400000) });
     return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
@@ -921,6 +904,7 @@ function createTransactionCard(tx) {
             }
             break;
             
+        case 'TASK_PRICE_ADJUST':
         case 'TASK_FREEZE':
             // 任务冻结
             description = tx.item_title || '';
@@ -937,6 +921,7 @@ function createTransactionCard(tx) {
             break;
             
         case 'REFUND':
+        case 'SALE_REFUND':
             // 退款
             description = tx.item_title || '';
             break;
@@ -1021,11 +1006,13 @@ function getTransactionTypeConfig(txType) {
         'TASK_PAYMENT': { icon: '📋', title: t('tx.task_payment') },
         'TASK_INCOME': { icon: '📋', title: t('tx.task_income') },
         'TASK_FREEZE': { icon: '🔒', title: t('tx.task_freeze') },
+        'TASK_PRICE_ADJUST': { icon: '🔒', title: t('tx.task_price_adjust') },
         'TASK_REFUND': { icon: '↩️', title: t('tx.task_refund') },
         'TASK_CANCEL_REFUND': { icon: '🔄', title: t('tx.task_cancel_refund') },
         'SALE': { icon: '💎', title: t('tx.sale'), color: '#28a745' },
         'RECHARGE': { icon: '💰', title: t('tx.recharge') },
         'REFUND': { icon: '↩️', title: t('tx.refund') },
+        'SALE_REFUND': { icon: '↩️', title: t('tx.sale_refund') },
         'WITHDRAW_FEE': { icon: '💸', title: t('tx.withdraw_fee') }
     };
     

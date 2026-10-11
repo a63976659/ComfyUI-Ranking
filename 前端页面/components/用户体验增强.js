@@ -38,16 +38,27 @@ export function createAutoSaver(formId, formElement, options = {}) {
     } = options;
     
     let debounceTimer = null;
+    let initialized = false;
+    let disposed = false;
+    let saveGeneration = 0;
     const storageKey = DRAFT_PREFIX + formId;
+
+    const canSaveInput = input => {
+        const name = input.name || input.id;
+        return name && name !== '_savedAt' && !excludeFields.includes(name)
+            && !['password', 'file', 'hidden', 'submit', 'button', 'reset'].includes(input.type)
+            && !['current-password', 'new-password', 'one-time-code'].includes(input.autocomplete)
+            && (!fields.length || fields.some(selector => input.matches(selector)));
+    };
     
     // 获取表单数据
     const getFormData = () => {
-        const data = {};
+        const data = Object.create(null);
         const inputs = formElement.querySelectorAll('input, textarea, select');
         
         inputs.forEach(input => {
             const name = input.name || input.id;
-            if (!name || excludeFields.includes(name)) return;
+            if (!canSaveInput(input)) return;
             
             if (input.type === 'checkbox') {
                 data[name] = input.checked;
@@ -63,22 +74,34 @@ export function createAutoSaver(formId, formElement, options = {}) {
     
     // 保存草稿
     const saveDraft = () => {
+        if (disposed) return;
         try {
             const data = getFormData();
             data._savedAt = Date.now();
             localStorage.setItem(storageKey, JSON.stringify(data));
-            console.log(`📝 草稿已自动保存: ${formId}`);
+            console.log('📝 草稿已自动保存');
         } catch (e) {
-            console.warn('草稿保存失败:', e);
+            console.warn('草稿保存失败');
         }
     };
     
     // 加载草稿
     const loadDraft = () => {
+        if (disposed) return null;
         try {
             const saved = localStorage.getItem(storageKey);
             if (!saved) return null;
-            return JSON.parse(saved);
+            const data = JSON.parse(saved);
+            if (!data || typeof data !== 'object' || Array.isArray(data)
+                || !Number.isFinite(data._savedAt) || data._savedAt <= 0) return null;
+            const projected = Object.create(null);
+            projected._savedAt = data._savedAt;
+            formElement.querySelectorAll('input, textarea, select').forEach(input => {
+                const name = input.name || input.id;
+                if (canSaveInput(input) && Object.prototype.hasOwnProperty.call(data, name)
+                    && ['string', 'number', 'boolean'].includes(typeof data[name])) projected[name] = data[name];
+            });
+            return projected;
         } catch (e) {
             return null;
         }
@@ -86,28 +109,37 @@ export function createAutoSaver(formId, formElement, options = {}) {
     
     // 恢复草稿到表单
     const restoreDraft = (data) => {
-        if (!data) return;
+        if (disposed || !data || typeof data !== 'object' || Array.isArray(data)) return;
+        const restored = Object.create(null);
+        if (Number.isFinite(data._savedAt) && data._savedAt > 0) restored._savedAt = data._savedAt;
         
         const inputs = formElement.querySelectorAll('input, textarea, select');
         inputs.forEach(input => {
             const name = input.name || input.id;
-            if (!name || !(name in data)) return;
+            if (!canSaveInput(input) || !Object.prototype.hasOwnProperty.call(data, name)) return;
+            if (!['string', 'number', 'boolean'].includes(typeof data[name])) return;
+            restored[name] = data[name];
             
             if (input.type === 'checkbox') {
                 input.checked = !!data[name];
             } else if (input.type === 'radio') {
                 input.checked = input.value === data[name];
             } else {
-                input.value = data[name] || '';
+                input.value = data[name] ?? '';
             }
         });
         
-        if (onRestore) onRestore(data);
+        if (onRestore) onRestore(restored);
     };
     
     // 清除草稿
     const clearDraft = () => {
-        localStorage.removeItem(storageKey);
+        if (disposed) return;
+        saveGeneration++;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = null;
+        try { localStorage.removeItem(storageKey); }
+        catch { console.warn('草稿清除失败'); }
     };
     
     // 检查是否有草稿
@@ -118,8 +150,14 @@ export function createAutoSaver(formId, formElement, options = {}) {
     
     // 输入事件监听（防抖保存）
     const handleInput = () => {
+        if (disposed) return;
         if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(saveDraft, DRAFT_DEBOUNCE);
+        const generation = ++saveGeneration;
+        debounceTimer = setTimeout(() => {
+            if (disposed || generation !== saveGeneration) return;
+            debounceTimer = null;
+            saveDraft();
+        }, DRAFT_DEBOUNCE);
     };
     
     // 页面离开前保存
@@ -129,12 +167,16 @@ export function createAutoSaver(formId, formElement, options = {}) {
     
     // 初始化
     const init = () => {
-        // 监听输入事件
-        formElement.addEventListener('input', handleInput);
-        formElement.addEventListener('change', handleInput);
+        if (disposed) return { hasDraft: false };
+        if (!initialized) {
+            initialized = true;
+            // 监听输入事件
+            formElement.addEventListener('input', handleInput);
+            formElement.addEventListener('change', handleInput);
         
-        // 页面离开前保存
-        window.addEventListener('beforeunload', handleBeforeUnload);
+            // 页面离开前保存
+            window.addEventListener('beforeunload', handleBeforeUnload);
+        }
         
         // 检查是否有草稿需要恢复
         const draft = loadDraft();
@@ -151,10 +193,14 @@ export function createAutoSaver(formId, formElement, options = {}) {
     // 防止内存泄漏和已卸载 DOM 上的事件监听器残留。
     // 调用时机：弹窗关闭回调、组件 unmount 钩子、或 beforeunload 兜底。
     const destroy = () => {
+        if (disposed) return;
+        disposed = true;
+        saveGeneration++;
         formElement.removeEventListener('input', handleInput);
         formElement.removeEventListener('change', handleInput);
         window.removeEventListener('beforeunload', handleBeforeUnload);
         if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = null;
     };
     
     return {
@@ -172,118 +218,48 @@ export function createAutoSaver(formId, formElement, options = {}) {
 // ==========================================
 // ⌨️ P2-3: 快捷键支持
 // ==========================================
-// 特点：
-//   - Esc 关闭弹窗
-//   - Enter 确认提交
-//   - Ctrl+S 保存
-//   - 可配置扩展
-
 const keyboardShortcuts = new Map();
-let shortcutsInitialized = false;
 
-/**
- * 注册全局快捷键
- * @param {string} key - 按键组合 (如 'Escape', 'Enter', 'Ctrl+S')
- * @param {Function} handler - 处理函数
- * @param {Object} options - 配置选项
- */
+/** 仅为明确的局部容器注册按键；不接受页面全局作用域。 */
 export function registerShortcut(key, handler, options = {}) {
-    const {
-        scope = 'global',      // 作用域
-        preventDefault = true, // 是否阻止默认行为
-        description = ''       // 描述
-    } = options;
-    
-    if (!keyboardShortcuts.has(key)) {
-        keyboardShortcuts.set(key, []);
-    }
-    
-    keyboardShortcuts.get(key).push({
-        handler,
-        scope,
-        preventDefault,
-        description
-    });
+    const { scope, preventDefault = true } = options;
+    if (!scope || scope.nodeType !== 1 || scope === document.body || scope === document.documentElement
+            || typeof handler !== 'function' || typeof key !== 'string') return () => {};
+    const listener = event => {
+        if (!scope.isConnected || !scope.contains(event.target) || event.defaultPrevented
+                || event.isComposing || event.keyCode === 229 || event.repeat) return;
+        if (event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
+                && event.key !== 'Escape') return;
+        const combo = `${event.ctrlKey || event.metaKey ? 'Ctrl+' : ''}${event.altKey ? 'Alt+' : ''}${event.shiftKey ? 'Shift+' : ''}${event.key}`;
+        if (combo !== key) return;
+        if (preventDefault) event.preventDefault();
+        event.stopPropagation();
+        handler(event);
+    };
+    const entry = { handler, scope, listener };
+    const entries = keyboardShortcuts.get(key) || [];
+    entries.push(entry);
+    keyboardShortcuts.set(key, entries);
+    scope.addEventListener('keydown', listener);
+    return () => {
+        scope.removeEventListener('keydown', listener);
+        const remaining = (keyboardShortcuts.get(key) || []).filter(item => item !== entry);
+        if (remaining.length) keyboardShortcuts.set(key, remaining);
+        else keyboardShortcuts.delete(key);
+    };
 }
 
-/**
- * 移除快捷键
- * @param {string} key - 按键组合
- * @param {Function} handler - 处理函数（可选，不传则移除所有）
- */
 export function unregisterShortcut(key, handler = null) {
-    if (handler && keyboardShortcuts.has(key)) {
-        const handlers = keyboardShortcuts.get(key);
-        const filtered = handlers.filter(h => h.handler !== handler);
-        if (filtered.length > 0) {
-            keyboardShortcuts.set(key, filtered);
-        } else {
-            keyboardShortcuts.delete(key);
-        }
-    } else {
-        keyboardShortcuts.delete(key);
+    const remaining = [];
+    for (const entry of keyboardShortcuts.get(key) || []) {
+        if (handler && entry.handler !== handler) remaining.push(entry);
+        else entry.scope.removeEventListener('keydown', entry.listener);
     }
+    if (remaining.length) keyboardShortcuts.set(key, remaining);
+    else keyboardShortcuts.delete(key);
 }
 
-/**
- * 初始化快捷键系统
- */
-export function initKeyboardShortcuts() {
-    if (shortcutsInitialized) return;
-    shortcutsInitialized = true;
-    
-    document.addEventListener('keydown', (e) => {
-        // 构建按键标识
-        let keyCombo = '';
-        if (e.ctrlKey || e.metaKey) keyCombo += 'Ctrl+';
-        if (e.altKey) keyCombo += 'Alt+';
-        if (e.shiftKey) keyCombo += 'Shift+';
-        keyCombo += e.key;
-        
-        // 也检查单独的按键
-        const keysToCheck = [keyCombo];
-        if (!e.ctrlKey && !e.altKey && !e.shiftKey) {
-            keysToCheck.push(e.key);
-        }
-        
-        for (const key of keysToCheck) {
-            if (keyboardShortcuts.has(key)) {
-                const handlers = keyboardShortcuts.get(key);
-                for (const { handler, preventDefault } of handlers) {
-                    // 跳过在输入框中的快捷键（除了 Escape）
-                    const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
-                    if (isInput && key !== 'Escape') continue;
-                    
-                    if (preventDefault) {
-                        e.preventDefault();
-                    }
-                    handler(e);
-                    return;
-                }
-            }
-        }
-    });
-    
-    // 注册默认快捷键
-    _registerDefaultShortcuts();
-}
-
-function _registerDefaultShortcuts() {
-    // Esc 关闭最上层弹窗
-    registerShortcut('Escape', () => {
-        const modals = document.querySelectorAll('[data-modal="true"]');
-        if (modals.length > 0) {
-            const topModal = modals[modals.length - 1];
-            const closeBtn = topModal.querySelector('[data-close]');
-            if (closeBtn) closeBtn.click();
-        }
-    }, { description: '关闭弹窗' });
-    
-    // Ctrl+S 保存（触发自定义事件）
-    registerShortcut('Ctrl+s', () => {
-        document.dispatchEvent(new CustomEvent('comfy-save-shortcut'));
-    }, { description: '保存' });
-}
+export function initKeyboardShortcuts() {}
 
 
 // ==========================================
@@ -527,9 +503,6 @@ export function initUXEnhancements() {
     
     // 应用安全区域
     applySafeAreaInsets();
-    
-    // 初始化快捷键
-    initKeyboardShortcuts();
     
     // 初始化 i18n
     initI18n();

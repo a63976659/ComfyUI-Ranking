@@ -48,7 +48,8 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
     // - 他人查看：直接使用云端 URL (userData.bannerUrl)
     let bannerImageUrl = userData.bannerUrl;
     if (isMe) {
-        const localBannerCache = localStorage.getItem(getBannerCacheKey(userData.account));
+        let localBannerCache = null;
+        try { localBannerCache = localStorage.getItem(getBannerCacheKey(userData.account)); } catch (_) {}
         if (localBannerCache) {
             bannerImageUrl = localBannerCache;
         }
@@ -80,20 +81,20 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
             ${isMe ? `
                 <div style="display:flex; flex-direction: column; gap: 6px; width: 100%;">
                     <div style="font-size: 14px;">
-                        <span>💰 ${t('profile.balance')}: <strong style="color:#FF9800; font-size: 16px;">${userData.balance || 0}</strong></span>
+                        <span>💰 ${t('profile.balance')}: <strong style="color:#FF9800; font-size: 16px;">${escapeHtml(userData.balance || 0)}</strong></span>
                     </div>
                     <div style="font-size: 11px; color: rgba(255,255,255,0.6);">
-                        <span>🛍️ ${t('profile.sales')}: ${userData.earn_balance || 0}</span>
-                        <span style="margin-left: 12px;">🎁 ${t('profile.tips')}: ${userData.tip_balance || 0}</span>
-                        <span style="margin-left: 12px;">📋 ${t('profile.task_earnings')}: ${userData.task_balance || 0}</span>
+                        <span>🛍️ ${t('profile.sales')}: ${escapeHtml(userData.earn_balance || 0)}</span>
+                        <span style="margin-left: 12px;">🎁 ${t('profile.tips')}: ${escapeHtml(userData.tip_balance || 0)}</span>
+                        <span style="margin-left: 12px;">📋 ${t('profile.task_earnings')}: ${escapeHtml(userData.task_balance || 0)}</span>
                     </div>
                 </div>
             ` : ''}
             <div style="display:flex; gap: 12px;">
-                <span>👍 ${t('profile.received_likes')}: <strong style="color:#fff;">${userData.receivedLikes || 0}</strong></span>
-                <span>🔖 ${t('profile.received_favorites')}: <strong style="color:#fff;">${userData.receivedFavorites || 0}</strong></span>
+                <span>👍 ${t('profile.received_likes')}: <strong style="color:#fff;">${escapeHtml(userData.receivedLikes || 0)}</strong></span>
+                <span>🔖 ${t('profile.received_favorites')}: <strong style="color:#fff;">${escapeHtml(userData.receivedFavorites || 0)}</strong></span>
                 <span id="btn-followers" style="cursor: pointer;">👥 ${t('profile.followers_count')}: <strong style="color:#fff;">${userData.followers ? userData.followers.length : 0}</strong></span>
-                <span id="btn-following" style="cursor: pointer;">🏃 ${t('profile.following_count')}: <strong style="color:#fff;">${followingCount}</strong></span>
+                <span id="btn-following" style="cursor: pointer;">🏃 ${t('profile.following_count')}: <strong style="color:#fff;">${escapeHtml(followingCount)}</strong></span>
             </div>
         </div>
     `;
@@ -120,7 +121,7 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                     <div style="flex: 1; padding-right: 150px;">
                         <div style="font-size: 20px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; text-shadow: 0 2px 4px rgba(0,0,0,0.6);">
                             ${escapeHtml(userData.name)}
-                            <span style="font-size: 12px; background: rgba(68,68,68,0.8); padding: 2px 6px; border-radius: 4px; font-weight: normal; backdrop-filter: blur(4px);">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age !== undefined && userData.age !== null ? userData.age : t('profile.unknown_age')}${t('profile.age_years')}</span>
+                            <span style="font-size: 12px; background: rgba(68,68,68,0.8); padding: 2px 6px; border-radius: 4px; font-weight: normal; backdrop-filter: blur(4px);">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age !== undefined && userData.age !== null ? escapeHtml(userData.age) : t('profile.unknown_age')}${t('profile.age_years')}</span>
                         </div>
                         <div style="font-size: 12px; color: rgba(255,255,255,0.85); margin-bottom: 8px; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">📍 ${escapeHtml(userData.country) || t('profile.location_secret')} - ${escapeHtml(userData.region || '')}</div>
                         <div style="font-size: 13px; color: rgba(255,255,255,0.95); line-height: 1.4; word-break: break-all; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">${escapeHtml(userData.intro) || t('profile.no_intro')}</div>

@@ -11,16 +11,17 @@ import { createPublishTaskView } from "../task/发布任务组件.js";  // 🎯 
 import { createPublishPostView } from "../post/发布帖子组件.js";  // 🎯 新增：帖子发布
 import { createPublishPromptView } from "../prompt/发布提示词组件.js";  // 🎯 新增：提示词发布
 import { createTopNav } from "../components/顶部导航组件.js";
-import { loadSidebarContent } from "./侧边栏数据引擎.js";
+import { loadSidebarContent, disposeSidebarContent } from "./侧边栏数据引擎.js";
 import { createItemDetailView } from "../market/资源详情页面组件.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { api } from "./网络请求API.js";  // 🔴 编辑模式需调用详情API获取完整数据
-import { CACHE, getBackgroundKey, IS_WEB_MODE } from "./全局配置.js";
+import { api, captureRequestSession } from "./网络请求API.js";  // 🔴 编辑模式需调用详情API获取完整数据
+import { CACHE, UI, getBackgroundKey, IS_WEB_MODE } from "./全局配置.js";
 import { debounce } from "../components/性能优化工具.js";
+import { scrollCardIntoView } from "../components/动画音效引擎.js";
 import { cleanupImageSandbox } from "../components/图片沙盒组件.js";  // 🔧 P3优化：导入清理函数
 import { getVersionConfig, formatVersionString } from "../components/关于插件组件.js";  // 🏷️ 动态版本号
 // 🎯 P2 用户体验增强
-import { initUXEnhancements, t } from "../components/用户体验增强.js";
+import { initUXEnhancements, t, getLanguage } from "../components/用户体验增强.js";
 
 // 初始化 UX 增强
 try {
@@ -29,16 +30,14 @@ try {
     console.warn('🎯 UX 增强初始化失败:', e);
 }
 
-// 🚫 注入 Tab 文案样式（模块加载时执行一次）
-// Tab 文案用伪元素 content 渲染而非文本节点，使其不存在于 DOM 树中，
-// 从而既避开 ComfyUI 翻译插件（只改写文本节点 / innerText / title / option.text），
-// 也避开浏览器翻译扩展；否则英文界面下 Tools 会被译成“工具”
-(function _injectTabLabelStyle() {
-    if (document.getElementById('hub-tab-label-style')) return;
-    const style = document.createElement('style');
-    style.id = 'hub-tab-label-style';
-    style.textContent = '.hub-tab-btn::before { content: var(--tab-label); }';
-    document.head.appendChild(style);
+// 统一设计 tokens 与键盘焦点样式；样式表只挂载一次，保持 ComfyUI 主题变量适配。
+(function _injectSharedThemeStyles() {
+    if (document.getElementById('hub-theme-style')) return;
+    const link = document.createElement('link');
+    link.id = 'hub-theme-style';
+    link.rel = 'stylesheet';
+    link.href = new URL('../styles/主题基础.css', import.meta.url).href;
+    document.head.appendChild(link);
 })();
 
 // 🚫 筛选框选项防翻译：原生 <option> 不支持伪元素，无法用上面那套方案，
@@ -47,9 +46,30 @@ try {
 // option 的 value 是独立字面量，排序/筛选逻辑不受影响
 const noTr = (txt) => `${txt}\u200b`;
 
+const sidebarPreferenceMemory = new Map();
+const pendingSidebarPreferences = new Set();
 const Store = {
-    save(key, value) { localStorage.setItem(`ComfyCommunitySidebar_${key}`, value); },
-    load(key, defaultValue) { return localStorage.getItem(`ComfyCommunitySidebar_${key}`) || defaultValue; }
+    save(key, value) {
+        const saved = String(value);
+        sidebarPreferenceMemory.set(key, saved);
+        try {
+            localStorage.setItem(`ComfyCommunitySidebar_${key}`, saved);
+            pendingSidebarPreferences.delete(key);
+        } catch {
+            pendingSidebarPreferences.add(key);
+        }
+    },
+    load(key, defaultValue) {
+        if (pendingSidebarPreferences.has(key)) return sidebarPreferenceMemory.get(key) || defaultValue;
+        try {
+            const saved = localStorage.getItem(`ComfyCommunitySidebar_${key}`);
+            if (saved === null) sidebarPreferenceMemory.delete(key);
+            else sidebarPreferenceMemory.set(key, saved);
+            return saved || defaultValue;
+        } catch {
+            return sidebarPreferenceMemory.get(key) || defaultValue;
+        }
+    }
 };
 
 // 工具背景图本地存储管理（账号隔离）
@@ -62,7 +82,10 @@ const BackgroundStore = {
             console.warn("⚠️ 界面背景保存失败（存储空间不足或不可用）:", e.message);
         }
     },
-    load() { return localStorage.getItem(getBackgroundKey()) || null; },
+    load() {
+        try { return localStorage.getItem(getBackgroundKey()) || null; }
+        catch { return null; }
+    },
     clear() {
         try {
             localStorage.removeItem(getBackgroundKey());
@@ -72,7 +95,18 @@ const BackgroundStore = {
 
 // 🔧 P1修复：window 监听注册表（语言切换会重建 buildSidebarDOM，需先移除旧监听防止累积泄漏）
 let _sidebarWindowListeners = [];
+let _sidebarInstanceSequence = 0;
+let _sidebarInlineViewCleanup = null;
+let _sidebarListCleanup = null;
 function _cleanupSidebarWindowListeners() {
+    const cleanupList = _sidebarListCleanup;
+    const cleanupInline = _sidebarInlineViewCleanup;
+    _sidebarListCleanup = null;
+    _sidebarInlineViewCleanup = null;
+    for (const cleanup of [cleanupList, cleanupInline]) {
+        try { cleanup?.(); }
+        catch { console.warn('Sidebar cleanup failed'); }
+    }
     for (const { event, handler } of _sidebarWindowListeners) {
         window.removeEventListener(event, handler);
     }
@@ -88,6 +122,7 @@ export function buildSidebarDOM() {
     _cleanupSidebarWindowListeners();
 
     const container = document.createElement("div");
+    container.className = "comfy-ranking-root";
     
     // 加载本地背景图
     const savedBg = BackgroundStore.load();
@@ -95,16 +130,17 @@ export function buildSidebarDOM() {
         ? `background-image: url(${savedBg}); background-size: cover; background-position: center;`
         : `background-color: var(--comfy-menu-bg);`;
     
-    Object.assign(container.style, {
-        display: "flex", flexDirection: "column", height: "100%", width: "100%",
-        color: "var(--fg-color, #fff)", fontFamily: "sans-serif"
-    });
     container.style.cssText += bgStyle;
 
     const topNav = createTopNav();
+    const sidebarInstanceId = `comfy-ranking-${++_sidebarInstanceSequence}`;
 
     const tabsContainer = document.createElement("div");
-    Object.assign(tabsContainer.style, { display: "flex", borderBottom: "1px solid #444", padding: "10px 10px 0 10px" });
+    tabsContainer.id = `${sidebarInstanceId}-tablist`;
+    tabsContainer.className = "hub-tablist";
+    tabsContainer.setAttribute("role", "tablist");
+    tabsContainer.setAttribute("aria-label", t("nav.board_navigation"));
+    tabsContainer.setAttribute("aria-orientation", "horizontal");
     // 🌐 多语言支持：Tab 名称使用翻译函数
     const tabs = [
         { id: "tools", label: t('nav.tools') },
@@ -118,10 +154,10 @@ export function buildSidebarDOM() {
     ];
 
     const sortContainer = document.createElement("div");
-    Object.assign(sortContainer.style, { padding: "10px", display: "flex", gap: "8px", alignItems: "center", width: "100%", boxSizing: "border-box" });
+    sortContainer.className = "hub-controls";
     sortContainer.innerHTML = `
         <!-- 通用排序选择框（工具/应用/推荐/创作者） -->
-        <select id="hub-sort-select" style="background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
+        <select id="hub-sort-select" class="hub-control-select hub-control-select--wide">
             <option value="time">${noTr(t('market.latest'))}</option>
             <option value="downloads">${noTr(t('market.downloads'))}</option>
             <option value="likes">${noTr(t('market.like'))}</option>
@@ -132,7 +168,7 @@ export function buildSidebarDOM() {
             <option value="rating">${noTr(t('market.rating'))}</option>
         </select>
         <!-- 任务榜筛选控件（状态+排序） -->
-        <select id="task-status-filter" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
+        <select id="task-status-filter" class="hub-control-select hub-control-select--compact" style="display: none;">
             <option value="">${noTr(t('task.filter_all'))}</option>
             <option value="open">${noTr(t('task.filter_open'))}</option>
             <option value="in_progress">${noTr(t('task.filter_in_progress'))}</option>
@@ -140,7 +176,7 @@ export function buildSidebarDOM() {
             <option value="completed">${noTr(t('task.filter_completed'))}</option>
             <option value="disputed">${noTr(t('task.filter_disputed'))}</option>
         </select>
-        <select id="task-sort-select" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 100px; flex-shrink: 0;">
+        <select id="task-sort-select" class="hub-control-select hub-control-select--compact" style="display: none;">
             <option value="latest">${noTr(t('task.sort_latest'))}</option>
             <option value="price">${noTr(t('task.sort_price'))}</option>
             <option value="deadline">${noTr(t('task.sort_deadline'))}</option>
@@ -150,7 +186,7 @@ export function buildSidebarDOM() {
             <option value="favorites">${noTr(t('task.sort_favorites'))}</option>
         </select>
         <!-- 🎯 讨论区排序控件（专用） -->
-        <select id="posts-sort-select" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
+        <select id="posts-sort-select" class="hub-control-select hub-control-select--wide" style="display: none;">
             <option value="latest">${noTr(t('post.sort_latest'))}</option>
             <option value="likes">${noTr(t('post.sort_likes'))}</option>
             <option value="favorites">${noTr(t('post.sort_favorites'))}</option>
@@ -160,16 +196,28 @@ export function buildSidebarDOM() {
             <option value="rating">${noTr(t('post.sort_rating'))}</option>
         </select>
         <!-- 🧩 提示词排序控件（专用） -->
-        <select id="prompts-sort-select" style="display: none; background: var(--comfy-input-bg); color: white; border: 1px solid #555; border-radius: 4px; outline: none; padding: 6px; width: 140px; flex-shrink: 0;">
+        <select id="prompts-sort-select" class="hub-control-select hub-control-select--wide" style="display: none;">
             <option value="latest">${noTr(t('prompt.sort_latest'))}</option>
             <option value="likes">${noTr(t('prompt.sort_likes'))}</option>
             <option value="favorites">${noTr(t('prompt.sort_favorites'))}</option>
             <option value="views">${noTr(t('prompt.sort_views'))}</option>
             <option value="daily_views">${noTr(t('prompt.sort_daily_views'))}</option>
         </select>
-        <input type="text" id="hub-search-input" autocomplete="off" placeholder="🔍 ${t('common.search')}..." style="flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #555; background: #222; color: white; outline: none;">
-        <button id="btn-open-publish" style="background: #4CAF50; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; flex-shrink: 0; box-shadow: 0 2px 5px rgba(0,0,0,0.3);">➕ ${t('market.publish')}</button>
+        <input type="search" id="hub-search-input" class="hub-search-input" autocomplete="off" placeholder="🔍 ${t('common.search')}...">
+        <button id="btn-open-publish" class="hub-publish-button" type="button">➕ ${t('market.publish')}</button>
     `;
+
+    const filterLabels = {
+        "hub-sort-select": "common.sort_items",
+        "task-status-filter": "common.filter_task_status",
+        "task-sort-select": "common.sort_tasks",
+        "posts-sort-select": "common.sort_posts",
+        "prompts-sort-select": "common.sort_prompts",
+        "hub-search-input": "common.search"
+    };
+    for (const [id, labelKey] of Object.entries(filterLabels)) {
+        sortContainer.querySelector(`#${id}`)?.setAttribute("aria-label", t(labelKey));
+    }
 
     // 📱 Web 模式：隐藏发布入口（网页版不支持发布族功能，编辑路由监听处另有中央兜底）
     if (IS_WEB_MODE) {
@@ -178,43 +226,34 @@ export function buildSidebarDOM() {
     }
 
     const contentBoxWrapper = document.createElement("div");
-    Object.assign(contentBoxWrapper.style, { flex: "1", minHeight: "0", padding: "0 10px 10px 10px", display: "flex", flexDirection: "column" });
+    contentBoxWrapper.className = "sidebar-content-wrapper";
 
     const contentArea = document.createElement("div");
     contentArea.className = "sidebar-scroll-container";
+    contentArea.id = `${sidebarInstanceId}-tabpanel`;
+    contentArea.setAttribute("role", "tabpanel");
+    contentArea.setAttribute("tabindex", "0");
     // 🔧 自适应高度：flex 填充剩余空间，内容少时随内容收缩，避免容器框与底部页脚间出现空白
-    Object.assign(contentArea.style, {
-        flex: "1 1 auto", minHeight: "0", overflowY: "auto", padding: "10px",
-        backgroundColor: "#1c1c1c", border: "1px solid #444", borderRadius: "8px",
-        boxShadow: "inset 0 4px 10px rgba(0,0,0,0.3)"
-    });
     contentBoxWrapper.appendChild(contentArea);
 
     // =========================================================================
     // 【新增】底部专业版权与合作伙伴信息区域 (Footer)
     // =========================================================================
     const footerContainer = document.createElement("div");
-    Object.assign(footerContainer.style, {
-        padding: "15px 10px 20px",
-        textAlign: "center",
-        fontSize: "12px",
-        color: "#666",
-        flexShrink: "0",
-        background: "transparent"
-    });
+    footerContainer.className = "sidebar-footer";
 
     footerContainer.innerHTML = `
-        <div style="display: flex; justify-content: center; align-items: center; gap: 16px; margin-bottom: 8px; flex-wrap: wrap;">
-            <a href="https://github.com/a63976659/ComfyUI-Ranking" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#4CAF50'" onmouseout="this.style.color='#888'">🌍 ComfyUI精选社区</a>
-            <a href="https://github.com/a63976659" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">🐙 GitHub</a>
-            <a href="https://huggingface.co/ZHIWEI666" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#FFD21E'" onmouseout="this.style.color='#888'">🤗 Hugging Face</a>
-            <a href="#" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#2196F3'" onmouseout="this.style.color='#888'">🏢 砚影科技</a>
-            <a href="https://www.bilibili.com/video/BV1x4XzBXEk9" target="_blank" style="color: #888; text-decoration: none; transition: color 0.2s;" onmouseover="this.style.color='#00A1D6'" onmouseout="this.style.color='#888'">📺 Bilibili</a>
+        <div class="sidebar-footer__links">
+            <a href="https://github.com/a63976659/ComfyUI-Ranking" target="_blank" rel="noopener noreferrer" class="sidebar-footer__link sidebar-footer__link--community">🌍 ${t('footer.community_name')}</a>
+            <a href="https://github.com/a63976659" target="_blank" rel="noopener noreferrer" class="sidebar-footer__link sidebar-footer__link--github">🐙 GitHub</a>
+            <a href="https://huggingface.co/ZHIWEI666" target="_blank" rel="noopener noreferrer" class="sidebar-footer__link sidebar-footer__link--huggingface">🤗 Hugging Face</a>
+            <a href="#" target="_blank" rel="noopener noreferrer" class="sidebar-footer__link sidebar-footer__link--company">🏢 砚影科技</a>
+            <a href="https://www.bilibili.com/video/BV1x4XzBXEk9" target="_blank" rel="noopener noreferrer" class="sidebar-footer__link sidebar-footer__link--bilibili">📺 Bilibili</a>
         </div>
-        <div style="display: flex; justify-content: center; align-items: center; gap: 10px; color: #555;">
-            <span>MIT License Copyright (c) 2026 <a href="#" id="easter-egg-trigger" style="color: #888; text-decoration: none; cursor: pointer; transition: color 0.2s;" onmouseover="this.style.color='#ffb0c0'" onmouseout="this.style.color='#888'">猪的飞行梦</a></span>
-            <span style="color: #444;">|</span>
-            <span class="footer-version-label">加载中...</span>
+        <div class="sidebar-footer__meta">
+            <span>MIT License Copyright (c) 2026 <a href="#" id="easter-egg-trigger" class="sidebar-footer__link sidebar-footer__link--easter-egg">猪的飞行梦</a></span>
+            <span class="sidebar-footer__separator" aria-hidden="true">|</span>
+            <span class="footer-version-label">${t('common.loading')}</span>
         </div>
     `;
     
@@ -223,7 +262,14 @@ export function buildSidebarDOM() {
     if (easterEggLink) {
         easterEggLink.addEventListener('click', (e) => {
             e.preventDefault();
-            import('../components/彩蛋动画引擎.js').then(mod => mod.openEasterEggPage());
+            const popup = window.open('', '_blank');
+            if (!popup) return;
+            import('../components/彩蛋动画引擎.js').then(mod => mod.openEasterEggPage(popup, {
+                language: getLanguage(),
+                title: t('easter.title'),
+                hint: t('easter.hint'),
+                speedLabel: t('easter.speed')
+            })).catch(() => popup.close());
         });
     }
 
@@ -235,7 +281,7 @@ export function buildSidebarDOM() {
         }
     }).catch(() => {
         const versionLabel = footerContainer.querySelector('.footer-version-label');
-        if (versionLabel) versionLabel.textContent = 'V2.0.0 Beta';
+        if (versionLabel) versionLabel.textContent = formatVersionString(UI.DEFAULT_PROJECT_VERSION);
     });
     
     // 监听从设置页面触发的背景更新事件
@@ -253,13 +299,35 @@ export function buildSidebarDOM() {
     });
     // =========================================================================
 
-    let activeInlineView = null; 
+    let activeInlineView = null;
+    let listNavigationGeneration = 0;
+    const captureListNavigation = () => {
+        const generation = listNavigationGeneration;
+        return () => !activeInlineView && generation === listNavigationGeneration;
+    };
+    container._captureListNavigation = () => {
+        const navigationCurrent = captureListNavigation();
+        const renderToken = getRenderToken();
+        const controls = Array.from(sortContainer.querySelectorAll('input, select'), control => [control, control.value]);
+        const focusedElement = document.activeElement;
+        return () => navigationCurrent() && renderToken === getRenderToken()
+            && document.activeElement === focusedElement
+            && controls.every(([control, value]) => control.value === value);
+    };
+    const releaseInlineView = () => {
+        if (!activeInlineView) return;
+        const view = activeInlineView;
+        activeInlineView = null;
+        try { view._cleanup?.(); }
+        catch { console.warn('Sidebar inline view cleanup failed'); }
+        try { cleanupImageSandbox(view); }
+        finally { view.remove(); }
+    };
+    _sidebarInlineViewCleanup = releaseInlineView;
 
     const showInlineView = (viewDOM) => {
-        if (activeInlineView) {
-            if (activeInlineView._cleanup) activeInlineView._cleanup();
-            activeInlineView.remove();
-        }
+        listNavigationGeneration++;
+        releaseInlineView();
         tabsContainer.style.display = "none";
         sortContainer.style.display = "none";
         contentBoxWrapper.style.display = "none";
@@ -269,18 +337,13 @@ export function buildSidebarDOM() {
     };
 
     const hideInlineView = () => {
-        if (activeInlineView) {
-            // 🔧 P3优化：在移除视图前清理事件监听器
-            if (activeInlineView._cleanup) activeInlineView._cleanup();
-            cleanupImageSandbox(activeInlineView);
-
-            activeInlineView.remove();
-            activeInlineView = null;
-        }
+        listNavigationGeneration++;
+        releaseInlineView();
         tabsContainer.style.display = "flex"; 
         sortContainer.style.display = "flex"; 
         contentBoxWrapper.style.display = "flex";
         footerContainer.style.display = "block"; // 【核心】：返回列表时恢复底部
+        container._onListReturn?.();
     };
 
     _onSidebarWindow("comfy-route-view", (e) => {
@@ -303,6 +366,8 @@ export function buildSidebarDOM() {
         // 📱 Web 模式中央兜底：发布族功能仅本地 ComfyUI 可用
         if (IS_WEB_MODE) return showToast(t('web.publish_not_supported'), "warning");
         const { itemData, currentUser } = e.detail;
+        const matchesSession = captureRequestSession();
+        if (!currentUser?.account || topNav.getCurrentUser()?.account !== currentUser.account) return;
 
         // 先展示加载状态，避免用户感知延迟
         const loadingView = document.createElement("div");
@@ -310,17 +375,23 @@ export function buildSidebarDOM() {
         loadingView.innerHTML = `<div style=\"font-size:24px;margin-bottom:10px;\">⏳</div><div>${t('common.loading')}</div>`;
         showInlineView(loadingView);
 
-        // 从详情API获取完整数据（确保 has_private_token、netdisk_password 等字段不缺失）
-        let enrichedItemData = itemData;
+        const isCurrent = () => matchesSession() && topNav.getCurrentUser()?.account === currentUser.account
+            && activeInlineView === loadingView && loadingView.isConnected;
+        let enrichedItemData;
         try {
-            const detailRes = await api.getItemById(itemData.id);
-            if (detailRes?.status === "success" && detailRes?.data) {
-                // 合并详情数据，保留列表中的图片URL等已有字段
-                enrichedItemData = { ...itemData, ...detailRes.data };
-            }
-        } catch (err) {
-            console.warn("获取编辑详情失败，使用列表数据:", err);
+            const detailRes = await api.getItemById(itemData.id, { noStore: true });
+            if (!isCurrent()) return;
+            const data = detailRes?.data, revision = data?.edit_revision === undefined ? 0 : data.edit_revision;
+            if (detailRes?.status !== 'success' || data?.id !== itemData.id || data?.author !== currentUser.account
+                || !Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid edit detail');
+            enrichedItemData = { ...data, edit_revision: revision };
+        } catch (_) {
+            if (!isCurrent()) return;
+            loadingView.textContent = t('common.operation_failed');
+            loadingView.setAttribute('role', 'alert');
+            return;
         }
+        if (!isCurrent()) return;
 
         const publishView = createPublishView(currentUser, 
             () => hideInlineView(), 
@@ -360,27 +431,31 @@ export function buildSidebarDOM() {
 
     // 🔔 通知跳转：切换到对应Tab并展开指定卡片
     _onSidebarWindow("comfy-route-to-item", async (e) => {
-        const { itemId, itemType } = e.detail;
-        if (!itemId) return;
+        const detail = e.detail;
+        if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return;
+        const { itemId, itemType } = detail;
+        if (!(typeof itemId === 'string' && itemId.trim()) &&
+            !(Number.isSafeInteger(itemId) && itemId > 0)) return;
         
         // 1. 根据 itemType 确定 Tab
         let targetTab;
         if (itemType === "tool") targetTab = "tools";
         else if (itemType === "skill") targetTab = "skills";
         else if (itemType === "app") targetTab = "apps";
-        else if (itemType.startsWith("recommend")) targetTab = "recommends";
+        else if (typeof itemType === 'string' && itemType.startsWith("recommend")) targetTab = "recommends";
         else targetTab = "tools"; // 兜底
         
         // 【问题2修复】如果已经在目标 Tab，先尝试在当前 DOM 中查找卡片
         if (currentTab === targetTab) {
-            const existingCard = contentArea.querySelector(`[data-item-id="${itemId}"]`);
+            const existingCard = Array.from(contentArea.querySelectorAll('[data-item-id]'))
+                .find(card => card.getAttribute('data-item-id') === String(itemId));
             if (existingCard) {
                 // 关闭可能存在的通知中心等全屏视图
                 if (activeInlineView) hideInlineView();
                 
                 const summary = existingCard.querySelector('.item-summary') || existingCard.firstElementChild;
                 // 先确保卡片是折叠状态再展开（避免点击已展开的卡片把它收起来）
-                existingCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                scrollCardIntoView(existingCard);
                 // 检查详情区域是否已展开
                 const detailView = existingCard.children[1]; // detailView 是第二个子元素
                 if (detailView && detailView.style.display === 'none' && summary) {
@@ -395,23 +470,8 @@ export function buildSidebarDOM() {
             currentTab = targetTab;
             Store.save("activeTab", currentTab);
             
-            // 3. 更新 Tab 按钮的选中状态
-            const tabBtns = tabsContainer.querySelectorAll('button');
-            tabBtns.forEach((btn, index) => {
-                const tabId = tabs[index].id;
-                const tabColor = tabColors[tabId];
-                if (tabId === currentTab) {
-                    btn.style.background = "rgba(0,0,0,0.3)";
-                    btn.style.color = tabColor.active;
-                    btn.style.borderBottom = `2px solid ${tabColor.active}`;
-                    btn.style.textShadow = getTextShadow(tabColor.active, true);
-                } else {
-                    btn.style.background = "rgba(0,0,0,0.15)";
-                    btn.style.color = tabColor.inactive;
-                    btn.style.borderBottom = "none";
-                    btn.style.textShadow = getTextShadow(tabColor.active, false);
-                }
-            });
+            // 3. 同步选中态；视觉状态由共享主题 CSS 根据 aria-selected 绘制
+            syncTabsA11y();
             
             // 4. 更新筛选控件可见性
             updateFilterVisibility(currentTab);
@@ -430,23 +490,49 @@ export function buildSidebarDOM() {
             currentUser: topNav.getCurrentUser(),
             renderToken: currentRenderToken,
             getRenderToken: getRenderToken,
+            isNavigationCurrent: captureListNavigation(),
             force: false,
             expandItemId: itemId  // 新增：要展开的卡片ID
         });
     });
 
-    let currentTab = Store.load("activeTab", "tools");
+    const savedTab = Store.load("activeTab", "tools");
+    let currentTab = tabs.some(tab => tab.id === savedTab) ? savedTab : tabs[0].id;
     let currentSort = Store.load("activeSort", "time");
     let currentRenderToken = 0;
+    let sidebarDisposed = false;
+    let searchDebounce = null;
     const getRenderToken = () => currentRenderToken;
+    _sidebarListCleanup = () => {
+        sidebarDisposed = true;
+        currentRenderToken++;
+        try { searchDebounce?.cancel(); }
+        finally {
+            try { disposeSidebarContent(contentArea); }
+            finally { cleanupImageSandbox(contentArea); }
+        }
+    };
+    const syncTabsA11y = () => {
+        const selectedTab = tabs.find(tab => tab.id === currentTab) || tabs[0];
+        for (const tab of tabs) {
+            const button = tabsContainer.querySelector(`[data-tab-id="${tab.id}"]`);
+            if (!button) continue;
+            const selected = tab.id === selectedTab.id;
+            button.setAttribute("aria-selected", String(selected));
+            button.tabIndex = selected ? 0 : -1;
+        }
+        contentArea.setAttribute("aria-labelledby", `${sidebarInstanceId}-tab-${selectedTab.id}`);
+    };
 
     const triggerLoad = (forceRefresh = false) => {
-        currentRenderToken++; 
+        if (sidebarDisposed) return;
+        currentRenderToken++;
         loadSidebarContent({
             tab: currentTab, sort: currentSort,
             keyword: sortContainer.querySelector("#hub-search-input").value.trim().toLowerCase(),
             contentArea: contentArea, currentUser: topNav.getCurrentUser(),
             renderToken: currentRenderToken, getRenderToken: getRenderToken,
+            isNavigationCurrent: captureListNavigation(),
             force: forceRefresh
         });
     };
@@ -461,7 +547,7 @@ export function buildSidebarDOM() {
 
     sortContainer.querySelector("#btn-open-publish").onclick = () => {
         const currentUser = topNav.getCurrentUser();
-        if (!currentUser) return showToast("⚠️ 请先登录您的社区账号后再进行发布！", "warning");
+        if (!currentUser) return showToast(t('auth.login_required'), "warning");
         
         // 🎯 根据当前Tab打开对应的发布界面
         if (currentTab === "tasks") {
@@ -488,69 +574,43 @@ export function buildSidebarDOM() {
         }
     };
 
-    // Tab 颜色配置：按色环渐变顺序排列（绿→青→蓝→紫→粉→红→橙→黄），相邻 Tab 色相平滑过渡
-    const tabColors = {
-        tools: { active: "#4CAF50", inactive: "#81C784" },      // 插件榜 - 绿（渐变起点）
-        skills: { active: "#00BCD4", inactive: "#4DD0E1" },     // Skill - 青
-        apps: { active: "#2196F3", inactive: "#64B5F6" },       // 工作流 - 蓝
-        recommends: { active: "#7C4DFF", inactive: "#B388FF" }, // 推荐榜 - 紫
-        creators: { active: "#E91E63", inactive: "#F06292" },   // 创作者 - 粉
-        tasks: { active: "#F44336", inactive: "#E57373" },      // 任务榜 - 红
-        posts: { active: "#FF9800", inactive: "#FFB74D" },      // 讨论区 - 橙
-        prompts: { active: "#FFC107", inactive: "#FFD54F" }     // 提示词 - 黄（渐变终点）
-    };
-
-    // 文字阴影效果：多层阴影确保任何背景下都清晰可见
-    const getTextShadow = (color, isActive) => {
-        const baseShadow = "0 1px 2px rgba(0,0,0,0.8), 0 0 4px rgba(0,0,0,0.6), 1px 1px 3px rgba(0,0,0,0.5)";
-        return isActive 
-            ? `${baseShadow}, 0 0 10px ${color}, 0 0 20px ${color}` 
-            : baseShadow;
-    };
-
     tabs.forEach(tab => {
         const btn = document.createElement("button");
-        // 文案交由 ::before 渲染（见文件顶部 _injectTabLabelStyle），不产生文本节点；
-        // 伪元素内容不参与可访问名计算，用 aria-label 补回无障碍名称
+        // 共享主题 CSS 从 aria-label 绘制伪元素文案，避免翻译插件改写标签。
         btn.className = "hub-tab-btn";
-        btn.style.setProperty("--tab-label", JSON.stringify(tab.label));
+        btn.type = "button";
+        btn.id = `${sidebarInstanceId}-tab-${tab.id}`;
+        btn.dataset.tabId = tab.id;
+        btn.setAttribute("role", "tab");
+        btn.setAttribute("aria-controls", contentArea.id);
         btn.setAttribute("aria-label", tab.label);
-        const isActive = currentTab === tab.id;
-        const color = tabColors[tab.id];
-        Object.assign(btn.style, { 
-            flex: "1", 
-            padding: "8px", 
-            cursor: "pointer", 
-            background: isActive ? "rgba(0,0,0,0.3)" : "rgba(0,0,0,0.15)", 
-            color: isActive ? color.active : color.inactive, 
-            border: "none", 
-            borderBottom: isActive ? `2px solid ${color.active}` : "none",
-            fontWeight: "bold",
-            textShadow: getTextShadow(color.active, isActive),
-            transition: "all 0.2s ease",
-            fontSize: "13px"
-        });
         btn.onclick = () => {
             currentTab = tab.id; Store.save("activeTab", currentTab);
-            Array.from(tabsContainer.children).forEach((c, i) => { 
-                const tabId = tabs[i].id;
-                const tabColor = tabColors[tabId];
-                c.style.background = "rgba(0,0,0,0.15)"; 
-                c.style.color = tabColor.inactive; 
-                c.style.borderBottom = "none"; 
-                c.style.textShadow = getTextShadow(tabColor.active, false);
-            });
-            btn.style.background = "rgba(0,0,0,0.3)"; 
-            btn.style.color = color.active; 
-            btn.style.borderBottom = `2px solid ${color.active}`;
-            btn.style.textShadow = getTextShadow(color.active, true);
             sortContainer.querySelector("#hub-search-input").value = "";
             // 🎯 根据 Tab 切换筛选控件显示
             updateFilterVisibility(currentTab);
+            syncTabsA11y();
             triggerLoad();
         };
+        btn.addEventListener("keydown", (event) => {
+            if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.repeat
+                || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+            const currentIndex = tabs.findIndex(item => item.id === tab.id);
+            let nextIndex = currentIndex;
+            if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length;
+            else if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+            else if (event.key === "Home") nextIndex = 0;
+            else if (event.key === "End") nextIndex = tabs.length - 1;
+            else return;
+            event.preventDefault();
+            event.stopPropagation();
+            const nextButton = tabsContainer.querySelector(`[data-tab-id="${tabs[nextIndex].id}"]`);
+            nextButton?.focus();
+            nextButton?.click();
+        });
         tabsContainer.appendChild(btn);
     });
+    syncTabsA11y();
 
     // 🎯 筛选控件显示切换函数
     const updateFilterVisibility = (tabId) => {
@@ -618,9 +678,12 @@ export function buildSidebarDOM() {
     sortContainer.querySelector("#hub-sort-select").onchange = (e) => { currentSort = e.target.value; Store.save("activeSort", currentSort); triggerLoad(); };
     
     // 🔍 搜索防抖：300ms 延迟，避免每次按键都发起网络请求
-    sortContainer.querySelector("#hub-search-input").oninput = debounce(() => {
+    searchDebounce = debounce(() => {
         triggerLoad();
     }, 300);
+    sortContainer.querySelector("#hub-search-input").oninput = () => {
+        if (!sidebarDisposed) searchDebounce();
+    };
     
     // 🎯 任务榜筛选控件事件绑定
     sortContainer.querySelector("#task-status-filter").onchange = () => {

@@ -8,6 +8,8 @@
 
 import { showToast } from "./UI交互提示组件.js";
 import { t } from "./用户体验增强.js";
+import { captureRequestSession } from "../core/网络请求_基础设施.js";
+import { getUser } from "../core/状态管理.js";
 // 本模块内部也需要转义（下方 renderInteractionButtonsHTML）；re-export 不会绑定本地标识符，故单独 import
 import { escapeHtml } from "../core/全局配置.js";
 
@@ -23,7 +25,7 @@ const VIEW_DEBOUNCE_MS = 300000;     // 5分钟成功冷却
 const VIEW_ERROR_COOLDOWN_MS = 30000; // 30秒错误冷却
 
 // 防重复提交状态跟踪
-const _pendingActions = new Set();
+const _pendingActions = new WeakMap();
 
 /**
  * 记录内容浏览量（带5分钟防抖）
@@ -131,7 +133,8 @@ export function renderInteractionButtonsHTML(data, currentAccount, options = {})
  * @param {string} options.activeToastKey - 激活时 toast 的 i18n key
  * @param {string} [options.activeTextColor] - 激活时的按钮文字色（可选）
  * @param {string} [options.inactiveTextColor] - 取消激活时的按钮文字色（可选）
- * @param {string} [options.warnLabel] - 日志警告用标签
+ * @param {string} options.inactiveAction - 服务端取消动作值
+ * @param {Function} [options.isCurrent] - 原视图仍有效的检查
  * @returns {Promise<Object|null>}
  */
 async function _handleToggleAction(apiMethod, contentId, buttonEl, countEl, currentUser, options) {
@@ -143,29 +146,37 @@ async function _handleToggleAction(apiMethod, contentId, buttonEl, countEl, curr
         activeToastKey,
         activeTextColor = null,
         inactiveTextColor = null,
-        warnLabel = 'toggle'
+        inactiveAction,
+        isCurrent: viewCurrent = () => true
     } = options;
 
-    if (!currentUser) {
+    const sessionMatches = captureRequestSession();
+    const originalHandler = buttonEl?.onclick;
+    const current = () => sessionMatches() && viewCurrent()
+        && (!buttonEl || (buttonEl.isConnected && buttonEl.onclick === originalHandler))
+        && (!countEl || countEl.isConnected)
+        && (getUser()?.account || null) === (currentUser?.account || null);
+    if (!current()) return null;
+    if (!currentUser?.account) {
         showToast(t('auth.login_required'), "warning");
         return null;
     }
 
-    const actionKey = `${actionPrefix}_${contentId}`;
-    if (_pendingActions.has(actionKey)) return null;
-    _pendingActions.add(actionKey);
+    // 同类内容ID可在不同业务存在；按实际API方法和账号隔离在途动作。
+    const actionKey = JSON.stringify([currentUser.account, actionPrefix, contentId]);
+    let pending = _pendingActions.get(apiMethod);
+    if (!pending) { pending = new Set(); _pendingActions.set(apiMethod, pending); }
+    if (pending.has(actionKey)) return null;
+    pending.add(actionKey);
 
     if (buttonEl) buttonEl.disabled = true;
 
     try {
         const res = await apiMethod(contentId);
-
-        if (!res || res.status !== "success") {
-            console.warn(`${warnLabel}响应异常:`, res);
-            return null;
-        }
-
-        const count = typeof res[countField] === 'number' ? res[countField] : 0;
+        if (!current()) return null;
+        if (res?.status !== "success" || !Number.isSafeInteger(res[countField]) || res[countField] < 0
+            || (res.action !== activeAction && res.action !== inactiveAction)) throw new Error();
+        const count = res[countField];
         if (countEl) countEl.textContent = count;
 
         if (res.action === activeAction) {
@@ -178,14 +189,14 @@ async function _handleToggleAction(apiMethod, contentId, buttonEl, countEl, curr
             if (buttonEl) buttonEl.style.borderColor = "#555";
             if (buttonEl && inactiveTextColor) buttonEl.style.color = inactiveTextColor;
         }
+        if (buttonEl) buttonEl.setAttribute("aria-pressed", String(res.action === activeAction));
         return res;
-    } catch (err) {
-        console.error(`${warnLabel}操作失败:`, err);
-        showToast(t('task.operation_failed'), "error");
+    } catch (_) {
+        if (current()) showToast(t('task.operation_failed'), "error");
         return null;
     } finally {
-        _pendingActions.delete(actionKey);
-        if (buttonEl) buttonEl.disabled = false;
+        pending.delete(actionKey);
+        if (current() && buttonEl) buttonEl.disabled = false;
     }
 }
 
@@ -196,16 +207,18 @@ async function _handleToggleAction(apiMethod, contentId, buttonEl, countEl, curr
  * @param {HTMLElement} buttonEl - 按钮元素
  * @param {HTMLElement} countEl - 计数元素
  * @param {Object} currentUser - 当前用户
+ * @param {Object} [options] - 可选视图检查，原五参数调用保持
  * @returns {Promise<Object|null>}
  */
-export async function handleToggleLike(apiMethod, contentId, buttonEl, countEl, currentUser) {
+export async function handleToggleLike(apiMethod, contentId, buttonEl, countEl, currentUser, options = {}) {
     return _handleToggleAction(apiMethod, contentId, buttonEl, countEl, currentUser, {
         actionPrefix: 'like',
         countField: 'likes',
         activeAction: 'liked',
         activeColor: '#FF5722',
         activeToastKey: 'post.liked',
-        warnLabel: '点赞'
+        inactiveAction: 'unliked',
+        isCurrent: options.isCurrent
     });
 }
 
@@ -216,9 +229,10 @@ export async function handleToggleLike(apiMethod, contentId, buttonEl, countEl, 
  * @param {HTMLElement} buttonEl - 按钮元素
  * @param {HTMLElement} countEl - 计数元素
  * @param {Object} currentUser - 当前用户
+ * @param {Object} [options] - 可选视图检查，原五参数调用保持
  * @returns {Promise<Object|null>}
  */
-export async function handleToggleFavorite(apiMethod, contentId, buttonEl, countEl, currentUser) {
+export async function handleToggleFavorite(apiMethod, contentId, buttonEl, countEl, currentUser, options = {}) {
     return _handleToggleAction(apiMethod, contentId, buttonEl, countEl, currentUser, {
         actionPrefix: 'favorite',
         countField: 'favorites',
@@ -227,7 +241,8 @@ export async function handleToggleFavorite(apiMethod, contentId, buttonEl, count
         activeToastKey: 'post.favorited',
         activeTextColor: '#000',
         inactiveTextColor: '#fff',
-        warnLabel: '收藏'
+        inactiveAction: 'unfavorited',
+        isCurrent: options.isCurrent
     });
 }
 

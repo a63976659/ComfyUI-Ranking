@@ -8,9 +8,8 @@
 /**
  * 在新标签页打开彩蛋动画页面
  */
-export function openEasterEggPage() {
-    const html = generateFullHTML();
-    const newWindow = window.open('', '_blank');
+export function openEasterEggPage(newWindow, { language, title, hint, speedLabel } = {}) {
+    const html = generateFullHTML({ language, title, hint, speedLabel });
     if (newWindow) {
         newWindow.document.write(html);
         newWindow.document.close();
@@ -20,13 +19,15 @@ export function openEasterEggPage() {
 /**
  * 生成完整的彩蛋动画HTML页面
  */
-function generateFullHTML() {
+function generateFullHTML({ language = 'zh-CN', title = '猪的飞行梦', hint = '鼠标移动改变视角 | PgUp加速 PgDn减速 | ESC关闭', speedLabel = '速度' } = {}) {
+    const safeLanguage = language === 'en-US' ? 'en-US' : 'zh-CN';
+    const speedLabelLiteral = JSON.stringify(speedLabel);
     return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${safeLanguage}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🐷 猪的飞行梦</title>
+    <title>🐷 ${title}</title>
     <style>
         * {
             margin: 0;
@@ -70,9 +71,10 @@ function generateFullHTML() {
 </head>
 <body>
     <canvas id="canvas"></canvas>
-    <div id="hint">鼠标移动改变视角 | PgUp加速 PgDn减速 | ESC关闭</div>
-    <div id="speed-indicator">速度: 1.0x</div>
+    <div id="hint">${hint}</div>
+    <div id="speed-indicator">${speedLabel}: 1.0x</div>
     <script>
+        const SPEED_LABEL = ${speedLabelLiteral};
         // ==================== 配置参数 ====================
         // 千字文（用于星空星星）
         const QIANZIWEN = '天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳云腾致雨露结为霜金生丽水玉出昆冈剑号巨阙珠称夜光果珍李柰菜重芥姜海咸河淡鳞潜羽翔龙师火帝鸟官人皇始制文字乃服衣裳推位让国有虞陶唐吊民伐罪周发殷汤坐朝问道垂拱平章爱育黎首臣伏戎羌遐迩一体率宾归王鸣凤在竹白驹食场化被草木赖及万方盖此身发四大五常恭惟鞠养岂敢毁伤女慕贞洁男效才良知过必改得能莫忘罔谈彼短靡恃己长信使可覆器欲难量墨悲丝染诗赞羔羊景行维贤克念作圣德建名立形端表正空谷传声虚堂习听祸因恶积福缘善庆尺璧非宝寸阴是竞资父事君曰严与敬孝当竭力忠则尽命临深履薄夙兴温凊似兰斯馨如松之盛川流不息渊澄取映容止若思言辞安定笃初诚美慎终宜令荣业所基籍甚无竟学优登仕摄职从政存以甘棠去而益咏乐殊贵贱礼别尊卑上和下睦夫唱妇随外受傅训入奉母仪诸姑伯叔犹子比儿孔怀兄弟同气连枝交友投分切磨箴规仁慈隐恻造次弗离节义廉退颠沛匪亏性静情逸心动神疲守真志满逐物意移坚持雅操好爵自縻都邑华夏东西二京背邙面洛浮渭据泾宫殿盘郁楼观飞惊图写禽兽画彩仙灵丙舍旁启甲帐对楹肆筵设席鼓瑟吹笙升阶纳陛弁转疑星右通广内左达承明既集坟典亦聚群英杜稿钟隶漆书壁经府罗将相路侠槐卿户封八县家给千兵高冠陪辇驱毂振缨世禄侈富车驾肥轻策功茂实勒碑刻铭盘溪伊尹佐时阿衡奄宅曲阜微旦孰营桓公匡合济弱扶倾绮回汉惠说感武丁俊乂密勿多士寔宁晋楚更霸赵魏困横假途灭虢践土会盟何遵约法韩弊烦刑起翦颇牧用军最精宣威沙漠驰誉丹青九州禹迹百郡秦并岳宗泰岱禅主云亭雁门紫塞鸡田赤城昆池碣石巨野洞庭旷远绵邈岩岫杳冥治本于农务资稼穑俶载南亩我艺黍稷税熟贡新劝赏黜陟孟轲敦素史鱼秉直庶几中庸劳谦谨敕聆音察理鉴貌辨色贻厥嘉猷勉其祗植省躬讥诫宠增抗极殆辱近耻林皋幸即两疏见机解组谁逼索居闲处沉默寂寥求古寻论散虑逍遥欣奏累遣戚谢欢招渠荷的历园莽抽条枇杷晚翠梧桐早凋陈根委翳落叶飘摇游鹍独运凌摩绛霄耽读玩市寓目囊箱易輶攸畏属耳垣墙具膳餐饭适口充肠饱饫烹宰饥厌糟糠亲戚故旧老少异粮妾御绩纺侍巾帷房纨扇圆洁银烛炜煌昼眠夕寐蓝笋象床弦歌酒宴接杯举觞矫手顿足悦豫且康嫡后嗣续祭祀烝尝稽颡再拜悚惧恐惶笺牒简要顾答审详骸垢想浴执热愿凉驴骡犊特骇跃超骧诛斩贼盗捕获叛亡布射僚丸嵇琴阮啸恬笔伦纸钧巧任钓释纷利俗并皆佳妙毛施淑姿工颦妍笑年矢每催曦晖朗曜璇玑悬斡晦魄环照指薪修祜永绥吉劭矩步引领俯仰廊庙束带矜庄徘徊瞻眺孤陋寡闻愚蒙等诮谓语助者焉哉乎也';
@@ -763,7 +765,7 @@ function generateFullHTML() {
                 cx = lerp(cx, targetCx, ease1);
                 cy = lerp(cy, targetCy, ease1);
                 currentSpeed = lerp(currentSpeed, targetSpeed, 0.05);
-                speedIndicator.textContent = \`速度: \${currentSpeed.toFixed(1)}x\`;
+                speedIndicator.textContent = SPEED_LABEL + ': ' + currentSpeed.toFixed(1) + 'x';
             }
         }
 

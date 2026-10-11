@@ -36,10 +36,24 @@ function _unwrapProxy(url, prefix) {
     let result = url;
     let guard = 0;
     while (result.startsWith(prefix) && guard++ < 10) {
-        try { result = decodeURIComponent(result.replace(prefix, '')); }
+        try {
+            let encoded = result.slice(prefix.length);
+            if (prefix === API.LOCAL_IMAGE_PROXY_PREFIX && encoded.endsWith(API.COMPLETE_IMAGE_QUERY_SUFFIX)) {
+                encoded = encoded.slice(0, -API.COMPLETE_IMAGE_QUERY_SUFFIX.length);
+            }
+            result = decodeURIComponent(encoded);
+        }
         catch (e) { break; }
     }
     return result;
+}
+
+/** 广告预载复用磁盘缓存；只有真实图片成功，才允许更新已展示的广告。 */
+export function getCompleteImageUrl(url) {
+    if (!url || typeof url !== 'string') return url;
+    const original = _unwrapProxy(url, API.LOCAL_IMAGE_PROXY_PREFIX);
+    if (IS_WEB_MODE || !original.startsWith('http')) return original;
+    return API.LOCAL_IMAGE_PROXY_PREFIX + encodeURIComponent(original) + API.COMPLETE_IMAGE_QUERY_SUFFIX;
 }
 
 // 🚀 导出图片代理函数，供其他组件在缓存读取后调用

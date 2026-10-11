@@ -111,7 +111,7 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
                 <button class="btn-zoom-out" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold;">-</button>
                 <button class="btn-zoom-reset" style="background: #333; color: #fff; border: 1px solid #555; height: 28px; padding: 0 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">${t('common.reset')}</button>
                 <button class="btn-zoom-in" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold;">+</button>
-                <button class="btn-fullscreen" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold; display: flex; align-items: center; justify-content: center; font-size: 14px; margin-left: 5px;" title="全屏播放">⛶</button>
+                <button class="btn-fullscreen" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold; display: flex; align-items: center; justify-content: center; font-size: 14px; margin-left: 5px;" title="${escapeHtml(t('image.viewer.fullscreen'))}">⛶</button>
             </div>
             <div class="sliders-wrapper" style="opacity: 0.2; transition: 0.3s; position: absolute; width: 100%; height: 100%; top:0; left:0; pointer-events: none;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.2">
                 <input type="range" class="slider-x" min="-400" max="400" value="0" style="position: absolute; bottom: 0px; left: 50%; transform: translateX(-50%); width: 80%; pointer-events: auto; z-index: 10;">
@@ -262,7 +262,7 @@ export function setupImageSandboxEvents(detailView) {
             const currentIndex = parseInt(viewport.getAttribute('data-current') || '0', 10);
             
             // 🔍 调试日志：输出收集到的图片URL
-            console.log('🖼️ 全屏播放图片:', imageUrls, '当前索引:', currentIndex);
+            console.log('🖼️ 全屏播放图片:', '图片数量:', imageUrls.length, '当前索引:', currentIndex);
             
             if (imageUrls.length > 0) {
                 // 打开全屏图像播放器（使用静态import，避免动态import路径问题）
@@ -272,11 +272,11 @@ export function setupImageSandboxEvents(detailView) {
                     console.error('无法打开图像播放器:', err);
                     // 显示用户可见的错误提示
                     import('./UI交互提示组件.js').then(module => {
-                        module.showToast('图像播放器加载失败，请刷新页面重试', 'error');
+                        module.showToast(t('image.viewer.load_failed'), 'error');
                     }).catch(() => {
                         // 动态import也失败时，创建简单的内联提示
                         const fallback = document.createElement('div');
-                        fallback.textContent = '图像播放器加载失败，请刷新页面重试';
+                        fallback.textContent = t('image.viewer.load_failed');
                         Object.assign(fallback.style, { position: 'fixed', top: '50px', left: '50%', transform: 'translateX(-50%)', background: '#F44336', color: '#fff', padding: '10px 20px', borderRadius: '8px', zIndex: '10000', fontSize: '14px' });
                         document.body.appendChild(fallback);
                         setTimeout(() => fallback.remove(), 3000);
@@ -314,28 +314,10 @@ export function setupImageSandboxEvents(detailView) {
     window.addEventListener('mouseup', handleMouseUp);
     viewport.addEventListener('mouseleave', () => { isDragging = false; viewport.style.cursor = 'grab'; });
     
-    // ⌨️ 键盘左右切换
-    const handleKeydown = (e) => {
-        if (e.key === 'ArrowLeft' && imageUrls.length > 1) {
-            loadImage(currentIndex > 0 ? currentIndex - 1 : imageUrls.length - 1);
-        } else if (e.key === 'ArrowRight' && imageUrls.length > 1) {
-            loadImage(currentIndex < imageUrls.length - 1 ? currentIndex + 1 : 0);
-        }
-    };
-    
-    // 当鼠标在视口内时启用键盘切换
-    viewport.addEventListener('mouseenter', () => {
-        document.addEventListener('keydown', handleKeydown);
-    });
-    viewport.addEventListener('mouseleave', () => {
-        document.removeEventListener('keydown', handleKeydown);
-    });
-    
     // 🔧 P3优化：注册清理函数，供组件销毁时调用
     const cleanup = () => {
         window.removeEventListener('mousemove', handleMouseMove);
         window.removeEventListener('mouseup', handleMouseUp);
-        document.removeEventListener('keydown', handleKeydown);
     };
     viewport._sandboxCleanup = cleanup;
 }

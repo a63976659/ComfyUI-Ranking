@@ -14,13 +14,14 @@
 //   - 性能优化工具.js (缓存/骨架屏)
 // ==========================================
 
-import { api } from "../core/网络请求API.js";
+import { createCardNavigationScope } from "../components/卡片导航生命周期.js";
+import { api, captureRequestSession } from "../core/网络请求API.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { readListCache, writeListCache, createSkeleton, createPaginationLoader, lazyLoadImages } from "../components/性能优化工具.js";
-import { applyViewportAnimations } from "../components/动画音效引擎.js";
+import { readListCache, writeListCache, requireListResponseData, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
+import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
-import { getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { API, CACHE, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
 import { createRatingStars } from "../social/评论与互动组件.js";
 import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
@@ -43,8 +44,8 @@ const SORT_OPTIONS = [
 // 🔧 修复内存泄漏：保存当前筛选事件监听器引用，以便在重新创建时移除
 let currentFilterHandler = null;
 
-// 🔧 自动分页器引用（用于组件切换时清理）
-let currentPaginator = null;
+// 当前视图清理入口；分页器由各视图实例持有。
+let activeViewCleanup = null;
 
 /**
  * 🔍 判断帖子是否匹配搜索关键词
@@ -60,10 +61,10 @@ function _matchesSearch(post, keyword) {
  */
 function _renderEmptyState(t) {
     return `
-        <div style="grid-column: span 2; text-align: center; padding: 60px 20px; color: #666;">
-            <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">📝</div>
-            <div style="font-size: 14px; margin-bottom: 8px;">${t('post.no_posts')}</div>
-            <div style="font-size: 12px; color: #888;">${t('post.be_first')}</div>
+        <div class="posts-empty" role="status">
+            <div class="posts-empty__icon" aria-hidden="true">📝</div>
+            <div class="posts-empty__title">${t('post.no_posts')}</div>
+            <div class="posts-empty__hint">${t('post.be_first')}</div>
         </div>
     `;
 }
@@ -72,57 +73,40 @@ function _renderEmptyState(t) {
  * 🖼️ 生成头像 HTML 字符串
  * @param {string} avatar - 头像 URL
  * @param {string} name - 用户名（用于首字母回退）
- * @param {number} size - 头像尺寸（px）
  */
-function _generateAvatarHtml(avatar, name, size) {
+function _generateAvatarHtml(avatar, name) {
     const initial = (name || 'U')[0].toUpperCase();
-    // 🔒 XSS防护：avatar / name 均来自他人可修改的资料（昵称首字母可能是 < ），写入 HTML 前必须转义
     if (avatar) {
-        return `<img class="swr-avatar" src="${escapeHtml(avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
+        return `<img class="swr-avatar posts-card__avatar" alt="" src="${escapeHtml(avatar)}">`;
     }
-    const fontSize = Math.max(9, Math.round(size * 0.5));
-    return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${escapeHtml(initial)}</div>`;
+    return `<div class="swr-avatar posts-card__avatar posts-card__avatar--initial" aria-hidden="true">${escapeHtml(initial)}</div>`;
 }
 
 /**
  * 💬 创建讨论区视图
  */
 export function createPostsView(currentUser, keyword = "") {
-    // 清理旧分页器
-    if (currentPaginator) {
-        currentPaginator.stop();
-        currentPaginator = null;
-    }
+    if (activeViewCleanup) activeViewCleanup();
     
     currentUserCache = currentUser;
     const searchKeyword = (keyword || "").substring(0, 100).toLowerCase();
     
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex",
-        flexDirection: "column",
-        gap: "0",
-        color: "#ccc",
-        fontSize: "14px",
-        padding: "0",
-        overflowY: "auto",
-        flex: "1",
-        boxSizing: "border-box"
-    });
+    container.className = "posts-view";
     
     container.innerHTML = `
         <!-- 🎯 瀑布流容器（发布按钮已移至顶部统一发布按钮） -->
-        <div id="posts-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 15px; overflow-y: auto; flex: 1;">
+        <div id="posts-grid" class="posts-grid">
             <!-- 加载占位 -->
-            <div id="posts-loading" style="grid-column: span 2; text-align: center; padding: 40px; color: #888;">
-                <div style="font-size: 24px; margin-bottom: 10px;">⏳</div>
+            <div id="posts-loading" class="posts-loading" role="status">
+                <div class="posts-loading__icon" aria-hidden="true">⏳</div>
                 ${t('post.loading')}
             </div>
         </div>
         
         <!-- 加载更多 -->
-        <div id="load-more-wrapper" style="display: none; padding: 15px; text-align: center; border-top: 1px solid var(--border-color, #333);">
-            <button id="btn-load-more" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 30px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: 0.2s;" onmouseover="this.style.background='#444'" onmouseout="this.style.background='var(--comfy-input-bg)'">
+        <div id="load-more-wrapper" class="posts-more" style="display: none;">
+            <button type="button" id="btn-load-more" class="posts-more__button">
                 ${t('post.load_more')}
             </button>
         </div>
@@ -131,23 +115,38 @@ export function createPostsView(currentUser, keyword = "") {
     // 🔌 绑定事件
     
     // 加载帖子数据
-    let currentPage = 1;
     let currentSort = "latest";
     let allPostsData = [];  // 全量数据缓存
     let isLoadingFromNetwork = false;
+    let listViewGeneration = 0;
+    let networkRequestGeneration = 0;
+    let disposed = false;
+    let firstPageReady = false;
+    const cardNavigation = createCardNavigationScope(window, () => !disposed, {
+        captureSession: captureRequestSession,
+        storageKeys: [CACHE.LEGACY_KEYS.TOKEN, CACHE.LEGACY_KEYS.USER]
+    });
+    let currentPaginator = null;
     const postsGrid = container.querySelector("#posts-grid");
     const loadMoreWrapper = container.querySelector("#load-more-wrapper");
     const loadMoreBtn = container.querySelector("#btn-load-more");
     
     // 🚀 自动分页加载回调
-    const loadMorePosts = async (page, pageSize) => {
+    const loadMorePosts = async (page, pageSize, { isCurrent = () => true } = {}) => {
+        if (disposed || !isCurrent()) return [];
         try {
-            isLoadingFromNetwork = true;
             const res = await api.getPosts(page, pageSize, currentSort);
-            const posts = res.data || [];
-            isLoadingFromNetwork = false;
+            if (disposed || !isCurrent()) return [];
+            const posts = requireListResponseData(res);
             
-            if (posts.length === 0) return [];
+            if (posts.length === 0) {
+                if (searchKeyword && !allPostsData.some(post => _matchesSearch(post, searchKeyword))) {
+                    renderListSearchMessage(postsGrid, t('pagination.search_empty'));
+                } else {
+                    postsGrid.querySelector('.list-search-message')?.remove();
+                }
+                return [];
+            }
             
             allPostsData = [...allPostsData, ...proxyImages(posts)];
             
@@ -157,7 +156,8 @@ export function createPostsView(currentUser, keyword = "") {
             // 渲染帖子卡片
             const newCards = [];
             displayPosts.forEach(post => {
-                const card = createPostCard(post);
+                postsGrid.querySelector('.list-search-message')?.remove();
+                const card = createPostCard(post, currentUser, () => !disposed, cardNavigation.capture);
                 newCards.push(card);
                 postsGrid.appendChild(card);
             });
@@ -172,14 +172,16 @@ export function createPostsView(currentUser, keyword = "") {
             
             return posts;
         } catch (err) {
-            console.error("分页加载帖子失败:", err);
-            isLoadingFromNetwork = false;
+            if (disposed || !isCurrent()) return [];
+            console.error("分页加载帖子失败");
+            postsGrid.querySelector('.list-search-message')?.remove();
             return null;  // 返回 null 表示加载失败（区别于空数组表示没有更多数据）
         }
     };
     
     // 🚀 启动自动分页
     const startAutoPagination = () => {
+        if (disposed) return;
         if (currentPaginator) {
             currentPaginator.stop();
         }
@@ -188,9 +190,12 @@ export function createPostsView(currentUser, keyword = "") {
         
         currentPaginator = createPaginationLoader({
             container: scrollContainer,
+            canLoad: () => !disposed && firstPageReady && !isLoadingFromNetwork,
             loadMore: loadMorePosts,
             pageSize: PAGE_SIZE,
-            threshold: 200
+            threshold: 200,
+            autoFill: () => Boolean(searchKeyword) && !allPostsData.some(post => _matchesSearch(post, searchKeyword)),
+            t
         });
         
         currentPaginator.start();
@@ -240,10 +245,11 @@ export function createPostsView(currentUser, keyword = "") {
     
     // 🎯 监听外部筛选变化事件（与任务榜保持一致）
     const handleFilterChange = (e) => {
+        if (disposed) return;
         const { sort } = e.detail;
         if (sort) {
+            listViewGeneration++;
             currentSort = sort;
-            currentPage = 1;
             
             // 🚀 重置分页器
             if (currentPaginator) {
@@ -272,6 +278,8 @@ export function createPostsView(currentUser, keyword = "") {
     
     // 监听外部评分刷新事件（帖子详情页评分后通知列表刷新）
     const refreshHandler = () => {
+        if (disposed) return;
+        listViewGeneration++;
         if (allPostsData.length > 0) {
             const sorted = sortPostsLocally(allPostsData, currentSort);
             renderPostsFromCache(sorted);
@@ -286,30 +294,30 @@ export function createPostsView(currentUser, keyword = "") {
         // 创建瀑布流式骨架屏
         for (let i = 0; i < 4; i++) {
             const skeletonCard = document.createElement("div");
-            skeletonCard.style.cssText = "background: var(--comfy-input-bg); border-radius: 10px; overflow: hidden; animation: pulse 1.5s infinite;";
+            skeletonCard.className = "posts-skeleton";
+            skeletonCard.setAttribute('aria-hidden', 'true');
             skeletonCard.innerHTML = `
-                <div style="width: 100%; padding-top: 120%; background: linear-gradient(90deg, #2a2a2a 25%, #333 50%, #2a2a2a 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite;"></div>
-                <div style="padding: 10px;">
-                    <div style="height: 14px; background: #333; border-radius: 4px; margin-bottom: 8px;"></div>
-                    <div style="height: 12px; background: #333; border-radius: 4px; width: 60%;"></div>
+                <div class="posts-skeleton__cover"></div>
+                <div class="posts-card__body">
+                    <div class="posts-skeleton__line"></div>
+                    <div class="posts-skeleton__line posts-skeleton__line--short"></div>
                 </div>
             `;
             postsGrid.appendChild(skeletonCard);
         }
-        // 添加动画样式
-        if (!document.getElementById("posts-skeleton-style")) {
-            const style = document.createElement("style");
-            style.id = "posts-skeleton-style";
-            style.textContent = `
-                @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-                @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
-            `;
-            document.head.appendChild(style);
-        }
+        const status = document.createElement('div');
+        status.className = 'posts-loading';
+        status.setAttribute('role', 'status');
+        status.textContent = t('post.loading');
+        postsGrid.appendChild(status);
     };
     
     const loadPosts = async (page = 1, append = false) => {
-        const cacheKey = getCacheKey();
+        if (disposed) return;
+        if (!append && page === 1) firstPageReady = false;
+        const viewGeneration = !append && page === 1 ? ++listViewGeneration : listViewGeneration;
+        const requestedSort = currentSort;
+        const cacheKey = `${CACHE_KEY_PREFIX}_${requestedSort}`;
         
         // ✅ 优先从本地缓存读取（含过期缓存：离线容灾，与插件榜/工作流/推荐榜策略一致）
         if (!append && page === 1) {
@@ -317,21 +325,36 @@ export function createPostsView(currentUser, keyword = "") {
             if (cachedData) {
                 // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
                 allPostsData = proxyImages(cachedData);
-                renderPostsFromCache(allPostsData);
+                renderPostsFromCache(allPostsData, true);
                 // 后台静默更新
-                silentRefresh();
+                silentRefresh().finally(() => {
+                    if (disposed || viewGeneration !== listViewGeneration) return;
+                    if (searchKeyword && !allPostsData.some(post => _matchesSearch(post, searchKeyword))) {
+                        currentPaginator?.load();
+                    }
+                });
                 return;
             }
         }
         
+        let requestGeneration = null;
         try {
             if (!append) {
                 showSkeleton();
             }
             
+            requestGeneration = ++networkRequestGeneration;
             isLoadingFromNetwork = true;
-            const res = await api.getPosts(page, PAGE_SIZE, currentSort);
-            const posts = res.data || [];
+            const res = await api.getPosts(page, PAGE_SIZE, requestedSort);
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration === networkRequestGeneration) {
+                    isLoadingFromNetwork = false;
+                    silentRefresh();
+                }
+                return;
+            }
+            const posts = requireListResponseData(res);
+            if (page === 1) firstPageReady = true;
             const total = res.total || 0;
             isLoadingFromNetwork = false;
             
@@ -351,15 +374,26 @@ export function createPostsView(currentUser, keyword = "") {
             let displayPosts = posts.filter(post => _matchesSearch(post, searchKeyword));
             
             if (displayPosts.length === 0 && page === 1) {
-                postsGrid.innerHTML = _renderEmptyState(t);
-                loadMoreWrapper.style.display = "none";
+                if (searchKeyword) {
+                    postsGrid.innerHTML = "";
+                    renderListSearchMessage(postsGrid, total > PAGE_SIZE ? t('pagination.searching') : t('pagination.search_empty'));
+                    if (total > PAGE_SIZE) {
+                        startAutoPagination();
+                        currentPaginator?.load();
+                    } else {
+                        loadMoreWrapper.style.display = "none";
+                    }
+                } else {
+                    postsGrid.innerHTML = _renderEmptyState(t);
+                    loadMoreWrapper.style.display = "none";
+                }
                 return;
             }
             
             // 渲染帖子卡片
             const cards = [];
             displayPosts.forEach(post => {
-                const card = createPostCard(post);
+                const card = createPostCard(post, currentUser, () => !disposed, cardNavigation.capture);
                 cards.push(card);
                 postsGrid.appendChild(card);
             });
@@ -377,16 +411,22 @@ export function createPostsView(currentUser, keyword = "") {
             
             // 显示/隐藏加载更多（基于过滤后的数据）
             const loadedCount = page * PAGE_SIZE;
-            const filteredTotal = searchKeyword ? displayPosts.length : total;
-            if (loadedCount < filteredTotal) {
+            if (loadedCount < total) {
                 loadMoreWrapper.style.display = "block";
             } else {
                 loadMoreWrapper.style.display = "none";
             }
             
         } catch (err) {
-            console.error("加载帖子失败:", err);
+            if (disposed) return;
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration !== networkRequestGeneration) return;
+                isLoadingFromNetwork = false;
+                silentRefresh();
+                return;
+            }
             isLoadingFromNetwork = false;
+            console.error("加载帖子失败");
             // 网络失败时尝试从缓存读取（包括过期缓存，离线容灾）
             if (!append) {
                 const cachedData = readListCache(cacheKey);
@@ -396,27 +436,30 @@ export function createPostsView(currentUser, keyword = "") {
                     renderPostsFromCache(allPostsData);
                     showToast(t('post.network_cache'), "warning");
                 } else {
-                    postsGrid.innerHTML = `
-                        <div style="grid-column: span 2; text-align: center; padding: 40px; color: #F44336;">
-                            <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
-                            ${t('post.load_failed')}
-                        </div>
-                    `;
+                    renderListLoadError(postsGrid, t('post.load_failed'), () => loadPosts(1, false), t);
                 }
             }
         }
     };
     
     // 从缓存渲染帖子列表
-    const renderPostsFromCache = (posts) => {
+    const renderPostsFromCache = (posts, deferSearchScan = false) => {
+        firstPageReady = true;
         postsGrid.innerHTML = "";
         
         // 🔍 搜索过滤
         const filteredPosts = posts.filter(post => _matchesSearch(post, searchKeyword));
         
         if (filteredPosts.length === 0) {
-            postsGrid.innerHTML = _renderEmptyState(t);
-            loadMoreWrapper.style.display = "none";
+            if (searchKeyword) {
+                renderListSearchMessage(postsGrid, t('pagination.searching'));
+                startAutoPagination();
+                loadMoreWrapper.style.display = "none";
+                if (!deferSearchScan) currentPaginator?.load();
+            } else {
+                postsGrid.innerHTML = _renderEmptyState(t);
+                loadMoreWrapper.style.display = "none";
+            }
             return;
         }
         
@@ -424,7 +467,7 @@ export function createPostsView(currentUser, keyword = "") {
         const firstPage = filteredPosts.slice(0, PAGE_SIZE);
         const cards = [];
         firstPage.forEach(post => {
-            const card = createPostCard(post);
+            const card = createPostCard(post, currentUser, () => !disposed, cardNavigation.capture);
             cards.push(card);
             postsGrid.appendChild(card);
         });
@@ -448,29 +491,56 @@ export function createPostsView(currentUser, keyword = "") {
     
     // 后台静默更新
     const silentRefresh = async () => {
-        if (isLoadingFromNetwork) return;
-        
+        if (disposed || isLoadingFromNetwork) return;
+        const viewGeneration = listViewGeneration;
+        const requestedSort = currentSort;
+        const cacheKey = `${CACHE_KEY_PREFIX}_${requestedSort}`;
+        const requestGeneration = ++networkRequestGeneration;
         try {
             isLoadingFromNetwork = true;
-            const res = await api.getPosts(1, PAGE_SIZE, currentSort);
-            const posts = res.data || [];
+            const res = await api.getPosts(1, PAGE_SIZE, requestedSort, {
+                noCache: true,
+                timeout: API.BACKGROUND_TIMEOUT,
+                retries: API.BACKGROUND_RETRIES
+            });
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration === networkRequestGeneration) {
+                    isLoadingFromNetwork = false;
+                    silentRefresh();
+                }
+                return;
+            }
+            const posts = requireListResponseData(res);
             isLoadingFromNetwork = false;
             
-            // 更新缓存
-            const cacheKey = getCacheKey();
-            writeListCache(cacheKey, posts, getCacheTTL());
-            
-            // 对比新旧数据，有变化时重新渲染
-            if (_postsDataChanged(allPostsData, posts)) {
-                console.log(`✅ 讨论区 ${currentSort} 检测到新数据，执行静默更新`);
-                allPostsData = proxyImages(posts);
-                renderPostsFromCache(allPostsData);
+            if (isEmptyListRefreshWithExistingData(posts, allPostsData)) {
+                console.warn(`🛡️ 讨论区 ${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
-                allPostsData = proxyImages(posts);
+                // 更新缓存
+                writeListCache(cacheKey, posts, getCacheTTL());
+
+                // 对比新旧数据，有变化时重新渲染
+                if (_postsDataChanged(allPostsData, posts)) {
+                    console.log(`✅ 讨论区 ${currentSort} 检测到新数据，执行静默更新`);
+                    allPostsData = proxyImages(posts);
+                    renderPostsFromCache(allPostsData);
+                } else {
+                    allPostsData = proxyImages(posts);
+                }
             }
         } catch (err) {
+            if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
+                if (requestGeneration === networkRequestGeneration) {
+                    isLoadingFromNetwork = false;
+                    silentRefresh();
+                }
+                return;
+            }
             isLoadingFromNetwork = false;
-            console.warn("后台更新失败:", err);
+            console.warn("后台更新帖子失败（保留当前内容）");
+        }
+        if (searchKeyword && !allPostsData.some(post => _matchesSearch(post, searchKeyword))) {
+            currentPaginator?.load();
         }
     };
     
@@ -492,8 +562,8 @@ export function createPostsView(currentUser, keyword = "") {
     
     // 加载更多按钮
     loadMoreBtn.onclick = () => {
-        currentPage++;
-        loadPosts(currentPage, true);
+        if (disposed) return;
+        currentPaginator?.load();
     };
     
     // 初始加载
@@ -501,38 +571,36 @@ export function createPostsView(currentUser, keyword = "") {
     
     // 🔧 组件生命周期清理方法
     container._cleanup = () => {
+        if (disposed) return;
+        disposed = true;
+        cardNavigation.dispose();
+        if (activeViewCleanup === container._cleanup) activeViewCleanup = null;
+        listViewGeneration++;
+        networkRequestGeneration++;
+        stopViewportAnimations(postsGrid);
         // 清理筛选事件监听器
-        if (currentFilterHandler) {
-            window.removeEventListener("comfy-posts-filter-change", currentFilterHandler);
-            currentFilterHandler = null;
-        }
+        window.removeEventListener("comfy-posts-filter-change", handleFilterChange);
+        if (currentFilterHandler === handleFilterChange) currentFilterHandler = null;
         // 清理刷新事件监听器
         if (typeof refreshHandler !== 'undefined') {
             window.removeEventListener("comfy-posts-refresh", refreshHandler);
         }
         // 如果有分页器，停止它
-        if (currentPaginator) {
-            currentPaginator.stop();
-            currentPaginator = null;
-        }
+        const stoppedPaginator = currentPaginator;
+        currentPaginator = null;
+        try { stoppedPaginator?.stop(); } catch { console.warn("榜单分页器清理失败"); }
     };
     
+    activeViewCleanup = container._cleanup;
     return container;
 }
 
 /**
  * 🎴 创建单个帖子卡片（小红书风格）
  */
-function createPostCard(post) {
+function createPostCard(post, currentUser = currentUserCache, isCurrent = () => true, captureNavigation = () => isCurrent) {
     const card = document.createElement("div");
-    Object.assign(card.style, {
-        background: "var(--comfy-menu-bg)",
-        borderRadius: "8px",
-        overflow: "hidden",
-        cursor: "pointer",
-        transition: "transform 0.2s, box-shadow 0.2s",
-        border: "1px solid var(--border-color, #333)"
-    });
+    card.className = "business-list-card posts-card";
     
     // 格式化时间
     const timeStr = formatTime(post.created_at);
@@ -542,46 +610,43 @@ function createPostCard(post) {
     
     card.innerHTML = `
         <!-- 封面图 -->
-        <div style="position: relative; width: 100%; padding-top: 100%; background: #111;">
-            <img src="${post.cover_image || 'data:image/svg+xml,...'}" 
-                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;"
-                 onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23222%22 width=%22200%22 height=%22200%22/%3E%3Ctext x=%22100%22 y=%22100%22 text-anchor=%22middle%22 fill=%22%23666%22 font-size=%2224%22%3E🖼️%3C/text%3E%3C/svg%3E'">
+        <div class="posts-card__cover">
+            <img src="${escapeHtml(post.cover_image || 'data:image/svg+xml,...')}"
+                 class="posts-card__image"
+                 alt="">
             ${isVideo ? `
             <!-- 视频播放按钮 -->
-            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-                        width: 48px; height: 48px; background: rgba(0,0,0,0.6); border-radius: 50%;
-                        display: flex; align-items: center; justify-content: center; pointer-events: none;">
-                <div style="width: 0; height: 0; border-left: 16px solid rgba(255,255,255,0.9);
-                            border-top: 10px solid transparent; border-bottom: 10px solid transparent;
-                            margin-left: 4px;"></div>
+            <div class="posts-card__play" aria-hidden="true">
+                <div class="posts-card__play-icon"></div>
             </div>
             ` : ''}
         </div>
         
         <!-- 内容区 -->
-        <div style="padding: 10px;">
+        <div class="posts-card__body">
             <!-- 标题 -->
-            <div style="font-size: 13px; font-weight: 500; color: #fff; margin-bottom: 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4;">
+            <button type="button" class="business-list-card__title">
                 ${escapeHtml(post.title)}
-            </div>
+            </button>
             
             <!-- 作者信息（SWR 缓存头像） -->
-            <div id="post-author-${post.id}" style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;"></div>
+            <div class="business-list-card__author posts-card__author"></div>
             
             <!-- 互动数据 -->
-            <div style="display: flex; align-items: center; gap: 12px; font-size: 11px; color: #888;">
-                <span>❤️ ${post.likes || 0}</span>
-                <span>🔖 ${post.favorites || 0}</span>
-                <span>🔥 ${post.views || 0}</span>
-                <span style="color: #FFD700;">★ ${(post.rating_avg || 0).toFixed(1)}</span>
-                <span style="margin-left: auto; font-size: 10px;">${timeStr}</span>
+            <div class="posts-card__stats">
+                <span>❤️ ${escapeHtml(post.likes || 0)}</span>
+                <span>🔖 ${escapeHtml(post.favorites || 0)}</span>
+                <span>🔥 ${escapeHtml(post.views || 0)}</span>
+                <span class="posts-card__rating">★ ${(typeof post.rating_avg === 'number' && Number.isFinite(post.rating_avg) ? post.rating_avg : 0).toFixed(1)}</span>
+                <span class="posts-card__time">${escapeHtml(timeStr)}</span>
             </div>
         </div>
     `;
     
     // 🚀 SWR 头像渲染：先从缓存读取，后台静默校对
     setTimeout(() => {
-        const authorContainer = card.querySelector(`#post-author-${post.id}`);
+        if (!isCurrent() || !card.isConnected) return;
+        const authorContainer = card.querySelector(".business-list-card__author");
         if (!authorContainer) return;
         
         const account = post.author;
@@ -591,19 +656,20 @@ function createPostCard(post) {
         const initial = (name || 'U')[0].toUpperCase();
         
         // 渲染初始头像
-        const avatarHtml = _generateAvatarHtml(avatar, name, 18);
+        const avatarHtml = _generateAvatarHtml(avatar, name);
         
-        authorContainer.innerHTML = `${avatarHtml}<span class="swr-name" style="font-size: 11px; color: #999; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(name)}</span>`;
+        authorContainer.innerHTML = `${avatarHtml}<span class="swr-name posts-card__name">${escapeHtml(name)}</span>`;
         
         // 后台静默校对
         getProfileWithSWR(account, api.getUserProfile, (profile) => {
+            if (!isCurrent() || !card.isConnected) return;
             const avatarEl = authorContainer.querySelector('.swr-avatar');
             const nameEl = authorContainer.querySelector('.swr-name');
             if (avatarEl && profile.avatar) {
                 if (avatarEl.tagName === 'IMG') {
                     avatarEl.src = profile.avatar;
                 } else {
-                    avatarEl.outerHTML = _generateAvatarHtml(profile.avatar, profile.name || name, 18);
+                    avatarEl.outerHTML = _generateAvatarHtml(profile.avatar, profile.name || name);
                 }
             }
             if (nameEl && profile.name) {
@@ -612,23 +678,32 @@ function createPostCard(post) {
         });
     }, 0);
     
-    // 悬停效果
-    card.onmouseover = () => {
-        card.style.transform = "translateY(-2px)";
-        card.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
+    const cover = card.querySelector('img');
+    if (cover) cover.onerror = () => {
+        cover.onerror = null;
+        cover.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23222" width="200" height="200"/%3E%3C/svg%3E';
     };
-    card.onmouseout = () => {
-        card.style.transform = "translateY(0)";
-        card.style.boxShadow = "none";
-    };
-    
-    // 点击进入详情
-    card.onclick = () => {
-        import("./帖子详情组件.js").then(module => {
-            const view = module.createPostDetailView(post.id, currentUserCache);
+
+    let opening = false;
+    card.onclick = async () => {
+        if (opening || !isCurrent() || !card.isConnected) return;
+        const isNavigationCurrent = captureNavigation();
+        if (!isNavigationCurrent()) { showToast(t('auth.reopen_list'), 'warning'); return; }
+        opening = true;
+        card.setAttribute('aria-busy', 'true');
+        try {
+            const module = await import("./帖子详情组件.js");
+            if (!isNavigationCurrent() || !card.isConnected || !card.getClientRects().length) return;
+            const view = module.createPostDetailView(post.id, currentUser);
+            if (!isNavigationCurrent() || !card.isConnected) { view._cleanup?.(); return; }
             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-        });
+        } catch {
+            if (isNavigationCurrent() && card.isConnected && card.getClientRects().length) showToast(t('post.load_failed'), 'error');
+        } finally {
+            opening = false;
+            card.removeAttribute('aria-busy');
+        }
     };
-    
+
     return card;
 }

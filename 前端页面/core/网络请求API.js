@@ -13,6 +13,6 @@
 //    readListCache / writeListCache）不在这里，统一从 components/性能优化工具.js 导入。
 // ==========================================
 
-export { request, requestCancelManager, invalidateRelatedCache, requestSSE } from './网络请求_基础设施.js';
+export { request, captureRequestSession, requestCancelManager, invalidateRelatedCache, requestSSE } from './网络请求_基础设施.js';
 export { proxyImages, unproxyImages } from './网络请求_图片代理.js';
 export { api } from './网络请求_业务API.js';
