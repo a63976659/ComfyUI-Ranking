@@ -1,13 +1,12 @@
 import { processImageCore as _processImageCore } from "./有界图片处理.js";
 import { validateImageFile } from "./图片文件检查.js";
-import { IMAGE_PROCESS } from "../core/全局配置.js";
+import { IMAGE_PROCESS, TYPE_RULES } from "../core/全局配置.js";
 // 前端页面/market/发布内容_提交引擎.js
 import { createPublishSubmissionScope } from "./发布提交生命周期.js";
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { removeCache, removeCacheByPrefix } from "../components/性能优化工具.js";
-import { TYPE_RULES } from "./发布内容组件.js";  // 📋 四榜发布表单声明式规则（与 UI 联动同源）
 
 /**
  * 📋 获取指定主类型的提交规则（校验与字段组装统一读取，与 UI 显隐同源）

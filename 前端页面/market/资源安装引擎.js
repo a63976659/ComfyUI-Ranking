@@ -139,6 +139,23 @@ const WORKFLOW_STAGE_KEYS = {
     error: 'workflow.stage_failed'
 };
 
+function _createProgressDiagnostics(stageKeys) {
+    const entries = [], startedAt = Date.now();
+    return {
+        entries,
+        record(event) {
+            const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+            const rawStage = typeof event.stage === 'string' ? event.stage : '';
+            entries.push({
+                stageKey: Object.hasOwn(stageKeys, rawStage) ? stageKeys[rawStage] : '',
+                progress: Number.isFinite(event.progress) ? Math.max(0, Math.min(100, event.progress)) : null,
+                time: `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+            });
+            if (entries.length > 50) entries.shift();
+        }
+    };
+}
+
 function _getWorkflowErrorMessage(result) {
     if (result?.outcomeUnknown) return t('workflow.connection_uncertain');
     const errorKeys = {
@@ -599,8 +616,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         const progress = trackProgress();
                         const cancelController = new AbortController();
                         progress.addCancelButton(t('install.cancel_in_progress'), () => cancelController.abort());
-                        const diagnosticEvents = [];
-                        const installStartedAt = Date.now();
+                        const diagnostics = _createProgressDiagnostics(INSTALL_STAGE_KEYS);
 
                         try {
                             // 发起 SSE 流式安装请求
@@ -609,15 +625,8 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                                 { url: itemData.link, id: itemData.id, account, token },
                                 (event) => {
                                     if (!isCurrent()) return;
-                                    const elapsedSeconds = Math.floor((Date.now() - installStartedAt) / 1000);
+                                    diagnostics.record(event);
                                     const rawStage = typeof event.stage === "string" ? event.stage : "";
-                                    diagnosticEvents.push({
-                                        stageKey: Object.hasOwn(INSTALL_STAGE_KEYS, rawStage) ? INSTALL_STAGE_KEYS[rawStage] : "",
-                                        stage: /^[a-z0-9_]{1,40}$/i.test(rawStage) ? rawStage : "",
-                                        progress: Number.isFinite(event.progress) ? Math.max(0, Math.min(100, event.progress)) : null,
-                                        time: `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, "0")}`
-                                    });
-                                    if (diagnosticEvents.length > 50) diagnosticEvents.shift();
                                     const stageKey = Object.hasOwn(INSTALL_STAGE_KEYS, rawStage) ? INSTALL_STAGE_KEYS[rawStage] : "";
                                     progress.update(event.progress, event.status === "error"
                                         ? _getInstallErrorMessage(event)
@@ -640,7 +649,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                                 phase = "unknown"; btnUse.removeAttribute("aria-busy");
                                 const message = t('install.connection_uncertain');
                                 progress.error(message);
-                                progress.showDiagnostics(diagnosticEvents);
+                                progress.showDiagnostics(diagnostics.entries, result);
                                 showToast(message, "warning");
                                 return;
                             }
@@ -675,7 +684,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                                 if (result?.outcomeUnknown) { phase = "unknown"; btnUse.removeAttribute("aria-busy"); }
                                 const message = _getInstallErrorMessage(result);
                                 progress.error(message);
-                                progress.showDiagnostics(diagnosticEvents);
+                                progress.showDiagnostics(diagnostics.entries, result);
                                 showToast(t('install.failed_for_item', { title: itemData.title, message }), "error");
                             }
                         } catch(err) {
@@ -684,7 +693,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                                 phase = "unknown"; btnUse.removeAttribute("aria-busy");
                                 const message = t('install.connection_uncertain');
                                 progress.error(message);
-                                progress.showDiagnostics(diagnosticEvents);
+                                progress.showDiagnostics(diagnostics.entries, err);
                                 showToast(message, "error");
                                 return;
                             }
@@ -764,6 +773,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 };
             } else if (isApp) {
                 const progress = trackProgress();
+                const diagnostics = _createProgressDiagnostics(WORKFLOW_STAGE_KEYS);
 
                 // 附带 account 凭证，解决问题 2 (一键鉴权加载)
                 try {
@@ -772,6 +782,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         { url: itemData.link, id: itemData.id, account, token },
                         (event) => {
                             if (!isCurrent()) return;
+                            diagnostics.record(event);
                             const stageKey = typeof event.stage === "string" && Object.hasOwn(WORKFLOW_STAGE_KEYS, event.stage)
                                 ? WORKFLOW_STAGE_KEYS[event.stage]
                                 : "";
@@ -790,6 +801,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         if (!graphLoaded) {
                             const message = t('workflow.canvas_load_failed');
                             progress.error(message);
+                            progress.showDiagnostics(diagnostics.entries, result);
                             showToast(message, "error");
                             return;
                         }
@@ -821,8 +833,8 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         const localizedMessage = result.error_code
                             ? message
                             : t('workflow.failed', { message });
-                        progress.error(message);
-                        inlineStatusBox.innerHTML = `<span class="resource-install__message resource-install__message--error">❌ ${escapeHtml(localizedMessage)}</span>`;
+                        progress.error(localizedMessage);
+                        progress.showDiagnostics(diagnostics.entries, result);
                         showToast(localizedMessage, "error");
                     }
                 } catch(err) {
@@ -831,6 +843,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         phase = "unknown"; btnUse.removeAttribute("aria-busy");
                         const message = t('workflow.connection_uncertain');
                         progress.error(message);
+                        progress.showDiagnostics(diagnostics.entries, err);
                         showToast(message, "error");
                         return;
                     }

@@ -69,7 +69,7 @@ export function calculateTipLevel(amount) {
  */
 export function renderTipLevelHTML(amount, compact = false) {
     if (!amount || amount <= 0) {
-        return `<span style="color:#666; font-size:11px;">${t('tip.new_fan')}</span>`;
+        return `<span class="tip-level tip-level--new">${t('tip.new_fan')}</span>`;
     }
     
     const level = calculateTipLevel(amount);
@@ -79,46 +79,46 @@ export function renderTipLevelHTML(amount, compact = false) {
     if (compact) {
         // 太阳（最高级别优先显示）
         if (level.suns > 0) {
-            html += `<span style="font-size:12px;">${ICON_SUN.repeat(Math.min(level.suns, 3))}${level.suns > 3 ? '×' + level.suns : ''}</span>`;
+            html += `<span class="tip-level__icon tip-level__icon--sun">${ICON_SUN.repeat(Math.min(level.suns, 3))}${level.suns > 3 ? '×' + level.suns : ''}</span>`;
         }
         // 月亮
         if (level.moons > 0) {
-            html += `<span style="font-size:11px;">${ICON_MOON.repeat(level.moons)}</span>`;
+            html += `<span class="tip-level__icon tip-level__icon--moon">${ICON_MOON.repeat(level.moons)}</span>`;
         }
         // 星星
         if (level.stars > 0) {
-            html += `<span style="font-size:10px;">${ICON_STAR.repeat(level.stars)}</span>`;
+            html += `<span class="tip-level__icon tip-level__icon--star">${ICON_STAR.repeat(level.stars)}</span>`;
         }
         
         // 满级特效
         if (level.isMaxLevel) {
-            html = `<span style="background: linear-gradient(90deg, #FFD700, #FF6B6B, #4CAF50); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: bold;">${html} 👑</span>`;
+            html = `<span class="tip-level tip-level--max-compact">${html} 👑</span>`;
         }
         
-        return html || `<span style="color:#888; font-size:10px;">⭐</span>`;
+        return html || `<span class="tip-level tip-level--fallback">⭐</span>`;
     }
     
     // ========== 完整模式：显示图标+数量 ==========
     const parts = [];
     
     if (level.suns > 0) {
-        parts.push(`<span style="color:#FF6B00; font-weight:bold;">${ICON_SUN}×${level.suns}</span>`);
+        parts.push(`<span class="tip-level__part tip-level__part--sun">${ICON_SUN}×${level.suns}</span>`);
     }
     if (level.moons > 0) {
-        parts.push(`<span style="color:#FFD700;">${ICON_MOON}×${level.moons}</span>`);
+        parts.push(`<span class="tip-level__part tip-level__part--moon">${ICON_MOON}×${level.moons}</span>`);
     }
     if (level.stars > 0) {
-        parts.push(`<span style="color:#FFC107;">${ICON_STAR}×${level.stars}</span>`);
+        parts.push(`<span class="tip-level__part tip-level__part--star">${ICON_STAR}×${level.stars}</span>`);
     }
     
     // 满级特效
     if (level.isMaxLevel) {
-        return `<span style="background: linear-gradient(90deg, #FFD700, #FF6B6B, #4CAF50); padding: 2px 6px; border-radius: 4px; font-size:11px;">👑 ${t('tip.supreme_sponsor')}</span>`;
+        return `<span class="tip-level tip-level--max">👑 ${t('tip.supreme_sponsor')}</span>`;
     }
     
     return parts.length > 0 
-        ? `<span style="display:inline-flex; gap:4px; align-items:center; font-size:11px;">${parts.join(' ')}</span>` 
-        : `<span style="color:#888; font-size:10px;">⭐</span>`;
+        ? `<span class="tip-level tip-level--full">${parts.join(' ')}</span>` 
+        : `<span class="tip-level tip-level--fallback">⭐</span>`;
 }
 
 /**
@@ -163,36 +163,26 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
     if (!Number.isFinite(amount) || amount < 0) return '';
     rank = Number.isSafeInteger(rank) && rank >= 0 ? rank : 0;
     
-    // 排名徽章颜色
-    const badgeColors = ['#FFD700', '#C0C0C0', '#CD7F32']; // 金银铜
-    const badgeBg = rank < 3 ? badgeColors[rank] : '#444';
-    const badgeColor = rank < 3 ? '#000' : '#aaa';
-    
-    // 尺寸配置
-    const sizeConfig = {
-        small: { badge: 16, font: 11, padding: 3, avatar: 20 },
-        normal: { badge: 20, font: 12, padding: 5, avatar: 24 },
-        large: { badge: 24, font: 14, padding: 8, avatar: 28 }
-    };
-    const cfg = sizeConfig[size] || sizeConfig.normal;
+    const rankClass = rank < 3 ? ['gold', 'silver', 'bronze'][rank] : 'default';
+    const sizeClass = size === 'small' || size === 'large' ? size : 'normal';
     
     // 等级图标
     const levelHtml = renderTipLevelHTML(amount, true);
     
     // 排名弽章 HTML（两个分支共用）
-    const badgeHtml = `<span style="display:inline-flex; justify-content:center; align-items:center; width:${cfg.badge}px; height:${cfg.badge}px; border-radius:50%; background:${badgeBg}; color:${badgeColor}; font-weight:bold; font-size:${cfg.font - 2}px;">${rank + 1}</span>`;
+    const badgeHtml = `<span class="tip-board-badge tip-board-badge--${rankClass}">${rank + 1}</span>`;
     
     // 匿名用户处理
     if (is_anon) {
         return `
-            <div style="display:flex; justify-content:space-between; padding:${cfg.padding}px 0; font-size:${cfg.font}px; align-items:center; border-bottom:1px dashed #333;">
-                <span style="display:flex; align-items:center; gap:6px;">
+            <div class="tip-board-item tip-board-item--${sizeClass}">
+                <span class="tip-board-group">
                     ${badgeHtml}
-                    <span style="color:#888;">🔒 ${t('creator.anonymous')}</span>
+                    <span class="tip-board-anonymous">🔒 ${t('creator.anonymous')}</span>
                 </span>
-                <span style="display:flex; align-items:center; gap:6px;">
+                <span class="tip-board-group">
                     ${levelHtml}
-                    <span style="color:#4CAF50; font-weight:bold; font-size:${cfg.font - 1}px;">${amount}</span>
+                    <span class="tip-board-amount">${amount}</span>
                 </span>
             </div>
         `;
@@ -228,17 +218,17 @@ export function renderTipBoardItemHTML(tipData, rank, size = 'normal') {
     // 🔒 XSS防护：昵称/头像来自用户可修改的资料，写入 HTML 前必须转义
     // （上方 SWR 刷新路径用的是 .src / .textContent，本身就是安全的）
     return `
-        <div id="${escapeHtml(containerId)}" style="display:flex; justify-content:space-between; padding:${cfg.padding}px 0; font-size:${cfg.font}px; align-items:center; border-bottom:1px dashed #333;">
-            <span style="display:flex; align-items:center; gap:6px;">
+        <div id="${escapeHtml(containerId)}" class="tip-board-item tip-board-item--${sizeClass}">
+            <span class="tip-board-group">
                 ${badgeHtml}
-                <span style="display:flex; align-items:center; gap:6px;">
-                    <img class="tip-board-avatar" alt="" src="${escapeHtml(avatarUrl)}" style="width:${cfg.avatar}px; height:${cfg.avatar}px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#333;">
-                    <span class="tip-board-name" style="color:#ddd;">${escapeHtml(userName)}</span>
+                <span class="tip-board-group">
+                    <img class="tip-board-avatar" alt="" src="${escapeHtml(avatarUrl)}">
+                    <span class="tip-board-name">${escapeHtml(userName)}</span>
                 </span>
             </span>
-            <span style="display:flex; align-items:center; gap:6px;">
+            <span class="tip-board-group">
                 ${levelHtml}
-                <span style="color:#4CAF50; font-weight:bold; font-size:${cfg.font - 1}px;">${amount}</span>
+                <span class="tip-board-amount">${amount}</span>
             </span>
         </div>
     `;
@@ -256,7 +246,7 @@ export function renderTipBoardHTML(boardData, maxShow = 5, emptyText = t('tip.no
     const entries = Array.isArray(boardData) ? boardData.filter(entry => entry && typeof entry === 'object'
         && !Array.isArray(entry) && Number.isFinite(Number(entry.amount)) && Number(entry.amount) >= 0) : [];
     if (entries.length === 0) {
-        return `<div style="color:#666; font-size:12px; text-align:center; padding:12px 0;">${escapeHtml(emptyText)}</div>`;
+        return `<div class="tip-board-empty">${escapeHtml(emptyText)}</div>`;
     }
     
     return entries.slice(0, maxShow).map((entry, i) => renderTipBoardItemHTML(entry, i, size)).join('');

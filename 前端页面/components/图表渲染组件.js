@@ -1,16 +1,17 @@
-// 前端页面/components/图表渲染组件.js
-
 import { t } from "./用户体验增强.js";
+import { CHART_LIFECYCLE, getSettings } from "../core/全局配置.js";
+import { loadECharts } from "./图表脚本加载.js";
 
-function loadECharts() {
-    return new Promise((resolve, reject) => {
-        if (window.echarts) { resolve(window.echarts); return; }
-        const script = document.createElement("script");
-        script.src = "https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js";
-        script.onload = () => resolve(window.echarts);
-        script.onerror = () => reject(new Error("ECharts 加载失败"));
-        document.head.appendChild(script);
+const owners = new Map();
+let removalObserver = null;
+function observeRemoval() {
+    if (removalObserver) return;
+    removalObserver = new MutationObserver(() => {
+        for (const [element, controller] of owners) {
+            if (!element.isConnected) controller.cleanup();
+        }
     });
+    removalObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 function getLast6Months() {
@@ -27,75 +28,170 @@ function getLast6Months() {
     return res;
 }
 
-function _initChart(domElement, itemData) {
-    loadECharts().then(echarts => {
-        domElement.innerHTML = "";
-        const chartInstance = echarts.init(domElement, 'dark', { backgroundColor: 'transparent' });
-        
+export function renderItemTrendChart(domElement, itemData) {
+    if (!domElement?.isConnected) return null;
+    owners.get(domElement)?.cleanup();
+    let active = true, disposed = false, generation = 0;
+    let chartInstance = null, widthObserver = null, widthTimer = null, resizeTimer = null;
+    domElement.classList.add('resource-trend');
+    let removeResize = null, removeAppearance = null;
+    const clearDescription = () => {
+        domElement.removeAttribute('role');
+        domElement.removeAttribute('aria-label');
+    };
+    const showState = (message, failed = false) => {
+        clearDescription();
+        const state = document.createElement('div');
+        state.className = 'resource-trend__state';
+        state.setAttribute('role', failed ? 'alert' : 'status');
+        state.textContent = message;
+        domElement.replaceChildren(state);
+    };
+    const clearWork = () => {
+        widthObserver?.disconnect(); widthObserver = null;
+        clearTimeout(widthTimer); widthTimer = null;
+        clearTimeout(resizeTimer); resizeTimer = null;
+        removeResize?.(); removeResize = null;
+        removeAppearance?.(); removeAppearance = null;
+        clearDescription();
+        if (chartInstance) {
+            const old = chartInstance; chartInstance = null;
+            try { if (!old.isDisposed?.()) old.dispose(); } catch (_) {}
+        }
+    };
+    const cleanup = () => {
+        if (disposed) return;
+        disposed = true; active = false; generation++;
+        clearWork();
+        if (owners.get(domElement) === controller) owners.delete(domElement);
+        if (!owners.size) { removalObserver?.disconnect(); removalObserver = null; }
+    };
+    const current = token => {
+        if (disposed || !active || generation !== token || owners.get(domElement) !== controller) return false;
+        if (!domElement.isConnected) { cleanup(); return false; }
+        return true;
+    };
+    const showError = (token, key = 'chart.render_failed') => {
+        if (!current(token)) return;
+        generation++;
+        clearWork();
+        const message = key === 'chart.load_failed' ? t('chart.load_failed')
+            : key === 'chart.size_unavailable' ? t('chart.size_unavailable') : t('chart.render_failed');
+        showState(message, true);
+    };
+    const resize = token => {
+        if (!current(token) || !chartInstance) return;
+        if (chartInstance.isDisposed?.()) { cleanup(); return; }
+        try { chartInstance.resize(); } catch (_) { showError(token); }
+    };
+    const initialize = token => {
+        let libraryReady = false;
+        loadECharts().then(echarts => {
+            if (!current(token)) return;
+            libraryReady = true;
+            if (domElement.clientWidth === 0) { waitWidth(token); return; }
+            domElement.innerHTML = "";
+            const instance = echarts.init(domElement, null, { backgroundColor: 'transparent' });
+            if (!current(token)) { instance.dispose(); return; }
+            chartInstance = instance;
         const months = getLast6Months();
         // 提取底层的真实时间序列
         const history = itemData.use_history || {};
         const data = months.map(m => history[m] || 0);
 
-        chartInstance.setOption({
-            tooltip: { trigger: 'axis', textStyle: { fontSize: 11 } },
-            grid: { top: 10, bottom: 20, left: 35, right: 10, containLabel: true },
-            xAxis: { type: 'category', data: months, axisLabel: { color: '#888', fontSize: 10 }, axisLine: { lineStyle: { color: '#444' } } },
-            yAxis: { type: 'value', splitLine: { lineStyle: { color: '#333', type: 'dashed' } }, axisLabel: { color: '#888', fontSize: 10 }, minInterval: 1 },
-            series: [{
-                name: '按月获取量', type: 'line', data: data, smooth: true, 
-                itemStyle: { color: '#2196F3' }, lineStyle: { width: 2 },
-                areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{offset: 0, color: 'rgba(33,150,243,0.5)'}, {offset: 1, color: 'rgba(33,150,243,0)'}]) }
-            }]
-        });
-        
-        // 🔧 P1修复：resize 监听可自清理——容器被移出 DOM（详情/列表关闭）后
-        // 下次触发时自动解绑并 dispose 图表实例，避免监听累积与实例泄漏
-        const onResize = () => {
-            if (!document.contains(domElement) || chartInstance.isDisposed()) {
-                window.removeEventListener('resize', onResize);
-                if (!chartInstance.isDisposed()) chartInstance.dispose();
-                return;
-            }
-            chartInstance.resize();
+        const describe = () => {
+            domElement.setAttribute('role', 'img');
+            domElement.setAttribute('aria-label', t('chart.data_description', {
+                series: t('chart.monthly_downloads'),
+                values: months.map((month, index) => t('chart.month_value', { month, value: data[index] })).join('; ')
+            }));
         };
-        window.addEventListener('resize', onResize);
+        const appearance = () => {
+            const style = getComputedStyle(domElement);
+            const fontSize = parseFloat(style.fontSize);
+            const size = Number.isFinite(fontSize) ? fontSize : 12;
+            const color = name => style.getPropertyValue(name).trim();
+            const text = color('--resource-trend-text');
+            const border = color('--resource-trend-border');
+            const line = color('--resource-trend-line');
+            return {
+                animation: getSettings().enableAnimations !== false && !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+                textStyle: { color: text, fontFamily: style.fontFamily, fontSize: size },
+                tooltip: { trigger: 'axis', backgroundColor: color('--resource-trend-panel'), borderColor: border, textStyle: { color: text, fontSize: size } },
+                grid: { top: size, bottom: size * 1.5, left: size, right: size, containLabel: true },
+                xAxis: { type: 'category', data: months, axisLabel: { color: text, fontSize: size, hideOverlap: true, formatter: value => value.replace('-', '\n'), showMinLabel: true, showMaxLabel: true, alignMinLabel: 'left', alignMaxLabel: 'right' }, axisLine: { lineStyle: { color: border } } },
+                yAxis: { type: 'value', splitLine: { lineStyle: { color: border, type: 'dashed' } }, axisLabel: { color: text, fontSize: size }, minInterval: 1 },
+                series: [{
+                    name: t('chart.monthly_downloads'), type: 'line', data: data, smooth: true,
+                    itemStyle: { color: line }, lineStyle: { color: line, width: 2 },
+                    areaStyle: { color: line, opacity: .12 }
+                }]
+            };
+        };
+        instance.setOption(appearance());
+        describe();
+        const onAppearance = () => {
+            if (!current(token) || chartInstance !== instance) return;
+            try { instance.setOption(appearance()); describe(); instance.resize(); }
+            catch (_) { showError(token); }
+        };
+        const observer = new MutationObserver(onAppearance);
+        for (let ancestor = domElement.parentElement; ancestor; ancestor = ancestor.parentElement) {
+            observer.observe(ancestor, { attributes: true, attributeFilter: ['class', 'style', 'data-theme', 'data-color-scheme'] });
+        }
+        const queries = ['(prefers-color-scheme: dark)', '(forced-colors: active)', '(prefers-reduced-motion: reduce)'].map(query => window.matchMedia(query));
+        for (const query of queries) query.addEventListener('change', onAppearance);
+        window.addEventListener('comfy-settings-changed', onAppearance);
+        removeAppearance = () => {
+            observer.disconnect();
+            for (const query of queries) query.removeEventListener('change', onAppearance);
+            window.removeEventListener('comfy-settings-changed', onAppearance);
+        };
         
-        // 初始化完成后延迟调用resize确保正确渲染
-        setTimeout(() => {
-            chartInstance.resize();
-        }, 300);
-    }).catch(err => {
-        domElement.innerHTML = `<div style="text-align:center; line-height:160px; color:#F44336;">${t('chart.load_failed')}</div>`;
-    });
-}
-
-// 【核心修改】：接收入参从单纯的数字改为完整的 itemData 以读取历史记录
-export function renderItemTrendChart(domElement, itemData) {
-    domElement.innerHTML = `<div style="text-align:center; line-height:160px; color:#888;">${t('chart.loading')}</div>`;
-    
-    // 使用 ResizeObserver 等待容器获得有效宽度后再渲染
-    if (domElement.clientWidth === 0) {
-        const observer = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                if (entry.contentRect.width > 0) {
-                    observer.disconnect();
-                    _initChart(domElement, itemData);
-                    return;
-                }
+            if (!current(token) || chartInstance !== instance) return;
+            const onResize = onAppearance;
+            window.addEventListener('resize', onResize);
+            removeResize = () => window.removeEventListener('resize', onResize);
+            resizeTimer = setTimeout(() => { resizeTimer = null; resize(token); }, CHART_LIFECYCLE.RESIZE_DELAY);
+        }).catch(() => showError(token, libraryReady ? 'chart.render_failed' : 'chart.load_failed'));
+    };
+    const waitWidth = token => {
+        if (!current(token)) return;
+        if (domElement.clientWidth > 0) { initialize(token); return; }
+        const observer = new ResizeObserver(entries => {
+            if (widthObserver !== observer || !current(token)) return;
+            if (entries.some(entry => entry.contentRect.width > 0)) {
+                observer.disconnect(); widthObserver = null;
+                clearTimeout(widthTimer); widthTimer = null;
+                initialize(token);
             }
         });
+        widthObserver = observer;
         observer.observe(domElement);
-        
-        // 安全超时：5秒后如果仍未获得宽度，放弃并清理
-        setTimeout(() => {
-            observer.disconnect();
-            if (domElement.clientWidth === 0) {
-                domElement.innerHTML = '';
-            }
-        }, 5000);
-        return;
-    }
-    
-    _initChart(domElement, itemData);
+        const timer = setTimeout(() => {
+            if (widthTimer !== timer) return;
+            widthTimer = null;
+            if (current(token)) showError(token, 'chart.size_unavailable');
+        }, CHART_LIFECYCLE.WIDTH_WAIT_TIMEOUT);
+        widthTimer = timer;
+    };
+    const start = () => {
+        const token = ++generation;
+        clearWork();
+        showState(t('chart.loading'));
+        waitWidth(token);
+    };
+    const controller = {
+        cleanup,
+        setActive(value) {
+            if (disposed || active === !!value) return;
+            active = !!value; generation++;
+            clearWork();
+            if (active) start();
+        }
+    };
+    owners.set(domElement, controller);
+    observeRemoval();
+    start();
+    return controller;
 }

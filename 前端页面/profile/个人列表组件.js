@@ -1,5 +1,6 @@
 // 前端页面/profile/个人列表组件.js
 import { api } from "../core/网络请求API.js";
+import { getPromptPriceState } from "../prompt/价格校验.js";
 import { createItemCard } from "../market/列表卡片组件.js";
 import { getAcquiredItems } from "../market/资源安装引擎.js";
 import { showToast } from "../components/UI交互提示组件.js";
@@ -243,14 +244,12 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             };
             
             const listDiv = document.createElement("div");
-            listDiv.style.display = "flex";
-            listDiv.style.flexDirection = "column";
-            listDiv.style.gap = "10px";
+            listDiv.className = 'profile-content-list';
             
             // 渲染我发布的任务
             if (publishedTasks.length > 0) {
                 const sectionTitle = document.createElement("div");
-                sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #FF9800; margin-bottom: 5px; padding: 5px 0;";
+                sectionTitle.className = 'profile-list-section-title';
                 sectionTitle.textContent = `📤 ${t('profile.published_tasks')} (${publishedTasks.length})`;
                 listDiv.appendChild(sectionTitle);
                 
@@ -263,7 +262,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             // 渲染我接的任务
             if (assignedTasks.length > 0) {
                 const sectionTitle = document.createElement("div");
-                sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #2196F3; margin-bottom: 5px; padding: 5px 0; margin-top: 15px;";
+                sectionTitle.className = 'profile-list-section-title';
                 sectionTitle.textContent = `📥 ${t('profile.assigned_tasks')} (${assignedTasks.length})`;
                 listDiv.appendChild(sectionTitle);
                 
@@ -304,7 +303,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             const salesStats = salesStatsRes.data || {};
             
             const containerDiv = document.createElement("div");
-            containerDiv.style.cssText = "display: flex; flex-direction: column; gap: 15px;";
+            containerDiv.className = 'profile-transactions';
             
             // 💰 销售统计卡片（放在最上方，与打赏统计样式一致）
             // 🔧 下方销售/打赏两处的 profile.transactions_unit 不再加 || '笔' 兜底：
@@ -342,7 +341,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             
             // 📝 交易明细列表
             const txListDiv = document.createElement("div");
-            txListDiv.style.cssText = "display: flex; flex-direction: column; gap: 8px;";
+            txListDiv.className = 'profile-transaction-list';
             
             if (transactions.length === 0) {
                 txListDiv.innerHTML = _renderEmptyState('💰', t('profile.no_transactions'));
@@ -352,7 +351,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                         const txCard = createTransactionCard(tx);
                         txListDiv.appendChild(txCard);
                     } catch (e) {
-                        console.error("交易卡片渲染失败:", tx.tx_id, e);
+                        console.error("交易卡片渲染失败");
                     }
                 });
             }
@@ -384,9 +383,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             }
 
             const listDiv = document.createElement("div");
-            listDiv.style.display = "flex";
-            listDiv.style.flexDirection = "column";
-            listDiv.style.gap = "10px";
+            listDiv.className = 'profile-content-list';
 
             posts.forEach(post => {
                 const postDiv = createPostItem(post, currentUser);
@@ -419,9 +416,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
             }
 
             const listDiv = document.createElement("div");
-            listDiv.style.display = "flex";
-            listDiv.style.flexDirection = "column";
-            listDiv.style.gap = "10px";
+            listDiv.className = 'profile-content-list';
 
             prompts.forEach(prompt => {
                 const promptDiv = createPromptItem(prompt, currentUser);
@@ -453,11 +448,11 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
                 return;
             }
             const listDiv = document.createElement("div");
-            listDiv.style.cssText = "display:flex;flex-direction:column;gap:10px;";
+            listDiv.className = 'profile-content-list';
 
             if (items && items.length > 0) {
                 const sectionTitle = document.createElement("div");
-                sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #FF9800; margin-bottom: 5px; padding: 5px 0;";
+                sectionTitle.className = 'profile-list-section-title';
                 sectionTitle.textContent = `📦 ${t('profile.collected_items')} (${items.length})`;
                 listDiv.appendChild(sectionTitle);
                 items.forEach(item => { listDiv.appendChild(createItemCard(item, currentUser)); });
@@ -465,7 +460,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
 
             if (posts && posts.length > 0) {
                 const sectionTitle = document.createElement("div");
-                sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #9C27B0; margin-bottom: 5px; padding: 5px 0;" + (items && items.length > 0 ? " margin-top: 15px;" : "");
+                sectionTitle.className = 'profile-list-section-title';
                 sectionTitle.textContent = `💬 ${t('profile.collected_posts')} (${posts.length})`;
                 listDiv.appendChild(sectionTitle);
                 posts.forEach(post => { listDiv.appendChild(createPostItem(post, currentUser)); });
@@ -473,7 +468,7 @@ export async function renderProfileListContent(tabId, domElement, userData, curr
 
             if (prompts && prompts.length > 0) {
                 const sectionTitle = document.createElement("div");
-                sectionTitle.style.cssText = "font-size: 13px; font-weight: bold; color: #00BCD4; margin-bottom: 5px; padding: 5px 0;" + ((items && items.length > 0) || (posts && posts.length > 0) ? " margin-top: 15px;" : "");
+                sectionTitle.className = 'profile-list-section-title';
                 sectionTitle.textContent = `🧩 ${t('profile.collected_prompts')} (${prompts.length})`;
                 listDiv.appendChild(sectionTitle);
                 prompts.forEach(prompt => { listDiv.appendChild(createPromptItem(prompt, currentUser)); });
@@ -582,15 +577,16 @@ function _renderEmptyState(icon, title, subtitle = '') {
  */
 function _createStatsCard(title, stats, extraStyle = '') {
     const card = document.createElement('div');
-    card.style.cssText = `background: linear-gradient(135deg, var(--comfy-input-bg), #1a1a1a); border-radius: 12px; padding: 15px; border: 1px solid #444;${extraStyle}`;
+    card.className = extraStyle === ' margin-bottom: 15px;' ? 'profile-stats-card profile-stats-card--spaced' : 'profile-stats-card';
+    const tones = { '#4CAF50': 'income', '#F44336': 'expense', '#2196F3': 'net' };
     const colsHtml = stats.map(s => `
-        <div style="text-align: center; padding: 10px; background: rgba(${s.bgRgb || '76,175,80'},0.1); border-radius: 8px;">
-            <div style="font-size: 20px; font-weight: bold; color: ${s.color};">${s.value}</div>
-            <div style="font-size: 11px; color: #888;">${s.label}</div>
+        <div class="profile-stats-card__cell profile-stats-card__cell--${Object.hasOwn(tones, s.color) ? tones[s.color] : 'net'}">
+            <div class="profile-stats-card__value">${escapeHtml(String(s.value))}</div>
+            <div class="profile-stats-card__label">${escapeHtml(String(s.label))}</div>
         </div>`).join('');
     card.innerHTML = `
-        <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 12px;">${title}</div>
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">${colsHtml}</div>
+        <div class="profile-stats-card__title">${escapeHtml(String(title))}</div>
+        <div class="profile-stats-card__grid">${colsHtml}</div>
     `;
     return card;
 }
@@ -599,34 +595,25 @@ function _createStatsCard(title, stats, extraStyle = '') {
  * 📝 创建任务卡片项
  */
 function createTaskItem(task, statusColors, statusLabels, currentUser) {
-    const taskDiv = document.createElement("div");
-    Object.assign(taskDiv.style, {
-        padding: "12px",
-        background: "var(--comfy-input-bg)",
-        borderRadius: "8px",
-        border: "1px solid #444",
-        cursor: "pointer",
-        transition: "0.2s"
-    });
+    const taskDiv = document.createElement("button");
+    taskDiv.type = 'button';
+    taskDiv.className = 'profile-task-card';
     
-    const statusColor = statusColors[task.status] || "#666";
+    const statusTones = { '#4CAF50': 'open', '#2196F3': 'active', '#FF9800': 'pending', '#F44336': 'disputed' };
+    const statusTone = Object.hasOwn(statusTones, statusColors[task.status]) ? statusTones[statusColors[task.status]] : 'neutral';
     const statusLabel = statusLabels[task.status] || t('task.status_unknown');
     
     taskDiv.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <span style="background: ${statusColor}; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 11px;">${statusLabel}</span>
-            <span style="color: #FF9800; font-weight: bold;">💰 ${task.total_price} ${t('task.points')}</span>
+        <div class="profile-task-card__summary">
+            <span class="profile-task-card__status profile-task-card__status--${statusTone}">${escapeHtml(String(statusLabel))}</span>
+            <span class="profile-task-card__price">💰 ${escapeHtml(String(task.total_price))} ${t('task.points')}</span>
         </div>
-        <div style="font-weight: bold; color: #eee; margin-bottom: 6px; font-size: 14px;">${escapeHtml(task.title)}</div>
-        <div style="font-size: 11px; color: #888; display: flex; gap: 15px;">
-            <span>✈️ ${formatDeadline(task.deadline)}</span>
-            ${task.status === "open" ? `<span>👥 ${(task.applicants || []).length} ${t('task.applicants')}</span>` : ""}
+        <div class="profile-list-card__title">${escapeHtml(task.title)}</div>
+        <div class="profile-list-card__meta">
+            <span>✈️ ${escapeHtml(String(formatDeadline(task.deadline)))}</span>
+            ${task.status === "open" ? `<span>👥 ${escapeHtml(String((task.applicants || []).length))} ${t('task.applicants')}</span>` : ""}
         </div>
     `;
-    
-    // 悬停效果
-    taskDiv.onmouseover = () => { taskDiv.style.borderColor = "#666"; taskDiv.style.transform = "translateX(3px)"; };
-    taskDiv.onmouseout = () => { taskDiv.style.borderColor = "#444"; taskDiv.style.transform = "translateX(0)"; };
     
     // 点击进入详情
     taskDiv.onclick = () => {
@@ -661,15 +648,9 @@ function formatDeadline(deadline) {
  * 💬 创建帖子卡片项
  */
 function createPostItem(post, currentUser) {
-    const postDiv = document.createElement("div");
-    Object.assign(postDiv.style, {
-        padding: "12px",
-        background: "var(--comfy-input-bg)",
-        borderRadius: "8px",
-        border: "1px solid #444",
-        cursor: "pointer",
-        transition: "all 0.2s"
-    });
+    const postDiv = document.createElement("button");
+    postDiv.type = 'button';
+    postDiv.className = 'profile-entry-card';
     
     // 截取内容摘要
     const contentPreview = (post.content || "").slice(0, 80) + ((post.content || "").length > 80 ? "..." : "");
@@ -688,38 +669,30 @@ function createPostItem(post, currentUser) {
     }
     
     postDiv.innerHTML = `
-        <div style="display: flex; align-items: flex-start; gap: 10px;">
+        <div class="profile-entry-card__row">
             ${coverImageUrl ? `
-                <div style="position: relative; flex-shrink: 0;">
-                    <img src="${escapeHtml(coverImageUrl)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; display: block;">
+                <div class="profile-entry-card__media">
+                    <img src="${escapeHtml(coverImageUrl)}" class="profile-entry-card__image">
                     ${isVideo ? `
-                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-                                width: 28px; height: 28px; background: rgba(0,0,0,0.6); border-radius: 50%;
-                                display: flex; align-items: center; justify-content: center; pointer-events: none;">
-                        <div style="width: 0; height: 0; border-left: 10px solid rgba(255,255,255,0.9);
-                                    border-top: 6px solid transparent; border-bottom: 6px solid transparent;
-                                    margin-left: 2px;"></div>
+                    <div class="profile-entry-card__play">
+                        <div class="profile-entry-card__play-triangle"></div>
                     </div>
                     ` : ''}
                 </div>
             ` : ""}
-            <div style="flex: 1; min-width: 0;">
-                <div style="font-size: 14px; color: #fff; margin-bottom: 6px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+            <div class="profile-list-card__body">
+                <div class="profile-list-card__title">
                     ${escapeHtml(contentPreview)}
                 </div>
-                <div style="display: flex; align-items: center; gap: 12px; font-size: 11px; color: #888;">
-                    <span>❤️ ${post.like_count || 0}</span>
-                    <span>💬 ${post.comment_count || 0}</span>
+                <div class="profile-list-card__meta">
+                    <span>❤️ ${escapeHtml(String(post.like_count || 0))}</span>
+                    <span>💬 ${escapeHtml(String(post.comment_count || 0))}</span>
                     ${isVideo ? `<span>🎬 ${t('post.video_tag')}</span>` : ((post.images || []).length > 1 ? `<span>🖼️ ${(post.images || []).length}${t('post.images_unit')}</span>` : "")}
-                    <span style="margin-left: auto;">${timeStr}</span>
+                    <span class="profile-list-card__time">${escapeHtml(String(timeStr))}</span>
                 </div>
             </div>
         </div>
     `;
-    
-    // 悬停效果（使用 mouseenter/mouseleave 避免子元素边界闪烁）
-    postDiv.onmouseenter = () => { postDiv.style.borderColor = "#9C27B0"; postDiv.style.transform = "translateX(2px)"; };
-    postDiv.onmouseleave = () => { postDiv.style.borderColor = "#444"; postDiv.style.transform = "translateX(0)"; };
     
     // 点击进入详情
     postDiv.onclick = () => {
@@ -727,7 +700,7 @@ function createPostItem(post, currentUser) {
             const view = module.createPostDetailView(post.id, currentUser);
             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
         }).catch(err => {
-            console.error("加载帖子详情组件失败:", err);
+            console.error("加载帖子详情组件失败");
             showToast(t('profile.post_detail_load_failed'), "error");
         });
     };
@@ -739,15 +712,9 @@ function createPostItem(post, currentUser) {
  * 🧩 创建提示词卡片项（复刻 createPostItem 模式）
  */
 function createPromptItem(prompt, currentUser) {
-    const promptDiv = document.createElement("div");
-    Object.assign(promptDiv.style, {
-        padding: "12px",
-        background: "var(--comfy-input-bg)",
-        borderRadius: "8px",
-        border: "1px solid #444",
-        cursor: "pointer",
-        transition: "all 0.2s"
-    });
+    const promptDiv = document.createElement("button");
+    promptDiv.type = 'button';
+    promptDiv.className = 'profile-entry-card';
 
     // 时间格式化（复用帖子时间格式函数）
     const timeStr = formatPostTime(prompt.created_at);
@@ -757,45 +724,38 @@ function createPromptItem(prompt, currentUser) {
     const coverImageUrl = prompt.cover_image || null;
 
     // 价格徽标
-    const priceBadge = (prompt.price > 0)
-        ? `<span style="background: rgba(255,193,7,0.15); color: #FFC107; padding: 1px 6px; border-radius: 4px; font-size: 10px;">💎 ${prompt.price}</span>`
-        : `<span style="background: rgba(76,175,80,0.15); color: #4CAF50; padding: 1px 6px; border-radius: 4px; font-size: 10px;">${t('prompt.free')}</span>`;
+    const priceState = getPromptPriceState(prompt.price);
+    const priceBadge = priceState !== 'free'
+        ? `<span class="profile-list-badge profile-list-badge--price">💎 ${escapeHtml(priceState === 'paid' ? String(prompt.price) : t('common.unknown'))}</span>`
+        : `<span class="profile-list-badge profile-list-badge--free">${t('prompt.free')}</span>`;
 
     promptDiv.innerHTML = `
-        <div style="display: flex; align-items: flex-start; gap: 10px;">
+        <div class="profile-entry-card__row">
             ${coverImageUrl ? `
-                <div style="position: relative; flex-shrink: 0;">
-                    <img src="${escapeHtml(coverImageUrl)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; display: block;">
+                <div class="profile-entry-card__media">
+                    <img src="${escapeHtml(coverImageUrl)}" class="profile-entry-card__image">
                     ${isVideo ? `
-                    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-                                width: 28px; height: 28px; background: rgba(0,0,0,0.6); border-radius: 50%;
-                                display: flex; align-items: center; justify-content: center; pointer-events: none;">
-                        <div style="width: 0; height: 0; border-left: 10px solid rgba(255,255,255,0.9);
-                                    border-top: 6px solid transparent; border-bottom: 6px solid transparent;
-                                    margin-left: 2px;"></div>
+                    <div class="profile-entry-card__play">
+                        <div class="profile-entry-card__play-triangle"></div>
                     </div>
                     ` : ''}
                 </div>
             ` : ""}
-            <div style="flex: 1; min-width: 0;">
-                <div style="font-size: 14px; color: #fff; margin-bottom: 6px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+            <div class="profile-list-card__body">
+                <div class="profile-list-card__title">
                     ${escapeHtml(prompt.title || '')}
                 </div>
-                <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: #888; flex-wrap: wrap;">
+                <div class="profile-list-card__meta">
                     ${priceBadge}
-                    ${prompt.category ? `<span style="background: rgba(0,188,212,0.12); color: #00BCD4; padding: 1px 6px; border-radius: 4px; font-size: 10px;">${escapeHtml(tIfExists('promptcat.' + prompt.category, prompt.category))}</span>` : ''}
-                    <span>❤️ ${prompt.likes || 0}</span>
-                    <span>⭐ ${prompt.favorites || 0}</span>
-                    <span>👁️ ${prompt.views || 0}</span>
-                    <span style="margin-left: auto;">${timeStr}</span>
+                    ${prompt.category ? `<span class="profile-list-badge">${escapeHtml(tIfExists('promptcat.' + prompt.category, prompt.category))}</span>` : ''}
+                    <span>❤️ ${escapeHtml(String(prompt.likes || 0))}</span>
+                    <span>⭐ ${escapeHtml(String(prompt.favorites || 0))}</span>
+                    <span>👁️ ${escapeHtml(String(prompt.views || 0))}</span>
+                    <span class="profile-list-card__time">${escapeHtml(String(timeStr))}</span>
                 </div>
             </div>
         </div>
     `;
-
-    // 悬停效果（青色主题，与提示词 Tab 配色一致）
-    promptDiv.onmouseenter = () => { promptDiv.style.borderColor = "#00BCD4"; promptDiv.style.transform = "translateX(2px)"; };
-    promptDiv.onmouseleave = () => { promptDiv.style.borderColor = "#444"; promptDiv.style.transform = "translateX(0)"; };
 
     // 点击进入提示词详情
     promptDiv.onclick = () => {
@@ -803,7 +763,7 @@ function createPromptItem(prompt, currentUser) {
             const view = module.createPromptDetailView(prompt.id, currentUser);
             window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
         }).catch(err => {
-            console.error("加载提示词详情组件失败:", err);
+            console.error("加载提示词详情组件失败");
             showToast(t('profile.prompt_detail_load_failed'), "error");
         });
     };
@@ -815,8 +775,12 @@ function createPromptItem(prompt, currentUser) {
  * 🕒 格式化帖子时间
  */
 function formatPostTime(timestamp) {
-    if (!timestamp) return "";
-    const date = new Date(timestamp * 1000);
+    if (timestamp === null || timestamp === undefined || timestamp === "" || timestamp === 0) return "";
+    if (typeof timestamp !== "number" && typeof timestamp !== "string") return t('common.unknown');
+    if (typeof timestamp === "string" && timestamp.trim() === "") return t('common.unknown');
+    const seconds = Number(timestamp);
+    const date = new Date(seconds * 1000);
+    if (!Number.isFinite(seconds) || !Number.isFinite(date.getTime())) return t('common.unknown');
     const now = new Date();
     const diff = now - date;
     
@@ -827,17 +791,44 @@ function formatPostTime(timestamp) {
     return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
+function formatTransactionTime(timestamp) {
+    if (timestamp === null || timestamp === undefined || timestamp === "" || timestamp === 0) return "";
+    let date;
+    if (typeof timestamp === "number") {
+        if (!Number.isFinite(timestamp)) return t('common.unknown');
+        date = new Date(timestamp);
+    } else if (typeof timestamp === "string") {
+        const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})?$/.exec(timestamp);
+        if (!parts) return t('common.unknown');
+        const [year, month, day, hour, minute, second] = parts.slice(1, 7).map(Number);
+        if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) return t('common.unknown');
+        const milliseconds = Number((parts[7] || '').padEnd(3, '0').slice(0, 3));
+        date = new Date(0);
+        date.setUTCFullYear(year, month - 1, day);
+        date.setUTCHours(hour, minute, second, milliseconds);
+        if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return t('common.unknown');
+        const zone = parts[8];
+        if (zone && zone !== 'Z') {
+            const hours = Number(zone.slice(1, 3)), minutes = Number(zone.slice(4, 6));
+            if (hours > 23 || minutes > 59) return t('common.unknown');
+            const offset = (hours * 60 + minutes) * (zone[0] === '+' ? 1 : -1);
+            date = new Date(date.getTime() - offset * 60000);
+        }
+    } else return t('common.unknown');
+    if (!Number.isFinite(date.getTime())) return t('common.unknown');
+    return date.toLocaleString(getLanguage(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 /**
  * 💳 创建交易记录卡片
  * 根据交易类型展示不同的详细信息
  */
 function createTransactionCard(tx) {
     const txDiv = document.createElement("div");
-    txDiv.style.cssText = "padding: 12px; background: var(--comfy-input-bg); border-radius: 8px; border: 1px solid #444; display: flex; justify-content: space-between; align-items: flex-start;";
+    txDiv.className = 'profile-transaction-card';
     
     const isPositive = tx.amount > 0;
-    const amountColor = isPositive ? '#4CAF50' : '#F44336';
-    const timeStr = tx.created_at ? new Date(tx.created_at).toLocaleString(getLanguage(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    const timeStr = formatTransactionTime(tx.created_at);
     
     // 获取交易类型配置
     const typeConfig = getTransactionTypeConfig(tx.tx_type);
@@ -945,31 +936,31 @@ function createTransactionCard(tx) {
     
     // 资源标题（如果有）
     const itemTitle = tx.item_title && tx.tx_type !== 'TIP_IN' && tx.tx_type !== 'TIP_OUT' 
-        ? `<span style="color: #888; margin-left: 6px;">- ${escapeHtml(tx.item_title)}</span>` 
+        ? `<span class="profile-transaction-card__item">- ${escapeHtml(tx.item_title)}</span>` 
         : '';
     
     // 实到金额（仅提现类型）
     const netAmountHtml = (tx.tx_type === 'WITHDRAW' && tx.net_amount !== null && tx.net_amount !== undefined)
-        ? `<div style="font-size: 11px; color: #888; text-align: right;">${t('tx.net_amount')}: ${tx.net_amount}</div>`
+        ? `<div class="profile-transaction-card__net">${t('tx.net_amount')}: ${escapeHtml(String(tx.net_amount))}</div>`
         : '';
     
     if (hasDetailedInfo) {
         // 详细展示模式
         txDiv.innerHTML = `
-            <div style="display: flex; align-items: flex-start; gap: 10px; flex: 1; min-width: 0;">
-                <span style="font-size: 20px; flex-shrink: 0;">${typeConfig.icon}</span>
-                <div style="flex: 1; min-width: 0;">
-                    <div style="display: flex; align-items: center; flex-wrap: wrap;">
-                        <span style="font-weight: bold; color: #eee; font-size: 13px;">${typeConfig.title}</span>
+            <div class="profile-transaction-card__summary">
+                <span class="profile-transaction-card__icon">${typeConfig.icon}</span>
+                <div class="profile-list-card__body">
+                    <div class="profile-transaction-card__heading">
+                        <span class="profile-transaction-card__title">${escapeHtml(String(typeConfig.title))}</span>
                         ${itemTitle}
                     </div>
-                    ${description ? `<div style="font-size: 11px; color: #aaa; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(description)}</div>` : ''}
-                    ${detailText ? `<div style="font-size: 11px; color: #888; margin-top: 3px;">${escapeHtml(detailText)}</div>` : ''}
+                    ${description ? `<div class="profile-transaction-card__description">${escapeHtml(description)}</div>` : ''}
+                    ${detailText ? `<div class="profile-transaction-card__detail">${escapeHtml(detailText)}</div>` : ''}
                 </div>
             </div>
-            <div style="text-align: right; flex-shrink: 0; margin-left: 10px;">
-                <div style="font-weight: bold; font-size: 15px; color: ${amountColor};">
-                    ${isPositive ? '+' : ''}${tx.amount}
+            <div class="profile-transaction-card__money">
+                <div class="profile-transaction-card__amount ${isPositive ? 'profile-transaction-card__amount--income' : 'profile-transaction-card__amount--expense'}">
+                    ${isPositive ? '+' : ''}${escapeHtml(String(tx.amount))}
                 </div>
                 ${netAmountHtml}
             </div>
@@ -977,15 +968,15 @@ function createTransactionCard(tx) {
     } else {
         // 简洁展示模式（向后兼容旧数据）
         txDiv.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 10px;">
-                <span style="font-size: 20px;">${typeConfig.icon}</span>
+            <div class="profile-transaction-card__summary">
+                <span class="profile-transaction-card__icon">${typeConfig.icon}</span>
                 <div>
-                    <div style="font-weight: bold; color: #eee; font-size: 13px;">${typeConfig.title}</div>
-                    <div style="font-size: 11px; color: #888;">${timeStr}${tx.related_account ? ' · ' + escapeHtml(tx.related_account.substring(0, 8)) + '...' : ''}</div>
+                    <div class="profile-transaction-card__title">${escapeHtml(String(typeConfig.title))}</div>
+                    <div class="profile-transaction-card__detail">${escapeHtml(String(timeStr))}${tx.related_account ? ' · ' + escapeHtml(tx.related_account.substring(0, 8)) + '...' : ''}</div>
                 </div>
             </div>
-            <div style="font-weight: bold; font-size: 15px; color: ${amountColor};">
-                ${isPositive ? '+' : ''}${tx.amount}
+            <div class="profile-transaction-card__amount ${isPositive ? 'profile-transaction-card__amount--income' : 'profile-transaction-card__amount--expense'}">
+                ${isPositive ? '+' : ''}${escapeHtml(String(tx.amount))}
             </div>
         `;
     }

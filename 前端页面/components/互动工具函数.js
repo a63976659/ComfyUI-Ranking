@@ -43,20 +43,20 @@ export async function recordView(apiMethod, contentId, cachePrefix, onSuccess = 
         return null;
     }
 
-    DEBUG && console.warn(`[浏览量调试] recordView 被调用 - prefix: ${cachePrefix}, id: ${contentId}`);
+    DEBUG && console.warn('浏览量记录开始');
     const now = Date.now();
     const cacheKey = `${cachePrefix}_${contentId}`;
     const cached = _viewRecordCache[cacheKey];
 
     // 检查是否在防抖/冷却时间内（成功5分钟，失败30秒）
     if (cached && now - cached.time < (cached.success ? VIEW_DEBOUNCE_MS : VIEW_ERROR_COOLDOWN_MS)) {
-        DEBUG && console.warn(`[浏览量调试] 防抖拦截 - ${cacheKey}, 距上次: ${now - cached.time}ms, 上次状态: ${cached.success ? 'success' : 'error'}`);
+        DEBUG && console.warn('浏览量记录处于冷却期');
         return null; // 防抖中，跳过
     }
 
     try {
         const res = await apiMethod(contentId);
-        DEBUG && console.warn(`[浏览量调试] API响应:`, res?.status, res);
+        DEBUG && console.warn('浏览量记录收到响应');
         if (res.status === "success") {
             // 成功后记录时间戳和成功状态
             _viewRecordCache[cacheKey] = { time: now, success: true };
@@ -66,10 +66,7 @@ export async function recordView(apiMethod, contentId, cachePrefix, onSuccess = 
     } catch (err) {
         // 失败时记录较短冷却时间，网络恢复后可快速重试
         _viewRecordCache[cacheKey] = { time: now, success: false };
-        // 浏览记录失败不影响页面显示，但输出详细错误便于调试
-        DEBUG && console.warn(`[浏览量调试] 记录${cachePrefix}浏览量失败:`, err.message || err);
-        DEBUG && console.warn(`[浏览量调试] 请求参数 - contentId: ${contentId}, cachePrefix: ${cachePrefix}`);
-        DEBUG && console.warn(`[浏览量调试] 错误详情:`, err);
+        DEBUG && console.warn('浏览量记录失败');
     }
     return null;
 }
@@ -322,13 +319,17 @@ export function getCacheTTL() {
  * @returns {string}
  */
 export function formatTime(timestamp) {
-    if (!timestamp) return "";
+    if (timestamp === null || timestamp === undefined || timestamp === "" || timestamp === 0) return "";
+    if (typeof timestamp !== "number" && typeof timestamp !== "string") return t('common.unknown');
+    const seconds = typeof timestamp === "number" ? timestamp : timestamp.trim() === "" ? NaN : Number(timestamp);
+    if (!Number.isFinite(seconds)) return t('common.unknown');
+    const date = new Date(seconds * 1000);
+    if (!Number.isFinite(date.getTime())) return t('common.unknown');
     const now = Date.now() / 1000;
-    const diff = now - timestamp;
+    const diff = now - seconds;
     if (diff < 60) return t('time.just_now');
     if (diff < 3600) return t('time.minutes_ago', { n: Math.floor(diff / 60) });
     if (diff < 86400) return t('time.hours_ago', { n: Math.floor(diff / 3600) });
     if (diff < 604800) return t('time.days_ago', { n: Math.floor(diff / 86400) });
-    const date = new Date(timestamp * 1000);
     return `${date.getMonth() + 1}/${date.getDate()}`;
 }

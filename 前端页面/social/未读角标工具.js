@@ -1,4 +1,4 @@
-import { captureRequestSession } from "../core/网络请求API.js";
+import { api, captureRequestSession } from "../core/网络请求API.js";
 import { getUser } from "../core/状态管理.js";
 
 const badgeGenerations = new WeakMap();
@@ -24,4 +24,15 @@ export function createUnreadBadgeUpdate(button, selector, account) {
 
 export function validUnreadCount(value) {
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+export async function loadUnreadCount(currentUser, bellBtn) {
+    const update = createUnreadBadgeUpdate(bellBtn, '#unread-badge', currentUser?.account);
+    if (!currentUser?.account || !bellBtn?.querySelector("#unread-badge")) return;
+    try {
+        const res = await api.getUnreadCount(currentUser.account);
+        if (res?.status === "success" && Number.isSafeInteger(res.unread_count) && res.unread_count >= 0) {
+            update.render(res.unread_count);
+        }
+    } catch (_) {}
 }

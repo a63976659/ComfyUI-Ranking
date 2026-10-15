@@ -17,7 +17,7 @@ import { t } from "../components/用户体验增强.js";
 import { removeCache, removeCacheByPrefix } from "../components/性能优化工具.js";
 import { createPublishEditingLock } from "../market/发布编辑锁.js";
 import { createPublishSubmissionScope } from "../market/发布提交生命周期.js";
-import { API, CACHE, PUBLISH_MEDIA_LIMITS, IMAGE_PROCESS, escapeHtml } from "../core/全局配置.js";
+import { areKeyboardShortcutsEnabled, API, CACHE, PUBLISH_MEDIA_LIMITS, IMAGE_PROCESS, escapeHtml } from "../core/全局配置.js";
 
 function requirePostUpload(result) {
     if (result?.status !== 'success' || typeof result.url !== 'string' || !result.url.trim()) {
@@ -58,8 +58,9 @@ function updateCoverMark(previewContainer) {
         wrapper.tabIndex = 0;
         wrapper.setAttribute('role', 'group');
         wrapper.setAttribute('aria-label', t('post.image_position', { index: idx + 1, total: wrappers.length }));
-        wrapper.setAttribute('aria-keyshortcuts', 'Alt+ArrowLeft Alt+ArrowRight');
-        if (!wrapper.title) wrapper.title = t('post.image_move_hint');
+        if (areKeyboardShortcutsEnabled()) wrapper.setAttribute('aria-keyshortcuts', 'Alt+ArrowLeft Alt+ArrowRight');
+        else wrapper.removeAttribute('aria-keyshortcuts');
+        wrapper.title = t(areKeyboardShortcutsEnabled() ? 'post.image_move_hint' : 'post.image_drag_hint');
         const remove = wrapper.querySelector('button[data-action="remove"]');
         if (remove) {
             remove.type = 'button';
@@ -68,13 +69,13 @@ function updateCoverMark(previewContainer) {
         if (img && !img.hasAttribute('alt')) img.alt = '';
 
         if (img) {
-            img.style.borderColor = idx === 0 ? '#4CAF50' : 'var(--rk-border, var(--border-color, #444))';
+            img.style.borderColor = idx === 0 ? 'var(--rk-success, #4caf50)' : 'var(--rk-border, var(--border-color, #444))';
         }
         if (idx === 0) {
             if (!coverLabel) {
                 const label = document.createElement('span');
                 label.className = 'cover-label';
-                label.style.cssText = 'position: absolute; top: 4px; left: 4px; background: #4CAF50; color: var(--rk-text, var(--fg-color, #ddd)); font-size: 10px; padding: 2px 6px; border-radius: 3px; pointer-events: none;';
+                
                 label.textContent = t('post.cover');
                 wrapper.appendChild(label);
             }
@@ -109,7 +110,7 @@ function setupImageDragSort(previewContainer, fileArray, options = {}) {
 
     wrappers.forEach(wrapper => {
         wrapper.draggable = true;
-        wrapper.style.cursor = 'grab';
+        
 
         // 绑定删除按钮（如果尚未绑定）
         const removeBtn = wrapper.querySelector('button[data-action="remove"]');
@@ -131,7 +132,7 @@ function setupImageDragSort(previewContainer, fileArray, options = {}) {
         }
 
         wrapper.onkeydown = (e) => {
-            if (e.target !== wrapper || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey ||
+            if (!areKeyboardShortcutsEnabled() || e.defaultPrevented || e.keyCode === 229 || e.target !== wrapper || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey ||
                 e.repeat || e.isComposing || !canInteract() ||
                 !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
             const current = getWrappers();
@@ -177,13 +178,15 @@ function setupImageDragSort(previewContainer, fileArray, options = {}) {
             _clearDragIndicators(currentWrappers);
 
             // 在当前目标左侧显示绿色竖线指示插入位置
-            wrapper.style.borderLeft = '3px solid #4CAF50';
+            wrapper.style.borderLeft = '3px solid var(--rk-success, #4caf50)';
             wrapper.style.paddingLeft = '5px';
+            
         };
 
         wrapper.ondragleave = () => {
             wrapper.style.borderLeft = '';
             wrapper.style.paddingLeft = '';
+            
         };
 
         wrapper.ondrop = (e) => {
@@ -234,7 +237,7 @@ function formatFileSize(bytes) {
 
 // ===== 共用样式常量 =====
 // P3-1: 图片预览包装器通用尺寸样式
-const PREVIEW_WRAPPER_STYLE = { position: "relative", width: "80px", height: "80px" };
+
 
 // ===== 共用辅助函数 =====
 
@@ -243,6 +246,7 @@ function _clearDragIndicators(wrappers) {
     wrappers.forEach(w => {
         w.style.borderLeft = '';
         w.style.paddingLeft = '';
+        
     });
 }
 
@@ -252,19 +256,7 @@ function _createAddButton(imagesInput, scope) {
     addBtn.type = "button";
     addBtn.setAttribute("aria-label", t("post.upload_images"));
     addBtn.setAttribute("data-file-picker-button", "");
-    Object.assign(addBtn.style, {
-        width: "80px",
-        height: "80px",
-        background: "transparent",
-        border: "2px dashed var(--rk-border, var(--border-color, #444))",
-        borderRadius: "6px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-        color: "var(--rk-muted, var(--descrip-text, #a4a4a4))",
-        fontSize: "24px"
-    });
+    addBtn.className = "post-publish-add";
     addBtn.textContent = "+";
     addBtn.onclick = (e) => {
         if (!scope.isCurrent() || imagesInput.disabled) return;
@@ -379,7 +371,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
     
     const container = document.createElement("div");
 
-    container.classList.add("ranking-publish-form");
+    container.classList.add("ranking-publish-form", "discussion-publish");
     container.innerHTML = `
         <!-- 顶部标题栏 -->
         <div class="ranking-publish-header">
@@ -394,65 +386,65 @@ export function createPublishPostView(currentUser, editPostData = null) {
         <!-- 表单内容 -->
         <div class="ranking-publish-body">
             <!-- 模式切换 -->
-            <div style="margin-bottom: 15px;">
-                <label style="display: block; font-size: 13px; font-weight: bold; color: var(--rk-text, var(--fg-color, #ddd)); margin-bottom: 8px;">
+            <div class="post-publish__field-group">
+                <label class="post-publish__field-label">
                     ${t('post.mode_label')}
                 </label>
-                <div role="group" aria-label="${t('post.mode_label')}" style="display: flex; gap: 0; background: var(--rk-panel, var(--comfy-input-bg, #292929)); border: 1px solid var(--rk-border, var(--border-color, #444)); border-radius: 6px; overflow: hidden;">
-                    <button id="mode-image" style="flex: 1; padding: 10px; background: #4CAF50; color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;">
+                <div role="group" aria-label="${t('post.mode_label')}" class="post-publish__modes">
+                    <button type="button" id="mode-image" class="post-publish__mode-image">
                         📷 ${t('post.mode_image')}
                     </button>
-                    <button id="mode-video" style="flex: 1; padding: 10px; background: transparent; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); border: none; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s; border-left: 1px solid var(--rk-border, var(--border-color, #444));">
+                    <button type="button" id="mode-video" class="post-publish__mode-video">
                         🎬 ${t('post.mode_video')}
                     </button>
                 </div>
             </div>
             
             <!-- 图片上传区 -->
-            <div id="image-upload-section" style="margin-bottom: 20px;">
-                <label style="display: block; font-size: 13px; font-weight: bold; color: var(--rk-text, var(--fg-color, #ddd)); margin-bottom: 8px;">
-                    🖼️ ${t('post.upload_images')} <span style="color: #F44336;">*</span>
-                    <span style="font-weight: normal; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 12px;">（${t('post.max_9_images')}）</span>
+            <div id="image-upload-section" class="post-publish__upload-section">
+                <label for="images-input" class="post-publish__field-label">
+                    🖼️ ${t('post.upload_images')} <span class="post-publish__required">*</span>
+                    <span class="post-publish__hint">（${t('post.max_9_images')}）</span>
                 </label>
                 <input type="file" id="images-input" accept="image/*" multiple style="display: none;">
-                <div id="images-preview" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 80px; padding: 15px; background: var(--rk-panel, var(--comfy-input-bg, #292929)); border: 2px dashed var(--rk-border, var(--border-color, #444)); border-radius: 8px; cursor: pointer; transition: 0.2s;">
-                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 13px;">
-                        <div style="font-size: 32px; margin-bottom: 8px;">📷</div>
+                <div id="images-preview" class="post-publish__images-preview">
+                    <div class="post-publish__upload-empty">
+                        <div class="post-publish__upload-icon">📷</div>
                         ${t('post.click_upload')}
                     </div>
                 </div>
             </div>
             
             <!-- 视频上传区 -->
-            <div id="video-upload-section" style="margin-bottom: 20px; display: none;">
-                <label style="display: block; font-size: 13px; font-weight: bold; color: var(--rk-text, var(--fg-color, #ddd)); margin-bottom: 8px;">
-                    🎬 ${t('post.upload_video')} <span style="color: #F44336;">*</span>
-                    <span style="font-weight: normal; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 12px;">${t('post.video_limits_hint', { megabytes: PUBLISH_MEDIA_LIMITS.VIDEO_MAX_BYTES / (1024 * 1024), minutes: PUBLISH_MEDIA_LIMITS.VIDEO_MAX_SECONDS / 60 })}</span>
+            <div id="video-upload-section" style="display: none;" class="post-publish__upload-section">
+                <label for="video-input" class="post-publish__field-label">
+                    🎬 ${t('post.upload_video')} <span class="post-publish__required">*</span>
+                    <span class="post-publish__hint">${t('post.video_limits_hint', { megabytes: PUBLISH_MEDIA_LIMITS.VIDEO_MAX_BYTES / (1024 * 1024), minutes: PUBLISH_MEDIA_LIMITS.VIDEO_MAX_SECONDS / 60 })}</span>
                 </label>
                 <input type="file" id="video-input" accept="video/mp4,video/webm,video/quicktime" style="display: none;">
-                <div id="video-preview-area" style="padding: 15px; background: var(--rk-panel, var(--comfy-input-bg, #292929)); border: 2px dashed var(--rk-border, var(--border-color, #444)); border-radius: 8px; cursor: pointer; transition: 0.2s;">
-                    <div id="video-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 13px;">
-                        <div style="font-size: 32px; margin-bottom: 8px;">🎬</div>
+                <div id="video-preview-area" class="post-publish__video-preview">
+                    <div id="video-empty-state" class="post-publish__upload-empty">
+                        <div class="post-publish__upload-icon">🎬</div>
                         ${t('post.click_upload_video')}
                     </div>
                     <div id="video-player-wrap" style="display: none;">
-                        <video id="video-player" controls style="width: 100%; max-height: 300px; border-radius: 8px; background: #000; display: block;"></video>
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px;">
-                            <div style="font-size: 12px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); line-height: 1.5;">
+                        <video id="video-player" controls class="post-publish__video"></video>
+                        <div class="post-publish__video-info">
+                            <div class="post-publish__video-meta">
                                 <div id="video-name"></div>
                                 <div id="video-meta"></div>
                             </div>
-                            <button id="btn-remove-video" style="width: 28px; height: 28px; border-radius: 50%; background: #F44336; color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 16px; line-height: 1; flex-shrink: 0;">×</button>
+                            <button type="button" id="btn-remove-video" aria-label="${t('common.delete')} ${t('post.mode_video')}" class="post-publish__remove-video">×</button>
                         </div>
                         <!-- 封面区域 -->
-                        <div id="video-cover-wrap" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color, #333);">
-                            <div style="font-size: 12px; font-weight: bold; color: var(--rk-text, var(--fg-color, #ddd)); margin-bottom: 8px;">${t('post.video_cover')}</div>
+                        <div id="video-cover-wrap" style="display: none;" class="post-publish__cover-section">
+                            <div class="post-publish__cover-heading">${t('post.video_cover')}</div>
                             <div class="ranking-publish-cover-controls">
-                                <div style="position: relative; width: 80px; height: 80px; flex-shrink: 0;">
-                                    <img id="cover-thumb" src="" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid #4CAF50; display: none;">
-                                    <span id="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: var(--rk-on-accent, #fff); font-size: 10px; padding: 2px 6px; border-radius: 3px; display: none;">${t('post.cover')}</span>
+                                <div class="post-publish__cover-slot">
+                                    <img id="cover-thumb" src="" style="display: none;" class="post-publish__cover-image">
+                                    <span id="cover-label" style="display: none;" class="post-publish__cover-label">${t('post.cover')}</span>
                                 </div>
-                                <div style="display: flex; flex-direction: column; gap: 6px;">
+                                <div class="post-publish__cover-actions">
                                     <button type="button" id="btn-capture-frame" class="ranking-publish-secondary">
                                         📸 ${t('post.capture_frame')}
                                     </button>
@@ -468,40 +460,40 @@ export function createPublishPostView(currentUser, editPostData = null) {
             </div>
             
             <!-- 标题输入 -->
-            <div style="margin-bottom: 15px;">
-                <label for="title-input" style="display: block; font-size: 13px; font-weight: bold; color: var(--rk-text, var(--fg-color, #ddd)); margin-bottom: 8px;">
-                    📝 ${t('post.title_label')} <span style="color: #F44336;">*</span>
+            <div class="post-publish__field-group">
+                <label for="title-input" class="post-publish__field-label">
+                    📝 ${t('post.title_label')} <span class="post-publish__required">*</span>
                 </label>
                 <input type="text" id="title-input" class="ranking-publish-input" value="${escapeHtml(editTitle)}" placeholder="${t('post.title_placeholder')}" maxlength="50">
-                <div style="text-align: right; font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); margin-top: 4px;">
+                <div class="post-publish__counter">
                     <span id="title-count">${editTitle.length}</span>/50
                 </div>
             </div>
             
             <!-- 正文输入 -->
-            <div style="margin-bottom: 15px;">
-                <label for="content-input" style="display: block; font-size: 13px; font-weight: bold; color: var(--rk-text, var(--fg-color, #ddd)); margin-bottom: 8px;">
+            <div class="post-publish__field-group">
+                <label for="content-input" class="post-publish__field-label">
                     ✍️ ${t('post.content_label')}
                 </label>
-                <textarea id="content-input" class="ranking-publish-input" placeholder="${t('post.content_placeholder')}" maxlength="2000" style="height: 200px; resize: none; line-height: 1.6;">${escapeHtml(editContent)}</textarea>
-                <div style="text-align: right; font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); margin-top: 4px;">
+                <textarea id="content-input" class="post-publish__content ranking-publish-input" placeholder="${t('post.content_placeholder')}" maxlength="2000">${escapeHtml(editContent)}</textarea>
+                <div class="post-publish__counter">
                     <span id="content-count">${editContent.length}</span>/2000
                 </div>
             </div>
             
             <!-- 原创作品勾选框 -->
-            <div style="margin-bottom: 15px; padding: 12px; background: var(--rk-panel, var(--comfy-input-bg, #292929)); border: 1px solid var(--rk-border, var(--border-color, #444)); border-radius: 6px;">
-                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                    <input type="checkbox" id="is-original-checkbox" ${editIsOriginal ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer; accent-color: #4CAF50;" />
-                    <span style="font-size: 13px; color: var(--rk-text, var(--fg-color, #ddd));">🎨 ${t('publish.mark_as_original')}</span>
+            <div class="post-publish__original">
+                <label class="post-publish__original-label">
+                    <input type="checkbox" id="is-original-checkbox" ${editIsOriginal ? 'checked' : ''} class="post-publish__original-checkbox" />
+                    <span class="post-publish__original-text">🎨 ${t('publish.mark_as_original')}</span>
                 </label>
-                <div style="font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); margin-top: 6px; padding-left: 24px;">
+                <div class="post-publish__original-hint">
                     ${t('publish.original_default_hint')}
                 </div>
             </div>
             
             <!-- 提示信息 -->
-            <div style="background: rgba(76,175,80,0.1); border: 1px solid rgba(76,175,80,0.3); border-radius: 6px; padding: 12px; font-size: 12px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); line-height: 1.6;">
+            <div class="post-publish__notice">
                 💡 <strong>${t('post.publish_notice')}：</strong><br>
                 • ${t('post.notice_original')}<br>
                 • ${t('post.notice_compress')}<br>
@@ -509,8 +501,8 @@ export function createPublishPostView(currentUser, editPostData = null) {
             </div>
             
             <!-- 确认发布按钮 -->
-            <button id="btn-submit-post" style="width: 100%; padding: 12px; background: #4CAF50; border: none; color: var(--rk-on-accent, #fff); border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: bold; transition: 0.2s; margin-top: 15px; margin-bottom: 5px;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
-                🚀 ${isEditMode ? '保存修改' : t('common.publish')}
+            <button type="button" id="btn-submit-post" class="post-publish__submit">
+                🚀 ${isEditMode ? t('task.save_changes') : t('common.publish')}
             </button>
         </div>
     `;
@@ -560,6 +552,15 @@ export function createPublishPostView(currentUser, editPostData = null) {
     const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
     const account = currentUser?.account;
     const scope = createPublishSubmissionScope(container, submitBtn, account);
+    const refreshImageShortcuts = () => {
+        if (scope.isCurrent()) updateCoverMark(imagesPreview);
+    };
+    window.addEventListener('comfy-settings-changed', refreshImageShortcuts);
+    window.addEventListener('storage', refreshImageShortcuts);
+    scope.addCleanup(() => {
+        window.removeEventListener('comfy-settings-changed', refreshImageShortcuts);
+        window.removeEventListener('storage', refreshImageShortcuts);
+    });
     const editingLock = createPublishEditingLock(container, [submitBtn, container.querySelector("#btn-back-publish")]);
     scope.addCleanup(() => editingLock.dispose());
     const previewReaders = new Set(), temporaryVideos = new Map();
@@ -620,17 +621,9 @@ export function createPublishPostView(currentUser, editPostData = null) {
         modeImageBtn.setAttribute('aria-pressed', String(postMode === 'image'));
         modeVideoBtn.setAttribute('aria-pressed', String(postMode === 'video'));
         if (postMode === 'image') {
-            modeImageBtn.style.background = '#4CAF50';
-            modeImageBtn.style.color = 'var(--rk-on-accent, #fff)';
-            modeVideoBtn.style.background = 'transparent';
-            modeVideoBtn.style.color = 'var(--rk-muted, var(--descrip-text, #a4a4a4))';
             imageSection.style.display = 'block';
             videoSection.style.display = 'none';
         } else {
-            modeImageBtn.style.background = 'transparent';
-            modeImageBtn.style.color = 'var(--rk-muted, var(--descrip-text, #a4a4a4))';
-            modeVideoBtn.style.background = '#4CAF50';
-            modeVideoBtn.style.color = 'var(--rk-on-accent, #fff)';
             imageSection.style.display = 'none';
             videoSection.style.display = 'block';
         }
@@ -774,8 +767,8 @@ export function createPublishPostView(currentUser, editPostData = null) {
         
         if (totalImages === 0) {
             imagesPreview.innerHTML = `
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 13px;">
-                    <div style="font-size: 32px; margin-bottom: 8px;">📷</div>
+                <div class="post-publish__upload-empty">
+                    <div class="post-publish__upload-icon">📷</div>
                     ${t('post.click_upload')}
                 </div>
             `;
@@ -801,12 +794,12 @@ export function createPublishPostView(currentUser, editPostData = null) {
         
         existingImageUrls.forEach((url, idx) => {
             const wrapper = document.createElement("div");
-            Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
+            wrapper.className = "post-publish-preview";
             
             wrapper.innerHTML = `
-                <img src="${escapeHtml(url)}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : 'var(--rk-border, var(--border-color, #444))'};">
-                ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: var(--rk-on-accent, #fff); font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
-                <button data-action="remove" data-existing-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; background: #F44336; color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+                <img src="${escapeHtml(url)}" class="post-publish__preview-image">
+                ${idx === 0 ? `<span class="post-publish__cover-label cover-label">${t('post.cover')}</span>` : ''}
+                <button type="button" data-action="remove" data-existing-idx="${idx}" class="post-publish__remove-image">×</button>
             `;
 
             wrapper._imageType = 'existing';
@@ -830,11 +823,11 @@ export function createPublishPostView(currentUser, editPostData = null) {
             previewReaders.add(reader);
             reader.onabort = () => finishPreviewReader(reader);
             const wrapper = document.createElement("div");
-            Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
+            wrapper.className = "post-publish-preview";
             wrapper.innerHTML = `
-                <img src="" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${existingImageUrls.length === 0 && idx === 0 ? '#4CAF50' : 'var(--rk-border, var(--border-color, #444))'};">
-                ${existingImageUrls.length === 0 && idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: var(--rk-on-accent, #fff); font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
-                <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; background: #F44336; color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+                <img src="" class="post-publish__preview-image">
+                ${existingImageUrls.length === 0 && idx === 0 ? `<span class="post-publish__cover-label cover-label">${t('post.cover')}</span>` : ''}
+                <button type="button" data-action="remove" data-idx="${idx}" class="post-publish__remove-image">×</button>
             `;
 
             wrapper.querySelector('img').removeAttribute('src');
@@ -881,8 +874,8 @@ export function createPublishPostView(currentUser, editPostData = null) {
         const generation = beginImagePreviews();
         if (imageFiles.length === 0) {
             imagesPreview.innerHTML = `
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 13px;">
-                    <div style="font-size: 32px; margin-bottom: 8px;">📷</div>
+                <div class="post-publish__upload-empty">
+                    <div class="post-publish__upload-icon">📷</div>
                     ${t('post.click_upload')}
                 </div>
             `;
@@ -898,12 +891,12 @@ export function createPublishPostView(currentUser, editPostData = null) {
             previewReaders.add(reader);
             reader.onabort = () => finishPreviewReader(reader);
             const wrapper = document.createElement("div");
-            Object.assign(wrapper.style, PREVIEW_WRAPPER_STYLE);
+            wrapper.className = "post-publish-preview";
 
             wrapper.innerHTML = `
-                <img src="" style="width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 2px solid ${idx === 0 ? '#4CAF50' : 'var(--rk-border, var(--border-color, #444))'};">
-                ${idx === 0 ? `<span class="cover-label" style="position: absolute; top: 4px; left: 4px; background: #4CAF50; color: var(--rk-on-accent, #fff); font-size: 10px; padding: 2px 6px; border-radius: 3px;">${t('post.cover')}</span>` : ''}
-                <button data-action="remove" data-idx="${idx}" style="position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; background: #F44336; color: var(--rk-on-accent, #fff); border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+                <img src="" class="post-publish__preview-image">
+                ${idx === 0 ? `<span class="post-publish__cover-label cover-label">${t('post.cover')}</span>` : ''}
+                <button type="button" data-action="remove" data-idx="${idx}" class="post-publish__remove-image">×</button>
             `;
 
             wrapper.querySelector('img').removeAttribute('src');

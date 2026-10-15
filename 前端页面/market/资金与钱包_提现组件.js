@@ -20,7 +20,6 @@ let withdrawalSequence = 0;
 function _setButtonState(btn, disabled, bgColor, text) {
     btn.disabled = disabled;
     btn.setAttribute('aria-busy', String(disabled));
-    btn.style.background = bgColor;
     btn.innerText = text;
 }
 
@@ -85,48 +84,48 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         showToast(t('wallet.withdraw.no_balance'), "warning"); scope.dispose(); return;
     }
 
-    container.style.color = "#ccc";
+    container.className = "wallet-modal wallet-modal--withdraw";
 
     container.innerHTML = `
-        <div style="margin-bottom: 20px; background: rgba(33, 150, 243, 0.1); border: 1px dashed #2196F3; padding: 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+        <div class="wallet-withdraw__summary">
             <div>
-                <div style="font-size: 12px; color: #2196F3; margin-bottom: 5px;">${t('wallet.withdraw.total_withdrawable')}</div>
-                <div style="font-size: 24px; font-weight: bold; color: #fff;">${maxWithdraw}</div>
+                <div class="wallet-withdraw__summary-label">${t('wallet.withdraw.total_withdrawable')}</div>
+                <div class="wallet-withdraw__balance">${maxWithdraw}</div>
             </div>
-            <div style="text-align: right;">
-                <div style="font-size: 12px; color: #888; margin-bottom: 5px;">${t('wallet.withdraw.rmb_equivalent')}</div>
-                <div style="font-size: 16px; font-weight: bold; color: #4CAF50;">≈ ${t('wallet.recharge.price_prefix')} ${maxWithdraw.toFixed(2)}</div>
+            <div class="wallet-withdraw__equivalent">
+                <div class="wallet-withdraw__summary-label">${t('wallet.withdraw.rmb_equivalent')}</div>
+                <div class="wallet-withdraw__equivalent-value">≈ ${t('wallet.recharge.price_prefix')} ${maxWithdraw.toFixed(2)}</div>
             </div>
         </div>
 
-        <div style="margin-bottom: 15px;">
-            <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.amount_label')} <span style="color:#F44336">*</span></label>
-            <input type="number" id="withdraw-amount" placeholder="${t('wallet.withdraw.amount_placeholder')}" max="${maxWithdraw}" min="1" step="1" style="width:100%; padding:10px; background:var(--comfy-input-bg); border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+        <div class="wallet-modal__field">
+            <label for="withdraw-amount" class="wallet-modal__label">${t('wallet.withdraw.amount_label')} <span class="wallet-modal__danger">*</span></label>
+            <input type="number" id="withdraw-amount" placeholder="${t('wallet.withdraw.amount_placeholder')}" max="${maxWithdraw}" min="1" step="1" class="wallet-modal__input">
             
-            <div id="fee-calc-box" style="margin-top: 10px; padding: 10px; background: rgba(255,152,0,0.1); border: 1px dashed #FF9800; border-radius: 4px; font-size: 12px; color: #FF9800; display:none; line-height: 1.5;">
+            <div id="fee-calc-box" class="wallet-withdraw__fee" style="display:none;">
                 <div id="fee-text"></div>
             </div>
         </div>
 
-        <div style="margin-bottom: 15px;">
-            <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.alipay_account')} <span style="color:#F44336">*</span></label>
-            <input type="text" id="withdraw-account" placeholder="${t('wallet.withdraw.alipay_placeholder')}" style="width:100%; padding:10px; background:var(--comfy-input-bg); border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+        <div class="wallet-modal__field">
+            <label for="withdraw-account" class="wallet-modal__label">${t('wallet.withdraw.alipay_account')} <span class="wallet-modal__danger">*</span></label>
+            <input type="text" id="withdraw-account" placeholder="${t('wallet.withdraw.alipay_placeholder')}" class="wallet-modal__input">
         </div>
 
-        <div style="margin-bottom: 15px;">
-            <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.real_name')} <span style="color:#F44336">*</span></label>
-            <input type="text" id="withdraw-name" placeholder="${t('wallet.withdraw.real_name_placeholder')}" style="width:100%; padding:10px; background:var(--comfy-input-bg); border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
+        <div class="wallet-modal__field">
+            <label for="withdraw-name" class="wallet-modal__label">${t('wallet.withdraw.real_name')} <span class="wallet-modal__danger">*</span></label>
+            <input type="text" id="withdraw-name" placeholder="${t('wallet.withdraw.real_name_placeholder')}" class="wallet-modal__input">
         </div>
 
-        <div style="margin-bottom: 20px;">
-            <label style="display:block; margin-bottom:5px; color:#ccc;">${t('wallet.withdraw.security_code')} <span style="color:#F44336">*</span></label>
-            <div style="display:flex; gap:10px;">
-                <input type="text" id="withdraw-code" placeholder="${t('wallet.withdraw.code_placeholder')}" maxlength="6" style="flex:1; padding:10px; background:var(--comfy-input-bg); border:1px solid #555; color:#fff; border-radius:4px; box-sizing:border-box;">
-                <button id="btn-send-code" style="padding:0 15px; background:#2196F3; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold; white-space:nowrap; transition:0.2s;">${t('wallet.withdraw.get_code')}</button>
+        <div class="wallet-modal__field wallet-modal__field--last">
+            <label for="withdraw-code" class="wallet-modal__label">${t('wallet.withdraw.security_code')} <span class="wallet-modal__danger">*</span></label>
+            <div class="wallet-withdraw__code-row">
+                <input type="text" id="withdraw-code" placeholder="${t('wallet.withdraw.code_placeholder')}" maxlength="6" class="wallet-modal__input wallet-withdraw__code-input">
+                <button type="button" id="btn-send-code" class="wallet-modal__button wallet-modal__button--code">${t('wallet.withdraw.get_code')}</button>
             </div>
         </div>
 
-        <button id="btn-submit-withdraw" style="width:100%; padding:12px; background:#4CAF50; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:bold; font-size:15px; transition:0.2s;" >${t('wallet.withdraw.confirm')}</button>
+        <button type="button" id="btn-submit-withdraw" class="wallet-modal__button wallet-modal__button--primary" >${t('wallet.withdraw.confirm')}</button>
     `;
 
     // 🚀 核心逻辑：动态计算提现手续费
@@ -151,9 +150,9 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         
         feeBox.style.display = "block";
         if (fee > 0) {
-            feeText.innerHTML = `${t('wallet.withdraw.fee_quota_exhausted')}<br>${t('wallet.withdraw.fee_deducted')}<strong style="color:#F44336;">${fee} ${t('wallet.recharge.points_suffix')}</strong><br>${t('wallet.withdraw.fee_actual')}<strong style="color:#4CAF50;">${(val - fee).toFixed(2)} ${t('wallet.withdraw.yuan')}</strong>`;
+            feeText.innerHTML = `${t('wallet.withdraw.fee_quota_exhausted')}<br>${t('wallet.withdraw.fee_deducted')}<strong class="wallet-modal__danger">${fee} ${t('wallet.recharge.points_suffix')}</strong><br>${t('wallet.withdraw.fee_actual')}<strong class="wallet-modal__success">${(val - fee).toFixed(2)} ${t('wallet.withdraw.yuan')}</strong>`;
         } else {
-            feeText.innerHTML = `${t('wallet.withdraw.fee_free_quota')}<br>${t('wallet.withdraw.fee_full_amount')}<strong style="color:#4CAF50;">${val.toFixed(2)} ${t('wallet.withdraw.yuan')}</strong>`;
+            feeText.innerHTML = `${t('wallet.withdraw.fee_free_quota')}<br>${t('wallet.withdraw.fee_full_amount')}<strong class="wallet-modal__success">${val.toFixed(2)} ${t('wallet.withdraw.yuan')}</strong>`;
         }
     };
 
@@ -162,8 +161,20 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         if (!scope.isCurrent() || btnSendCode.disabled) return;
         _setButtonState(btnSendCode, true, "#555", t('wallet.withdraw.sending'));
         try {
-            await api.sendVerifyCode(currentUser.email, "email", "withdraw", currentUser.account);
+            const profile = await api.getUserProfile(account, { noCache: true, noStore: true, componentId,
+                timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES });
             if (!scope.isCurrent()) return;
+            if (!profile || typeof profile !== "object" || Array.isArray(profile) || profile.status !== "success" ||
+                    !profile.data || typeof profile.data !== "object" ||
+                    Array.isArray(profile.data) || profile.data.account !== account ||
+                    typeof profile.data.email !== "string" || !profile.data.email.trim()) {
+                throw new Error("unconfirmed withdrawal contact");
+            }
+            const result = await api.sendVerifyCode(profile.data.email, "email", "withdraw", account);
+            if (!scope.isCurrent()) return;
+            if (!result || typeof result !== "object" || Array.isArray(result) || result.status !== "success") {
+                throw new Error("unconfirmed verification code");
+            }
             showToast(t('wallet.withdraw.code_sent'), "success");
             let count = 60;
             countdown = setInterval(() => {

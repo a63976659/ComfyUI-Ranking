@@ -259,7 +259,7 @@ export function createPostsView(currentUser, keyword = "") {
             // 🚀 本地排序优先：已有数据时直接本地排序渲染
             if (allPostsData.length > 0) {
                 const sorted = sortPostsLocally(allPostsData, currentSort);
-                renderPostsFromCache(sorted);
+                renderPostsFromCache(sorted, true);
                 // 后台静默刷新最新数据
                 silentRefresh();
             } else {
@@ -282,7 +282,7 @@ export function createPostsView(currentUser, keyword = "") {
         listViewGeneration++;
         if (allPostsData.length > 0) {
             const sorted = sortPostsLocally(allPostsData, currentSort);
-            renderPostsFromCache(sorted);
+            renderPostsFromCache(sorted, true);
         }
         silentRefresh();
     };
@@ -436,7 +436,7 @@ export function createPostsView(currentUser, keyword = "") {
                     renderPostsFromCache(allPostsData);
                     showToast(t('post.network_cache'), "warning");
                 } else {
-                    renderListLoadError(postsGrid, t('post.load_failed'), () => loadPosts(1, false), t);
+                    renderListLoadError(postsGrid, t('post.load_failed'), () => loadPosts(1, false), t, err);
                 }
             }
         }
@@ -445,6 +445,7 @@ export function createPostsView(currentUser, keyword = "") {
     // 从缓存渲染帖子列表
     const renderPostsFromCache = (posts, deferSearchScan = false) => {
         firstPageReady = true;
+        const restoreFocus = cardNavigation.captureListFocus(postsGrid);
         postsGrid.innerHTML = "";
         
         // 🔍 搜索过滤
@@ -460,6 +461,7 @@ export function createPostsView(currentUser, keyword = "") {
                 postsGrid.innerHTML = _renderEmptyState(t);
                 loadMoreWrapper.style.display = "none";
             }
+            restoreFocus();
             return;
         }
         
@@ -487,6 +489,7 @@ export function createPostsView(currentUser, keyword = "") {
         } else {
             loadMoreWrapper.style.display = "none";
         }
+        restoreFocus();
     };
     
     // 后台静默更新
@@ -548,14 +551,25 @@ export function createPostsView(currentUser, keyword = "") {
     const _postsDataChanged = (oldData, newData) => {
         if (!oldData || !newData) return true;
         if (oldData.length !== newData.length) return true;
-        const checkCount = Math.min(10, oldData.length);
+        const checkCount = oldData.length;
         const COMPARE_FIELDS = ['likes', 'favorites', 'views', 'daily_views', 'comments_count'];
+        const contentFields = ["title", "content", "post_type", "created_at", "author", "author_name"];
+        const mediaFields = ["cover_image", "author_avatar"];
+        const normalizedImage = value => typeof value === 'string'
+            ? proxyImages({ cover_image: value }).cover_image : value;
         for (let i = 0; i < checkCount; i++) {
             if ((oldData[i].id) !== (newData[i].id)) return true;
+            for (const field of contentFields) {
+                if (!Object.is(oldData[i][field], newData[i][field])) return true;
+            }
+            for (const field of mediaFields) {
+                if (!Object.is(normalizedImage(oldData[i][field]), normalizedImage(newData[i][field]))) return true;
+            }
             for (const f of COMPARE_FIELDS) {
                 if ((oldData[i][f] || 0) !== (newData[i][f] || 0)) return true;
             }
-            if (Math.abs((oldData[i].rating_avg || 0) - (newData[i].rating_avg || 0)) > 0.01) return true;
+            const ratingText = value => (typeof value === 'number' && Number.isFinite(value) ? value : 0).toFixed(1);
+            if (ratingText(oldData[i].rating_avg) !== ratingText(newData[i].rating_avg)) return true;
         }
         return false;
     };
@@ -601,12 +615,17 @@ export function createPostsView(currentUser, keyword = "") {
 function createPostCard(post, currentUser = currentUserCache, isCurrent = () => true, captureNavigation = () => isCurrent) {
     const card = document.createElement("div");
     card.className = "business-list-card posts-card";
+    if (typeof post.id === 'string' || (typeof post.id === 'number' && Number.isFinite(post.id))) {
+        card._rankingListId = String(post.id);
+    }
     
     // 格式化时间
     const timeStr = formatTime(post.created_at);
     
     // 判断是否为视频帖子
     const isVideo = post.post_type === "video";
+    const initialAuthor = isCurrent() && typeof post.author === 'string' ? getCachedProfile(post.author) : null;
+    const initialAuthorName = [initialAuthor?.name, post.author_name, post.author].find(value => typeof value === 'string' && value) || '';
     
     card.innerHTML = `
         <!-- 封面图 -->
@@ -630,7 +649,7 @@ function createPostCard(post, currentUser = currentUserCache, isCurrent = () => 
             </button>
             
             <!-- 作者信息（SWR 缓存头像） -->
-            <div class="business-list-card__author posts-card__author"></div>
+            <div class="business-list-card__author posts-card__author">${_generateAvatarHtml('', initialAuthorName)}<span class="swr-name posts-card__name">${escapeHtml(initialAuthorName)}</span></div>
             
             <!-- 互动数据 -->
             <div class="posts-card__stats">
@@ -650,9 +669,9 @@ function createPostCard(post, currentUser = currentUserCache, isCurrent = () => 
         if (!authorContainer) return;
         
         const account = post.author;
-        const cached = getCachedProfile(account);
-        const avatar = cached?.avatar || post.author_avatar || '';
-        const name = cached?.name || post.author_name || account || '';
+        const cached = initialAuthor;
+        const avatar = [cached?.avatar, post.author_avatar].find(value => typeof value === 'string' && value) || '';
+        const name = initialAuthorName;
         const initial = (name || 'U')[0].toUpperCase();
         
         // 渲染初始头像
@@ -661,21 +680,23 @@ function createPostCard(post, currentUser = currentUserCache, isCurrent = () => 
         authorContainer.innerHTML = `${avatarHtml}<span class="swr-name posts-card__name">${escapeHtml(name)}</span>`;
         
         // 后台静默校对
-        getProfileWithSWR(account, api.getUserProfile, (profile) => {
+        const updateAuthor = (profile) => {
             if (!isCurrent() || !card.isConnected) return;
             const avatarEl = authorContainer.querySelector('.swr-avatar');
             const nameEl = authorContainer.querySelector('.swr-name');
-            if (avatarEl && profile.avatar) {
+            if (avatarEl && typeof profile.avatar === 'string' && profile.avatar) {
                 if (avatarEl.tagName === 'IMG') {
-                    avatarEl.src = profile.avatar;
+                    if (avatarEl.getAttribute('src') !== profile.avatar) avatarEl.src = profile.avatar;
                 } else {
-                    avatarEl.outerHTML = _generateAvatarHtml(profile.avatar, profile.name || name);
+                    avatarEl.outerHTML = _generateAvatarHtml(profile.avatar, typeof profile.name === 'string' && profile.name ? profile.name : name);
                 }
             }
-            if (nameEl && profile.name) {
+            if (nameEl && typeof profile.name === 'string' && profile.name && nameEl.textContent !== profile.name) {
                 nameEl.textContent = profile.name;
             }
-        });
+        };
+        const latestCached = getProfileWithSWR(account, api.getUserProfile, updateAuthor);
+        if (latestCached) updateAuthor(latestCached);
     }, 0);
     
     const cover = card.querySelector('img');

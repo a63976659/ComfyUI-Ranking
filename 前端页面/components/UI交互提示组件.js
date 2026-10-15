@@ -15,7 +15,7 @@
 // ===========================================
 
 import { t } from "./用户体验增强.js";
-import { escapeHtml } from "../core/全局配置.js";
+import { escapeHtml, UI } from "../core/全局配置.js";
 
 // ==========================================
 // 📢 Toast 消息提示
@@ -24,14 +24,107 @@ import { escapeHtml } from "../core/全局配置.js";
 
 // Toast 队列管理（避免重叠）
 let toastQueue = [];
-let toastOffset = 50;
+let toastObserver = null;
+let toastSizeObserver = null;
+let toastPointer = null;
+let toastPointerListening = false;
+
+function isToastHovered(toast) {
+    if (!toastPointer) return false;
+    const bounds = toast.getBoundingClientRect();
+    return toastPointer.x >= bounds.left && toastPointer.x < bounds.right &&
+        toastPointer.y >= bounds.top && toastPointer.y < bounds.bottom;
+}
+
+function updateToastHover() {
+    const states = toastQueue.map(isToastHovered);
+    toastQueue.forEach((toast, index) => toast._setToastHovered?.(states[index]));
+}
+
+function handleToastPointer(event) {
+    if (event.pointerType === "touch") return;
+    toastPointer = { x: event.clientX, y: event.clientY };
+    updateToastHover();
+}
+
+function clearToastPointer() {
+    toastPointer = null;
+    updateToastHover();
+}
+
+function observeToastPointer() {
+    if (toastPointerListening) return;
+    toastPointerListening = true;
+    document.addEventListener("pointermove", handleToastPointer, { passive: true });
+    document.addEventListener("pointerleave", clearToastPointer);
+    window.addEventListener("blur", clearToastPointer);
+}
 let dialogInstanceId = 0;
 const dialogStack = [];
 
 function repositionToasts() {
+    const heights = toastQueue.map(toast => toast.offsetHeight);
+    let top = UI.TOAST.OFFSET;
     toastQueue.forEach((toast, index) => {
-        toast.style.top = `${toastOffset + index * 60}px`;
+        toast.style.top = `${top}px`;
+        top += heights[index] + UI.TOAST.GAP;
     });
+    updateToastHover();
+}
+
+function observeToastSize(toast) {
+    if (typeof ResizeObserver !== "function") return;
+    if (!toastSizeObserver) toastSizeObserver = new ResizeObserver(repositionToasts);
+    toastSizeObserver.observe(toast);
+}
+
+
+function releaseToast(toast) {
+    toast._toastReleased = true;
+    toastSizeObserver?.unobserve(toast);
+    if (toast._autoCloseTimer != null) clearTimeout(toast._autoCloseTimer);
+    if (toast._closeTimer != null) clearTimeout(toast._closeTimer);
+    if (toast._entryFrame != null) cancelAnimationFrame(toast._entryFrame);
+    toast._autoCloseTimer = null;
+    toast._closeTimer = null;
+    toast._entryFrame = null;
+    toast._previousFocus = null;
+    toast._cleanupToastEvents?.();
+    toast._cleanupToastEvents = null;
+    toast._setToastHovered = null;
+    const index = toastQueue.indexOf(toast);
+    if (index > -1) toastQueue.splice(index, 1);
+    repositionToasts();
+    if (!toastQueue.length) {
+        toastObserver?.disconnect();
+        toastObserver = null;
+        toastSizeObserver?.disconnect();
+        toastSizeObserver = null;
+        document.removeEventListener("pointermove", handleToastPointer);
+        document.removeEventListener("pointerleave", clearToastPointer);
+        window.removeEventListener("blur", clearToastPointer);
+        toastPointerListening = false;
+        toastPointer = null;
+    }
+}
+
+function observeToastRemoval() {
+    if (toastObserver) return;
+    toastObserver = new MutationObserver(() => {
+        for (const toast of [...toastQueue]) if (!toast.isConnected) releaseToast(toast);
+    });
+    toastObserver.observe(document.body, { childList: true });
+}
+
+function reserveToastSlot() {
+    while (toastQueue.length >= UI.TOAST.MAX_VISIBLE) {
+        const candidate = toastQueue.find(toast => !toast.contains(document.activeElement) && !isToastHovered(toast))
+            || toastQueue.find(toast => !toast.contains(document.activeElement));
+        if (!candidate) return false;
+        candidate.remove();
+        releaseToast(candidate);
+    }
+    return true;
 }
 
 /**
@@ -41,16 +134,18 @@ function repositionToasts() {
  * @param {number} duration - 显示时长（毫秒），默认3000
  */
 export function showToast(message, type = "info", duration = 3000) {
+    if (!reserveToastSlot()) return;
+    const previousFocus = document.activeElement;
     const toast = document.createElement("div");
     const safeType = ["success", "error", "warning", "info"].includes(type) ? type : "info";
     toast.className = `comfy-ranking-toast comfy-ranking-toast--${safeType}`;
-    toast.setAttribute("role", type === "error" ? "alert" : "status");
+    toast.setAttribute("role", safeType === "error" ? "alert" : "status");
     toast.setAttribute("aria-live", safeType === "error" ? "assertive" : "polite");
     toast.setAttribute("aria-atomic", "true");
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     if (reduceMotion) toast.classList.add("comfy-ranking-toast--reduced-motion");
     // 新提示从目标位置上方滑入；关闭后再按当前队列位置重排。
-    toast.style.top = `${toastOffset + toastQueue.length * 60 - 30}px`;
+    toast.style.top = `${UI.TOAST.OFFSET + toastQueue.reduce((height, item) => height + item.offsetHeight + UI.TOAST.GAP, 0) - 30}px`;
 
     // 提示文本统一转义：message 常携带昵称/标题/后端报错等用户可控内容，
     // 全库无任何调用方故意向 showToast 传 HTML 标签，故无条件转义不会改变现有显示效果。
@@ -61,34 +156,76 @@ export function showToast(message, type = "info", duration = 3000) {
         <button type="button" class="toast-close comfy-ranking-toast__close" aria-label="${escapeHtml(t('common.close'))}">×</button>
     `;
     
+    toast._previousFocus = previousFocus;
     document.body.appendChild(toast);
     toastQueue.push(toast);
+    observeToastRemoval();
+    observeToastSize(toast);
     
     // 点击关闭
-    toast.querySelector(".toast-close").addEventListener("click", () => closeToast(toast));
+    const closeButton = toast.querySelector(".toast-close");
+    const handleClose = () => closeToast(toast);
+    closeButton.addEventListener("click", handleClose);
     
     // 入场动画
-    requestAnimationFrame(() => {
+    toast._entryFrame = requestAnimationFrame(() => {
+        toast._entryFrame = null;
+        if (toast._toastReleased || !toast.isConnected || toast.classList.contains("comfy-ranking-toast--closing")) return;
         toast.style.opacity = "1";
         repositionToasts();
     });
 
-    // 自动关闭
-    const autoCloseTimer = setTimeout(() => closeToast(toast), duration);
-    toast._autoCloseTimer = autoCloseTimer;
+    let remaining = Number(duration);
+    let deadline = 0;
+    let hovered = false;
+    const pauseTimer = () => {
+        if (toast._autoCloseTimer == null) return;
+        clearTimeout(toast._autoCloseTimer);
+        toast._autoCloseTimer = null;
+        remaining = Math.max(0, deadline - performance.now());
+    };
+    const resumeTimer = () => {
+        if (toast._toastReleased || hovered || toast.contains(document.activeElement) || !toast.isConnected ||
+                toast.classList.contains("comfy-ranking-toast--closing") || toast._autoCloseTimer != null) return;
+        deadline = performance.now() + remaining;
+        toast._autoCloseTimer = setTimeout(() => closeToast(toast), remaining);
+    };
+    toast._setToastHovered = value => {
+        if (hovered === value) return;
+        hovered = value;
+        if (hovered) pauseTimer();
+        else resumeTimer();
+    };
+    const handleFocusOut = event => {
+        if (!toast.contains(event.relatedTarget)) queueMicrotask(resumeTimer);
+    };
+    toast.addEventListener("focusin", pauseTimer);
+    toast.addEventListener("focusout", handleFocusOut);
+    toast._cleanupToastEvents = () => {
+        closeButton.removeEventListener("click", handleClose);
+        toast.removeEventListener("focusin", pauseTimer);
+        toast.removeEventListener("focusout", handleFocusOut);
+    };
+    observeToastPointer();
+    updateToastHover();
+    resumeTimer();
 }
 
 function closeToast(toast) {
-    if (!toast?.isConnected || toast.classList.contains("comfy-ranking-toast--closing")) return;
-    if (toast._autoCloseTimer) clearTimeout(toast._autoCloseTimer);
+    if (!toast || toast._toastReleased) return;
+    if (!toast.isConnected) { releaseToast(toast); return; }
+    if (toast.classList.contains("comfy-ranking-toast--closing")) return;
+    if (toast._autoCloseTimer != null) clearTimeout(toast._autoCloseTimer);
+    toast._autoCloseTimer = null;
     
     toast.classList.add("comfy-ranking-toast--closing");
     
-    setTimeout(() => {
+    toast._closeTimer = setTimeout(() => {
+        const restore = toast.contains(document.activeElement);
+        const previousFocus = toast._previousFocus;
         toast.remove();
-        const idx = toastQueue.indexOf(toast);
-        if (idx > -1) toastQueue.splice(idx, 1);
-        repositionToasts();
+        releaseToast(toast);
+        if (restore && previousFocus?.isConnected) previousFocus.focus();
     }, window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 300);
 }
 
@@ -419,10 +556,11 @@ export function showRetryDialog(message, retryFn, options = {}) {
 
         let settled = false;
         let retryInProgress = false;
-        let dialogAccessibility;
+        let dialogAccessibility, observer;
         const settle = result => {
             if (settled) return;
             settled = true;
+            observer?.disconnect();
             dialogAccessibility?.cleanup();
             _closeDialog(overlay, box, false, () => {
                 dialogAccessibility?.restoreFocus();
@@ -434,32 +572,42 @@ export function showRetryDialog(message, retryFn, options = {}) {
                 if (!retryInProgress) settle(false);
             }
         );
+        observer = new MutationObserver(() => {
+            if (settled || overlay.isConnected) return;
+            settled = true;
+            observer.disconnect();
+            dialogAccessibility.cleanup();
+            resolve(false);
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
 
         box.querySelector("#ui-btn-cancel").onclick = () => {
             settle(false);
         };
         
         box.querySelector("#ui-btn-retry").onclick = async () => {
+            if (settled || retryInProgress || !overlay.isConnected) return;
             const retryBtn = box.querySelector("#ui-btn-retry");
             retryBtn.innerHTML = `<span class="btn-spinner"></span> ${t('common.retrying')}`;
             retryBtn.disabled = true;
             retryInProgress = true;
+            box.setAttribute("aria-busy", "true");
             
             try {
                 await retryFn();
+                if (settled || !overlay.isConnected) return;
                 settle(true);
-            } catch (error) {
-                // 重试错误可能来自远端或扩展，即使初始提示允许富文本也必须作为纯文本处理
-                const errText = error.message || t('common.retry_failed');
+            } catch {
+                if (settled || !overlay.isConnected) return;
                 const errBox = box.querySelector(".comfy-ranking-dialog__message");
-                if (html) {
-                    errBox.innerHTML = escapeHtml(errText);
-                } else {
-                    errBox.textContent = errText;
-                }
+                errBox.textContent = t('common.retry_failed');
+                errBox.setAttribute("role", "alert");
+            } finally {
+                if (settled || !overlay.isConnected) return;
                 retryBtn.innerHTML = escapeHtml(retryText);
                 retryBtn.disabled = false;
                 retryInProgress = false;
+                box.removeAttribute("aria-busy");
             }
         };
     });
@@ -484,6 +632,7 @@ export function showRetryDialog(message, retryFn, options = {}) {
 
 let loadingOverlay = null;
 let loadingCount = 0;
+let loadingHideTask = null;
 
 /**
  * 显示全局加载遮罩
@@ -491,11 +640,17 @@ let loadingCount = 0;
  */
 export function showLoading(message = t('feedback.processing')) {
     loadingCount++;
+    if (loadingHideTask) {
+        clearTimeout(loadingHideTask.timer);
+        loadingHideTask = null;
+    }
+    if (loadingOverlay && !loadingOverlay.isConnected) loadingOverlay = null;
     
     if (loadingOverlay) {
         // 更新文字
         const textEl = loadingOverlay.querySelector(".loading-text");
         if (textEl) textEl.textContent = message;
+        loadingOverlay.style.opacity = "1";
         return;
     }
     
@@ -546,8 +701,9 @@ export function showLoading(message = t('feedback.processing')) {
     
     document.body.appendChild(loadingOverlay);
     
+    const overlay = loadingOverlay;
     requestAnimationFrame(() => {
-        loadingOverlay.style.opacity = "1";
+        if (loadingOverlay === overlay && loadingCount > 0 && overlay.isConnected) overlay.style.opacity = "1";
     });
 }
 
@@ -559,9 +715,16 @@ export function hideLoading() {
     
     if (loadingCount > 0 || !loadingOverlay) return;
     
-    loadingOverlay.style.opacity = "0";
-    setTimeout(() => {
-        loadingOverlay?.remove();
+    const overlay = loadingOverlay;
+    overlay.style.opacity = "0";
+    if (loadingHideTask) return;
+    const task = { timer: null };
+    loadingHideTask = task;
+    task.timer = setTimeout(() => {
+        if (loadingHideTask !== task) return;
+        loadingHideTask = null;
+        if (loadingOverlay !== overlay || loadingCount > 0) return;
+        overlay.remove();
         loadingOverlay = null;
     }, 200);
 }
@@ -716,6 +879,8 @@ export function createInstallProgress(container) {
     const progressTrack = wrapper.querySelector(".install-progress__track");
     const startedAt = Date.now();
     let cancelButton = null;
+    let destroyed = false;
+    let diagnosticGeneration = 0;
     const updateElapsed = () => {
         const totalSeconds = Math.floor((Date.now() - startedAt) / 1000);
         const time = `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
@@ -755,28 +920,37 @@ export function createInstallProgress(container) {
             stage.textContent = message || `❌ ${t('install.failed')}`;
             progressTrack.setAttribute("aria-valuetext", stage.textContent);
         },
-        showDiagnostics(entries) {
-            if (!Array.isArray(entries) || entries.length === 0) return;
-            const details = document.createElement("details");
-            details.className = "install-progress__diagnostics";
-            const summary = document.createElement("summary");
-            summary.textContent = t('install.diagnostics');
-            details.appendChild(summary);
+        showDiagnostics(entries, error = null) {
+            if (destroyed) return;
+            const generation = ++diagnosticGeneration;
+            wrapper.querySelectorAll('.install-progress__diagnostics, .comfy-ranking-request-diagnostic').forEach(node => node.remove());
+            if (Array.isArray(entries) && entries.length) {
+                const details = document.createElement("details");
+                details.className = "install-progress__diagnostics";
+                const summary = document.createElement("summary");
+                summary.textContent = t('install.diagnostics');
+                details.appendChild(summary);
 
-            const list = document.createElement("ol");
-            for (const entry of entries.slice(-50)) {
-                const item = document.createElement("li");
-                const stageKey = entry.stageKey;
-                const stageLabel = stageKey ? t(stageKey) : (entry.stage || t('install.stage_unknown'));
-                item.textContent = t('install.diagnostic_entry', {
-                    time: entry.time,
-                    stage: stageLabel,
-                    progress: Number.isFinite(entry.progress) ? `${entry.progress}%` : "—"
-                });
-                list.appendChild(item);
+                const list = document.createElement("ol");
+                for (const entry of entries.slice(-50)) {
+                    const item = document.createElement("li");
+                    const stageKey = entry.stageKey;
+                    const stageLabel = stageKey ? t(stageKey) : (entry.stage || t('install.stage_unknown'));
+                    item.textContent = t('install.diagnostic_entry', {
+                        time: entry.time,
+                        stage: stageLabel,
+                        progress: Number.isFinite(entry.progress) ? `${entry.progress}%` : "—"
+                    });
+                    list.appendChild(item);
+                }
+                details.appendChild(list);
+                wrapper.appendChild(details);
             }
-            details.appendChild(list);
-            wrapper.appendChild(details);
+            if (typeof error?.requestId !== 'string') return;
+            import('./性能优化工具.js').then(({ appendRequestDiagnostic }) => {
+                const isCurrent = () => !destroyed && generation === diagnosticGeneration && wrapper.isConnected;
+                if (isCurrent()) appendRequestDiagnostic(wrapper, error, t, isCurrent);
+            }).catch(() => { console.warn('请求诊断界面加载失败'); });
         },
         addCancelButton(label, onCancel) {
             if (cancelButton || typeof onCancel !== "function") return;
@@ -793,6 +967,8 @@ export function createInstallProgress(container) {
             wrapper.appendChild(cancelButton);
         },
         destroy() {
+            destroyed = true;
+            diagnosticGeneration++;
             stopElapsedTimer();
             wrapper.remove();
         }

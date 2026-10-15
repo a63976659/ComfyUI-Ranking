@@ -5,7 +5,7 @@
 // 作用：处理图片URL的本地代理转换，支持入口清洗和出口剥离
 // ==========================================
 
-import { API, IS_WEB_MODE } from './全局配置.js';
+import { API, IS_WEB_MODE, normalizeProfileImageUrl } from './全局配置.js';
 import { isOnline } from './状态管理.js';  // 🌐 网络状态统一取自 状态管理.js，不再直读 navigator.onLine
 
 // 🟢 入口清洗：接收云端数据时，转换为本地代理，并带【自愈机制】清理被污染的历史数据
@@ -65,10 +65,12 @@ export function proxyImages(obj) {
         for (let key in obj) {
             if (IMAGE_PROXY_FIELDS.includes(key) && typeof obj[key] === 'string') {
                 
-                let originalUrl = _unwrapProxy(obj[key], '/community_hub/image?url=');
+                const isProfileImage = key !== 'coverUrl' && key !== 'cover_image';
+                const safeUrl = isProfileImage ? normalizeProfileImageUrl(obj[key]) : obj[key];
+                let originalUrl = _unwrapProxy(safeUrl, '/community_hub/image?url=');
 
                 // 只有最终剥离出来的确实是外部网络链接（包括云端代理URL），才挂上本地缓存代理
-                if (originalUrl.startsWith('http')) {
+                if (isProfileImage ? /^https?:\/\//i.test(originalUrl) : originalUrl.startsWith('http')) {
                     // 📱 Web 模式：同源/直链可直接加载，不挂本地代理前缀
                     obj[key] = IS_WEB_MODE ? originalUrl : `/community_hub/image?url=${encodeURIComponent(originalUrl)}`;
                 } else {

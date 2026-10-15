@@ -12,8 +12,9 @@
 // ==========================================
 
 import { api, proxyImages, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
+import { getPromptPriceState } from "./价格校验.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
+import { getCoverSandboxHTML, setupImageSandboxEvents, cleanupImageSandbox } from "../components/图片沙盒组件.js";
 import { getVideoPlayerHTML, setupVideoPlayerEvents, cleanupVideoPlayer } from "../components/视频播放器组件.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
@@ -24,6 +25,8 @@ import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML 
 
 import { getUser, eventBus, EVENTS } from "../core/状态管理.js";
 import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
+
+import { isConfirmedDedicatedCommentResponse, isDefiniteCommentRejection } from "../social/评论数据工具.js";
 
 const viewContexts = new WeakMap();
 let promptViewSequence = 0;
@@ -44,10 +47,9 @@ function _generateAvatarHtml(avatar, name, size, extraStyle = '') {
     const initial = (name || 'U')[0].toUpperCase();
     // 🔒 XSS防护：avatar / name 均来自他人可修改的资料（昵称首字母可能是 < ），写入 HTML 前必须转义
     if (avatar) {
-        return `<img class="swr-avatar" src="${escapeHtml(avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; ${extraStyle}">`;
+        return `<img class="swr-avatar prompt-detail__avatar ${size === 24 ? 'prompt-detail__avatar--small' : 'prompt-detail__avatar--large'}" alt="" src="${escapeHtml(avatar)}">`;
     }
-    const fontSize = Math.max(9, Math.round(size * 0.4));
-    return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${escapeHtml(initial)}</div>`;
+    return `<div class="swr-avatar prompt-detail__avatar prompt-detail__avatar--initial ${size === 24 ? 'prompt-detail__avatar--small' : 'prompt-detail__avatar--large'}" aria-hidden="true">${escapeHtml(initial)}</div>`;
 }
 
 /**
@@ -58,7 +60,7 @@ function _updateAvatarElement(avatarEl, profile, size, extraStyle = '') {
     if (avatarEl.tagName === 'IMG') {
         avatarEl.src = profile.avatar;
     } else {
-        avatarEl.outerHTML = `<img class="swr-avatar" src="${escapeHtml(profile.avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; ${extraStyle}">`;
+        avatarEl.outerHTML = `<img class="swr-avatar prompt-detail__avatar ${size === 24 ? 'prompt-detail__avatar--small' : 'prompt-detail__avatar--large'}" alt="" src="${escapeHtml(profile.avatar)}">`;
     }
 }
 
@@ -67,31 +69,21 @@ function _updateAvatarElement(avatarEl, profile, size, extraStyle = '') {
  */
 export function createPromptDetailView(promptId, currentUser) {
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex",
-        flexDirection: "column",
-        gap: "0",
-        color: "#ccc",
-        fontSize: "14px",
-        padding: "0",
-        overflowY: "auto",
-        flex: "1",
-        boxSizing: "border-box"
-    });
+    container.className = "prompt-detail";
 
     container.innerHTML = `
         <!-- 顶部标题栏 -->
-        <div style="display: flex; align-items: center; gap: 10px; padding: 15px; border-bottom: 1px solid #444; background: #1a1a1a;">
-            <button id="btn-back-prompt-detail" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#667eea'; this.style.borderColor='#667eea'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
+        <div class="prompt-detail__header">
+            <button type="button" id="btn-back-prompt-detail" class="prompt-detail__button">
                 ⬅ ${t('common.back')}
             </button>
-            <span style="font-size: 16px; font-weight: bold; color: #fff;">${t('prompt.detail_title')}</span>
+            <span class="prompt-detail__heading">${t('prompt.detail_title')}</span>
         </div>
 
         <!-- 内容区域 -->
-        <div id="prompt-content" style="flex: 1; overflow-y: auto; padding: 15px;">
-            <div style="text-align: center; padding: 60px; color: #888;">
-                <div style="font-size: 24px; margin-bottom: 10px;">⏳</div>
+        <div id="prompt-content" class="prompt-detail__content">
+            <div class="prompt-detail__state" role="status">
+                <div class="prompt-detail__state-icon" aria-hidden="true">⏳</div>
                 ${t('prompt.loading')}
             </div>
         </div>
@@ -115,6 +107,7 @@ export function createPromptDetailView(promptId, currentUser) {
     viewContexts.set(container, context); viewContexts.set(contentArea, context);
     const handleRouteBack = () => scope.dispose();
     scope.addCleanup(() => {
+        cleanupImageSandbox(contentArea);
         cleanupVideoPlayer(contentArea);
         contentArea.querySelectorAll('audio').forEach(audio => { audio.pause(); audio.removeAttribute('src'); audio.load(); });
         contentArea.replaceChildren(); observer?.disconnect();
@@ -147,6 +140,7 @@ async function loadPromptDetail(container, promptId, currentUser) {
 
     // 先清理旧的视频播放器全局事件（如果存在）
     if (contentArea) {
+        cleanupImageSandbox(contentArea);
         cleanupVideoPlayer(contentArea);
     }
 
@@ -171,8 +165,8 @@ async function loadPromptDetail(container, promptId, currentUser) {
 
     if (!prompt) {
         contentArea.innerHTML = `
-            <div style="text-align: center; padding: 60px; color: #F44336;">
-                <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
+            <div class="prompt-detail__state prompt-detail__state--error" role="alert">
+                <div class="prompt-detail__state-icon" aria-hidden="true">⚠️</div>
                 ${t('prompt.not_exist')}
             </div>
         `;
@@ -185,6 +179,7 @@ async function loadPromptDetail(container, promptId, currentUser) {
     // 🔓 判断提示词是否可见（免费/作者/已购买 → prompt_text 已由服务端下发）
     const isOwner = currentUser && currentUser.account === prompt.author;
     const isUnlocked = !fromCache && typeof prompt.prompt_text === "string" && prompt.locked !== true;
+    const priceState = getPromptPriceState(prompt.price);
 
     // 判断是否为视频封面
     const isVideo = prompt.media_type === "video" && prompt.video_url;
@@ -199,9 +194,9 @@ async function loadPromptDetail(container, promptId, currentUser) {
 
     // 🎵 音乐提示词音频播放器（图片+音频方案，仅存在 audio_url 时渲染）
     const audioHTML = prompt.audio_url ? `
-        <div style="margin-top: 12px; padding: 12px; background: #1a1a1a; border: 1px solid #444; border-radius: 8px;">
-            <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">🎵 ${t('prompt.audio_label')}</div>
-            <audio controls preload="metadata" src="${escapeHtml(prompt.audio_url)}" style="width: 100%; display: block;"></audio>
+        <div class="prompt-detail__audio">
+            <div class="prompt-detail__muted prompt-detail__audio-label">🎵 ${t('prompt.audio_label')}</div>
+            <audio controls preload="metadata" src="${escapeHtml(prompt.audio_url)}" class="prompt-detail__audio-player"></audio>
         </div>` : '';
 
     // 检查当前用户是否已点赞/收藏
@@ -210,100 +205,100 @@ async function loadPromptDetail(container, promptId, currentUser) {
 
     contentArea.innerHTML = `
             <!-- 媒体展示区 -->
-            <div id="media-area" style="margin-bottom: 15px;">
+            <div id="media-area" class="prompt-detail__media">
                 ${mediaHTML}
                 ${audioHTML}
             </div>
 
             <!-- 标题 -->
-            <div style="font-size: 18px; font-weight: bold; color: #fff; margin-bottom: 8px; line-height: 1.4;">
+            <div class="prompt-detail__title">
                 ${escapeHtml(prompt.title)}
             </div>
 
             <!-- 原创标识 -->
             ${prompt.is_original ? `
-            <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px;
-                        background: linear-gradient(135deg, #FF6B35, #FF8F00); border-radius: 12px;
-                        font-size: 11px; color: #fff; font-weight: 500; margin-bottom: 12px;">
+            <div class="prompt-detail__badge prompt-detail__badge--original">
                 🎨 ${t('prompt.original_badge')}
             </div>
             ` : ''}
 
             <!-- 分类与价格标签 -->
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
-                <span style="display: inline-block; background: rgba(118, 75, 162, 0.25); border: 1px solid rgba(118, 75, 162, 0.5); color: #CE93D8; font-size: 11px; padding: 3px 10px; border-radius: 10px;">${prompt.prompt_type === 'video' ? '🎬' : (prompt.prompt_type === 'music' ? '🎵' : '🎨')} ${escapeHtml(tIfExists('promptcat.' + (prompt.category || ''), prompt.category || ''))}</span>
-                ${prompt.price > 0
-                    ? `<span style="background: linear-gradient(135deg, #FFD700, #FFA000); color: #333; font-size: 11px; font-weight: bold; padding: 3px 10px; border-radius: 10px;">💎 ${prompt.price}</span>`
-                    : `<span style="background: rgba(76, 175, 80, 0.25); color: #4CAF50; font-size: 11px; font-weight: bold; padding: 3px 10px; border-radius: 10px; border: 1px solid rgba(76, 175, 80, 0.5);">${t('prompt.free')}</span>`}
-                ${prompt.owned ? `<span style="background: rgba(33, 150, 243, 0.25); color: #64B5F6; font-size: 11px; font-weight: bold; padding: 3px 10px; border-radius: 10px; border: 1px solid rgba(33, 150, 243, 0.5);">${t('prompt.owned_mark')}</span>` : ''}
+            <div class="prompt-detail__badges">
+                <span class="prompt-detail__badge">${prompt.prompt_type === 'video' ? '🎬' : (prompt.prompt_type === 'music' ? '🎵' : '🎨')} ${escapeHtml(tIfExists('promptcat.' + (prompt.category || ''), prompt.category || ''))}</span>
+                ${priceState !== 'free'
+                    ? `<span class="prompt-detail__badge prompt-detail__badge--price">💎 ${escapeHtml(priceState === 'paid' ? prompt.price : t('common.unknown'))}</span>`
+                    : `<span class="prompt-detail__badge">${t('prompt.free')}</span>`}
+                ${prompt.owned ? `<span class="prompt-detail__badge">${t('prompt.owned_mark')}</span>` : ''}
             </div>
 
             <!-- 🏷️ 标签展示 -->
             ${(Array.isArray(prompt.tags) && prompt.tags.length) ? `
-            <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;">
-                ${prompt.tags.map(tag => `<span style="display: inline-block; background: rgba(0,188,212,0.12); border: 1px solid rgba(0,188,212,0.35); color: #4DD0E1; font-size: 11px; padding: 2px 8px; border-radius: 10px;">#${escapeHtml(tag)}</span>`).join('')}
+            <div class="prompt-detail__tags">
+                ${prompt.tags.map(tag => `<span class="prompt-detail__badge">#${escapeHtml(tag)}</span>`).join('')}
             </div>` : ''}
 
             <!-- 作者信息（SWR 缓存头像） -->
-            <div id="author-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; padding: 10px; background: #1a1a1a; border-radius: 8px; cursor: pointer;">
-                <div class="swr-avatar-container" style="width: 40px; height: 40px;"></div>
-                <div style="flex: 1;">
-                    <div class="swr-name" style="font-size: 14px; font-weight: 500; color: #fff;">${escapeHtml(prompt.author_name || prompt.author)}</div>
-                    <div style="font-size: 11px; color: #888;">${formatTime(prompt.created_at)}</div>
-                </div>
+            <div id="author-row" class="prompt-detail__author">
+                <button type="button" id="btn-author-prompt" class="prompt-detail__author-link">
+                <span class="swr-avatar-container prompt-detail__avatar-slot"></span>
+                <span class="prompt-detail__author-info">
+                    <span class="swr-name prompt-detail__author-name">${escapeHtml(prompt.author_name || prompt.author)}</span>
+                    <span class="prompt-detail__muted prompt-detail__author-time">${escapeHtml(formatTime(prompt.created_at))}</span>
+                </span>
+                </button>
                 ${isOwner ? `
-                <div style="display: flex; gap: 8px;" onclick="event.stopPropagation()">
-                    ${IS_WEB_MODE ? '' : `<button id="btn-edit-prompt" style="background: #2196F3; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="${t('common.edit')}">✏️</button>`}
-                    <button id="btn-delete-prompt" style="background: #F44336; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="${t('common.delete')}">🗑️</button>
+                <div class="prompt-detail__author-actions">
+                    ${IS_WEB_MODE ? '' : `<button type="button" id="btn-edit-prompt" class="prompt-detail__button" aria-label="${t('common.edit')}" title="${t('common.edit')}">✏️</button>`}
+                    <button type="button" id="btn-delete-prompt" class="prompt-detail__button prompt-detail__button--danger" aria-label="${t('common.delete')}" title="${t('common.delete')}">🗑️</button>
                 </div>
                 ` : ''}
             </div>
 
             <!-- 简介内容 -->
-            <div style="font-size: 14px; color: #ddd; line-height: 1.8; margin-bottom: 20px; white-space: pre-wrap; word-wrap: break-word;">${escapeHtml((prompt.content || '').trim())}</div>
+            <div class="prompt-detail__description">${escapeHtml((prompt.content || '').trim())}</div>
 
             <!-- 🔑 提示词正文区（付费遮罩/解锁/复制） -->
-            <div id="prompt-text-area" style="margin-bottom: 20px;"></div>
+            <div id="prompt-text-area" class="prompt-detail__text-area"></div>
 
             <!-- 互动按钮栏 -->
-            <div id="interaction-bar" style="display: flex; align-items: center; gap: 15px; padding: 15px 0; border-top: 1px solid var(--border-color, #333); border-bottom: 1px solid var(--border-color, #333);">
-                <button id="btn-like" style="background: ${isLiked ? '#FF5722' : 'var(--comfy-input-bg)'}; border: 1px solid ${isLiked ? '#FF5722' : '#555'}; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
-                    ❤️ <span id="like-count">${prompt.likes || 0}</span>
+            <div id="interaction-bar" class="prompt-detail__interactions">
+                <button type="button" id="btn-like" aria-label="${t('market.like')}" aria-pressed="${isLiked}" class="prompt-detail__button prompt-detail__interaction">
+                    ❤️ <span id="like-count">${escapeHtml(prompt.likes || 0)}</span>
                 </button>
-                <button id="btn-favorite" style="background: ${isFavorited ? '#FFC107' : 'var(--comfy-input-bg)'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
-                    🔖 <span id="favorite-count">${prompt.favorites || 0}</span>
+                <button type="button" id="btn-favorite" aria-label="${t('market.favorite')}" aria-pressed="${isFavorited}" class="prompt-detail__button prompt-detail__interaction">
+                    🔖 <span id="favorite-count">${escapeHtml(prompt.favorites || 0)}</span>
                 </button>
-                <button id="btn-tip" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+                <button type="button" id="btn-tip" class="prompt-detail__button prompt-detail__interaction">
                     ${t('prompt.tip_author')}
                 </button>
                 <!-- 👀 浏览量统计（纯展示） -->
-                <div style="display: flex; align-items: center; gap: 12px; margin-left: auto; color: #888; font-size: 13px;">
-                    <span style="display: flex; align-items: center; gap: 4px;">🔥 <span id="prompt-view-total">${prompt.views || 0}</span></span>
-                    <span style="display: flex; align-items: center; gap: 4px;">📅 <span id="prompt-view-daily">${prompt.daily_views || 0}</span></span>
+                <div class="prompt-detail__views">
+                    <span class="prompt-detail__view-count">🔥 <span id="prompt-view-total">${escapeHtml(prompt.views || 0)}</span></span>
+                    <span class="prompt-detail__view-count">📅 <span id="prompt-view-daily">${escapeHtml(prompt.daily_views || 0)}</span></span>
                 </div>
             </div>
 
             <!-- 打赏榜单 -->
-            <div id="tip-board-area" style="margin: 15px 0;">
+            <div id="tip-board-area" class="prompt-detail__tips">
                 ${renderCommonTipBoardHTML(prompt.tip_board || [], 5, t('prompt.no_tips'))}
             </div>
 
             <!-- 评论区 -->
-            <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                ${t('prompt.comments_title')} <span style="color: #888; font-weight: normal;">(${prompt.comments || 0})</span>
+            <div class="prompt-detail__comments-heading">
+                ${t('prompt.comments_title')} <span class="prompt-detail__muted">(${escapeHtml(prompt.comments || 0)})</span>
             </div>
 
             <!-- 评论输入框 -->
-            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                <input type="text" id="comment-input" placeholder="${t('prompt.comment_placeholder')}" style="flex: 1; padding: 10px 12px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 20px; color: #fff; font-size: 13px; outline: none;" onfocus="this.style.borderColor='#764ba2'" onblur="this.style.borderColor='#444'">
-                <button id="btn-send-comment" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; color: #fff; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;">
+            <div class="prompt-detail__comment-form">
+                <input type="text" id="comment-input" required aria-label="${escapeHtml(t('prompt.comment_placeholder'))}" placeholder="${t('prompt.comment_placeholder')}" class="prompt-detail__comment-input">
+                <button type="button" id="btn-send-comment" class="prompt-detail__button prompt-detail__button--accent">
                     ${t('common.send')}
                 </button>
             </div>
 
             <!-- 评论列表 -->
-            <div id="comments-list" style="display: flex; flex-direction: column; gap: 10px;">
-                <div style="text-align: center; padding: 20px; color: #888; font-size: 12px;">⏳</div>
+            <div id="comments-list" class="prompt-detail__comments">
+                <div class="prompt-detail__state prompt-detail__state--compact" role="status" aria-label="${t('prompt.loading')}">⏳</div>
             </div>
         `;
 
@@ -349,7 +344,7 @@ async function loadPromptDetail(container, promptId, currentUser) {
         }
 
         // 绑定作者点击
-        contentArea.querySelector("#author-row").onclick = (e) => {
+        contentArea.querySelector("#btn-author-prompt").onclick = (e) => {
             if (!isCurrent(contentArea)) return;
             if (e.target.id === 'btn-edit-prompt' || e.target.id === 'btn-delete-prompt') return;
             openOtherUserProfileModal(prompt.author, currentUser);
@@ -402,35 +397,36 @@ function renderPromptTextArea(contentArea, prompt, currentUser, isUnlocked) {
     if (!isCurrent(contentArea)) return;
     const textArea = contentArea.querySelector("#prompt-text-area");
     if (!textArea) return;
+    const priceState = getPromptPriceState(prompt.price);
 
     if (isUnlocked && prompt.prompt_text) {
         // ✅ 已解锁：展示正文 + 一键复制
         textArea.innerHTML = `
-            <div style="background: #1a1a1a; border: 1px solid rgba(118, 75, 162, 0.5); border-radius: 8px; overflow: hidden;">
-                <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid #333; background: rgba(118, 75, 162, 0.15);">
-                    <span style="font-size: 13px; font-weight: bold; color: #CE93D8;">🔑 ${t('prompt.text_label')}</span>
-                    <button id="btn-copy-prompt" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; color: #fff; padding: 6px 16px; border-radius: 16px; cursor: pointer; font-size: 12px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+            <div class="prompt-detail__text-box">
+                <div class="prompt-detail__text-header">
+                    <span class="prompt-detail__text-label">🔑 ${t('prompt.text_label')}</span>
+                    <button type="button" id="btn-copy-prompt" class="prompt-detail__button prompt-detail__button--accent">
                         📋 ${t('prompt.copy')}
                     </button>
                 </div>
-                <div style="padding: 14px; font-size: 13px; color: #ddd; line-height: 1.7; font-family: monospace; white-space: pre-wrap; word-wrap: break-word; user-select: text;">${escapeHtml(prompt.prompt_text)}</div>
+                <div class="prompt-detail__text-body">${escapeHtml(prompt.prompt_text)}</div>
             </div>
         `;
         textArea.querySelector("#btn-copy-prompt").onclick = () => {
             if (isCurrent(contentArea)) copyToClipboard(prompt.prompt_text, textArea.querySelector("#btn-copy-prompt"), () => isCurrent(contentArea));
         };
-    } else if (prompt.price > 0) {
+    } else if (priceState === 'paid') {
         // 🔒 付费遮罩：模糊预览 + 解锁按钮
         textArea.innerHTML = `
-            <div style="position: relative; min-height: 240px; background: #1a1a1a; border: 1px solid #444; border-radius: 8px; overflow: hidden;">
-                <div style="padding: 14px; min-height: 240px; box-sizing: border-box; font-size: 13px; color: #ddd; line-height: 1.7; font-family: monospace; filter: blur(8px); user-select: none; pointer-events: none;">
+            <div class="prompt-detail__locked">
+                <div class="prompt-detail__locked-preview" aria-hidden="true">
                     ${escapeHtml((prompt.content || '') + '\n' + (prompt.content || ''))}
                 </div>
-                <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(0,0,0,0.35);">
-                    <div style="font-size: 28px;">🔒</div>
-                    <div style="font-size: 14px; font-weight: bold; color: #fff;">${t('prompt.locked_title')}</div>
-                    <div style="font-size: 12px; color: #bbb; max-width: 80%; text-align: center;">${t('prompt.locked_desc')}</div>
-                    <button id="btn-unlock-prompt" style="background: linear-gradient(135deg, #FFD700, #FFA000); border: none; color: #333; padding: 10px 28px; border-radius: 20px; cursor: pointer; font-size: 14px; font-weight: bold; display: flex; align-items: center; gap: 6px; transition: 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                <div class="prompt-detail__locked-overlay">
+                    <div class="prompt-detail__lock-icon" aria-hidden="true">🔒</div>
+                    <div class="prompt-detail__lock-title">${t('prompt.locked_title')}</div>
+                    <div class="prompt-detail__muted prompt-detail__locked-description">${t('prompt.locked_desc')}</div>
+                    <button type="button" id="btn-unlock-prompt" class="prompt-detail__button prompt-detail__button--gold">
                         💎 ${t('prompt.unlock', { price: prompt.price })}
                     </button>
                 </div>
@@ -439,6 +435,12 @@ function renderPromptTextArea(contentArea, prompt, currentUser, isUnlocked) {
         textArea.querySelector("#btn-unlock-prompt").onclick = () => {
             showPurchaseConfirmDialog(contentArea, prompt, currentUser);
         };
+    } else if (priceState === 'unknown') {
+        const message = document.createElement('p');
+        message.className = 'prompt-detail__muted';
+        message.setAttribute('role', 'status');
+        message.textContent = t('prompt.price_unknown');
+        textArea.replaceChildren(message);
     }
 }
 
@@ -526,18 +528,18 @@ async function showPurchaseConfirmDialog(contentArea, prompt, currentUser) {
     }
 
     const content = document.createElement("div");
-    content.style.color = "#ccc";
+    content.className = "prompt-detail-dialog";
     content.innerHTML = `
-        <div style="text-align: center;">
-            <div style="font-size: 36px; margin-bottom: 12px;">💎</div>
-            <div style="font-size: 15px; font-weight: bold; color: #fff; margin-bottom: 10px;">${t('prompt.purchase_confirm_title')}</div>
-            <div style="font-size: 13px; color: #aaa; margin-bottom: 15px; line-height: 1.6;">${t('prompt.purchase_confirm_desc', { price: expectedPrice, title: escapeHtml(purchaseTitle) })}</div>
-            <div style="margin-bottom: 15px; background: rgba(255,152,0,0.1); padding: 10px; border-radius: 4px; border: 1px solid #FF9800;">
-                ${t('prompt.purchase_balance')}: <strong style="color:#FF9800;">${balance}</strong>
+        <div class="prompt-detail-dialog__center">
+            <div class="prompt-detail-dialog__icon" aria-hidden="true">💎</div>
+            <div class="prompt-detail-dialog__title">${t('prompt.purchase_confirm_title')}</div>
+            <div class="prompt-detail-dialog__description">${t('prompt.purchase_confirm_desc', { price: expectedPrice, title: escapeHtml(purchaseTitle) })}</div>
+            <div class="prompt-detail-dialog__balance">
+                ${t('prompt.purchase_balance')}: <strong class="prompt-detail-dialog__value">${balance}</strong>
             </div>
-            <div style="display: flex; gap: 10px;">
-                <button id="purchase-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="purchase-confirm" style="flex: 1; background: linear-gradient(135deg, #FFD700, #FFA000); border: none; color: #333; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">💎 ${t('prompt.unlock', { price: expectedPrice })}</button>
+            <div class="prompt-detail-dialog__actions">
+                <button type="button" id="purchase-cancel" class="prompt-detail__button">${t('common.cancel')}</button>
+                <button type="button" id="purchase-confirm" class="prompt-detail__button prompt-detail__button--gold">💎 ${t('prompt.unlock', { price: expectedPrice })}</button>
             </div>
         </div>
     `;
@@ -644,19 +646,19 @@ async function showTipDialog(prompt, currentUser, container) {
     }
 
     const content = document.createElement("div");
-    content.style.color = "#ccc";
+    content.className = "prompt-detail-dialog";
     content.innerHTML = `
-        <div style="margin-bottom: 12px; background: rgba(255,152,0,0.1); padding: 10px; border-radius: 4px; border: 1px solid #FF9800; text-align: center;">
-            ${t('wallet.current_balance')}: <strong style="color:#FF9800;">${balance}</strong> ${t('wallet.credits')}
+        <div class="prompt-detail-dialog__balance">
+            ${t('wallet.current_balance')}: <strong class="prompt-detail-dialog__value">${balance}</strong> ${t('wallet.credits')}
         </div>
-        <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
-            <button class="tip-amount" data-amount="10" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="50" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">50 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="100" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">100 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="500" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">500 ${t('task.points')}</button>
+        <div class="prompt-detail__tip-amounts">
+            <button type="button" class="tip-amount prompt-detail__button" data-amount="10">10 ${t('task.points')}</button>
+            <button type="button" class="tip-amount prompt-detail__button" data-amount="50">50 ${t('task.points')}</button>
+            <button type="button" class="tip-amount prompt-detail__button" data-amount="100">100 ${t('task.points')}</button>
+            <button type="button" class="tip-amount prompt-detail__button" data-amount="500">500 ${t('task.points')}</button>
         </div>
-        <div style="display: flex; gap: 10px;">
-            <button id="tip-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+        <div class="prompt-detail-dialog__actions">
+            <button type="button" id="tip-cancel" class="prompt-detail__button">${t('common.cancel')}</button>
         </div>
     `;
 
@@ -705,6 +707,13 @@ async function loadComments(container, promptId, currentUser) {
     const sendBtn = container.querySelector("#btn-send-comment");
     if (!isCurrent(container)) return;
     const context = viewContexts.get(container);
+    const account = typeof currentUser === "string" ? currentUser : currentUser?.account;
+    let submission = context.commentSubmission;
+    if (!submission || submission.input !== commentInput || submission.button !== sendBtn || submission.account !== account) {
+        submission = context.commentSubmission = { input: commentInput, button: sendBtn, account, phase: "idle", bound: false };
+    }
+    const submissionCurrent = () => isCurrent(container) && context.commentSubmission === submission
+        && commentInput.isConnected && sendBtn.isConnected;
     const generation = context.commentGeneration = (context.commentGeneration || 0) + 1;
     const current = () => isCurrent(container) && context.commentGeneration === generation && commentsList.isConnected;
 
@@ -718,7 +727,7 @@ async function loadComments(container, promptId, currentUser) {
 
         if (comments.length === 0) {
             commentsList.innerHTML = `
-                <div style="text-align: center; padding: 30px; color: #666; font-size: 13px;">
+                <div class="prompt-detail__state prompt-detail__state--compact" role="status">
                     ${t('prompt.no_comments')}
                 </div>
             `;
@@ -732,13 +741,13 @@ async function loadComments(container, promptId, currentUser) {
                 const avatarHtml = _generateAvatarHtml(avatar, name, 24, 'background: var(--comfy-input-bg);');
 
                 return `
-                    <div id="comment-${idx}" data-account="${escapeHtml(c.author)}" style="background: #1a1a1a; padding: 12px; border-radius: 8px;">
-                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <div id="comment-${idx}" data-account="${escapeHtml(c.author)}" class="prompt-detail__comment">
+                        <div class="prompt-detail__comment-header">
                             <div class="swr-avatar-container">${avatarHtml}</div>
-                            <span class="swr-name" style="font-size: 13px; color: #fff; font-weight: 500;">${escapeHtml(name)}</span>
-                            <span style="font-size: 11px; color: #888; margin-left: auto;">${formatTime(c.created_at)}</span>
+                            <span class="swr-name prompt-detail__comment-name">${escapeHtml(name)}</span>
+                            <span class="prompt-detail__muted prompt-detail__comment-time">${escapeHtml(formatTime(c.created_at))}</span>
                         </div>
-                        <div style="font-size: 13px; color: #ddd; line-height: 1.5; padding-left: 32px;">
+                        <div class="prompt-detail__comment-body">
                             ${escapeHtml(c.content)}
                         </div>
                     </div>
@@ -762,45 +771,71 @@ async function loadComments(container, promptId, currentUser) {
     } catch (err) {
         if (!current()) return;
         commentsList.innerHTML = `
-            <div style="text-align: center; padding: 20px; color: #F44336; font-size: 12px;">
+            <div class="prompt-detail__state prompt-detail__state--compact prompt-detail__state--error" role="alert">
                 ${t('prompt.load_failed')}
             </div>
         `;
     }
 
-    // 发送评论
+    if (submission.bound || !submissionCurrent()) return;
+    submission.bound = true;
+    sendBtn.disabled = false;
+    commentInput.readOnly = false;
+    sendBtn.removeAttribute("aria-busy");
+    commentInput.oninput = () => {
+        if (submissionCurrent()) commentInput.removeAttribute("aria-invalid");
+    };
     sendBtn.onclick = async () => {
-        if (!isCurrent(container) || !sendBtn.isConnected || sendBtn.disabled) return;
-        if (!currentUser) {
+        if (!submissionCurrent() || submission.phase !== "idle") return;
+        if (typeof account !== "string" || !account.trim()) {
             showToast(t('auth.login_required'), "warning");
             return;
         }
-        const content = commentInput.value.trim();
+        const originalInput = commentInput.value, content = originalInput.trim();
         if (!content) {
+            commentInput.setAttribute("aria-invalid", "true");
+            commentInput.focus();
             showToast(t('prompt.comment_required'), "warning");
             return;
         }
+        commentInput.removeAttribute("aria-invalid");
+        submission.phase = "submitting";
+        sendBtn.disabled = true;
+        sendBtn.setAttribute("aria-busy", "true");
+        sendBtn.textContent = t('common.sending');
         try {
-            sendBtn.disabled = true;
-            sendBtn.textContent = t('common.sending');
             const result = await api.addPromptComment(promptId, content);
-            if (!isCurrent(container) || !sendBtn.isConnected) return;
-            if (result?.status !== "success") throw new Error();
-            if (commentInput.value.trim() === content) commentInput.value = "";
+            if (!submissionCurrent()) return;
+            if (!isConfirmedDedicatedCommentResponse(result, account, content)) throw new Error("Unconfirmed comment");
+            submission.phase = "committed";
+            if (commentInput.value === originalInput) commentInput.value = "";
             showToast(t('prompt.comment_success'), "success");
-            loadComments(container, promptId, currentUser);
+            await loadComments(container, promptId, currentUser);
+            if (submissionCurrent()) submission.phase = "idle";
         } catch (err) {
-            if (isCurrent(container) && sendBtn.isConnected) showToast(t('prompt.comment_failed'), "error");
+            if (!submissionCurrent()) return;
+            if (submission.phase === "committed") {
+                try { showToast(t('social.comment_refresh_required'), "warning"); } catch (_) {}
+                return;
+            }
+            const rejected = isDefiniteCommentRejection(err);
+            submission.phase = rejected ? "idle" : "unconfirmed";
+            showToast(t(rejected ? 'prompt.comment_failed' : 'social.comment_unconfirmed'), rejected ? "error" : "warning");
         } finally {
-            if (!isCurrent(container) || !sendBtn.isConnected) return;
-            sendBtn.disabled = false;
-            sendBtn.textContent = t('common.send');
+            if (!submissionCurrent()) return;
+            sendBtn.disabled = submission.phase !== "idle";
+            commentInput.readOnly = submission.phase !== "idle";
+            sendBtn.removeAttribute("aria-busy");
+            sendBtn.textContent = t(submission.phase === "unconfirmed" ? 'social.comment_pending' : 'common.send');
         }
     };
 
     // 回车发送
     commentInput.onkeydown = (e) => {
-        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        if (isCurrent(container) && !e.defaultPrevented && e.key === "Enter"
+            && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey
+            && !e.isComposing && e.keyCode !== 229 && !e.repeat
+            && !commentInput.disabled && !commentInput.readOnly) {
             e.preventDefault();
             sendBtn.click();
         }
@@ -813,15 +848,15 @@ async function loadComments(container, promptId, currentUser) {
 function showDeleteConfirmDialog(prompt, container) {
     if (!isCurrent(container)) return;
     const content = document.createElement("div");
-    content.style.color = "#ccc";
+    content.className = "prompt-detail-dialog";
     content.innerHTML = `
-        <div style="text-align: center;">
-            <div style="font-size: 40px; margin-bottom: 15px;">⚠️</div>
-            <div style="font-size: 16px; font-weight: bold; color: #fff; margin-bottom: 10px;">${t('prompt.delete_confirm')}</div>
-            <div style="font-size: 13px; color: #888; margin-bottom: 20px;">${escapeHtml(prompt.title)}</div>
-            <div style="display: flex; gap: 10px;">
-                <button id="delete-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="delete-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
+        <div class="prompt-detail-dialog__center">
+            <div class="prompt-detail-dialog__icon" aria-hidden="true">⚠️</div>
+            <div class="prompt-detail-dialog__title">${t('prompt.delete_confirm')}</div>
+            <div class="prompt-detail-dialog__description">${escapeHtml(prompt.title)}</div>
+            <div class="prompt-detail-dialog__actions">
+                <button type="button" id="delete-cancel" class="prompt-detail__button">${t('common.cancel')}</button>
+                <button type="button" id="delete-confirm" class="prompt-detail__button prompt-detail__button--danger">${t('common.delete')}</button>
             </div>
         </div>
     `;

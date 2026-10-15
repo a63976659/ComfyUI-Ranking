@@ -1,3 +1,5 @@
+import { normalizeProfileImageUrl } from '../core/全局配置.js';
+
 /** 用户资料与 SQL 钱包响应分别校验，未知内部字段不进入页面。 */
 const PUBLIC_FIELDS = ['name', 'avatar', 'avatarDataUrl', 'bannerUrl', 'intro', 'gender', 'country', 'region'];
 const WALLET_FIELDS = ['balance', 'earn_balance', 'tip_balance', 'task_balance', 'frozen_balance', 'total_withdrawn'];
@@ -7,7 +9,8 @@ export function normalizeProfileData(value, account, own = false) {
         || typeof account !== 'string' || !account.trim()) throw new Error('Invalid profile');
     const result = { account };
     for (const key of [...PUBLIC_FIELDS, ...(own ? ['email', 'phone', 'birthday'] : [])]) {
-        if (typeof value[key] === 'string') result[key] = value[key];
+        if (typeof value[key] === 'string') result[key] = ['avatar', 'avatarDataUrl', 'bannerUrl'].includes(key)
+            ? normalizeProfileImageUrl(value[key]) : value[key];
     }
     for (const key of ['age', 'created_at', 'receivedLikes', 'receivedFavorites', 'receivedUses']) {
         if (typeof value[key] === 'number' && Number.isFinite(value[key]) && value[key] >= 0) result[key] = value[key];

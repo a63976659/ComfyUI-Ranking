@@ -53,11 +53,7 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
         const dialogId = `image-crop-dialog-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         // 创建遮罩层
         const overlay = document.createElement("div");
-        Object.assign(overlay.style, {
-            position: "fixed", top: "0", left: "0", width: "100%", height: "100%",
-            background: "rgba(0,0,0,0.85)", zIndex: "99999",
-            display: "flex", justifyContent: "center", alignItems: "center"
-        });
+        overlay.className = "image-crop-overlay";
 
         // 创建弹窗容器
         const modal = document.createElement("div");
@@ -66,18 +62,11 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
         modal.setAttribute("aria-labelledby", `${dialogId}-title`);
         modal.setAttribute("aria-describedby", `${dialogId}-hint`);
         modal.setAttribute("tabindex", "-1");
-        Object.assign(modal.style, {
-            background: "var(--comfy-input-bg)", borderRadius: "12px", padding: "20px",
-            maxWidth: "90vw", maxHeight: "90vh", display: "flex", flexDirection: "column",
-            boxShadow: "0 8px 32px rgba(0,0,0,0.5)"
-        });
+        modal.className = "image-crop-dialog";
 
         // 标题栏
         const header = document.createElement("div");
-        Object.assign(header.style, {
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            marginBottom: "15px", paddingBottom: "10px", borderBottom: "1px solid #444"
-        });
+        header.className = "image-crop-header";
         // 比例显示文字
         let ratioText = '16:9';
         if (aspectRatio === 1) ratioText = '1:1';
@@ -85,40 +74,23 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
         // 📱 触控设备与鼠标设备的操作提示区分（移动端无滚轮/拖动概念）；文案走词典，随界面语言切换
         const gestureHint = _isTouchDevice() ? t('crop.gesture_hint_touch') : t('crop.gesture_hint_mouse');
         header.innerHTML = `
-            <span id="${dialogId}-title" role="heading" aria-level="2" style="font-size: 16px; font-weight: bold; color: #fff;">✂️ ${escapeHtml(title)}</span>
-            <span id="${dialogId}-hint" style="font-size: 12px; color: #888;">${escapeHtml(t('crop.ratio_label'))} ${ratioText} | ${escapeHtml(gestureHint)}</span>
+            <span id="${dialogId}-title" role="heading" aria-level="2" class="image-crop-title">✂️ ${escapeHtml(title)}</span>
+            <span id="${dialogId}-hint" class="image-crop-hint">${escapeHtml(t('crop.ratio_label'))} ${ratioText} | ${escapeHtml(gestureHint)}</span>
         `;
 
         // 裁剪区域容器
         const cropContainer = document.createElement("div");
         let containerWidth, containerHeight;
-        if (aspectRatio === 1) {
-            // 1:1 正方形
-            containerWidth = containerHeight = Math.min(400, window.innerWidth * 0.7);
-        } else if (aspectRatio > 1) {
-            // 16:9 横向
-            containerWidth = Math.min(600, window.innerWidth * 0.8);
-            containerHeight = containerWidth / aspectRatio;
-        } else {
-            // 9:16 纵向
-            containerWidth = Math.min(300, window.innerWidth * 0.5);
-            containerHeight = Math.min(450, window.innerHeight * 0.5);
-        }
-        
-        Object.assign(cropContainer.style, {
-            width: `${containerWidth}px`, height: `${containerHeight}px`,
-            position: "relative", overflow: "hidden", borderRadius: "8px",
-            background: "#1a1a1a", border: "2px solid #4CAF50", cursor: "move",
-            // 📱 禁止浏览器接管触摸手势（页面滚动/双指缩放页面），交由裁剪组件自行处理
-            touchAction: "none"
-        });
+        const preferredWidth = aspectRatio === 1
+            ? Math.min(400, window.innerWidth * 0.7)
+            : aspectRatio > 1 ? Math.min(600, window.innerWidth * 0.8)
+                : Math.min(300, window.innerWidth * 0.5, Math.min(450, window.innerHeight * 0.5) * aspectRatio);
+        cropContainer.className = "image-crop-viewport";
+
 
         // 图片元素
         const img = document.createElement("img");
-        Object.assign(img.style, {
-            position: "absolute", maxWidth: "none", maxHeight: "none",
-            userSelect: "none", pointerEvents: "none"
-        });
+        img.className = "image-crop-image";
 
         // 裁剪状态
         let scale = 1;
@@ -177,13 +149,30 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
             img.style.height = `${scaledHeight}px`;
             img.style.left = `${left}px`;
             img.style.top = `${top}px`;
+            const slider = modal.querySelector('#crop-scale-slider');
+            if (slider && imgNaturalWidth) {
+                const percent = Math.round(scale / _getScaleLimits().minScale * 100);
+                slider.value = String(percent);
+                slider.setAttribute('aria-valuetext', `${percent}%`);
+                modal.querySelector('#crop-scale-value').textContent = `${percent}%`;
+            }
+        }
+
+        function localPoint(clientX, clientY) {
+            const rect = cropContainer.getBoundingClientRect();
+            return {
+                x: (clientX - rect.left) * (containerWidth + cropContainer.clientLeft * 2) / rect.width - cropContainer.clientLeft,
+                y: (clientY - rect.top) * (containerHeight + cropContainer.clientTop * 2) / rect.height - cropContainer.clientTop
+            };
         }
 
         // 鼠标拖动
         cropContainer.onmousedown = (e) => {
+            if (!imgNaturalWidth || e.button !== 0) return;
             isDragging = true;
-            dragStartX = e.clientX - offsetX;
-            dragStartY = e.clientY - offsetY;
+            const point = localPoint(e.clientX, e.clientY);
+            dragStartX = point.x - offsetX;
+            dragStartY = point.y - offsetY;
             cropContainer.style.cursor = "grabbing";
         };
 
@@ -192,6 +181,7 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
 
         // 🔧 P3优化：ESC 键关闭
         function handleKeyDown(e) {
+            if (e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
             if (e.key === 'Escape') {
                 e.preventDefault();
                 cleanup();
@@ -221,8 +211,9 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
 
         function handleMouseMove(e) {
             if (!isDragging) return;
-            offsetX = e.clientX - dragStartX;
-            offsetY = e.clientY - dragStartY;
+            const point = localPoint(e.clientX, e.clientY);
+            offsetX = point.x - dragStartX;
+            offsetY = point.y - dragStartY;
             updateImagePosition();
         }
 
@@ -234,6 +225,7 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
         // 滚轮缩放
         cropContainer.onwheel = (e) => {
             e.preventDefault();
+            if (!imgNaturalWidth) return;
             const delta = e.deltaY > 0 ? 0.95 : 1.05;
             const newScale = scale * delta;
 
@@ -254,9 +246,6 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
         let pinchCenterY = 0;
         let pinchStartOffsetX = 0;
         let pinchStartOffsetY = 0;
-        // 🔧 手势起始时容器的视口原点（含 border），用于把 clientX/Y 换算成与 img.style.left 同源的容器内坐标
-        let pinchOriginX = 0;
-        let pinchOriginY = 0;
 
         // 获取缩放边界（与滚轮缩放共用同一规则）
         function _getScaleLimits() {
@@ -267,10 +256,8 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
         }
 
         function _getTouchMidPoint(touches) {
-            return {
-                x: (touches[0].clientX + touches[1].clientX) / 2,
-                y: (touches[0].clientY + touches[1].clientY) / 2
-            };
+            return localPoint((touches[0].clientX + touches[1].clientX) / 2,
+                (touches[0].clientY + touches[1].clientY) / 2);
         }
 
         function _getTouchDistance(touches) {
@@ -280,22 +267,19 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
         }
 
         function handleTouchStart(e) {
+            if (!imgNaturalWidth) return;
             if (e.touches.length === 1) {
                 isDragging = true;
-                dragStartX = e.touches[0].clientX - offsetX;
-                dragStartY = e.touches[0].clientY - offsetY;
+                const point = localPoint(e.touches[0].clientX, e.touches[0].clientY);
+                dragStartX = point.x - offsetX;
+                dragStartY = point.y - offsetY;
             } else if (e.touches.length === 2) {
                 isDragging = false;
                 pinchStartDist = _getTouchDistance(e.touches);
                 pinchStartScale = scale;
-                // 🔧 clientX 是视口坐标，offsetX/containerWidth 是容器内坐标，两者必须同原点才能参与锚点计算；
-                // clientLeft/clientTop 为 2px 边框宽度（img 的 absolute 定位原点在 padding box 左上角）
-                const rect = cropContainer.getBoundingClientRect();
-                pinchOriginX = rect.left + cropContainer.clientLeft;
-                pinchOriginY = rect.top + cropContainer.clientTop;
                 const mid = _getTouchMidPoint(e.touches);
-                pinchCenterX = mid.x - pinchOriginX;
-                pinchCenterY = mid.y - pinchOriginY;
+                pinchCenterX = mid.x;
+                pinchCenterY = mid.y;
                 pinchStartOffsetX = offsetX;
                 pinchStartOffsetY = offsetY;
             }
@@ -305,8 +289,9 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
         function handleTouchMove(e) {
             if (e.touches.length === 1 && isDragging) {
                 // 单指拖动
-                offsetX = e.touches[0].clientX - dragStartX;
-                offsetY = e.touches[0].clientY - dragStartY;
+                const point = localPoint(e.touches[0].clientX, e.touches[0].clientY);
+                offsetX = point.x - dragStartX;
+                offsetY = point.y - dragStartY;
                 updateImagePosition();
             } else if (e.touches.length === 2 && pinchStartDist > 0) {
                 // 双指捏合缩放（以两指中点为锚点，图片跟随手指中心移动）
@@ -314,9 +299,8 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
                 const newScale = _clamp(pinchStartScale * (_getTouchDistance(e.touches) / pinchStartDist), minScale, maxScale);
                 const ratio = newScale / pinchStartScale;
                 const mid = _getTouchMidPoint(e.touches);
-                // 换算到容器内坐标（与 handleTouchStart 同原点，一次捏合手势期间弹窗不移动）
-                const relX = mid.x - pinchOriginX;
-                const relY = mid.y - pinchOriginY;
+                const relX = mid.x;
+                const relY = mid.y;
                 // 图片 left = (W - s·imgW)/2 + o，故锚点不动的条件解出：
                 //   o1 = (p1 - p0) + ratio·(o0 - d) + d，其中 d = p0 - W/2 为起始手指相对容器中心的偏移
                 const centerX = containerWidth / 2;
@@ -339,8 +323,9 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
                 // 双指抬起剩单指：切换为拖动模式，避免图片跳变
                 pinchStartDist = 0;
                 isDragging = true;
-                dragStartX = e.touches[0].clientX - offsetX;
-                dragStartY = e.touches[0].clientY - offsetY;
+                const point = localPoint(e.touches[0].clientX, e.touches[0].clientY);
+                dragStartX = point.x - offsetX;
+                dragStartY = point.y - offsetY;
             }
         }
 
@@ -351,24 +336,20 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
 
         // 缩放滑块
         const sliderContainer = document.createElement("div");
-        Object.assign(sliderContainer.style, {
-            display: "flex", alignItems: "center", gap: "10px", marginTop: "15px", padding: "0 10px"
-        });
+        sliderContainer.className = "image-crop-zoom";
         sliderContainer.innerHTML = `
-            <span style="color: #888; font-size: 12px;">🔍 ${escapeHtml(t('crop.zoom_label'))}</span>
+            <label for="crop-scale-slider" class="image-crop-zoom-label">🔍 ${escapeHtml(t('crop.zoom_label'))}</label>
             <input type="range" id="crop-scale-slider" min="100" max="500" value="100" aria-label="${escapeHtml(t('crop.zoom_label'))}" aria-valuetext="100%"
-                   style="flex: 1; accent-color: #4CAF50;">
-            <span id="crop-scale-value" style="color: #4CAF50; font-size: 12px; min-width: 40px;">100%</span>
+                   class="image-crop-range">
+            <span id="crop-scale-value" class="image-crop-zoom-value">100%</span>
         `;
 
         // 按钮区域
         const buttonContainer = document.createElement("div");
-        Object.assign(buttonContainer.style, {
-            display: "flex", gap: "10px", marginTop: "15px", justifyContent: "flex-end"
-        });
+        buttonContainer.className = "image-crop-actions";
         buttonContainer.innerHTML = `
-            <button id="btn-crop-cancel" type="button" style="padding: 10px 20px; background: transparent; border: 1px solid #555; color: #ccc; border-radius: 6px; cursor: pointer; font-size: 13px;">${escapeHtml(t('common.cancel'))}</button>
-            <button id="btn-crop-confirm" type="button" disabled style="padding: 10px 30px; background: #4CAF50; border: none; color: white; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold;">✂️ ${escapeHtml(t('crop.confirm'))}</button>
+            <button id="btn-crop-cancel" type="button" class="image-crop-button image-crop-cancel">${escapeHtml(t('common.cancel'))}</button>
+            <button id="btn-crop-confirm" type="button" disabled class="image-crop-button image-crop-confirm">✂️ ${escapeHtml(t('crop.confirm'))}</button>
         `;
 
         // 组装DOM
@@ -379,6 +360,13 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
         modal.appendChild(buttonContainer);
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
+        const modalStyle = getComputedStyle(modal);
+        const availableWidth = modal.clientWidth - parseFloat(modalStyle.paddingLeft) - parseFloat(modalStyle.paddingRight);
+        const viewportStyle = getComputedStyle(cropContainer);
+        containerWidth = Math.min(preferredWidth, Math.max(1, availableWidth - parseFloat(viewportStyle.borderLeftWidth) - parseFloat(viewportStyle.borderRightWidth)));
+        containerHeight = containerWidth / aspectRatio;
+        cropContainer.style.width = `${containerWidth}px`;
+        cropContainer.style.height = `${containerHeight}px`;
         modal.querySelector("#btn-crop-cancel").focus();
 
         // 绑定缩放滑块事件
@@ -389,6 +377,7 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
             const scaleValue = modal.querySelector("#crop-scale-value");
             
             slider.oninput = () => {
+                if (!imgNaturalWidth) return;
                 const minScaleX = containerWidth / imgNaturalWidth;
                 const minScaleY = containerHeight / imgNaturalHeight;
                 const minScale = Math.max(minScaleX, minScaleY);
@@ -411,6 +400,7 @@ export async function openImageCropper(file, aspectRatio = 16/9, title = t('crop
                 const btn = modal.querySelector("#btn-crop-confirm");
                 if (btn.disabled) return;
                 btn.textContent = `⏳ ${t('crop.processing')}`;
+                if (modal.contains(document.activeElement)) modal.focus({ preventScroll: true });
                 btn.disabled = true;
 
                 encodeTimer = setTimeout(fail, IMAGE_PROCESS.TIMEOUT);

@@ -209,7 +209,7 @@ export async function loadSidebarContent({
         // 空数据处理
         if (displayData.length === 0 && state.displayedCount === 0) {
             const emptyState = document.createElement('div');
-            emptyState.style.cssText = 'text-align:center; padding:40px 20px; color:#888;';
+            emptyState.className = 'sidebar-status-message';
             emptyState.textContent = t(keyword ? 'feedback.no_search_results' : 'feedback.no_list_data');
             emptyState.setAttribute('role', 'status');
             contentArea.replaceChildren(emptyState);
@@ -619,7 +619,7 @@ export async function loadSidebarContent({
                     displayData = searchCreatorsLocally(keyword, fallbackData);
                     if (displayData.length === 0) {
                         const emptyState = document.createElement('div');
-                        emptyState.style.cssText = 'text-align:center; padding:40px 20px; color:#888;';
+                        emptyState.className = 'sidebar-status-message';
                         emptyState.textContent = t('feedback.no_search_results');
                         emptyState.setAttribute('role', 'status');
                         contentArea.replaceChildren(emptyState);
@@ -650,7 +650,7 @@ export async function loadSidebarContent({
                 renderListLoadError(contentArea, t('common.network_error_retry'), () => loadSidebarContent({
                     tab, sort, keyword, contentArea, currentUser, renderToken, getRenderToken,
                     force: true, expandItemId, isNavigationCurrent
-                }), t);
+                }), t, error);
                 return;
             }
         }
@@ -659,7 +659,7 @@ export async function loadSidebarContent({
         renderListLoadError(contentArea, t('common.network_error_retry'), () => loadSidebarContent({
             tab, sort, keyword, contentArea, currentUser, renderToken, getRenderToken,
             force: true, expandItemId, isNavigationCurrent
-        }), t);
+        }), t, error);
     }
 }
 

@@ -20,3 +20,10 @@ export function validatePromptPriceInput(input, error, t) {
     input.removeAttribute("aria-invalid");
     return price;
 }
+
+export function getPromptPriceState(value) {
+    const known = (typeof value === 'number' || (typeof value === 'string' && value.trim() !== ''))
+        && Number.isFinite(Number(value)) && Number(value) >= 0;
+    if (!known) return 'unknown';
+    return Number(value) === 0 ? 'free' : 'paid';
+}

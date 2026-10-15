@@ -16,7 +16,8 @@ import { API, CACHE, PLACEHOLDERS, TASK_LIMITS, getCachedProfile, getProfileWith
 import { removeCache, findInListCache, requireListResponseData } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
-import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
+import { getCoverSandboxHTML, setupImageSandboxEvents, cleanupImageSandbox } from "../components/图片沙盒组件.js";
+import { openChatModal } from "../social/私信聊天组件.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml } from "../components/互动工具函数.js";
 
@@ -27,6 +28,7 @@ const taskCommentStates = new WeakMap();
 
 function openTaskModal(scope, title, content, options) {
     if (scope && !scope.isCurrent()) return;
+    content.classList.add("task-modal");
     globalModal.openModal(title, content, options);
     const modal = globalModal.activeModals.at(-1);
     const release = scope?.addCleanup(() => globalModal.closeModal(modal));
@@ -87,6 +89,7 @@ export function createTaskDetailView(taskId, currentUser) {
     });
     scope.componentId = componentId;
     scope.root = container;
+    scope.addCleanup(() => cleanupImageSandbox(container));
     container._taskScope = scope;
     container.querySelector("#task-content")._taskScope = scope;
     container._cleanup = () => {
@@ -187,7 +190,8 @@ function renderTaskDetail(contentEl, task, currentUser, preview = false) {
         submitted: { bg: "#FF9800", textKey: "task.status_submitted" },
         completed: { bg: "#9E9E9E", textKey: "task.status_completed" },
         disputed: { bg: "#F44336", textKey: "task.status_disputed" },
-        cancelled: { bg: "#757575", textKey: "task.status_cancelled" }
+        cancelled: { bg: "#757575", textKey: "task.status_cancelled" },
+        expired: { bg: "#757575", textKey: "task.status_expired" }
     };
     
     const status = Object.prototype.hasOwnProperty.call(statusStyles, task.status)
@@ -216,123 +220,124 @@ function renderTaskDetail(contentEl, task, currentUser, preview = false) {
     const isLiked = Array.isArray(task.liked_by) && task.liked_by.includes(currentAccount);
     const isFavorited = Array.isArray(task.favorited_by) && task.favorited_by.includes(currentAccount);
     
+    cleanupImageSandbox(contentEl);
     contentEl.innerHTML = `
         <!-- 状态 + 价格 -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <span style="background: ${status.bg}; color: #fff; padding: 5px 12px; border-radius: 6px; font-size: 13px; font-weight: bold;">
+        <div class="task-detail__summary">
+            <span class="task-detail__status" data-status="${escapeHtml(task.status)}">
                 ${statusText}
             </span>
-            <div style="text-align: right;">
-                <div style="color: #FF9800; font-size: 20px; font-weight: bold;">💰 ${escapeHtml(task.total_price)} ${t('common.credits')}</div>
-                <div style="font-size: 11px; color: #888;">${t('task.deposit')} ${escapeHtml(task.deposit_ratio)}%（${escapeHtml(task.deposit_amount)} ${t('common.credits')}）</div>
+            <div class="task-detail__price-align">
+                <div class="task-detail__price">💰 ${escapeHtml(task.total_price)} ${t('common.credits')}</div>
+                <div class="task-detail__deposit">${t('task.deposit')} ${escapeHtml(task.deposit_ratio)}%（${escapeHtml(task.deposit_amount)} ${t('common.credits')}）</div>
             </div>
         </div>
         
         <!-- 标题 -->
-        <h2 style="font-size: 18px; font-weight: bold; color: #fff; margin: 0 0 15px 0; line-height: 1.4;">
+        <h2 class="task-detail__title">
             ${escapeHtml(task.title)}
         </h2>
         
         <!-- 发布者信息 -->
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; padding: 10px; background: var(--comfy-menu-bg); border-radius: 8px;">
+        <div class="task-detail__publisher">
             <img src="${escapeHtml(task.publisher_avatar || PLACEHOLDERS.AVATAR_SMALL)}"
-                 style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid var(--border-color, #333); cursor: pointer;" id="publisher-avatar">
-            <div style="flex: 1;">
-                <div style="color: #fff; font-size: 14px; font-weight: 500;">${escapeHtml(task.publisher_name || task.publisher)}</div>
-                <div style="color: #888; font-size: 11px;">${t('task.published_at')} ${formatTime(task.created_at)}</div>
+                 class="task-detail__avatar-main" id="publisher-avatar" alt="">
+            <div class="task-detail__grow">
+                <div class="task-detail__publisher-name">${escapeHtml(task.publisher_name || task.publisher)}</div>
+                <div class="task-detail__timestamp">${t('task.published_at')} ${formatTime(task.created_at)}</div>
             </div>
             ${isPublisher && ["open", "in_progress", "submitted"].includes(task.status) ? `
-            <div style="display: flex; gap: 8px;">
-                ${IS_WEB_MODE ? '' : `<button id="btn-edit-task" style="background: #2196F3; border: none; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;" title="${t('common.edit')}">✏️ ${t('common.edit')}</button>`}
+            <div class="task-detail__compact-actions">
+                ${IS_WEB_MODE ? '' : `<button type="button" id="btn-edit-task" class="task-detail__edit" title="${t('common.edit')}">✏️ ${t('common.edit')}</button>`}
                 ${task.status === "open" ? `
-                <button id="btn-delete-task" style="background: #F44336; border: none; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;" title="${t('common.delete')}">🗑️ ${t('common.delete')}</button>
+                <button type="button" id="btn-delete-task" class="task-detail__delete" title="${t('common.delete')}">🗑️ ${t('common.delete')}</button>
                 ` : ''}
             </div>
             ` : ''}
             ${!isPublisher && currentUser ? `
-                <button id="btn-chat-publisher" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+                <button type="button" id="btn-chat-publisher" class="task-detail__chat">
                     💬 ${t('common.message')}
                 </button>
             ` : ""}
         </div>
         
         <!-- 👀 浏览量统计 -->
-        <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px; padding: 10px; background: #1a1a1a; border-radius: 8px; color: #888; font-size: 12px;">
-            <span style="display: flex; align-items: center; gap: 4px;">${t('task.view_total')}: <span id="task-view-total" style="color: #fff; font-weight: 500;">${escapeHtml(task.views || 0)}</span></span>
-            <span style="display: flex; align-items: center; gap: 4px;">${t('task.view_today')}: <span id="task-view-daily" style="color: #fff; font-weight: 500;">${escapeHtml(task.daily_views || 0)}</span></span>
+        <div class="task-detail__stats">
+            <span class="task-detail__stat">${t('task.view_total')}: <span id="task-view-total" class="task-detail__value">${escapeHtml(task.views || 0)}</span></span>
+            <span class="task-detail__stat">${t('task.view_today')}: <span id="task-view-daily" class="task-detail__value">${escapeHtml(task.daily_views || 0)}</span></span>
         </div>
         
         <!-- 截止日期 -->
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 15px; padding: 10px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;">
-            <span style="font-size: 18px;">⏰</span>
+        <div class="task-detail__deadline">
+            <span class="task-detail__icon">⏰</span>
             <div>
-                <div style="color: #FF9800; font-size: 13px; font-weight: bold;">${t('task.deadline')}</div>
-                <div style="color: #fff; font-size: 14px;">${formatDeadline(task.deadline)}</div>
+                <div class="task-detail__deadline-title">${t('task.deadline')}</div>
+                <div class="task-detail__deadline-value">${formatDeadline(task.deadline)}</div>
             </div>
         </div>
         
         <!-- 任务描述 -->
-        <div style="margin-bottom: 20px;">
-            <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">📄 ${t('task.description')}</div>
-            <div style="color: #ccc; font-size: 13px; line-height: 1.6; white-space: pre-wrap; background: var(--comfy-menu-bg); padding: 12px; border-radius: 8px;">
+        <div class="task-detail__section">
+            <div class="task-detail__heading">📄 ${t('task.description')}</div>
+            <div class="task-detail__prose">
 ${escapeHtml(task.description)}</div>
         </div>
         
         <!-- 参考图片 -->
         ${referenceImages.length > 0 ? `
-            <div style="margin-bottom: 20px;" class="ref-images-sandbox">
-                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">🖼️ ${t('task.reference_images')}</div>
-                <div style="--sandbox-title-display: none">
-                    ${getCoverSandboxHTML(referenceImages, true).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
+            <div class="task-detail__section ref-images-sandbox" >
+                <div class="task-detail__heading">🖼️ ${t('task.reference_images')}</div>
+                <div class="task-detail__gallery-inner">
+                    ${getCoverSandboxHTML(referenceImages, true)}
                 </div>
             </div>
         ` : ""}
         
         <!-- 参考链接 -->
         ${safeReferenceLink ? `
-            <div style="margin-bottom: 20px;">
-                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">🔗 ${t('task.reference_link')}</div>
-                <a href="${escapeHtml(safeReferenceLink)}" target="_blank" rel="noopener noreferrer" style="color: #2196F3; font-size: 13px; word-break: break-all;">
+            <div class="task-detail__section">
+                <div class="task-detail__heading">🔗 ${t('task.reference_link')}</div>
+                <a href="${escapeHtml(safeReferenceLink)}" target="_blank" rel="noopener noreferrer" class="task-detail__reference-link">
                     ${escapeHtml(task.reference_link)}
                 </a>
             </div>
         ` : ""}
         
         <!-- 👍 互动按钮栏 -->
-        <div id="interaction-bar" style="display: flex; align-items: center; gap: 15px; padding: 15px 0; border-top: 1px solid var(--border-color, #333); border-bottom: 1px solid var(--border-color, #333); margin-bottom: 15px;">
-            <button id="btn-like" style="background: ${isLiked ? '#FF5722' : 'var(--comfy-input-bg)'}; border: 1px solid ${isLiked ? '#FF5722' : '#555'}; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+        <div id="interaction-bar" class="task-detail__interactions">
+            <button type="button" id="btn-like" aria-label="${escapeHtml(t('market.like'))}" class="task-detail__like" aria-pressed="${isLiked}">
                 ❤️ <span id="like-count">${escapeHtml(task.likes || 0)}</span>
             </button>
-            <button id="btn-favorite" style="background: ${isFavorited ? '#FFC107' : 'var(--comfy-input-bg)'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+            <button type="button" id="btn-favorite" aria-label="${escapeHtml(t('market.favorite'))}" class="task-detail__favorite" aria-pressed="${isFavorited}">
                 🔖 <span id="favorite-count">${escapeHtml(task.favorites || 0)}</span>
             </button>
-            <button id="btn-tip" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+            <button type="button" id="btn-tip" class="task-detail__tip">
                 💰 ${t('post.tip_author')}
             </button>
         </div>
         
         <!-- 💰 打赏榜单 -->
-        <div id="tip-board-area" style="margin-bottom: 15px;">
+        <div id="tip-board-area" class="task-detail__spaced">
             ${renderTipBoard(tipBoard)}
         </div>
         
         <!-- 💬 评论区 -->
-        <div style="margin-bottom: 15px;">
-            <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                💬 ${t('post.comments_title')} <span style="color: #888; font-weight: normal;">(${escapeHtml(task.comments || 0)})</span>
+        <div class="task-detail__spaced">
+            <div class="task-detail__comments-heading">
+                💬 ${t('post.comments_title')} <span class="task-detail__count">(${escapeHtml(task.comments || 0)})</span>
             </div>
             
             <!-- 评论输入框 -->
-            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                <input type="text" id="comment-input" aria-label="${escapeHtml(t('post.comment_placeholder'))}" aria-required="true" required placeholder="${escapeHtml(t('post.comment_placeholder'))}" style="flex: 1; padding: 10px 12px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 20px; color: #fff; font-size: 13px; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
-                <button type="button" id="btn-send-comment" style="background: #4CAF50; border: none; color: #fff; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
+            <div class="task-detail__comment-compose">
+                <input type="text" id="comment-input" aria-label="${escapeHtml(t('post.comment_placeholder'))}" aria-required="true" required placeholder="${escapeHtml(t('post.comment_placeholder'))}" class="task-detail__comment-input">
+                <button type="button" id="btn-send-comment" class="task-detail__comment-send">
                     ${t('common.send')}
                 </button>
             </div>
             
             <!-- 评论列表 -->
-            <div id="comments-list" style="display: flex; flex-direction: column; gap: 10px;">
-                <div style="text-align: center; padding: 20px; color: #888; font-size: 12px;">
+            <div id="comments-list" class="task-detail__stack">
+                <div class="task-detail__empty">
                     ${t('post.comment_loading')}
                 </div>
             </div>
@@ -340,41 +345,41 @@ ${escapeHtml(task.description)}</div>
         
         <!-- 接单者信息（如果有） -->
         ${task.assignee ? `
-            <div style="margin-bottom: 20px; padding: 12px; background: rgba(33,150,243,0.1); border: 1px solid rgba(33,150,243,0.3); border-radius: 8px;">
-                <div style="font-size: 13px; font-weight: bold; color: #2196F3; margin-bottom: 8px;">👷 ${t('task.assignee')}</div>
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <img src="${escapeHtml(task.assignee_avatar || PLACEHOLDERS.AVATAR_SMALL)}"
-                         style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">
-                    <span style="color: #fff;">${escapeHtml(task.assignee_name || task.assignee)}</span>
+            <div class="task-detail__assignee">
+                <div class="task-detail__assignee-heading">👷 ${t('task.assignee')}</div>
+                <div class="task-detail__person">
+                    <img alt="" src="${escapeHtml(task.assignee_avatar || PLACEHOLDERS.AVATAR_SMALL)}"
+                         class="task-detail__avatar">
+                    <span class="task-detail__person-name">${escapeHtml(task.assignee_name || task.assignee)}</span>
                 </div>
             </div>
         ` : ""}
         
         <!-- 交付成果（如果有） -->
         ${deliverables.length > 0 ? `
-            <div style="margin-bottom: 20px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;" class="deliverables-sandbox">
-                <div style="font-size: 13px; font-weight: bold; color: #FF9800; margin-bottom: 8px;">📦 ${t('task.deliverables')}</div>
-                <div style="--sandbox-title-display: none">
-                    ${getCoverSandboxHTML(deliverables, true).replace(/<div style="font-size: 12px[^>]*>[^<]*<\/div>/, '')}
+            <div class="task-detail__delivery deliverables-sandbox" >
+                <div class="task-detail__delivery-heading">📦 ${t('task.deliverables')}</div>
+                <div class="task-detail__gallery-inner">
+                    ${getCoverSandboxHTML(deliverables, true)}
                 </div>
-                ${task.submit_note ? `<div style="margin-top: 10px; color: #ccc; font-size: 12px;">${t('task.note')}: ${escapeHtml(task.submit_note)}</div>` : ""}
+                ${task.submit_note ? `<div class="task-detail__note">${t('task.note')}: ${escapeHtml(task.submit_note)}</div>` : ""}
             </div>
         ` : ""}
         
         <!-- 申请者列表（仅发布者可见，且在 open 状态） -->
         ${isPublisher && task.status === "open" && applicants.length > 0 ? `
-            <div style="margin-bottom: 20px;">
-                <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 8px;">👥 ${t('task.applicants')}（${applicants.length}${t('task.applicants_count')}）</div>
-                <div id="applicants-list" style="display: flex; flex-direction: column; gap: 8px;">
+            <div class="task-detail__section">
+                <div class="task-detail__heading">👥 ${t('task.applicants')}（${applicants.length}${t('task.applicants_count')}）</div>
+                <div id="applicants-list" class="task-detail__applicants">
                     ${applicants.map(app => `
-                        <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--comfy-menu-bg); border-radius: 8px;">
-                            <img src="${escapeHtml(app.avatar || PLACEHOLDERS.AVATAR_SMALL)}"
-                                 style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover;">
-                            <div style="flex: 1;">
-                                <div style="color: #fff; font-size: 13px;">${escapeHtml(app.name || app.account)}</div>
-                                ${app.message ? `<div style="color: #888; font-size: 11px; margin-top: 2px;">${escapeHtml(app.message)}</div>` : ""}
+                        <div class="task-detail__applicant">
+                            <img alt="" src="${escapeHtml(app.avatar || PLACEHOLDERS.AVATAR_SMALL)}"
+                                 class="task-detail__avatar">
+                            <div class="task-detail__grow">
+                                <div class="task-detail__applicant-name">${escapeHtml(app.name || app.account)}</div>
+                                ${app.message ? `<div class="task-detail__applicant-message">${escapeHtml(app.message)}</div>` : ""}
                             </div>
-                            <button class="btn-assign" data-account="${escapeHtml(app.account)}" style="background: #4CAF50; border: none; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+                            <button type="button" class="btn-assign task-detail__assign" data-account="${escapeHtml(app.account)}" >
                                 ${t('task.choose_assignee')}
                             </button>
                         </div>
@@ -384,7 +389,7 @@ ${escapeHtml(task.description)}</div>
         ` : ""}
         
         <!-- 操作按钮区域 -->
-        <div id="action-buttons" style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border-color, #333);">
+        <div id="action-buttons" class="task-detail__actions">
         </div>
     `;
     
@@ -396,7 +401,7 @@ ${escapeHtml(task.description)}</div>
         contentEl.querySelectorAll("button, input, textarea, select").forEach(control => { control.disabled = true; });
         contentEl.querySelector("#action-buttons").textContent = t('task.cached_readonly');
         contentEl.querySelector("#comments-list").textContent = t('task.cached_readonly');
-        setupImageSandboxEvents(contentEl);
+        contentEl.querySelectorAll(".img-viewport").forEach(viewport => setupImageSandboxEvents(viewport));
         return;
     }
 
@@ -415,6 +420,12 @@ ${escapeHtml(task.description)}</div>
         showDeleteTaskConfirm(task, contentEl);
     });
     
+    contentEl.querySelector("#btn-chat-publisher")?.addEventListener("click", () => {
+        const scope = taskScopes.get(task);
+        if (!scope?.isCurrent() || typeof task.publisher !== "string" || !task.publisher.trim()) return;
+        openChatModal(currentUser, task.publisher);
+    });
+
     // 绑定申请者列表的选择按钮
     contentEl.querySelectorAll(".btn-assign").forEach(btn => {
         btn.onclick = () => {
@@ -424,7 +435,7 @@ ${escapeHtml(task.description)}</div>
     });
     
     // 绑定图片沙盒交互（缩放、拖动、轮播等）
-    setupImageSandboxEvents(contentEl);
+    contentEl.querySelectorAll(".img-viewport").forEach(viewport => setupImageSandboxEvents(viewport));
     
     // 👍 绑定互动事件（点赞/收藏/打赏）
     bindTaskInteractionEvents(contentEl, task, currentUser);
@@ -440,18 +451,18 @@ function _showConfirmDialog({ scope, title, icon, message, description, confirmT
     let phase = "idle";
     const content = document.createElement("div");
     content._cleanup = () => { phase = "closed"; };
-    content.style.color = "#ccc";
+    content.classList.add("task-modal");
     // 🔒 XSS防护：message/description 可能嵌入其他用户的账号或昵称
     // （如 t('task.confirm_assign', { assignee })），写入 innerHTML 前必须转义。
     // 本函数的 4 个调用方传的都是词典文本/emoji/数字，转义不改变现有显示效果。
     content.innerHTML = `
-        <div style="text-align: center;">
-            <div style="font-size: 40px; margin-bottom: 15px;">${icon}</div>
-            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${escapeHtml(message)}</div>
-            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${escapeHtml(description)}</div>
-            <div style="display: flex; gap: 10px;">
-                <button id="dialog-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="dialog-confirm" style="flex: 1; ${confirmStyle}; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${escapeHtml(confirmText)}</button>
+        <div class="task-detail__centered">
+            <div class="task-detail__dialog-icon">${icon}</div>
+            <div class="task-detail__dialog-message">${escapeHtml(message)}</div>
+            <div class="task-detail__dialog-description">${escapeHtml(description)}</div>
+            <div class="task-detail__buttons">
+                <button type="button" id="dialog-cancel" class="task-detail__cancel">${t('common.cancel')}</button>
+                <button type="button" id="dialog-confirm" class="task-detail__confirm" data-tone="${confirmStyle === 'background: #F44336' ? 'danger' : confirmStyle === 'background: #FF9800' ? 'warning' : 'success'}">${escapeHtml(confirmText)}</button>
             </div>
         </div>
     `;
@@ -566,15 +577,15 @@ function bindTaskTextSubmission({ content, taskId, input, button, confirmText, e
 function showApplyDialog(task, currentUser) {
     const taskId = task.id;
     const content = document.createElement("div");
-    content.style.color = "#ccc";
+    content.classList.add("task-modal");
     content.innerHTML = `
-        <div style="margin-bottom: 15px;">
-            <label for="apply-message" style="display: block; color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.apply_message_prompt')}</label>
-            <textarea id="apply-message" rows="4" placeholder="${t('task.apply_message_placeholder')}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
+        <div class="task-detail__spaced">
+            <label for="apply-message" class="task-detail__label">${t('task.apply_message_prompt')}</label>
+            <textarea id="apply-message" rows="4" placeholder="${t('task.apply_message_placeholder')}" class="task-detail__textarea"></textarea>
         </div>
-        <div style="display: flex; gap: 10px;">
-            <button type="button" id="apply-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-            <button type="button" id="apply-confirm" style="flex: 1; background: #FF9800; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
+        <div class="task-detail__buttons">
+            <button type="button" id="apply-cancel" class="task-detail__cancel">${t('common.cancel')}</button>
+            <button type="button" id="apply-confirm" class="task-detail__submit-warning">${t('common.confirm_submit')}</button>
         </div>
     `;
     
@@ -680,15 +691,15 @@ function showAcceptConfirmDialog(task, currentUser) {
 function showRejectDialog(task, currentUser) {
     const taskId = task.id;
     const content = document.createElement("div");
-    content.style.color = "#ccc";
+    content.classList.add("task-modal");
     content.innerHTML = `
-        <div style="margin-bottom: 15px;">
-            <label for="reject-feedback" style="display: block; color: #888; font-size: 12px; margin-bottom: 8px;">${t('task.reject_reason_prompt')}</label>
-            <textarea aria-required="true" id="reject-feedback" rows="4" placeholder="${t('task.reject_reason_placeholder')}" style="width: 100%; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box; font-size: 13px;"></textarea>
+        <div class="task-detail__spaced">
+            <label for="reject-feedback" class="task-detail__label">${t('task.reject_reason_prompt')}</label>
+            <textarea aria-required="true" id="reject-feedback" rows="4" placeholder="${t('task.reject_reason_placeholder')}" class="task-detail__textarea"></textarea>
         </div>
-        <div style="display: flex; gap: 10px;">
-            <button type="button" id="reject-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-            <button type="button" id="reject-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('task.reject_work')}</button>
+        <div class="task-detail__buttons">
+            <button type="button" id="reject-cancel" class="task-detail__cancel">${t('common.cancel')}</button>
+            <button type="button" id="reject-confirm" class="task-detail__submit-danger">${t('task.reject_work')}</button>
         </div>
     `;
     
@@ -719,15 +730,15 @@ function showDeleteCommentConfirmDialog(taskId, comment, container, currentUser)
     let phase = "idle";
     const content = document.createElement("div");
     content._cleanup = () => { phase = "closed"; };
-    content.style.color = "#ccc";
+    content.classList.add("task-modal");
     content.innerHTML = `
-        <div style="text-align: center;">
-            <div style="font-size: 40px; margin-bottom: 15px;">⚠️</div>
-            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('post.delete_comment_confirm')}</div>
-            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('post.delete_comment_warning')}</div>
-            <div style="display: flex; gap: 10px;">
-                <button type="button" id="delete-comment-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button type="button" id="delete-comment-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
+        <div class="task-detail__centered">
+            <div class="task-detail__dialog-icon">⚠️</div>
+            <div class="task-detail__dialog-message">${t('post.delete_comment_confirm')}</div>
+            <div class="task-detail__dialog-description">${t('post.delete_comment_warning')}</div>
+            <div class="task-detail__buttons">
+                <button type="button" id="delete-comment-cancel" class="task-detail__cancel">${t('common.cancel')}</button>
+                <button type="button" id="delete-comment-confirm" class="task-detail__submit-danger">${t('common.delete')}</button>
             </div>
         </div>
     `;
@@ -773,23 +784,23 @@ function renderActionButtons(container, task, currentUser, isPublisher, isAssign
     let buttons = [];
     
     if (!currentUser) {
-        buttons.push(`<div style="text-align: center; color: #888; font-size: 13px;">${t('common.login_required')}</div>`);
+        buttons.push(`<div class="task-detail__login">${t('common.login_required')}</div>`);
     } else if (task.status === "open") {
         if (isPublisher) {
             buttons.push(`
-                <button id="btn-cancel-task" style="background: #F44336; border: none; color: #fff; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                <button type="button" id="btn-cancel-task" class="task-detail__action-danger">
                     ❌ ${t('task.cancel_task')}
                 </button>
             `);
         } else if (hasApplied) {
             buttons.push(`
-                <button id="btn-cancel-apply" style="background: #757575; border: none; color: #fff; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                <button type="button" id="btn-cancel-apply" class="task-detail__action-neutral">
                     ${t('task.cancel_apply')}
                 </button>
             `);
         } else {
             buttons.push(`
-                <button id="btn-apply" style="background: linear-gradient(135deg, #FF9800, #F57C00); border: none; color: #fff; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; box-shadow: 0 2px 8px rgba(255,152,0,0.3);">
+                <button type="button" id="btn-apply" class="task-detail__action-warning">
                     🙋 ${t('task.apply_task')}
                 </button>
             `);
@@ -797,7 +808,7 @@ function renderActionButtons(container, task, currentUser, isPublisher, isAssign
     } else if (task.status === "in_progress") {
         if (isAssignee) {
             buttons.push(`
-                <button id="btn-submit" style="background: linear-gradient(135deg, #4CAF50, #45a049); border: none; color: #fff; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                <button type="button" id="btn-submit" class="task-detail__action-success">
                     📤 ${t('task.submit_work')}
                 </button>
             `);
@@ -805,10 +816,10 @@ function renderActionButtons(container, task, currentUser, isPublisher, isAssign
     } else if (task.status === "submitted") {
         if (isPublisher) {
             buttons.push(`
-                <button id="btn-accept" style="background: #4CAF50; border: none; color: #fff; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold; margin-bottom: 8px;">
+                <button type="button" id="btn-accept" class="task-detail__action-accept">
                     ✅ ${t('task.accept_work')}
                 </button>
-                <button id="btn-reject" style="background: #F44336; border: none; color: #fff; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                <button type="button" id="btn-reject" class="task-detail__action-danger">
                     ❌ ${t('task.reject_work')}
                 </button>
             `);
@@ -818,7 +829,7 @@ function renderActionButtons(container, task, currentUser, isPublisher, isAssign
     // 申诉按钮（进行中或待验收时，双方都可以申诉）
     if ((task.status === "in_progress" || task.status === "submitted") && (isPublisher || isAssignee)) {
         buttons.push(`
-            <button id="btn-dispute" style="background: #757575; border: none; color: #fff; padding: 10px; border-radius: 8px; cursor: pointer; font-size: 13px; margin-top: 10px;">
+            <button type="button" id="btn-dispute" class="task-detail__action-dispute">
                 ⚖️ ${t('task.start_dispute')}
             </button>
         `);
@@ -827,7 +838,7 @@ function renderActionButtons(container, task, currentUser, isPublisher, isAssign
     // 查看申诉详情按钮（争议中状态）
     if (task.status === "disputed" && task.dispute_id && (isPublisher || isAssignee)) {
         buttons.push(`
-            <button id="btn-view-dispute" style="background: linear-gradient(135deg, #9C27B0, #7B1FA2); border: none; color: #fff; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: bold; margin-top: 10px;">
+            <button type="button" id="btn-view-dispute" class="task-detail__action-dispute-view">
                 ⚖️ ${t('task.view_dispute')}
             </button>
         `);
@@ -904,22 +915,22 @@ function showSubmitDialog(task, currentUser) {
     let phase = "idle";
     const content = document.createElement("div");
     content._cleanup = () => { phase = "closed"; };
-    content.style.color = "#ccc";
+    content.classList.add("task-modal");
     content.innerHTML = `
-        <div style="margin-bottom: 15px;">
-            <label for="deliverable-files" style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.deliverable_images')} <span aria-hidden="true">*</span></label>
-            <input type="file" aria-required="true" aria-describedby="deliverable-hint" id="deliverable-files" multiple accept="image/*" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; border-radius: 6px; color: #fff;">
-            <div id="deliverable-hint" style="font-size: 11px; color: #888; margin-top: 4px;">${t('task.support_multiple_images')}</div>
+        <div class="task-detail__spaced">
+            <label for="deliverable-files" class="task-detail__file-label">${t('task.deliverable_images')} <span aria-hidden="true">*</span></label>
+            <input type="file" aria-required="true" aria-describedby="deliverable-hint" id="deliverable-files" multiple accept="image/*" class="task-detail__file-input">
+            <div id="deliverable-hint" class="task-detail__hint">${t('task.support_multiple_images')}</div>
         </div>
         
-        <div style="margin-bottom: 20px;">
-            <label for="submit-note" style="display: block; color: #ccc; font-size: 13px; margin-bottom: 5px;">${t('task.note_optional')}</label>
-            <textarea id="submit-note" rows="3" placeholder="${t('task.note_placeholder')}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; border-radius: 6px; color: #fff; resize: none; box-sizing: border-box;"></textarea>
+        <div class="task-detail__section">
+            <label for="submit-note" class="task-detail__file-label">${t('task.note_optional')}</label>
+            <textarea id="submit-note" rows="3" placeholder="${t('task.note_placeholder')}" class="task-detail__note-input"></textarea>
         </div>
         
-        <div style="display: flex; gap: 10px;">
-            <button type="button" id="btn-cancel-modal" style="flex: 1; padding: 10px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-            <button type="button" id="btn-confirm-submit" style="flex: 1; padding: 10px; background: #4CAF50; border: none; color: #fff; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.confirm_submit')}</button>
+        <div class="task-detail__buttons">
+            <button type="button" id="btn-cancel-modal" class="task-detail__cancel-padded">${t('common.cancel')}</button>
+            <button type="button" id="btn-confirm-submit" class="task-detail__submit-success">${t('common.confirm_submit')}</button>
         </div>
     `;
     
@@ -1043,13 +1054,13 @@ function showTaskTipDialog(task, currentUser, container) {
     let phase = "idle";
     const content = document.createElement("div");
     content._cleanup = () => { phase = "closed"; };
-    content.style.color = "#ccc";
+    content.classList.add("task-modal");
     content.innerHTML = `
-        <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
-            ${TASK_LIMITS.TIP_AMOUNTS.map(amount => `<button type="button" class="tip-amount" data-amount="${amount}" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">${amount} ${t('task.points')}</button>`).join("")}
+        <div class="task-detail__tip-options">
+            ${TASK_LIMITS.TIP_AMOUNTS.map(amount => `<button type="button" class="tip-amount task-detail__tip-option" data-amount="${amount}" >${amount} ${t('task.points')}</button>`).join("")}
         </div>
-        <div style="display: flex; gap: 10px;">
-            <button type="button" id="tip-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+        <div class="task-detail__buttons">
+            <button type="button" id="tip-cancel" class="task-detail__cancel">${t('common.cancel')}</button>
         </div>
     `;
 
@@ -1110,8 +1121,8 @@ function _renderCommentAvatar(name, avatarUrl) {
     const initial = String(name || 'U')[0].toUpperCase();
     // 🔒 XSS防护：评论者昵称与头像均来自他人可修改的资料，写入 HTML 前必须转义
     return avatarUrl 
-        ? `<img class="swr-avatar" src="${escapeHtml(avatarUrl)}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--comfy-input-bg);">`
-        : `<div class="swr-avatar" style="width: 24px; height: 24px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold;">${escapeHtml(initial)}</div>`;
+        ? `<img alt="" class="swr-avatar task-detail__comment-avatar" src="${escapeHtml(avatarUrl)}" >`
+        : `<div class="swr-avatar task-detail__comment-avatar-fallback" >${escapeHtml(initial)}</div>`;
 }
 
 /**
@@ -1154,7 +1165,7 @@ async function loadTaskComments(container, taskId, currentUser) {
         
         if (comments.length === 0) {
             commentsList.innerHTML = `
-                <div style="text-align: center; padding: 30px; color: #666; font-size: 13px;">
+                <div class="task-detail__comments-empty">
                     ${t('post.no_comments')}
                 </div>
             `;
@@ -1175,16 +1186,14 @@ async function loadTaskComments(container, taskId, currentUser) {
                 );
                 
                 return `
-                    <div id="task-comment-${idx}" data-account="${escapeHtml(c.author)}" data-comment-id="${escapeHtml(c.id || idx)}" style="background: #1a1a1a; padding: 12px; border-radius: 8px;">
-                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <div id="task-comment-${idx}" data-account="${escapeHtml(c.author)}" data-comment-id="${escapeHtml(c.id || idx)}" class="task-detail__comment">
+                        <div class="task-detail__comment-meta">
                             <div class="swr-avatar-container">${avatarHtml}</div>
-                            <span class="swr-name" style="font-size: 13px; color: #fff; font-weight: 500;">${escapeHtml(name)}</span>
-                            <span style="font-size: 11px; color: #888; margin-left: auto;">${formatTime(c.created_at)}</span>
-                            ${canDelete ? `<button class="btn-delete-comment" data-idx="${idx}" style="background: transparent; border: none; color: #f44; cursor: pointer; font-size: 11px; padding: 2px 6px;">🗑️</button>` : ''}
+                            <span class="swr-name task-detail__comment-name" >${escapeHtml(name)}</span>
+                            <span class="task-detail__comment-time">${formatTime(c.created_at)}</span>
+                            ${canDelete ? `<button type="button" aria-label="${escapeHtml(t('social.delete_comment_title'))}" class="btn-delete-comment task-detail__comment-delete" data-idx="${idx}" >🗑️</button>` : ''}
                         </div>
-                        <div style="font-size: 13px; color: #ddd; line-height: 1.5; padding-left: 32px;">
-                            ${escapeHtml(c.content)}
-                        </div>
+                        <div class="task-detail__comment-body">${escapeHtml(c.content)}</div>
                     </div>
                 `;
             }).join("");
@@ -1220,7 +1229,7 @@ async function loadTaskComments(container, taskId, currentUser) {
     } catch (err) {
         if (!readCurrent()) return;
         commentsList.innerHTML = `
-            <div style="text-align: center; padding: 20px; color: #F44336; font-size: 12px;">
+            <div class="task-detail__comments-error">
                 ${t('post.comment_load_failed')}
             </div>
         `;
@@ -1277,7 +1286,10 @@ async function loadTaskComments(container, taskId, currentUser) {
             }
         };
         commentInput.onkeydown = event => {
-            if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && !event.repeat) {
+            if (isCurrent() && !event.defaultPrevented && event.key === "Enter"
+                && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey
+                && !event.isComposing && event.keyCode !== 229 && !event.repeat
+                && !commentInput.disabled && !commentInput.readOnly) {
                 event.preventDefault();
                 sendBtn.click();
             }
@@ -1288,7 +1300,9 @@ async function loadTaskComments(container, taskId, currentUser) {
  * 🕐 格式化时间
  */
 function formatTime(timestamp) {
-    if (!timestamp) return "";
+    if (timestamp === null || timestamp === undefined || timestamp === "" || timestamp === 0) return "";
+    if (typeof timestamp !== "number" && typeof timestamp !== "string") return t('common.unknown');
+    if (typeof timestamp === "string" && timestamp.trim() === "") return t('common.unknown');
     const seconds = Number(timestamp);
     const date = new Date(seconds * 1000);
     if (!Number.isFinite(seconds) || seconds < 0 || !Number.isFinite(date.getTime())) return t('common.unknown');
@@ -1317,15 +1331,15 @@ function showDeleteTaskConfirm(task, contentEl) {
     let phase = "idle";
     const content = document.createElement("div");
     content._cleanup = () => { phase = "closed"; };
-    content.style.color = "#ccc";
+    content.classList.add("task-modal");
     content.innerHTML = `
-        <div style="text-align: center;">
-            <div style="font-size: 40px; margin-bottom: 15px;">⚠️</div>
-            <div style="color: #fff; font-size: 14px; margin-bottom: 8px;">${t('task.delete_confirm_title')}</div>
-            <div style="color: #888; font-size: 12px; margin-bottom: 20px;">${t('task.delete_confirm_desc')}</div>
-            <div style="display: flex; gap: 10px;">
-                <button id="delete-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="delete-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
+        <div class="task-detail__centered">
+            <div class="task-detail__dialog-icon">⚠️</div>
+            <div class="task-detail__dialog-message">${t('task.delete_confirm_title')}</div>
+            <div class="task-detail__dialog-description">${t('task.delete_confirm_desc')}</div>
+            <div class="task-detail__buttons">
+                <button type="button" id="delete-cancel" class="task-detail__cancel">${t('common.cancel')}</button>
+                <button type="button" id="delete-confirm" class="task-detail__submit-danger">${t('common.delete')}</button>
             </div>
         </div>
     `;
@@ -1403,7 +1417,7 @@ function showDisputeDialog(task, currentUser) {
             </div>
         </div>
         
-        <button id="btn-submit-dispute" class="task-dispute__submit">
+        <button type="button" id="btn-submit-dispute" class="task-dispute__submit">
             ${t('dispute.submit')}
         </button>
     `;

@@ -34,6 +34,26 @@ const BASE_URL = API.BASE_URL;
 // ⚡ P1性能优化：请求去重（相同GET请求只发一次）
 const pendingRequests = new Map();
 
+function withRequestDiagnostic(error, response, data = null) {
+    let headerId;
+    try { headerId = response.headers?.get?.(API.REQUEST_ID_HEADER); } catch {}
+    for (const value of [headerId, data?.error_id]) {
+        if (typeof value === 'string' && API.REQUEST_ID_PATTERN.test(value)) {
+            error.requestId = value;
+            break;
+        }
+    }
+    return error;
+}
+
+function httpErrorMessage(data, status) {
+    if (Array.isArray(data.detail)) return t('feedback.invalid_request_data');
+    for (const value of [data.detail, data.message, data.error]) {
+        if (typeof value === 'string' && value.trim()) return value;
+    }
+    return t('feedback.http_request_failed', { status });
+}
+
 // 🚀 P3优化：网络状态由 状态管理.js 的 isOnline() 统一提供（见下方离线模式支持），
 // 本模块不再自行注册 online/offline 监听。
 
@@ -486,18 +506,7 @@ async function request(endpoint, options = {}) {
 
                 if (!response.ok && !result.validated) {
                     if (!responseData || typeof responseData !== "object" || Array.isArray(responseData)) responseData = {};
-                    let errorMsg = `请求失败 (${response.status})`;
-                    
-                    // 🚀 核心修改：增加对 FastAPI 422 报错数组的解析
-                    if (Array.isArray(responseData.detail)) {
-                        errorMsg = "数据格式错误: " + responseData.detail.map(e => `${e.loc[e.loc.length-1]} (${e.type})`).join(", ");
-                    } else if (typeof responseData.detail === "string") {
-                        errorMsg = responseData.detail;
-                    } else if (responseData.message) {
-                        errorMsg = responseData.message;
-                    } else if (responseData.error) {
-                        errorMsg = responseData.error;
-                    }
+                    const errorMsg = httpErrorMessage(responseData, response.status);
                     
                     // 🚀 P1优化：4xx 错误不重试，5xx 错误可重试
                     if (response.status >= 400 && response.status < 500) {
@@ -512,7 +521,7 @@ async function request(endpoint, options = {}) {
                                 window.dispatchEvent(new CustomEvent('comfy-ranking-auth-expired'));
                             }
                         }
-                        const error = new Error(errorMsg);
+                        const error = withRequestDiagnostic(new Error(errorMsg), response, responseData);
                         error.status = response.status;
                         if (typeof responseData.detail === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(responseData.detail)) error.code = responseData.detail;
                         throw error;
@@ -521,7 +530,7 @@ async function request(endpoint, options = {}) {
                     // 应用明确标记且正文可读的503只影响当前接口，仍允许其它榜单联网。
                     if (response.status === 503 && result.bodyConfirmed &&
                             response.headers?.get?.(API.ENDPOINT_ERROR_SCOPE_HEADER) === API.ENDPOINT_ERROR_SCOPE_VALUE) {
-                        lastError = new Error(errorMsg);
+                        lastError = withRequestDiagnostic(new Error(errorMsg), response, responseData);
                         lastError.status = response.status;
                         networkLevelFailure = false;
                         break;
@@ -532,14 +541,14 @@ async function request(endpoint, options = {}) {
                     // 与超时/连接失败一样共享冷却，避免切换榜单时每个 endpoint
                     // 都重复访问一次；普通 500 仍只视为单接口服务端错误。
                     if ([502, 503, 504].includes(response.status)) {
-                        lastError = new Error(errorMsg);
+                        lastError = withRequestDiagnostic(new Error(errorMsg), response, responseData);
                         lastError.status = response.status;
                         networkLevelFailure = true;
                         markCloudDown(endpoint);
                         break;
                     }
                     
-                    lastError = new Error(errorMsg);
+                    lastError = withRequestDiagnostic(new Error(errorMsg), response, responseData);
                     lastError.status = response.status;
                     continue;  // 5xx 错误重试
                 }
@@ -606,8 +615,8 @@ async function request(endpoint, options = {}) {
                     // 让 GET 请求走过期缓存回退；无缓存时仍以该友好错误抛出。
                     const isTimeout = error.name === 'AbortError';
                     lastError = isTimeout
-                        ? new Error('网络请求超时，请检查网络连接')
-                        : new Error('网络连接失败，请检查网络');
+                        ? new Error(t('feedback.network_timeout'))
+                        : new Error(t('feedback.network_unavailable'));
                     lastError.code = isTimeout ? 'network_timeout' : 'network_unavailable';
                     if (fetchStarted) networkLevelFailure = true;
                     // ☁️ 连接层失败（被墙 / DNS 污染 / 拒绝连接 / 证书错误）几乎不会是偶发抖动，
@@ -643,7 +652,7 @@ async function request(endpoint, options = {}) {
             }
         }
         // 仍无缓存，才抛异常
-        throw lastError || new Error('请求失败');
+        throw lastError || new Error(t('feedback.error'));
     })();
     
     if (privateEntry) requestPromise.finally(() => activePrivateReads.delete(privateEntry)).catch(() => {});
@@ -693,6 +702,7 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
     let currentIdleTimeout = options.idleTimeout || IDLE_TIMEOUT_DEFAULT;
     let idleTimer = null;
     let finalResult = null;
+    let streamReader = null;
 
     const clearIdleTimer = () => {
         if (idleTimer !== null) {
@@ -710,7 +720,7 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
         });
 
         if (!response.ok) {
-            const error = new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const error = withRequestDiagnostic(new Error(t('feedback.http_request_failed', { status: response.status })), response);
             error.status = response.status;
             // 仅当流式路由明确不存在/不接受该方法时，调用方可安全回退到旧端点。
             // 网络错误、超时和服务端错误都可能发生在操作已开始后，不可自动重发。
@@ -718,16 +728,68 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
             throw error;
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
+        const reader = streamReader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8', { fatal: true });
+        const decodeSSEChunk = (value, options) => {
+            try {
+                return decoder.decode(value, options);
+            } catch (_) {
+                const error = new Error(t('feedback.stream_invalid_encoding'));
+                error.code = 'invalid_stream_encoding';
+                error.outcomeUnknown = true;
+                throw error;
+            }
+        };
+        let totalBytes = 0, lineBytes = 0, lineCount = 0;
+        let workBytes = 0, workLines = 0, workChunks = 0;
+        const lineParts = [];
+        const limitError = () => {
+            const error = new Error(t('feedback.stream_limit_exceeded'));
+            error.code = 'stream_limit_exceeded';
+            error.outcomeUnknown = true;
+            return error;
+        };
+        const appendLinePart = (part) => {
+            if (!part) return;
+            let level = 0;
+            while (lineParts[level] !== undefined) {
+                part = lineParts[level] + part;
+                lineParts[level++] = undefined;
+            }
+            lineParts[level] = part;
+        };
+        const takeLine = () => {
+            const line = lineParts.slice().reverse().filter(part => part !== undefined).join('');
+            lineParts.length = 0;
+            return line;
+        };
+        const yieldIfNeeded = async () => {
+            if (workBytes >= API.SSE_YIELD_BYTES || workLines >= API.SSE_YIELD_LINES || workChunks >= API.SSE_YIELD_CHUNKS) {
+                workBytes = workLines = workChunks = 0;
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+            if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        };
+        const checkChunkBudget = (value) => {
+            totalBytes += value.byteLength;
+            if (totalBytes > API.SSE_MAX_RESPONSE_BYTES) throw limitError();
+            let start = 0, end;
+            while ((end = value.indexOf(10, start)) !== -1) {
+                lineBytes += end - start;
+                if (lineBytes > API.SSE_MAX_LINE_BYTES) throw limitError();
+                lineBytes = 0;
+                start = end + 1;
+            }
+            lineBytes += value.byteLength - start;
+            if (lineBytes > API.SSE_MAX_LINE_BYTES) throw limitError();
+        };
         const processSSELine = (line) => {
             if (!line.startsWith("data: ")) return;
             let data;
             try {
                 data = JSON.parse(line.slice(6));
-            } catch (parseError) {
-                console.warn("[SSE] 解析事件失败:", parseError?.name || 'SyntaxError');
+            } catch (_) {
+                console.warn("[SSE] 解析事件失败");
                 return;
             }
             if (!data || typeof data !== "object" || Array.isArray(data)) {
@@ -743,6 +805,22 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
                 onProgress?.(data);
             } catch (callbackError) {
                 console.warn("[SSE] 进度回调失败");
+            }
+        };
+        const processSSEText = async (text, flush = false) => {
+            let start = 0, end;
+            while ((end = text.indexOf("\n", start)) !== -1) {
+                if (++lineCount > API.SSE_MAX_LINES) throw limitError();
+                appendLinePart(text.slice(start, end));
+                processSSELine(takeLine());
+                start = end + 1;
+                workLines++;
+                await yieldIfNeeded();
+            }
+            appendLinePart(text.slice(start));
+            if (flush && lineParts.length) {
+                if (++lineCount > API.SSE_MAX_LINES) throw limitError();
+                processSSELine(takeLine());
             }
         };
         while (true) {
@@ -764,7 +842,7 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
                     // 如果已收到 finalResult，优先返回它（服务器只是没正确关闭连接）
                     if (finalResult) return finalResult;
                     // 否则返回空闲超时错误
-                    return { status: "error", outcomeUnknown: true, message: "连接超时：30秒未收到数据" };
+                    return { status: "error", outcomeUnknown: true, message: t('feedback.stream_idle_timeout') };
                 }
                 throw e;
             }
@@ -772,19 +850,18 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
 
             const { done, value } = readResult;
             if (done) {
-                buffer += decoder.decode();
-                for (const line of buffer.split("\n")) processSSELine(line);
-                buffer = "";
+                await processSSEText(decodeSSEChunk(), true);
                 break;
             }
 
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || ""; // 保留不完整行
-            for (const line of lines) processSSELine(line);
+            checkChunkBudget(value);
+            workBytes += value.byteLength;
+            workChunks++;
+            await processSSEText(decodeSSEChunk(value, { stream: true }));
+            await yieldIfNeeded();
         }
 
-        return finalResult || { status: "error", outcomeUnknown: true, message: "未收到最终结果" };
+        return finalResult || { status: "error", outcomeUnknown: true, message: t('feedback.stream_missing_final') };
     } catch (err) {
         // 已收到最终事件时，后续连接关闭错误不应覆盖操作结果或触发重复提交。
         if (finalResult) return finalResult;
@@ -793,7 +870,7 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
                 status: "error",
                 outcomeUnknown: true,
                 cancelRequested: !!externalSignal?.aborted,
-                message: externalSignal?.aborted ? t('feedback.request_cancelled') : "连接超时，操作结果暂时无法确认"
+                message: externalSignal?.aborted ? t('feedback.request_cancelled') : t('feedback.stream_timeout_unconfirmed')
             };
         }
         throw err;
@@ -801,6 +878,12 @@ export async function requestSSE(endpoint, body, onProgress, options = {}) {
         clearTimeout(globalTimer);
         clearIdleTimer();
         externalSignal?.removeEventListener("abort", abortFromCaller);
+        try { controller.abort(); } catch (_) {}
+        if (streamReader) {
+            try { Promise.resolve(streamReader.cancel()).catch(() => {}); } catch (_) {}
+            try { streamReader.releaseLock(); } catch (_) {}
+            streamReader = null;
+        }
     }
 }
 

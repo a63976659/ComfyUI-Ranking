@@ -26,7 +26,7 @@ export function setupSidebarPagination(contentArea, state, pageSize, loadMoreDat
         const isCurrent = () => !stopped && renderToken === getRenderToken();
         const loadMoreBtn = document.createElement('button');
         loadMoreBtn.textContent = t('task.load_more');
-        loadMoreBtn.style.cssText = 'width:100%;padding:10px;margin-top:10px;cursor:pointer;border:1px solid #555;border-radius:6px;background:transparent;color:inherit;';
+        loadMoreBtn.className = 'sidebar-status-more';
         state.loader = { stop() {
             stopped = true;
             loadMoreBtn.onclick = null;
@@ -34,6 +34,7 @@ export function setupSidebarPagination(contentArea, state, pageSize, loadMoreDat
         } };
         loadMoreBtn.onclick = async () => {
             if (!isCurrent()) return;
+            const ownedFocus = document.activeElement === loadMoreBtn;
             loadMoreBtn.disabled = true;
             loadMoreBtn.textContent = t('common.loading');
             try {
@@ -53,6 +54,9 @@ export function setupSidebarPagination(contentArea, state, pageSize, loadMoreDat
                 loadMoreBtn.textContent = t('task.load_failed');
             }
             loadMoreBtn.disabled = false;
+            if (ownedFocus && isCurrent() && loadMoreBtn.isConnected && document.activeElement === document.body) {
+                loadMoreBtn.focus({ preventScroll: true });
+            }
         };
         contentArea.appendChild(loadMoreBtn);
         return;

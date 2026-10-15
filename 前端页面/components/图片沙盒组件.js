@@ -12,7 +12,7 @@
 // ==========================================
 
 import { t } from "./用户体验增强.js";
-import { escapeHtml } from "../core/全局配置.js";
+import { escapeHtml, API, UI } from "../core/全局配置.js";
 import { openImageViewer } from "./图片展示测试.js";
 
 // 🔧 通用SVG占位图生成函数
@@ -34,25 +34,31 @@ function getErrorSVG() { return createErrorSVG(t('image.load_failed')); }
 function getTimeoutSVG() { return createTimeoutSVG(t('image.load_timeout')); }
 
 // 🔧 P3优化：带超时机制的图片加载器
-const IMAGE_LOAD_TIMEOUT = 30000;  // 30秒超时
-
-function loadImageWithTimeout(url, timeout = IMAGE_LOAD_TIMEOUT) {
+function loadImageWithTimeout(url, signal) {
     return new Promise((resolve, reject) => {
-        const img = new Image();
-        const timer = setTimeout(() => {
-            img.onload = img.onerror = null;
-            reject(new Error('图片加载超时'));
-        }, timeout);
-        
-        img.onload = () => {
-            clearTimeout(timer);
-            resolve(img);
+        if (signal.aborted) { reject(new DOMException('Image read cancelled', 'AbortError')); return; }
+        const image = new Image();
+        let settled = false;
+        let timer = null;
+        const finish = error => {
+            if (settled) return;
+            settled = true;
+            if (timer !== null) clearTimeout(timer);
+            image.onload = image.onerror = null;
+            signal.removeEventListener('abort', cancel);
+            if (error) { image.src = ''; reject(error); }
+            else resolve(image);
         };
-        img.onerror = () => {
-            clearTimeout(timer);
-            reject(new Error('图片加载失败'));
-        };
-        img.src = url;
+        const cancel = () => finish(new DOMException('Image read cancelled', 'AbortError'));
+        signal.addEventListener('abort', cancel, { once: true });
+        image.onload = () => finish(null);
+        image.onerror = () => finish(new Error('Image read failed'));
+        timer = setTimeout(() => {
+            const error = new Error('Image read timed out');
+            error.name = 'TimeoutError';
+            finish(error);
+        }, API.TIMEOUT);
+        try { image.src = url; } catch (error) { finish(error); }
     });
 }
 
@@ -65,8 +71,8 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     // 兼容：接受单个URL或数组
     let imageUrls = [];
     if (Array.isArray(imageSource)) {
-        imageUrls = imageSource.filter(url => url && url.trim());
-    } else if (imageSource && imageSource.trim()) {
+        imageUrls = imageSource.filter(url => typeof url === 'string' && url.trim());
+    } else if (typeof imageSource === 'string' && imageSource.trim()) {
         imageUrls = [imageSource];
     }
     
@@ -75,7 +81,7 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     const firstUrl = imageUrls[0];
     
     // 🚀 本地代理URL已缓存，无需懒加载（从磁盘读取几乎瞬时）
-    const isLocalProxy = firstUrl && firstUrl.startsWith('/community_hub/image?url=');
+    const isLocalProxy = firstUrl && firstUrl.startsWith(API.LOCAL_IMAGE_PROXY_PREFIX);
     const shouldLazy = lazyLoad && !isLocalProxy;
     
     // 🔒 XSS防护：图片 URL 来自其他用户发布的内容，写入 HTML 属性前必须转义
@@ -86,36 +92,26 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     
     // 🖼️ 多图模式：显示左右切换按钮和计数器
     const hasMultiple = imageUrls.length > 1;
+    const positionLabel = escapeHtml(t('image.viewer.image_position', { current: 1, total: imageUrls.length }));
     const navButtons = hasMultiple ? `
-        <button class="btn-prev" style="position: absolute; left: 30px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; border: none; cursor: pointer; font-size: 18px; z-index: 20; display: flex; align-items: center; justify-content: center; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.8)'" onmouseout="this.style.background='rgba(0,0,0,0.6)'">❮</button>
-        <button class="btn-next" style="position: absolute; right: 30px; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; border: none; cursor: pointer; font-size: 18px; z-index: 20; display: flex; align-items: center; justify-content: center; transition: 0.2s;" onmouseover="this.style.background='rgba(76,175,80,0.8)'" onmouseout="this.style.background='rgba(0,0,0,0.6)'">❯</button>
-        <div class="img-counter" style="position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); color: #fff; padding: 4px 12px; border-radius: 12px; font-size: 12px; z-index: 20;">1 / ${imageUrls.length}</div>
+        <button type="button" class="sandbox-control btn-prev" aria-label="${escapeHtml(t('image.viewer.previous_short'))}" title="${escapeHtml(t('image.viewer.previous_short'))}">❮</button>
+        <button type="button" class="sandbox-control btn-next" aria-label="${escapeHtml(t('image.viewer.next_short'))}" title="${escapeHtml(t('image.viewer.next_short'))}">❯</button>
+        <div class="img-counter" role="status" aria-label="${positionLabel}">1 / ${imageUrls.length}</div>
     ` : '';
-    
-    // 🔒 图片保护：禁用右键菜单、拖拽
-    const protectionStyles = `
-        -webkit-user-select: none; 
-        -moz-user-select: none; 
-        -ms-user-select: none; 
-        user-select: none; 
-        pointer-events: none;
-        -webkit-user-drag: none;
-    `;
-    
     return `
-        <div style="font-size: 12px; font-weight: bold; margin-bottom: 6px; color: #aaa;">🖼️ ${t('image.gallery')}${hasMultiple ? ` (${imageUrls.length})` : ''}</div>
-        <div class="img-viewport" data-images='${escapeHtml(JSON.stringify(imageUrls))}' data-current="0" style="position: relative; width: 100%; height: 260px; background: #111; border: 2px dashed #666; border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; cursor: grab; user-select: none; -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none;" oncontextmenu="return false;">
-            <img class="target-img ${lazyClass}" src="${escapeHtml(imgSrc)}" ${dataAttr} draggable="false" style="max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center; transition: transform 0.05s linear, opacity 0.3s ease; ${protectionStyles}">
+        <div class="sandbox-heading">🖼️ ${t('image.gallery')}${hasMultiple ? ` (${imageUrls.length})` : ''}</div>
+        <div class="img-viewport image-sandbox" role="group" aria-label="${escapeHtml(t('image.gallery'))}" data-images='${escapeHtml(JSON.stringify(imageUrls))}' data-current="0">
+            <img class="target-img ${lazyClass}" src="${escapeHtml(imgSrc)}" ${dataAttr} draggable="false" alt="${positionLabel}">
             ${navButtons}
-            <div style="position: absolute; top: 10px; right: 10px; display: flex; gap: 5px; opacity: 0.3; transition: 0.3s; z-index: 10;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.3">
-                <button class="btn-zoom-out" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold;">-</button>
-                <button class="btn-zoom-reset" style="background: #333; color: #fff; border: 1px solid #555; height: 28px; padding: 0 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">${t('common.reset')}</button>
-                <button class="btn-zoom-in" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold;">+</button>
-                <button class="btn-fullscreen" style="background: #333; color: #fff; border: 1px solid #555; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold; display: flex; align-items: center; justify-content: center; font-size: 14px; margin-left: 5px;" title="${escapeHtml(t('image.viewer.fullscreen'))}">⛶</button>
+            <div class="sandbox-tools">
+                <button type="button" class="sandbox-control btn-zoom-out" aria-label="${escapeHtml(t('image.zoom_out'))}" title="${escapeHtml(t('image.zoom_out'))}">−</button>
+                <button type="button" class="sandbox-control btn-zoom-reset" title="${escapeHtml(t('common.reset'))}">${t('common.reset')}</button>
+                <button type="button" class="sandbox-control btn-zoom-in" aria-label="${escapeHtml(t('image.zoom_in'))}" title="${escapeHtml(t('image.zoom_in'))}">+</button>
+                <button type="button" class="sandbox-control btn-fullscreen" aria-label="${escapeHtml(t('image.viewer.fullscreen'))}" title="${escapeHtml(t('image.viewer.fullscreen'))}">⛶</button>
             </div>
-            <div class="sliders-wrapper" style="opacity: 0.2; transition: 0.3s; position: absolute; width: 100%; height: 100%; top:0; left:0; pointer-events: none;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.2">
-                <input type="range" class="slider-x" min="-400" max="400" value="0" style="position: absolute; bottom: 0px; left: 50%; transform: translateX(-50%); width: 80%; pointer-events: auto; z-index: 10;">
-                <input type="range" class="slider-y" min="-400" max="400" value="0" style="position: absolute; left: -100px; top: 50%; transform: translateY(-50%) rotate(270deg); width: 230px; pointer-events: auto; z-index: 10;">
+            <div class="sliders-wrapper">
+                <input type="range" class="slider-x" min="-400" max="400" value="0" aria-label="${escapeHtml(t('image.pan_horizontal'))}">
+                <input type="range" class="slider-y" min="-400" max="400" value="0" aria-label="${escapeHtml(t('image.pan_vertical'))}">
             </div>
         </div>
     `;
@@ -125,201 +121,192 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
  * 🖼️ 设置图片沙盒事件（轮播、缩放、拖动）
  */
 export function setupImageSandboxEvents(detailView) {
-    const viewport = detailView.querySelector('.img-viewport');
+    const viewport = detailView?.matches?.('.img-viewport') ? detailView : detailView?.querySelector('.img-viewport');
     if (!viewport) return;
-
-    const targetImg = detailView.querySelector('.target-img');
-    const btnIn = detailView.querySelector('.btn-zoom-in');
-    const btnOut = detailView.querySelector('.btn-zoom-out');
-    const btnReset = detailView.querySelector('.btn-zoom-reset');
-    const sliderX = detailView.querySelector('.slider-x');
-    const sliderY = detailView.querySelector('.slider-y');
-    const btnPrev = detailView.querySelector('.btn-prev');
-    const btnNext = detailView.querySelector('.btn-next');
-    const imgCounter = detailView.querySelector('.img-counter');
-    
-    // 🔒 图片保护：禁用右键菜单
-    viewport.addEventListener('contextmenu', (e) => e.preventDefault());
-    targetImg.addEventListener('dragstart', (e) => e.preventDefault());
-
-    // 📦 解析图片数组
-    let imageUrls = [];
-    let currentIndex = 0;
-    try {
-        imageUrls = JSON.parse(viewport.dataset.images || '[]');
-    } catch (e) {
-        imageUrls = [];
-    }
-    
-    // 🖼️ 加载指定索引的图片（🔧 P3优化：带超时机制）
-    const loadImage = async (index) => {
-        if (index < 0 || index >= imageUrls.length) return;
-        currentIndex = index;
-        viewport.dataset.current = index;
-        
-        const url = imageUrls[index];
-        targetImg.classList.add('lazy-loading');
-        targetImg.src = getPlaceholderSVG();
-        
-        try {
-            await loadImageWithTimeout(url);
-            targetImg.src = url;
-            targetImg.classList.remove('lazy-loading');
-            targetImg.classList.add('lazy-loaded');
-            targetImg.style.opacity = '1';
-        } catch (err) {
-            // 区分超时和加载失败
-            targetImg.src = err.message.includes('超时') ? getTimeoutSVG() : getErrorSVG();
-            targetImg.classList.remove('lazy-loading');
-            targetImg.classList.add('lazy-error');
-        }
-        
-        // 更新计数器
-        if (imgCounter) {
-            imgCounter.textContent = `${index + 1} / ${imageUrls.length}`;
-        }
-        
-        // 重置缩放和位置
-        scale = 1;
-        sliderX.value = 0;
-        sliderY.value = 0;
-        syncTransform();
-    };
-
-    // ⚡ 初始加载第一张图片（🔧 P3优化：带超时机制）
-    if (targetImg.classList.contains('lazy-loading') && targetImg.dataset.src) {
-        const realSrc = targetImg.dataset.src;
-        
-        loadImageWithTimeout(realSrc).then(() => {
-            targetImg.src = realSrc;
-            targetImg.classList.remove('lazy-loading');
-            targetImg.classList.add('lazy-loaded');
-            targetImg.style.opacity = '1';
-            delete targetImg.dataset.src;
-        }).catch(err => {
-            targetImg.src = err.message.includes('超时') ? getTimeoutSVG() : getErrorSVG();
-            targetImg.classList.remove('lazy-loading');
-            targetImg.classList.add('lazy-error');
-        });
-    }
-
-    // 🖼️ 轮播切换按钮事件
-    if (btnPrev && btnNext) {
-        btnPrev.onclick = (e) => {
-            e.stopPropagation();
-            loadImage(currentIndex > 0 ? currentIndex - 1 : imageUrls.length - 1);
-        };
-        btnNext.onclick = (e) => {
-            e.stopPropagation();
-            loadImage(currentIndex < imageUrls.length - 1 ? currentIndex + 1 : 0);
-        };
-    }
-
-    // 🔍 缩放功能
-    let scale = 1.0;
-    const syncTransform = () => { 
-        targetImg.style.transform = `scale(${scale}) translate(${sliderX.value}px, ${sliderY.value}px)`; 
-    };
-    
-    const zoom = (delta) => { 
-        scale = Math.max(0.5, Math.min(5.0, scale + delta)); 
-        syncTransform(); 
-    };
-
-    btnIn.onclick = () => zoom(0.2); 
-    btnOut.onclick = () => zoom(-0.2);
-    btnReset.onclick = () => { scale = 1; sliderX.value = 0; sliderY.value = 0; syncTransform(); };
-    
-    // ⛶ 全屏播放按钮事件
-    const btnFullscreen = viewport.querySelector('.btn-fullscreen');
-    if (btnFullscreen) {
-        btnFullscreen.onclick = (e) => {
-            e.stopPropagation();
-            
-            // 收集当前viewport的所有图片URL
-            const dataImages = viewport.getAttribute('data-images');
-            let imageUrls = [];
-            
-            if (dataImages) {
-                try {
-                    imageUrls = JSON.parse(dataImages);
-                } catch (e) {
-                    // 单图模式
-                    const img = viewport.querySelector('.target-img');
-                    if (img && img.src) {
-                        imageUrls = [img.src];
-                    }
-                }
-            } else {
-                // 无data-images属性，取当前img的src
-                const img = viewport.querySelector('.target-img');
-                if (img && img.src) {
-                    imageUrls = [img.src];
-                }
-            }
-            
-            // 获取当前图片索引
-            const currentIndex = parseInt(viewport.getAttribute('data-current') || '0', 10);
-            
-            // 🔍 调试日志：输出收集到的图片URL
-            console.log('🖼️ 全屏播放图片:', '图片数量:', imageUrls.length, '当前索引:', currentIndex);
-            
-            if (imageUrls.length > 0) {
-                // 打开全屏图像播放器（使用静态import，避免动态import路径问题）
-                try {
-                    openImageViewer(imageUrls, currentIndex, { opaque: true });
-                } catch (err) {
-                    console.error('无法打开图像播放器:', err);
-                    // 显示用户可见的错误提示
-                    import('./UI交互提示组件.js').then(module => {
-                        module.showToast(t('image.viewer.load_failed'), 'error');
-                    }).catch(() => {
-                        // 动态import也失败时，创建简单的内联提示
-                        const fallback = document.createElement('div');
-                        fallback.textContent = t('image.viewer.load_failed');
-                        Object.assign(fallback.style, { position: 'fixed', top: '50px', left: '50%', transform: 'translateX(-50%)', background: '#F44336', color: '#fff', padding: '10px 20px', borderRadius: '8px', zIndex: '10000', fontSize: '14px' });
-                        document.body.appendChild(fallback);
-                        setTimeout(() => fallback.remove(), 3000);
-                    });
-                }
-            } else {
-                console.warn('⚠️ 没有可播放的图片URL');
-            }
-        };
-    }
-    
-    viewport.addEventListener('wheel', (e) => { e.preventDefault(); zoom(e.deltaY > 0 ? -0.1 : 0.1); });
-    sliderX.addEventListener('input', syncTransform); 
-    sliderY.addEventListener('input', syncTransform);
-
-    // ✨ 拖动功能（统一管理事件监听器）
-    let isDragging = false; let startX, startY, initValX, initValY;
-    
-    // 🔧 命名事件处理函数，便于清理
-    const handleMouseMove = (e) => {
-        if (!isDragging) return;
-        const dx = (e.clientX - startX) / scale; const dy = (e.clientY - startY) / scale;
-        sliderX.value = initValX + dx; sliderY.value = initValY + dy; syncTransform();
-    };
-    
-    const handleMouseUp = () => { isDragging = false; viewport.style.cursor = 'grab'; };
-    
-    viewport.addEventListener('mousedown', (e) => {
-        if(e.target.tagName.toLowerCase() === 'input' || e.target.tagName.toLowerCase() === 'button') return;
-        e.preventDefault(); // 阻止浏览器默认的文本/图片选中行为
-        isDragging = true; viewport.style.cursor = 'grabbing';
-        startX = e.clientX; startY = e.clientY; initValX = parseInt(sliderX.value); initValY = parseInt(sliderY.value);
-    });
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    viewport.addEventListener('mouseleave', () => { isDragging = false; viewport.style.cursor = 'grab'; });
-    
-    // 🔧 P3优化：注册清理函数，供组件销毁时调用
+    viewport._sandboxCleanup?.();
+    const targetImg = viewport.querySelector('.target-img');
+    const btnIn = viewport.querySelector('.btn-zoom-in');
+    const btnOut = viewport.querySelector('.btn-zoom-out');
+    const btnReset = viewport.querySelector('.btn-zoom-reset');
+    const sliderX = viewport.querySelector('.slider-x');
+    const sliderY = viewport.querySelector('.slider-y');
+    if (![targetImg, btnIn, btnOut, btnReset, sliderX, sliderY].every(Boolean)) return;
+    let imageUrls;
+    try { imageUrls = JSON.parse(viewport.dataset.images || '[]'); } catch (_) { imageUrls = []; }
+    if (!Array.isArray(imageUrls)) imageUrls = [];
+    imageUrls = imageUrls.filter(url => typeof url === 'string' && url.trim());
+    if (!imageUrls.length) return;
+    let currentIndex = Number.parseInt(viewport.dataset.current || '0', 10);
+    if (!Number.isInteger(currentIndex) || currentIndex < 0 || currentIndex >= imageUrls.length) currentIndex = 0;
+    let disposed = false, generation = 0, readController = null, closeViewer = null;
+    let observer = null, wasMounted = false, fallbackNode = null, fallbackTimer = null;
+    const stops = [];
+    const owns = () => !disposed && viewport._sandboxCleanup === cleanup;
+    const connected = () => viewport.isConnected && (detailView === viewport || detailView.contains(viewport));
+    const current = () => owns() && connected();
     const cleanup = () => {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
+        if (disposed) return;
+        disposed = true;
+        generation++;
+        readController?.abort();
+        readController = null;
+        for (const stop of stops) stop();
+        stops.length = 0;
+        observer?.disconnect();
+        observer = null;
+        if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+        fallbackNode?.remove();
+        fallbackNode = null;
+        const close = closeViewer;
+        closeViewer = null;
+        try { close?.(); } catch (_) { console.warn('Image sandbox viewer cleanup failed'); }
+        if (viewport._sandboxCleanup === cleanup) viewport._sandboxCleanup = null;
     };
     viewport._sandboxCleanup = cleanup;
+    const watchRemoval = () => {
+        if (!owns() || observer) return;
+        const inspect = records => {
+            if (!owns() || observer !== ownedObserver) return;
+            if (connected()) { wasMounted = true; return; }
+            const appeared = records.some(record => [...record.addedNodes, ...record.removedNodes]
+                .some(node => node === viewport || node.contains?.(viewport)));
+            if (wasMounted || appeared) cleanup();
+        };
+        const ownedObserver = new MutationObserver(inspect);
+        observer = ownedObserver;
+        observer.observe(document.body, { childList: true, subtree: true });
+        queueMicrotask(() => {
+            if (!owns() || observer !== ownedObserver) return;
+            inspect(ownedObserver.takeRecords());
+            if (!connected() && !wasMounted && owns()) { ownedObserver.disconnect(); observer = null; }
+        });
+    };
+    const guard = callback => event => {
+        if (!current()) return;
+        watchRemoval();
+        callback(event);
+    };
+    const listen = (target, type, callback, options) => {
+        const owned = guard(callback);
+        target.addEventListener(type, owned, options);
+        stops.push(() => target.removeEventListener(type, owned, options));
+    };
+    const click = (target, callback) => {
+        if (!target) return;
+        const owned = guard(callback);
+        target.onclick = owned;
+        stops.push(() => { if (target.onclick === owned) target.onclick = null; });
+    };
+    let scale = Number(viewport.dataset.sandboxScale);
+    if (!Number.isFinite(scale) || scale < 0.5 || scale > 5) scale = 1;
+    const syncTransform = () => {
+        viewport.dataset.sandboxScale = String(scale);
+        targetImg.style.transform = `scale(${scale}) translate(${sliderX.value}px, ${sliderY.value}px)`;
+    };
+    const counter = viewport.querySelector('.img-counter');
+    const updateCounter = () => {
+        viewport.dataset.current = String(currentIndex);
+        const label = t('image.viewer.image_position', { current: currentIndex + 1, total: imageUrls.length });
+        targetImg.alt = label;
+        if (counter) {
+            counter.textContent = `${currentIndex + 1} / ${imageUrls.length}`;
+            counter.setAttribute('aria-label', label);
+        }
+    };
+    const loadImage = async index => {
+        if (!owns() || index < 0 || index >= imageUrls.length) return;
+        readController?.abort();
+        const controller = new AbortController();
+        readController = controller;
+        const expected = ++generation;
+        currentIndex = index;
+        updateCounter();
+        scale = 1; sliderX.value = 0; sliderY.value = 0; syncTransform();
+        targetImg.classList.remove('lazy-loaded', 'lazy-error');
+        targetImg.classList.add('lazy-loading');
+        targetImg.src = getPlaceholderSVG();
+        const url = imageUrls[index];
+        try {
+            await loadImageWithTimeout(url, controller.signal);
+            if (!current() || expected !== generation) return;
+            watchRemoval();
+            targetImg.src = url;
+            targetImg.classList.remove('lazy-loading', 'lazy-error');
+            targetImg.classList.add('lazy-loaded');
+            targetImg.style.opacity = '1';
+        } catch (error) {
+            if (!current() || expected !== generation || controller.signal.aborted) return;
+            watchRemoval();
+            targetImg.src = error.name === 'TimeoutError' ? getTimeoutSVG() : getErrorSVG();
+            targetImg.classList.remove('lazy-loading', 'lazy-loaded');
+            targetImg.classList.add('lazy-error');
+        } finally {
+            if (readController === controller) readController = null;
+        }
+    };
+    delete targetImg.dataset.src;
+    watchRemoval();
+    updateCounter();
+    syncTransform();
+    const ready = targetImg.getAttribute('src') === imageUrls[currentIndex] &&
+        (targetImg.classList.contains('lazy-loaded') || (targetImg.complete && targetImg.naturalWidth > 0));
+    if (!ready) loadImage(currentIndex);
+    else { targetImg.classList.remove('lazy-loading', 'lazy-error'); targetImg.classList.add('lazy-loaded'); }
+    listen(viewport, 'contextmenu', event => event.preventDefault());
+    listen(targetImg, 'dragstart', event => event.preventDefault());
+    click(viewport.querySelector('.btn-prev'), event => { event.stopPropagation(); loadImage(currentIndex > 0 ? currentIndex - 1 : imageUrls.length - 1); });
+    click(viewport.querySelector('.btn-next'), event => { event.stopPropagation(); loadImage(currentIndex < imageUrls.length - 1 ? currentIndex + 1 : 0); });
+    const zoom = delta => { scale = Math.max(0.5, Math.min(5, scale + delta)); syncTransform(); };
+    click(btnIn, () => zoom(0.2));
+    click(btnOut, () => zoom(-0.2));
+    click(btnReset, () => { scale = 1; sliderX.value = 0; sliderY.value = 0; syncTransform(); });
+    const notifyFailure = async () => {
+        try {
+            const module = await import('./UI交互提示组件.js');
+            if (current()) module.showToast(t('image.viewer.load_failed'), 'error');
+        } catch (_) {
+            if (!current()) return;
+            fallbackNode?.remove();
+            if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+            const node = document.createElement('div');
+            node.textContent = t('image.viewer.load_failed');
+            Object.assign(node.style, { position: 'fixed', top: '50px', left: '50%', transform: 'translateX(-50%)', background: '#F44336', color: '#fff', padding: '10px 20px', borderRadius: '8px', zIndex: '10000', fontSize: '14px' });
+            fallbackNode = node;
+            document.body.appendChild(node);
+            fallbackTimer = setTimeout(() => { node.remove(); if (fallbackNode === node) { fallbackNode = null; fallbackTimer = null; } }, UI.TOAST.DURATION);
+        }
+    };
+    click(viewport.querySelector('.btn-fullscreen'), event => {
+        event.stopPropagation();
+        try { closeViewer?.(); closeViewer = openImageViewer(imageUrls, currentIndex, { opaque: true }); }
+        catch (_) { console.error('无法打开图像播放器'); notifyFailure(); }
+    });
+    listen(viewport, 'wheel', event => { event.preventDefault(); zoom(event.deltaY > 0 ? -0.1 : 0.1); }, { passive: false });
+    const rangeKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+    const keepNativeRangeKey = event => {
+        if (event.defaultPrevented || event.isComposing || event.keyCode === 229 ||
+            event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+        if (rangeKeys.has(event.key)) event.stopPropagation();
+    };
+    listen(sliderX, 'keydown', keepNativeRangeKey);
+    listen(sliderY, 'keydown', keepNativeRangeKey);
+    listen(sliderX, 'input', syncTransform);
+    listen(sliderY, 'input', syncTransform);
+    let dragging = false, startX, startY, initialX, initialY;
+    listen(viewport, 'mousedown', event => {
+        if (event.target.closest('input, button')) return;
+        event.preventDefault(); dragging = true; viewport.style.cursor = 'grabbing';
+        startX = event.clientX; startY = event.clientY; initialX = Number(sliderX.value); initialY = Number(sliderY.value);
+    });
+    listen(window, 'mousemove', event => {
+        if (!dragging) return;
+        sliderX.value = initialX + (event.clientX - startX) / scale;
+        sliderY.value = initialY + (event.clientY - startY) / scale;
+        syncTransform();
+    });
+    listen(window, 'mouseup', () => { dragging = false; viewport.style.cursor = 'grab'; });
+    listen(viewport, 'mouseleave', () => { dragging = false; viewport.style.cursor = 'grab'; });
 }
 
 /**
@@ -327,9 +314,7 @@ export function setupImageSandboxEvents(detailView) {
  * @param {HTMLElement} detailView - 详情视图容器
  */
 export function cleanupImageSandbox(detailView) {
-    const viewport = detailView?.querySelector('.img-viewport');
-    if (viewport && viewport._sandboxCleanup) {
-        viewport._sandboxCleanup();
-        viewport._sandboxCleanup = null;
-    }
+    const viewports = [...(detailView?.querySelectorAll?.('.img-viewport') || [])];
+    if (detailView?.matches?.('.img-viewport')) viewports.unshift(detailView);
+    for (const viewport of viewports) viewport._sandboxCleanup?.();
 }

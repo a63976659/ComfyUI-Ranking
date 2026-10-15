@@ -8,125 +8,99 @@
 //   - 打赏等级工具.js (打赏榜单等级渲染)
 // ==========================================
 
-import { getBannerCacheKey, PLACEHOLDERS } from "../core/全局配置.js";
+import { getBannerCacheKey, PLACEHOLDERS, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
-// 一次性注入组件样式（CSS类替代内联hover事件+减少重复样式）
-if (!document.getElementById('profile-template-styles')) {
-    const style = document.createElement('style');
-    style.id = 'profile-template-styles';
-    style.textContent = `
-        .profile-nav-btn{background:rgba(51,51,51,0.8);border:1px solid rgba(85,85,85,0.8);color:#fff;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;display:flex;align-items:center;gap:6px;box-shadow:0 2px 4px rgba(0,0,0,0.3);transition:0.2s}
-        .profile-nav-btn:hover{background:#4CAF50;border-color:#4CAF50}
-        .profile-header-btn{padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;transition:0.2s;backdrop-filter:blur(4px)}
-        .profile-header-btn--settings{background:rgba(51,51,51,0.8);border:1px solid rgba(85,85,85,0.8);color:#ccc}
-        .profile-header-btn--settings:hover{color:#fff;border-color:#888}
-        .profile-header-btn--logout{background:rgba(244,67,54,0.2);border:1px solid #F44336;color:#F44336}
-        .profile-header-btn--logout:hover{background:#F44336;color:#fff}
-        .profile-action-btn{border-radius:4px;cursor:pointer;font-weight:bold}
-        .profile-action-btn--primary{background:#FF9800;border:none;color:white;box-shadow:0 2px 4px rgba(0,0,0,0.2);transition:0.2s}
-        .profile-action-btn--primary:hover{opacity:0.8}
-        .profile-action-btn--withdraw{background:rgba(76,175,80,0.2);border:1px solid #4CAF50;color:#4CAF50;transition:0.2s}
-        .profile-action-btn--withdraw:hover{background:rgba(76,175,80,0.3)}
-        .profile-action-btn--send{background:#2196F3;border:none;color:white;box-shadow:0 2px 4px rgba(0,0,0,0.2)}
-        .profile-action-btn--follow{background:#4CAF50;border:none;color:white;box-shadow:0 2px 4px rgba(0,0,0,0.2)}
-        .profile-action-btn--me{padding:8px 12px;font-size:13px}
-        .profile-action-btn--other{padding:6px 12px;font-size:12px;width:100%}
-    `;
-    document.head.appendChild(style);
-}
-
 /** 生成返回按钮HTML */
-function _backButtonHtml(extraStyle = '') {
-    return `<button id="btn-back-profile" class="profile-nav-btn" style="${extraStyle}">⬅ ${t('common.back')}</button>`;
+function _backButtonHtml(extraClass = '') {
+    return `<button type="button" id="btn-back-profile" class="profile-nav-btn ${extraClass}">⬅ ${t('common.back')}</button>`;
 }
 
 export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs) {
     // 个人资料卡背景图：
     // - 自己查看自己：优先使用本地缓存（账号区分键），否则使用云端 URL
     // - 他人查看：直接使用云端 URL (userData.bannerUrl)
-    let bannerImageUrl = userData.bannerUrl;
+    let bannerImageUrl = normalizeProfileImageUrl(userData.bannerUrl);
     if (isMe) {
         let localBannerCache = null;
         try { localBannerCache = localStorage.getItem(getBannerCacheKey(userData.account)); } catch (_) {}
-        if (localBannerCache) {
+        if (normalizeProfileImageUrl(localBannerCache)) {
             bannerImageUrl = localBannerCache;
         }
     }
     
-    // 🔒 XSS防护：他人查看时 bannerUrl 直接来自云端（用户可自行填写），
-    // 写入 CSS url() 前剔除引号与括号，避免突破属性（与创作者卡片、个人设置表单同一写法）
-    const bannerStyle = bannerImageUrl 
-        ? `background-image: url(${String(bannerImageUrl).replace(/['"()\\]/g, '')}); background-size: cover; background-position: center;`
-        : `background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);`;
+    const hasBannerImage = !!bannerImageUrl;
+    const bannerStyle = hasBannerImage
+        ? `background-image: ${escapeHtml(`url(${JSON.stringify(bannerImageUrl)})`)}; background-size: cover; background-position: center;`
+        : ``;
 
     // 设置视图时返回简化的返回按钮（与个人资料页按钮样式一致，但不显示背景图）
     if (isSettingsView && isMe) {
-        return _backButtonHtml('align-self:flex-start;margin-left:15px;margin-top:15px');
+        return _backButtonHtml('profile-nav-btn--settings-return');
     }
 
     const actionButtons = isMe 
-        ? `<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
-               <button id="btn-wallet" class="profile-action-btn profile-action-btn--primary profile-action-btn--me">💰 ${t('profile.recharge')}</button>
-               <button id="btn-withdraw" class="profile-action-btn profile-action-btn--withdraw profile-action-btn--me">💸 ${t('profile.withdraw')}</button>
+        ? `<div class="profile-wallet-actions">
+               <button type="button" id="btn-wallet" class="profile-action-btn profile-action-btn--primary profile-action-btn--me">💰 ${t('profile.recharge')}</button>
+               <button type="button" id="btn-withdraw" class="profile-action-btn profile-action-btn--withdraw profile-action-btn--me">💸 ${t('profile.withdraw')}</button>
            </div>`
-        : `<button id="btn-tip-user" class="profile-action-btn profile-action-btn--primary profile-action-btn--other" style="margin-bottom: 8px">🎁 ${t('profile.tip_support')}</button>
-           <button id="btn-send-msg" class="profile-action-btn profile-action-btn--send profile-action-btn--other">✉️ ${t('profile.send_message')}</button>
-           <button id="btn-follow-user" class="profile-action-btn profile-action-btn--follow profile-action-btn--other" style="margin-top: 8px">${isFollowing ? `✔️ ${t('profile.followed')}` : `➕ ${t('profile.follow_author')}`}</button>`;
+        : `<button type="button" id="btn-tip-user" class="profile-tip-action profile-action-btn profile-action-btn--primary profile-action-btn--other">🎁 ${t('profile.tip_support')}</button>
+           <button type="button" id="btn-send-msg" class="profile-action-btn profile-action-btn--send profile-action-btn--other">✉️ ${t('profile.send_message')}</button>
+           <button type="button" id="btn-follow-user" class="profile-follow-action profile-action-btn profile-action-btn--follow profile-action-btn--other">${isFollowing ? `✔️ ${t('profile.followed')}` : `➕ ${t('profile.follow_author')}`}</button>`;
 
     // 统计数据区域（现在在背景图内）
     const statsHtml = `
-        <div style="display: flex; gap: 15px; font-size: 12px; color: rgba(255,255,255,0.9); flex-wrap: wrap; margin-top: 15px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <div class="profile-stats">
             ${isMe ? `
-                <div style="display:flex; flex-direction: column; gap: 6px; width: 100%;">
-                    <div style="font-size: 14px;">
-                        <span>💰 ${t('profile.balance')}: <strong style="color:#FF9800; font-size: 16px;">${escapeHtml(userData.balance || 0)}</strong></span>
+                <div class="profile-wallet-stats">
+                    <div class="profile-balance">
+                        <span>💰 ${t('profile.balance')}: <strong class="profile-balance-amount">${escapeHtml(userData.balance || 0)}</strong></span>
                     </div>
-                    <div style="font-size: 11px; color: rgba(255,255,255,0.6);">
+                    <div class="profile-earnings">
                         <span>🛍️ ${t('profile.sales')}: ${escapeHtml(userData.earn_balance || 0)}</span>
-                        <span style="margin-left: 12px;">🎁 ${t('profile.tips')}: ${escapeHtml(userData.tip_balance || 0)}</span>
-                        <span style="margin-left: 12px;">📋 ${t('profile.task_earnings')}: ${escapeHtml(userData.task_balance || 0)}</span>
+                        <span class="profile-earning-item">🎁 ${t('profile.tips')}: ${escapeHtml(userData.tip_balance || 0)}</span>
+                        <span class="profile-earning-item">📋 ${t('profile.task_earnings')}: ${escapeHtml(userData.task_balance || 0)}</span>
                     </div>
                 </div>
             ` : ''}
-            <div style="display:flex; gap: 12px;">
-                <span>👍 ${t('profile.received_likes')}: <strong style="color:#fff;">${escapeHtml(userData.receivedLikes || 0)}</strong></span>
-                <span>🔖 ${t('profile.received_favorites')}: <strong style="color:#fff;">${escapeHtml(userData.receivedFavorites || 0)}</strong></span>
-                <span id="btn-followers" style="cursor: pointer;">👥 ${t('profile.followers_count')}: <strong style="color:#fff;">${userData.followers ? userData.followers.length : 0}</strong></span>
-                <span id="btn-following" style="cursor: pointer;">🏃 ${t('profile.following_count')}: <strong style="color:#fff;">${escapeHtml(followingCount)}</strong></span>
+            <div class="profile-counts">
+                <span>👍 ${t('profile.received_likes')}: <strong class="profile-count">${escapeHtml(userData.receivedLikes || 0)}</strong></span>
+                <span>🔖 ${t('profile.received_favorites')}: <strong class="profile-count">${escapeHtml(userData.receivedFavorites || 0)}</strong></span>
+                <button type="button" class="profile-count-link" id="btn-followers">👥 ${t('profile.followers_count')}: <strong class="profile-count">${userData.followers ? userData.followers.length : 0}</strong></button>
+                <button type="button" class="profile-count-link" id="btn-following">🏃 ${t('profile.following_count')}: <strong class="profile-count">${escapeHtml(followingCount)}</strong></button>
             </div>
         </div>
     `;
 
     // 整个头部区域（包括返回按钮、用户信息、统计数据）都在背景图内
     const headerHtml = `
-        <div style="position: relative; border-radius: 12px; overflow: hidden; margin-bottom: 15px;">
-            <div style="${bannerStyle} padding: 15px; min-height: 200px;">
+        <div class="profile-header">
+            <div class="profile-banner" style="${bannerStyle}">
                 <!-- 顶部导航栏 -->
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        ${_backButtonHtml('backdrop-filter:blur(4px)')}
+                <div class="profile-navigation">
+                    <div class="profile-back-group">
+                        ${_backButtonHtml()}
                     </div>
                     ${isMe ? `
-                    <div style="display: flex; gap: 10px;">
-                        <button id="btn-open-settings" class="profile-header-btn profile-header-btn--settings">⚙️ ${t('profile.settings')}</button>
-                        <button id="btn-logout" class="profile-header-btn profile-header-btn--logout">🚪 ${t('profile.logout')}</button>
+                    <div class="profile-account-actions">
+                        <button type="button" id="btn-open-settings" class="profile-header-btn profile-header-btn--settings">⚙️ ${t('profile.settings')}</button>
+                        <button type="button" id="btn-logout" class="profile-header-btn profile-header-btn--logout">🚪 ${t('profile.logout')}</button>
                     </div>` : ''}
                 </div>
                 
                 <!-- 用户信息区域 -->
-                <div style="display: flex; align-items: flex-start; gap: 15px; position: relative;">
-                    <img src="${escapeHtml(userData.avatarDataUrl || userData.avatar || PLACEHOLDERS.AVATAR)}" style="width: 80px; height: 80px; border-radius: 50%; border: 3px solid #4CAF50; object-fit: cover; box-shadow: 0 4px 12px rgba(0,0,0,0.4);">
-                    <div style="flex: 1; padding-right: 150px;">
-                        <div style="font-size: 20px; font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; text-shadow: 0 2px 4px rgba(0,0,0,0.6);">
+                <div class="profile-identity">
+                    <img alt="" class="profile-avatar" src="${escapeHtml(normalizeProfileImageUrl(userData.avatarDataUrl) || normalizeProfileImageUrl(userData.avatar) || PLACEHOLDERS.AVATAR)}">
+                    <div class="profile-bio">
+                        <div class="profile-name">
                             ${escapeHtml(userData.name)}
-                            <span style="font-size: 12px; background: rgba(68,68,68,0.8); padding: 2px 6px; border-radius: 4px; font-weight: normal; backdrop-filter: blur(4px);">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age !== undefined && userData.age !== null ? escapeHtml(userData.age) : t('profile.unknown_age')}${t('profile.age_years')}</span>
+                            <span class="profile-age">${userData.gender === 'male' ? '♂️' : (userData.gender === 'female' ? '♀️' : '🔒')} ${userData.age !== undefined && userData.age !== null ? escapeHtml(userData.age) : t('profile.unknown_age')}${t('profile.age_years')}</span>
                         </div>
-                        <div style="font-size: 12px; color: rgba(255,255,255,0.85); margin-bottom: 8px; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">📍 ${escapeHtml(userData.country) || t('profile.location_secret')} - ${escapeHtml(userData.region || '')}</div>
-                        <div style="font-size: 13px; color: rgba(255,255,255,0.95); line-height: 1.4; word-break: break-all; text-shadow: 0 1px 3px rgba(0,0,0,0.6);">${escapeHtml(userData.intro) || t('profile.no_intro')}</div>
+                        <div class="profile-location">📍 ${escapeHtml(userData.country) || t('profile.location_secret')} - ${escapeHtml(userData.region || '')}</div>
+                        <div class="profile-intro">${escapeHtml(userData.intro) || t('profile.no_intro')}</div>
                     </div>
-                    <div style="position: absolute; top: 0; right: 0; width: 135px; display: flex; flex-direction: column; gap: 8px;">${actionButtons}</div>
+                    <div class="profile-actions">${actionButtons}</div>
                 </div>
                 
                 <!-- 统计数据区域 -->
@@ -135,12 +109,12 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
         </div>
     `;
 
-    let tabsHtml = `<div style="display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 5px;">`;
+    let tabsHtml = `<div class="profile-tabs">`;
     tabs.forEach(tab => {
         const isActive = activeTab === tab.id;
-        tabsHtml += `<button class="profile-tab-btn" data-id="${tab.id}" style="background: transparent; border: none; cursor: pointer; padding: 5px 10px; color: ${isActive ? '#4CAF50' : '#888'}; font-weight: ${isActive ? 'bold' : 'normal'}; border-bottom: ${isActive ? '2px solid #4CAF50' : 'none'};">${tab.label}</button>`;
+        tabsHtml += `<button type="button" class="profile-tab-btn" data-id="${tab.id}" aria-pressed="${isActive}">${tab.label}</button>`;
     });
-    tabsHtml += `</div><div id="profile-list-container" style="flex: 1; overflow-y: auto; padding-right: 5px;"></div>`;
+    tabsHtml += `</div><div class="profile-list" id="profile-list-container"></div>`;
 
     return headerHtml + tabsHtml;
 }

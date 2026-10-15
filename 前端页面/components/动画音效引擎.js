@@ -11,7 +11,7 @@
 //   - tetris: 提示词 - 俄罗斯方块式逐个下坠堆积
 // ==========================================
 
-import { getSettings } from "./全局设置组件.js";
+import { getSettings } from "../core/全局配置.js";
 
 function prefersReducedMotion() {
     try { return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true; }
@@ -41,22 +41,47 @@ const SOUND_CONFIGS = {
 
 // 通用音效合成播放函数
 function _playSynthSound(ctx, config) {
-    const oscillator = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(ctx.destination);
-    const now = ctx.currentTime;
-    const dur = config.stopTime || config.duration;
-    oscillator.type = config.type;
-    oscillator.frequency.setValueAtTime(config.freqStart, now);
-    oscillator.frequency.exponentialRampToValueAtTime(config.freqEnd, now + config.duration);
-    gainNode.gain.setValueAtTime(config.gain, now);
-    if (config.gainMid !== undefined) {
-        gainNode.gain.linearRampToValueAtTime(config.gainMid, now + config.gainMidTime);
+    let oscillator = null;
+    let gainNode = null;
+    let started = false;
+    let released = false;
+    const release = () => {
+        if (released) return;
+        released = true;
+        if (oscillator) {
+            oscillator.onended = null;
+            try { oscillator.disconnect(); } catch {}
+        }
+        if (gainNode) {
+            try { gainNode.disconnect(); } catch {}
+        }
+    };
+    try {
+        oscillator = ctx.createOscillator();
+        gainNode = ctx.createGain();
+        oscillator.onended = release;
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        const now = ctx.currentTime;
+        const dur = config.stopTime || config.duration;
+        oscillator.type = config.type;
+        oscillator.frequency.setValueAtTime(config.freqStart, now);
+        oscillator.frequency.exponentialRampToValueAtTime(config.freqEnd, now + config.duration);
+        gainNode.gain.setValueAtTime(config.gain, now);
+        if (config.gainMid !== undefined) {
+            gainNode.gain.linearRampToValueAtTime(config.gainMid, now + config.gainMidTime);
+        }
+        gainNode.gain.exponentialRampToValueAtTime(0.001, now + dur);
+        oscillator.start(now);
+        started = true;
+        oscillator.stop(now + dur);
+    } catch (error) {
+        if (started) {
+            try { oscillator.stop(); } catch {}
+        }
+        release();
+        throw error;
     }
-    gainNode.gain.exponentialRampToValueAtTime(0.001, now + dur);
-    oscillator.start(now);
-    oscillator.stop(now + dur);
 }
 
 // 🔧 懒加载 AudioContext（确保在用户交互后创建）
@@ -65,7 +90,7 @@ function getAudioContext() {
         try {
             audioContext = new AudioContext();
         } catch (e) {
-            console.warn('AudioContext 创建失败:', e);
+            console.warn('AudioContext 创建失败');
             return null;
         }
     }
@@ -79,7 +104,8 @@ async function resumeAudioContext() {
         try {
             await ctx.resume();
         } catch (e) {
-            console.warn('AudioContext resume 失败:', e);
+            console.warn('AudioContext resume 失败');
+            return null;
         }
     }
     return ctx;
@@ -107,7 +133,7 @@ export async function playSound(type = 'whoosh') {
                 break;
         }
     } catch (e) {
-        console.warn('音效播放失败:', e);
+        console.warn('音效播放失败');
     }
 }
 
@@ -529,7 +555,7 @@ export function initAnimationEngine() {
     
     // 🔒 在用户首次交互时预热 AudioContext
     const warmupAudio = () => {
-        resumeAudioContext();
+        if (getSettings().enableSoundEffects) resumeAudioContext();
         document.removeEventListener('click', warmupAudio);
         document.removeEventListener('keydown', warmupAudio);
     };

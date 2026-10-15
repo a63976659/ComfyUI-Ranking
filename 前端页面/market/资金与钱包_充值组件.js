@@ -26,8 +26,6 @@ function _setButtonLoading(btn, isLoading, loadingText, normalText) {
     btn.disabled = isLoading;
     btn.setAttribute('aria-busy', String(isLoading));
     btn.innerText = isLoading ? loadingText : normalText;
-    btn.style.background = isLoading ? "#888" : "#4CAF50";
-    btn.style.cursor = isLoading ? "not-allowed" : "pointer";
 }
 
 export async function openRechargeModal(currentUser, onBalanceChange) {
@@ -57,7 +55,7 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
         if (Number.isSafeInteger(wallet.balance)) balanceText = String(wallet.balance);
     } catch (_) { if (!scope.isCurrent()) return; }
 
-    container.style.color = "#ccc";
+    container.className = "wallet-modal wallet-modal--recharge";
 
     const rechargeOptions = [
         { points: 10, price: 10, isCustom: false },
@@ -70,58 +68,58 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
     let paymentMethod = "alipay"; 
 
     function _rechargeOptionWrapper(isSelected, index, innerHtml) {
-        return `<button type="button" aria-pressed="${isSelected}" class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}" style="flex: 1; min-width: 45%; padding: 15px; background: ${isSelected ? 'rgba(76, 175, 80, 0.2)' : 'var(--comfy-input-bg)'}; border: 2px solid ${isSelected ? '#4CAF50' : '#444'}; border-radius: 8px; cursor: pointer; text-align: center; transition: 0.2s;">${innerHtml}</button>`;
+        return `<button type="button" aria-pressed="${isSelected}" class="recharge-opt ${isSelected ? 'selected' : ''}" data-index="${index}">${innerHtml}</button>`;
     }
 
     const renderOptions = () => rechargeOptions.map((opt, index) => {
         const isSelected = selectedOption === opt;
         if (opt.isCustom) {
-            const inner = `<div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px; line-height: 22px;">${opt.label}</div><div style="font-size: 12px; color: #888;">${t('wallet.recharge.any_amount')}</div>`;
+            const inner = `<div class="wallet-recharge__option-title">${opt.label}</div><div class="wallet-modal__hint">${t('wallet.recharge.any_amount')}</div>`;
             return _rechargeOptionWrapper(isSelected, index, inner);
         } else {
-            const inner = `<div style="font-size: 18px; font-weight: bold; color: ${isSelected ? '#4CAF50' : '#fff'}; margin-bottom: 5px;">${opt.points} ${t('wallet.recharge.points_suffix')}</div><div style="font-size: 12px; color: #888;">${t('wallet.recharge.price_prefix')}${opt.price.toFixed(2)}</div>`;
+            const inner = `<div class="wallet-recharge__option-title">${opt.points} ${t('wallet.recharge.points_suffix')}</div><div class="wallet-modal__hint">${t('wallet.recharge.price_prefix')}${opt.price.toFixed(2)}</div>`;
             return _rechargeOptionWrapper(isSelected, index, inner);
         }
     }).join("");
 
     container.innerHTML = `
-        <div style="margin-bottom: 20px; text-align: center;">
-            <div style="font-size: 14px; color: #aaa;">${t('wallet.recharge.current_balance')}</div>
-            <div style="font-size: 28px; font-weight: bold; color: #FF9800; margin-top: 5px;">${balanceText} <span style="font-size: 14px;">${t('wallet.recharge.points_suffix')}</span></div>
+        <div class="wallet-recharge__balance">
+            <div class="wallet-modal__muted">${t('wallet.recharge.current_balance')}</div>
+            <div class="wallet-recharge__balance-value">${balanceText} <span class="wallet-recharge__balance-unit">${t('wallet.recharge.points_suffix')}</span></div>
         </div>
         
-        <div style="margin-bottom: 15px;">
-            <label style="display: block; margin-bottom: 8px; font-weight: bold; color: #eee;">${t('wallet.recharge.select_amount')} <span style="color: #888; font-weight: normal;">${t('wallet.recharge.exchange_rate')}</span></label>
-            <div id="recharge-grid" style="display: flex; flex-wrap: wrap; gap: 10px;">
+        <div class="wallet-modal__field">
+            <label for="custom-amount" class="wallet-modal__label">${t('wallet.recharge.select_amount')} <span class="wallet-modal__muted">${t('wallet.recharge.exchange_rate')}</span></label>
+            <div id="recharge-grid" class="wallet-recharge__grid">
                 ${renderOptions()}
             </div>
-            <div id="custom-input-container" style="display: none; margin-top: 10px;">
-                <input type="number" id="custom-amount" placeholder="${t('wallet.recharge.custom_placeholder')}" min="1" max="10000" step="1" style="width: 100%; padding: 10px; background: #222; border: 1px solid #4CAF50; color: #fff; border-radius: 4px; box-sizing: border-box; text-align: center; font-size: 16px; font-weight: bold; outline: none;">
+            <div id="custom-input-container" class="wallet-recharge__custom" style="display: none;">
+                <input type="number" id="custom-amount" placeholder="${t('wallet.recharge.custom_placeholder')}" min="1" max="10000" step="1" class="wallet-modal__input wallet-recharge__custom-input">
             </div>
         </div>
 
-        <div style="margin-bottom: 20px;">
-            <label style="display: block; margin-bottom: 8px; font-weight: bold; color: #eee;">${t('wallet.recharge.payment_method')}</label>
-            <div style="display: flex; gap: 15px;">
-                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+        <div class="wallet-modal__field wallet-modal__field--last">
+            <div class="wallet-modal__label">${t('wallet.recharge.payment_method')}</div>
+            <div class="wallet-recharge__methods">
+                <label class="wallet-recharge__method">
                     <input type="radio" name="pay_method" value="alipay" checked>
-                    <span style="color: #00A1E9; font-weight: bold;">${t('wallet.recharge.alipay')}</span>
+                    <span class="wallet-recharge__method-name">${t('wallet.recharge.alipay')}</span>
                 </label>
-                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer;">
+                <label class="wallet-recharge__method">
                     <input type="radio" name="pay_method" value="wechat" disabled>
-                    <span style="color: #888; font-weight: bold;">${t('wallet.recharge.wechat')}</span>
+                    <span class="wallet-modal__muted">${t('wallet.recharge.wechat')}</span>
                 </label>
             </div>
         </div>
 
-        <div id="qr-container" style="display: none; text-align: center; margin-bottom: 20px; padding: 20px; background: #fff; border-radius: 8px;">
-            <div id="qr-loading" style="color: #666; font-size: 14px; margin-bottom: 10px;">${t('wallet.recharge.connecting')}</div>
-            <img id="qr-image" style="width: 180px; height: 180px; display: none; margin: 0 auto;">
-            <div style="color: #333; font-size: 13px; margin-top: 10px; font-weight: bold;">${t('wallet.recharge.scan_to_pay')} <span id="pay-price-text" style="color: #F44336;"></span> ${t('wallet.recharge.yuan')}</div>
-            <div style="color: #888; font-size: 11px; margin-top: 5px;">${t('wallet.recharge.auto_redirect')}</div>
+        <div id="qr-container" class="wallet-recharge__qr" style="display: none;">
+            <div id="qr-loading" class="wallet-recharge__qr-status">${t('wallet.recharge.connecting')}</div>
+            <img id="qr-image" class="wallet-recharge__qr-image" style="display: none;">
+            <div class="wallet-recharge__pay-label">${t('wallet.recharge.scan_to_pay')} <span id="pay-price-text" class="wallet-modal__danger"></span> ${t('wallet.recharge.yuan')}</div>
+            <div class="wallet-recharge__qr-hint">${t('wallet.recharge.auto_redirect')}</div>
         </div>
 
-        <button id="btn-create-order" style="width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 15px; box-shadow: 0 4px 10px rgba(76, 175, 80, 0.3);">${t('wallet.recharge.get_qr')}</button>
+        <button type="button" id="btn-create-order" class="wallet-modal__button wallet-modal__button--primary">${t('wallet.recharge.get_qr')}</button>
     `;
 
     const customInputContainer = container.querySelector("#custom-input-container");
@@ -131,6 +129,8 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
         container.querySelectorAll('.recharge-opt').forEach(el => {
             el.onclick = () => {
                 if (!scope.isCurrent() || submitting) return;
+                const restoreOptionFocus = document.activeElement === el;
+                const optionIndex = el.getAttribute('data-index');
                 selectedOption = rechargeOptions[parseInt(el.getAttribute('data-index'))];
                 container.querySelector('#recharge-grid').innerHTML = renderOptions();
                 
@@ -141,7 +141,13 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
                     customInputContainer.style.display = "none";
                     customAmountInput.value = ""; 
                 }
-                bindGridEvents(); 
+                bindGridEvents();
+                if (restoreOptionFocus && !selectedOption.isCustom && scope.isCurrent() && container.isConnected &&
+                        document.activeElement === document.body) {
+                    const replacement = Array.from(container.querySelectorAll('.recharge-opt'))
+                        .find(button => button.getAttribute('data-index') === optionIndex);
+                    replacement?.focus({ preventScroll: true });
+                }
             };
         });
     };

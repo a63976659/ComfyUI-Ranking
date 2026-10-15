@@ -18,8 +18,10 @@
 // 🌐 API 配置
 // ==========================================
 
-/** @type {{ BASE_URL: string, TIMEOUT: number, VIDEO_UPLOAD_TIMEOUT: number, VIDEO_UPLOAD_RESPONSE_MAX_CHARS: number, LOCAL_CACHE_STATS_TIMEOUT: number, LOCAL_CACHE_CLEAR_TIMEOUT: number, LOCAL_CACHE_RESPONSE_MAX_BYTES: number, MAX_RETRIES: number, RETRY_DELAY: number, LIST_RETRIES: number, SEARCH_TIMEOUT: number, SEARCH_RETRIES: number, PROFILE_RESOURCE_TIMEOUT: number, CREATOR_CHART_SCRIPT_URL: string, BACKGROUND_TIMEOUT: number, BANNER_IMAGE_TIMEOUT: number, BACKGROUND_RETRIES: number, WORKFLOW_DOWNLOAD_TIMEOUT: number, CLOUD_DOWN_COOLDOWN: number, SEARCH_COMPONENT_ID: string, IMAGE_PROXY_PATH: string, LOCAL_IMAGE_PROXY_PREFIX: string, COMPLETE_IMAGE_QUERY_SUFFIX: string, PRIVATE_GET_PATTERNS: RegExp[], PUBLIC_CONDITIONAL_GET_PATHS: string[], CONDITIONAL_ETAG_PATTERN: RegExp, ENDPOINT_ERROR_SCOPE_HEADER: string, ENDPOINT_ERROR_SCOPE_VALUE: string }} */
+/** @type {{ BASE_URL: string, TIMEOUT: number, VIDEO_UPLOAD_TIMEOUT: number, VIDEO_UPLOAD_RESPONSE_MAX_CHARS: number, LOCAL_CACHE_STATS_TIMEOUT: number, LOCAL_CACHE_CLEAR_TIMEOUT: number, LOCAL_CACHE_RESPONSE_MAX_BYTES: number, SSE_MAX_RESPONSE_BYTES: number, SSE_MAX_LINE_BYTES: number, SSE_MAX_LINES: number, SSE_YIELD_LINES: number, SSE_YIELD_BYTES: number, SSE_YIELD_CHUNKS: number, MAX_RETRIES: number, RETRY_DELAY: number, LIST_RETRIES: number, SEARCH_TIMEOUT: number, SEARCH_RETRIES: number, PROFILE_RESOURCE_TIMEOUT: number, CREATOR_CHART_SCRIPT_URL: string, BACKGROUND_TIMEOUT: number, BANNER_IMAGE_TIMEOUT: number, BACKGROUND_RETRIES: number, WORKFLOW_DOWNLOAD_TIMEOUT: number, CLOUD_DOWN_COOLDOWN: number, SEARCH_COMPONENT_ID: string, IMAGE_PROXY_PATH: string, PROFILE_MEDIA_URL_MAX_BYTES: number, LOCAL_IMAGE_PROXY_PREFIX: string, COMPLETE_IMAGE_QUERY_SUFFIX: string, PRIVATE_GET_PATTERNS: RegExp[], PUBLIC_CONDITIONAL_GET_PATHS: string[], CONDITIONAL_ETAG_PATTERN: RegExp, REQUEST_ID_HEADER: string, REQUEST_ID_PATTERN: RegExp, ENDPOINT_ERROR_SCOPE_HEADER: string, ENDPOINT_ERROR_SCOPE_VALUE: string }} */
 export const API = {
+    REQUEST_ID_HEADER: "X-Ranking-Request-Id",
+    REQUEST_ID_PATTERN: /^(?:[a-f0-9]{32}|ERR_[0-9]{10,13}_[a-f0-9]{1,8})$/,
     ENDPOINT_ERROR_SCOPE_HEADER: "X-Ranking-Error-Scope",
     ENDPOINT_ERROR_SCOPE_VALUE: "endpoint",
     // 仅公开榜单使用由正文派生的条件验证器，私有响应仍禁止留存。
@@ -36,6 +38,13 @@ export const API = {
     LOCAL_CACHE_STATS_TIMEOUT: 10000,
     LOCAL_CACHE_CLEAR_TIMEOUT: 60000,
     LOCAL_CACHE_RESPONSE_MAX_BYTES: 8192,
+    // 工作流终态编码上限为512 MiB，另保留64 MiB进度数据；行预算包含data前缀。
+    SSE_MAX_RESPONSE_BYTES: 576 * 1024 * 1024,
+    SSE_MAX_LINE_BYTES: 512 * 1024 * 1024,
+    SSE_MAX_LINES: 262144,
+    SSE_YIELD_LINES: 256,
+    SSE_YIELD_BYTES: 1024 * 1024,
+    SSE_YIELD_CHUNKS: 256,
 
     // GET 请求重试次数（实际尝试 MAX_RETRIES + 1 次）
     // 🔧 修复：此前本值为 3 且全库无人读取，真正的重试次数硬编码在 网络请求_基础设施.js 中为 2，
@@ -82,6 +91,7 @@ export const API = {
     SEARCH_COMPONENT_ID: "sidebar-search",
     // 上传相对路径的云端图片读取入口。
     IMAGE_PROXY_PATH: "/api/image_proxy",
+    PROFILE_MEDIA_URL_MAX_BYTES: 16384,
     // 本地广告预载要求真实图片，熔断占位图不能作为下载成功。
     LOCAL_IMAGE_PROXY_PREFIX: "/community_hub/image?url=",
     COMPLETE_IMAGE_QUERY_SUFFIX: "&require_complete=1",
@@ -94,7 +104,19 @@ export const API = {
 };
 
 
+export const CHART_LIFECYCLE = Object.freeze({
+    WIDTH_WAIT_TIMEOUT: 5000,
+    RESIZE_DELAY: 300
+});
+
 // 发布视频的本地读取预算，不改变云端上传额度。
+export const LAZY_IMAGES = Object.freeze({
+    ROOT_MARGIN: "200px 0px",
+    THRESHOLD: 0.01,
+    MOUNT_TIMEOUT: 30000,
+    READ_TIMEOUT: 30000
+});
+
 export const PUBLISH_MEDIA_LIMITS = Object.freeze({
     MAX_IMAGES: 9,
     IMAGE_MAX_EDGE: 1920,
@@ -298,6 +320,8 @@ export const UI = {
     },
     // Toast 消息配置
     TOAST: {
+        OFFSET: 50,
+        GAP: 10,
         DURATION: 3000,           // 显示时长（毫秒）
         MAX_VISIBLE: 3,           // 最大同时显示数量
         POSITION: "top-center"    // 位置
@@ -572,6 +596,78 @@ export function escapeHtml(str) {
               .replace(/'/g, "&#039;");
 }
 
+/** 资料图片只接受明确的图片表示或网络地址，不相对宿主解析业务路径。 */
+export function normalizeProfileImageUrl(value, unwrapProxy = false) {
+    if (typeof value !== 'string' || !value || value.trim() !== value || /[\u0000-\u001f\u007f]/.test(value)) return '';
+    let source = value;
+    let layers = 0;
+    while (source.startsWith(API.LOCAL_IMAGE_PROXY_PREFIX)) {
+        if (++layers > 10) return '';
+        let encoded = source.slice(API.LOCAL_IMAGE_PROXY_PREFIX.length);
+        if (encoded.endsWith(API.COMPLETE_IMAGE_QUERY_SUFFIX)) encoded = encoded.slice(0, -API.COMPLETE_IMAGE_QUERY_SUFFIX.length);
+        try { source = decodeURIComponent(encoded); } catch (_) { return ''; }
+        if (!source || source.trim() !== source || /[\u0000-\u001f\u007f]/.test(source)) return '';
+    }
+    if (!layers && /^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,.+$/i.test(source)) return value;
+    if (!layers && /^blob:https?:\/\//i.test(source)) {
+        try {
+            const blob = new URL(source);
+            if (typeof location !== 'undefined' && location.origin && blob.origin !== location.origin) return '';
+            return blob.origin === 'null' ? '' : value;
+        } catch (_) { return ''; }
+    }
+    if (!/^https?:\/\//i.test(source) || source.includes('\\')) return '';
+    try {
+        if (value.length > API.PROFILE_MEDIA_URL_MAX_BYTES
+            || encodeURIComponent(value).replace(/%[0-9a-f]{2}/gi, 'x').length > API.PROFILE_MEDIA_URL_MAX_BYTES) return '';
+        const url = new URL(source);
+        const authority = source.match(/^https?:\/\/([^/?#]*)/i)?.[1];
+        if (!authority || authority.includes('@') || authority.includes('%') || authority.endsWith(':') || url.port === '0') return '';
+        if (url.username || url.password) return '';
+        const host = url.hostname.toLowerCase().replace(/\.$/, '');
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(host)
+            && authority.replace(/:[0-9]+$/, '').replace(/\.$/, '').toLowerCase() !== host) return '';
+        const base = new URL(API.BASE_URL);
+        const baseHost = base.hostname.toLowerCase().replace(/\.$/, '');
+        if (host === baseHost) {
+            const expectedPath = base.pathname.replace(/\/$/, '') + API.IMAGE_PROXY_PATH;
+            const sourcePath = source.slice(source.indexOf('://') + 3 + authority.length).split(/[?#]/, 1)[0] || '/';
+            if (url.protocol !== base.protocol || url.port !== base.port || sourcePath !== expectedPath) return '';
+            return unwrapProxy ? source : value;
+        }
+        if (!host.startsWith('[') && !/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+            const labels = host.split('.');
+            if (host.length > 253 || labels.length < 2 || !labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
+                || /^(?:0x[0-9a-f]+|[0-9]+)$/i.test(labels.at(-1))) return '';
+        }
+        if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return '';
+        if (host.startsWith('[')) {
+            if (!/^\[[23][0-9a-f]{0,3}:/i.test(host)) return '';
+            const pieces = host.slice(1, -1).split('::');
+            const left = pieces[0] ? pieces[0].split(':').map(part => parseInt(part, 16)) : [];
+            const right = pieces[1] ? pieces[1].split(':').map(part => parseInt(part, 16)) : [];
+            const groups = pieces.length === 1 ? left : [...left, ...Array(8 - left.length - right.length).fill(0), ...right];
+            const [first, second, third] = groups;
+            if (first === 0x2002 || (first === 0x3fff && second < 0x1000) || (first === 0x2001 && second === 0xdb8)) return '';
+            if (first === 0x2001 && second < 0x200) {
+                const exception = (second === 1 && groups.slice(2, 7).every(part => part === 0) && [1, 2].includes(groups[7]))
+                    || second === 3 || (second === 4 && third === 0x112) || (second >= 0x20 && second <= 0x3f);
+                if (!exception) return '';
+            }
+        } else if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+            const rawHost = authority.replace(/:[0-9]+$/, '').replace(/\.$/, '').toLowerCase();
+            if (rawHost !== host) return '';
+            const [a,b,c,last] = host.split('.').map(Number);
+            if (a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b <= 127)
+                || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
+                || (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19))
+                || (a === 192 && b === 0 && ((c === 0 && ![9, 10].includes(last)) || c === 2))
+                || (a === 198 && b === 51 && c === 100) || (a === 203 && b === 0 && c === 113)) return '';
+        }
+        return unwrapProxy ? source : value;
+    } catch (_) { return ''; }
+}
+
 /** 统一字段映射：将后端 avatarDataUrl 映射为前端 avatar */
 function _mapAvatarField(profile) {
     if (profile && profile.avatarDataUrl && !profile.avatar) {
@@ -584,7 +680,8 @@ const PUBLIC_PROFILE_FIELDS = ["account", "name", "avatar", "avatarDataUrl", "in
     "receivedLikes", "receivedFavorites", "receivedUses"];
 function _publicProfile(profile) {
     return Object.fromEntries(PUBLIC_PROFILE_FIELDS.filter(key => Object.prototype.hasOwnProperty.call(profile, key))
-        .map(key => [key, profile[key]]));
+        .map(key => [key, ['avatar', 'avatarDataUrl', 'bannerUrl'].includes(key)
+            ? normalizeProfileImageUrl(profile[key]) : profile[key]]));
 }
 
 function _validProfile(profile) {
@@ -690,7 +787,7 @@ export function renderAvatarWithSWR(options) {
     
     // 从缓存获取
     const cached = getCachedProfile(account);
-    const avatar = cached?.avatar || cached?.avatarDataUrl || fallbackAvatar || '';
+    const avatar = cached?.avatar || cached?.avatarDataUrl || normalizeProfileImageUrl(fallbackAvatar);
     const name = cached?.name || fallbackName || account || '';
     
     // 后台静默校对并更新 DOM
@@ -771,3 +868,71 @@ export const PROMPT_LIMITS = Object.freeze({ MAX_PRICE: 10000 });
 
 // 任务定价边界，与云端 task_publication/task_terms 对应。
 export const TASK_LIMITS = Object.freeze({ MAX_PRICE: 2147483647, MAX_REFERENCE_IMAGES: 6, DEPOSIT_RATIOS: Object.freeze([10, 20, 30, 50]), TIP_AMOUNTS: Object.freeze([10, 50, 100, 500]) });
+
+
+export const TYPE_RULES = {
+    tool: {
+        recommendForm: false, resType: { selectable: ['link', 'netdisk'] },
+        privateRepoWhenLink: true, price: true, refund: true, originalRequired: true
+    },
+    skill: {
+        recommendForm: false, resType: { selectable: ['link', 'netdisk'] },
+        privateRepoWhenLink: true, price: true, refund: true, originalRequired: true
+    },
+    app: {
+        recommendForm: false, resType: { fixed: 'json' },
+        privateRepoWhenLink: true, price: true, refund: true, originalRequired: true
+    },
+    recommend: {
+        recommendForm: true, resType: { lockedByForm: true },
+        privateRepoWhenLink: false, price: false, refund: false, originalRequired: false,
+        formToResType: { recommend_tool: 'link', recommend_skill: 'link', recommend_app: 'json', recommend_link: 'netdisk' }
+    }
+};
+
+// 🔧 设置项 localStorage Key
+const SETTINGS_KEY = "ComfyCommunity_Settings";
+
+// 🔧 默认设置值
+const DEFAULT_SETTINGS = {
+    enableKeyboardShortcuts: false,
+    showCreatorBanner: true,  // 创作者卡片显示背景图
+    enableAnimations: true,   // ✨ 榜单切换动画
+    enableSoundEffects: true, // 🔊 动画音效
+    language: 'zh-CN',        // 🌐 界面语言
+    cacheExpireSeconds: 7200, // ⏱️ 缓存刷新间隔（秒），默认2小时
+    // 🚀 后续可扩展更多设置项
+    // compactMode: false,    // 紧凑模式
+    // darkMode: true,        // 深色模式
+};
+
+/**
+ * 📦 获取当前设置
+ */
+export function getSettings(options = {}) {
+    try {
+        const saved = localStorage.getItem(SETTINGS_KEY);
+        if (saved) {
+            const value = JSON.parse(saved);
+            if (options.strict && (!value || typeof value !== 'object' || Array.isArray(value))) throw new Error('Invalid settings');
+            return { ...DEFAULT_SETTINGS, ...value };
+        }
+    } catch (e) { if (options.strict) throw e; }
+    return { ...DEFAULT_SETTINGS };
+}
+
+/**
+ * 💾 保存设置
+ */
+export function areKeyboardShortcutsEnabled() {
+    return getSettings().enableKeyboardShortcuts === true;
+}
+
+export function saveSettings(settings) {
+    try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        // 🔔 广播设置变更事件，让其他组件响应
+        window.dispatchEvent(new CustomEvent("comfy-settings-changed", { detail: settings }));
+        return true;
+    } catch (e) { return false; }
+}

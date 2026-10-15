@@ -11,53 +11,15 @@
 import { showToast } from "./UI交互提示组件.js";
 import { setLanguage, getLanguage, t } from "./用户体验增强.js";
 import { clearAllCache } from "./性能优化工具.js";
-import { IS_WEB_MODE } from "../core/全局配置.js";
+import { IS_WEB_MODE, getSettings, saveSettings } from "../core/全局配置.js";
+export { getSettings, saveSettings };
 import { getDiskCacheStats, clearDiskCache } from './缓存管理请求.js';
-
-// 🔧 设置项 localStorage Key
-const SETTINGS_KEY = "ComfyCommunity_Settings";
-
-// 🔧 默认设置值
-const DEFAULT_SETTINGS = {
-    showCreatorBanner: true,  // 创作者卡片显示背景图
-    enableAnimations: true,   // ✨ 榜单切换动画
-    enableSoundEffects: true, // 🔊 动画音效
-    language: 'zh-CN',        // 🌐 界面语言
-    cacheExpireSeconds: 7200, // ⏱️ 缓存刷新间隔（秒），默认2小时
-    // 🚀 后续可扩展更多设置项
-    // compactMode: false,    // 紧凑模式
-    // darkMode: true,        // 深色模式
-};
 
 // 🌐 语言选项（双语显示）
 const LANGUAGE_OPTIONS = [
     { value: 'zh-CN', label: '简体中文 / Simplified Chinese' },
     { value: 'en-US', label: 'English / 英语' }
 ];
-
-/**
- * 📦 获取当前设置
- */
-export function getSettings() {
-    try {
-        const saved = localStorage.getItem(SETTINGS_KEY);
-        if (saved) {
-            return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
-        }
-    } catch (e) {}
-    return { ...DEFAULT_SETTINGS };
-}
-
-/**
- * 💾 保存设置
- */
-export function saveSettings(settings) {
-    try {
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-        // 🔔 广播设置变更事件，让其他组件响应
-        window.dispatchEvent(new CustomEvent("comfy-settings-changed", { detail: settings }));
-    } catch (e) {}
-}
 
 /**
  * 📊 格式化文件大小
@@ -98,290 +60,142 @@ function getBrowserCacheStats() {
  */
 export function createSettingsView() {
     const settings = getSettings();
-    
+
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex",
-        flexDirection: "column",
-        gap: "0",
-        color: "#ccc",
-        fontSize: "14px",
-        padding: "0",
-        overflowY: "auto",
-        flex: "1",
-        boxSizing: "border-box"
-    });
-    
-    // 添加开关样式
-    const styleSheet = document.createElement("style");
-    styleSheet.textContent = `
-        .setting-switch {
-            color: inherit;
-            appearance: none;
-            border: 0;
-            padding: 0;
-            position: relative;
-            width: 44px;
-            height: 24px;
-            background: #444;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: 0.3s;
-            flex-shrink: 0;
-        }
-        .setting-switch:focus-visible {
-            outline: 2px solid currentColor;
-            outline-offset: 3px;
-        }
-        .setting-switch.active {
-            background: #4CAF50;
-        }
-        .setting-switch::after {
-            content: '';
-            position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 20px;
-            height: 20px;
-            background: #fff;
-            border-radius: 50%;
-            transition: 0.3s;
-        }
-        .setting-switch.active::after {
-            left: 22px;
-        }
-        .setting-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 16px;
-            border-bottom: 1px solid var(--border-color, #333);
-            transition: background 0.2s;
-        }
-        .setting-item:hover {
-            background: rgba(255,255,255,0.03);
-        }
-        .setting-select {
-            background: var(--comfy-input-bg);
-            border: 1px solid #444;
-            color: #fff;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            cursor: pointer;
-            min-width: 200px;
-            outline: none;
-            transition: 0.2s;
-        }
-        .setting-select:hover {
-            border-color: #4CAF50;
-        }
-        .setting-select:focus {
-            border-color: #4CAF50;
-            box-shadow: 0 0 0 2px rgba(76,175,80,0.2);
-        }
-        .setting-select option {
-            background: var(--comfy-input-bg);
-            color: #fff;
-            padding: 8px;
-        }
-        .setting-number-input {
-            background: var(--comfy-input-bg);
-            border: 1px solid #444;
-            color: #fff;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            width: 80px;
-            outline: none;
-            transition: 0.2s;
-            text-align: center;
-        }
-        .setting-number-input:hover {
-            border-color: #4CAF50;
-        }
-        .setting-number-input:focus {
-            border-color: #4CAF50;
-            box-shadow: 0 0 0 2px rgba(76,175,80,0.2);
-        }
-        .setting-number-input::-webkit-inner-spin-button,
-        .setting-number-input::-webkit-outer-spin-button {
-            opacity: 0;
-            width: 0;
-        }
-        .setting-range-slider {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 100%;
-            height: 6px;
-            border-radius: 3px;
-            background: linear-gradient(to right, #4CAF50 0%, #333 0%);
-            outline: none;
-            cursor: pointer;
-        }
-        .setting-range-slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            appearance: none;
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            background: #4CAF50;
-            cursor: pointer;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.4);
-            transition: transform 0.15s;
-        }
-        .setting-range-slider::-webkit-slider-thumb:hover {
-            transform: scale(1.2);
-        }
-        .setting-range-slider::-moz-range-thumb {
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            background: #4CAF50;
-            cursor: pointer;
-            border: none;
-        }
-        .cache-clear-btn {
-            flex: 1;
-            min-width: 120px;
-            background: rgba(156, 39, 176, 0.15);
-            border: 1px solid #9C27B0;
-            color: #ccc;
-            padding: 8px 14px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            transition: 0.2s;
-        }
-        .cache-clear-btn:hover:not(:disabled) {
-            background: rgba(156, 39, 176, 0.3);
-            color: #fff;
-        }
-        .cache-clear-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-    `;
-    document.head.appendChild(styleSheet);
-    
+    container.className = "ranking-settings";
+
     container.innerHTML = `
         <!-- 顶部标题栏 -->
-        <div style="display: flex; align-items: center; gap: 10px; padding: 15px; border-bottom: 1px solid #444; background: #1a1a1a;">
-            <!-- 🚀 返回按钮位置可调整参数：margin-left 控制右移，margin-top 控制下移 -->
-            <button id="btn-back-settings" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
+        <header class="ranking-settings__header">
+            <button type="button" class="ranking-settings__back" id="btn-back-settings" >
                 ⬅ ${t('common.back')}
             </button>
-            <span style="font-size: 16px; font-weight: bold; color: #fff;">⚙️ ${t('settings.title')}</span>
-        </div>
-        
+            <h1 class="ranking-settings__title">⚙️ ${t('settings.title')}</h1>
+        </header>
+
         <!-- 设置内容区域 -->
-        <div style="padding: 0; flex: 1;">
-            
+        <div class="ranking-settings__body" >
+
             <!-- 分类：通用设置 -->
-            <div style="padding: 16px 16px 10px; color: #2196F3; font-size: 13px; font-weight: bold; border-bottom: 1px solid var(--border-color, #333); background: rgba(33,150,243,0.05);">
+            <h2 class="ranking-settings__heading-general">
                 🌐 ${t('settings.general')}
-            </div>
-            
+            </h2>
+
             <!-- 设置项：界面语言 -->
             <div class="setting-item">
-                <div style="flex: 1;">
-                    <div id="label-language" style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.language')} / Language</div>
-                    <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.language_desc')} / Select display language</div>
+                <div class="ranking-settings__copy" >
+                    <div class="ranking-settings__label" id="label-language" >${t('settings.language')} / Language</div>
+                    <div class="ranking-settings__description" >${t('settings.language_desc')} / Select display language</div>
                 </div>
                 <select aria-labelledby="label-language" id="select-language" class="setting-select">
-                    ${LANGUAGE_OPTIONS.map(opt => 
+                    ${LANGUAGE_OPTIONS.map(opt =>
                         `<option value="${opt.value}" ${(settings.language || 'zh-CN') === opt.value ? 'selected' : ''}>${opt.label}</option>`
                     ).join('')}
                 </select>
             </div>
-            
+
+            <section class="setting-shortcuts" aria-labelledby="heading-shortcuts">
+                <h2 id="heading-shortcuts" class="setting-shortcuts__heading">⌨️ ${t('settings.shortcuts')}</h2>
+                <div class="setting-item">
+                    <div class="setting-shortcuts__copy">
+                        <div id="label-keyboard-shortcuts" class="setting-shortcuts__label">${t('settings.keyboard_combinations')}</div>
+                        <p id="desc-keyboard-shortcuts" class="setting-shortcuts__desc">${t('settings.keyboard_combinations_desc')}</p>
+                    </div>
+                    <button type="button" role="switch" id="switch-keyboard-shortcuts" aria-labelledby="label-keyboard-shortcuts" aria-describedby="desc-keyboard-shortcuts" class="setting-switch ${settings.enableKeyboardShortcuts === true ? 'active' : ''}"></button>
+                </div>
+                <dl class="setting-shortcuts__list">
+                    ${[[t('settings.shortcuts_tab_keys'), t('settings.shortcuts_controls')], [t('settings.shortcuts_activate_keys'), t('settings.shortcuts_activate')], [t('settings.shortcuts_arrows'), t('settings.shortcuts_tabs')], [t('settings.shortcuts_image_keys'), t('settings.shortcuts_images')], [t('settings.shortcuts_escape_key'), t('settings.shortcuts_escape')]].map(([keys, description]) => `<div class="setting-shortcuts__entry"><dt><kbd>${keys}</kbd></dt><dd>${description}</dd></div>`).join('')}
+                </dl>
+                <p class="setting-shortcuts__note">${t('settings.shortcuts_scope')}</p>
+            </section>
+
             <!-- 分类：显示偏好 -->
-            <div style="padding: 16px 16px 10px; color: #4CAF50; font-size: 13px; font-weight: bold; border-bottom: 1px solid var(--border-color, #333); background: rgba(76,175,80,0.05); margin-top: 20px;">
+            <h2 class="ranking-settings__heading-display">
                 📐 ${t('settings.display')}
-            </div>
-            
+            </h2>
+
             <!-- 设置项：创作者卡片背景图 -->
             <div class="setting-item">
-                <div style="flex: 1;">
-                    <div id="label-creator-banner" style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.creator_banner')}</div>
-                    <div id="desc-creator-banner" style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.creator_banner_desc')}</div>
+                <div class="ranking-settings__copy" >
+                    <div class="ranking-settings__label" id="label-creator-banner" >${t('settings.creator_banner')}</div>
+                    <div class="ranking-settings__description" id="desc-creator-banner" >${t('settings.creator_banner_desc')}</div>
                 </div>
                 <button type="button" role="switch" id="switch-creator-banner" aria-labelledby="label-creator-banner" aria-describedby="desc-creator-banner" class="setting-switch ${settings.showCreatorBanner ? 'active' : ''}"></button>
             </div>
-            
+
             <!-- 分类：更多功能 -->
-            <div style="padding: 16px 16px 10px; color: #FF9800; font-size: 13px; font-weight: bold; border-bottom: 1px solid var(--border-color, #333); background: rgba(255,152,0,0.05); margin-top: 20px;">
+            <h2 class="ranking-settings__heading-animation">
                 ✨ ${t('settings.animation')}
-            </div>
-            
+            </h2>
+
             <!-- 设置项：榜单切换动画 -->
             <div class="setting-item">
-                <div style="flex: 1;">
-                    <div id="label-animations" style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.animations')}</div>
-                    <div id="desc-animations" style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.animations_desc')}</div>
+                <div class="ranking-settings__copy" >
+                    <div class="ranking-settings__label" id="label-animations" >${t('settings.animations')}</div>
+                    <div class="ranking-settings__description" id="desc-animations" >${t('settings.animations_desc')}</div>
                 </div>
                 <button type="button" role="switch" id="switch-animations" aria-labelledby="label-animations" aria-describedby="desc-animations" class="setting-switch ${settings.enableAnimations ? 'active' : ''}"></button>
             </div>
-            
+
             <!-- 设置项：动画音效 -->
             <div class="setting-item">
-                <div style="flex: 1;">
-                    <div id="label-sound-effects" style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.sound')}</div>
-                    <div id="desc-sound-effects" style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.sound_desc')}</div>
+                <div class="ranking-settings__copy" >
+                    <div class="ranking-settings__label" id="label-sound-effects" >${t('settings.sound')}</div>
+                    <div class="ranking-settings__description" id="desc-sound-effects" >${t('settings.sound_desc')}</div>
                 </div>
                 <button type="button" role="switch" id="switch-sound-effects" aria-labelledby="label-sound-effects" aria-describedby="desc-sound-effects" class="setting-switch ${settings.enableSoundEffects ? 'active' : ''}"></button>
             </div>
-            
+
             <!-- 分类：数据与缓存 -->
-            <div style="padding: 16px 16px 10px; color: #9C27B0; font-size: 13px; font-weight: bold; border-bottom: 1px solid var(--border-color, #333); background: rgba(156,39,176,0.05); margin-top: 20px;">
+            <h2 class="ranking-settings__heading-cache">
                 ${t('settings.data_cache')}
-            </div>
-            
+            </h2>
+
             <!-- 设置项：缓存刷新间隔（滑条） -->
-            <div class="setting-item" style="flex-direction: column; align-items: flex-start; gap: 12px;">
-                <div style="flex: 1; width: 100%;">
-                    <div id="label-cache-expire" style="color: #fff; font-size: 14px; margin-bottom: 4px; font-weight: 500;">${t('settings.cache_expire')}</div>
-                    <div style="color: #888; font-size: 12px; line-height: 1.4;">${t('settings.cache_expire_desc')}</div>
+            <div class="ranking-settings__stack setting-item" >
+                <div class="ranking-settings__copy-wide" >
+                    <div class="ranking-settings__label" id="label-cache-expire" >${t('settings.cache_expire')}</div>
+                    <div class="ranking-settings__description" >${t('settings.cache_expire_desc')}</div>
                 </div>
-                <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
-                    <div style="display: flex; align-items: center; gap: 12px; width: 100%;">
-                        <input aria-labelledby="label-cache-expire" type="range" id="slider-cache-expire" class="setting-range-slider"
+                <div class="ranking-settings__controls" >
+                    <div class="ranking-settings__range-row" >
+                        <input aria-labelledby="label-cache-expire" type="range" id="slider-cache-expire" class="ranking-settings__copy setting-range-slider"
                             value="${settings.cacheExpireSeconds || 7200}"
                             min="60" max="86400" step="60"
-                            style="flex: 1;">
+                            >
                         <input aria-labelledby="label-cache-expire" type="number" id="input-cache-expire" class="setting-number-input"
                             value="${settings.cacheExpireSeconds || 7200}"
                             min="60" max="86400" step="60">
-                        <span id="cache-expire-label" style="color: #4CAF50; font-size: 12px; min-width: 55px; white-space: nowrap;"></span>
+                        <span class="ranking-settings__time" id="cache-expire-label" ></span>
                     </div>
-                    <div style="color: #666; font-size: 11px; line-height: 1.5; padding: 8px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 2px solid #9C27B0;">
+                    <div class="ranking-settings__hint" >
                         💡 ${t('settings.cache_trigger_desc')}
                     </div>
                 </div>
             </div>
-            
+
             <!-- 设置项：缓存统计与清理 -->
-            <div class="setting-item" style="flex-direction: column; align-items: flex-start; gap: 12px;">
-                <div style="flex: 1; width: 100%;">
-                    <div style="color: #fff; font-size: 14px; margin-bottom: 2px; font-weight: 500;">${t('settings.cache_stats')}</div>
-                    <div style="color: #999; font-size: 12px; line-height: 1.4;">${t('settings.cache_stats_hint')}</div>
+            <div class="ranking-settings__stack setting-item" >
+                <div class="ranking-settings__copy-wide" >
+                    <div class="ranking-settings__stats-label" >${t('settings.cache_stats')}</div>
+                    <div class="ranking-settings__stats-hint" >${t('settings.cache_stats_hint')}</div>
                 </div>
-                <div id="cache-stats-panel" style="width: 100%; display: flex; flex-direction: column; gap: 6px;">
-                    <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #888; font-size: 13px;">
+                <div class="ranking-settings__stats" id="cache-stats-panel" >
+                    <div class="ranking-settings__stat-muted" >
                         ${t('settings.no_cache')}
                     </div>
                 </div>
-                <div style="display: flex; gap: 10px; width: 100%; flex-wrap: wrap;">
-                    <button id="btn-clear-browser-cache" class="cache-clear-btn">${t('settings.clear_browser_cache')}</button>
-                    ${IS_WEB_MODE ? '' : `<button id="btn-clear-disk-cache" class="cache-clear-btn">${t('settings.clear_disk_cache')}</button>
-                    <button id="btn-clear-all-cache" class="cache-clear-btn">${t('settings.clear_all_cache')}</button>`}
+                <div class="ranking-settings__actions" >
+                    <button type="button" id="btn-clear-browser-cache" class="cache-clear-btn">${t('settings.clear_browser_cache')}</button>
+                    ${IS_WEB_MODE ? '' : `<button type="button" id="btn-clear-disk-cache" class="cache-clear-btn">${t('settings.clear_disk_cache')}</button>
+                    <button type="button" id="btn-clear-all-cache" class="cache-clear-btn">${t('settings.clear_all_cache')}</button>`}
                 </div>
             </div>
-            
+
             <!-- 动画预览提示 -->
-            <div style="padding: 16px; background: rgba(33, 150, 243, 0.05); border-radius: 8px; margin: 16px; border: 1px dashed var(--border-color, #333);">
-                <div style="color: #2196F3; font-size: 12px; font-weight: bold; margin-bottom: 8px;">🎨 ${t('settings.animation_preview')}</div>
-                <div style="color: #888; font-size: 11px; line-height: 1.5;">
+            <div class="ranking-settings__preview" >
+                <div class="ranking-settings__preview-title" >🎨 ${t('settings.animation_preview')}</div>
+                <div class="ranking-settings__preview-copy" >
                     • ${t('settings.anim_cascade')}<br>
                     • ${t('settings.anim_fan')}<br>
                     • ${t('settings.anim_abyss')}<br>
@@ -389,20 +203,20 @@ export function createSettingsView() {
                 </div>
             </div>
         </div>
-        
+
         <!-- 底部信息 -->
-        <div style="padding: 15px; border-top: 1px solid var(--border-color, #333); background: #1a1a1a; text-align: center;">
-            <div style="color: #666; font-size: 11px;">${t('settings.auto_save')}</div>
+        <div class="ranking-settings__footer" >
+            <div class="ranking-settings__footer-copy" >${t('settings.auto_save')}</div>
         </div>
     `;
-    
+
     // 🔌 绑定事件
-    
+
     // 返回按钮
     container.querySelector("#btn-back-settings").onclick = () => {
         window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
-    
+
     /**
      * 通用开关绑定辅助函数
      * @param {string} selector - querySelector 选择器
@@ -414,12 +228,27 @@ export function createSettingsView() {
         const switchEl = container.querySelector(selector);
         switchEl.setAttribute("aria-checked", String(switchEl.classList.contains("active")));
         switchEl.onclick = () => {
-            const newValue = !switchEl.classList.contains("active");
+            if (settingKey === 'enableKeyboardShortcuts' && (cacheViewDisposed || !container.isConnected)) return;
+            let currentSettings;
+            try { currentSettings = getSettings(settingKey === 'enableKeyboardShortcuts' ? { strict: true } : undefined); }
+            catch { showToast(t('common.error'), 'error'); return; }
+            const previousValue = switchEl.classList.contains("active");
+            const newValue = !previousValue;
             switchEl.classList.toggle("active", newValue);
             switchEl.setAttribute("aria-checked", String(newValue));
-            const currentSettings = getSettings();
             currentSettings[settingKey] = newValue;
-            saveSettings(currentSettings);
+            const saved = saveSettings(currentSettings);
+            let confirmed = saved === true;
+            if (settingKey === 'enableKeyboardShortcuts') {
+                try { confirmed = confirmed && getSettings({ strict: true }).enableKeyboardShortcuts === newValue; }
+                catch { confirmed = false; }
+            }
+            if (settingKey === 'enableKeyboardShortcuts' && !confirmed) {
+                switchEl.classList.toggle('active', previousValue);
+                switchEl.setAttribute('aria-checked', String(previousValue));
+                showToast(t('common.error'), 'error');
+                return;
+            }
             showToast(
                 newValue
                     ? `${iconOn} ${t(labelKey)} ${t('settings.enabled')}`
@@ -428,7 +257,7 @@ export function createSettingsView() {
             );
         };
     }
-    
+
     // 🌐 下拉控制：界面语言
     const selectLanguage = container.querySelector("#select-language");
     let languageTimer = null;
@@ -440,18 +269,18 @@ export function createSettingsView() {
         const generation = ++languageGeneration;
         clearTimeout(languageTimer);
         languageTimer = null;
-        
+
         const currentSettings = getSettings();
         currentSettings.language = newLang;
         saveSettings(currentSettings);
-        
+
         // 同步到 i18n 模块
         setLanguage(newLang);
         if (cacheViewDisposed || generation !== languageGeneration || !container.isConnected) return;
-        
+
         const langName = LANGUAGE_OPTIONS.find(opt => opt.value === newLang)?.label || newLang;
         showToast(`🌐 ${t('settings.language_changed')} ${langName.split(' / ')[0]}`, "success");
-        
+
         languageTimer = setTimeout(() => {
             languageTimer = null;
             if (cacheViewDisposed || generation !== languageGeneration || !container.isConnected) return;
@@ -471,17 +300,18 @@ export function createSettingsView() {
             }
         }, 100);
     };
-    
+
     // 🎛️ 开关控制：创作者背景图 / 榜单切换动画 / 动画音效
+    _bindSwitchHandler("#switch-keyboard-shortcuts", "enableKeyboardShortcuts", "settings.keyboard_combinations");
     _bindSwitchHandler("#switch-creator-banner", "showCreatorBanner", "settings.creator_banner", "✅");
     _bindSwitchHandler("#switch-animations",     "enableAnimations",  "settings.animations",     "✨");
     _bindSwitchHandler("#switch-sound-effects",  "enableSoundEffects", "settings.sound",         "🔊");
-    
+
     // ⏱️ 滑条+输入框联动：缓存刷新间隔
     const inputCacheExpire = container.querySelector("#input-cache-expire");
     const sliderCacheExpire = container.querySelector("#slider-cache-expire");
     const cacheExpireLabel = container.querySelector("#cache-expire-label");
-    
+
     // 格式化时间显示
     function formatCacheTime(seconds) {
         if (seconds >= 3600) {
@@ -491,14 +321,14 @@ export function createSettingsView() {
         }
         return `${Math.floor(seconds / 60)}min`;
     }
-    
+
     // 更新滑条渐变背景
     function updateSliderTrack() {
         const val = sliderCacheExpire.value;
         const pct = ((val - 60) / (86400 - 60)) * 100;
-        sliderCacheExpire.style.background = `linear-gradient(to right, #4CAF50 ${pct}%, #333 ${pct}%)`;
+        sliderCacheExpire.style.setProperty("--settings-range-progress", `${pct}%`);
     }
-    
+
     // 保存设置
     function saveCacheExpire(newValue) {
         const currentSettings = getSettings();
@@ -507,11 +337,11 @@ export function createSettingsView() {
         cacheExpireLabel.textContent = formatCacheTime(newValue);
         updateSliderTrack();
     }
-    
+
     // 初始化显示
     cacheExpireLabel.textContent = formatCacheTime(parseInt(inputCacheExpire.value));
     updateSliderTrack();
-    
+
     // 滑条拖动 → 同步输入框 + 保存
     sliderCacheExpire.oninput = () => {
         const val = parseInt(sliderCacheExpire.value);
@@ -523,7 +353,7 @@ export function createSettingsView() {
         saveCacheExpire(parseInt(sliderCacheExpire.value));
         showToast(`⏱️ ${t('settings.cache_expire')}: ${formatCacheTime(parseInt(sliderCacheExpire.value))}`, "success");
     };
-    
+
     // 输入框修改 → 同步滑条 + 保存
     inputCacheExpire.onchange = () => {
         let newValue = parseInt(inputCacheExpire.value);
@@ -534,7 +364,7 @@ export function createSettingsView() {
         saveCacheExpire(newValue);
         showToast(`⏱️ ${t('settings.cache_expire')}: ${formatCacheTime(newValue)}`, "success");
     };
-    
+
     // 📊 缓存统计面板
     const cacheStatsPanel = container.querySelector("#cache-stats-panel");
     cacheStatsPanel.setAttribute('role', 'status');
@@ -546,6 +376,7 @@ export function createSettingsView() {
     container._cleanup = () => {
         if (cacheViewDisposed) return;
         cacheViewDisposed = true;
+        container.querySelector("#switch-keyboard-shortcuts").onclick = null;
         languageGeneration++;
         clearTimeout(languageTimer);
         languageTimer = null;
@@ -553,7 +384,7 @@ export function createSettingsView() {
         statsController?.abort();
         statsController = null;
     };
-    
+
     async function loadCacheStats() {
         const generation = ++statsGeneration;
         statsController?.abort();
@@ -569,8 +400,8 @@ export function createSettingsView() {
                 return;
             }
             cacheStatsPanel.innerHTML = `
-                <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #aaa; font-size: 13px;">
-                    <span style="color: #ccc;">${t('settings.cache_browser')}：</span>${browserStats.count} ${t('settings.files')} · ${formatSize(browserStats.totalSize)}
+                <div class="ranking-settings__stat" >
+                    <span class="ranking-settings__stat-title" >${t('settings.cache_browser')}：</span>${browserStats.count} ${t('settings.files')} · ${formatSize(browserStats.totalSize)}
                 </div>
             `;
             lastStatsHTML = cacheStatsPanel.innerHTML;
@@ -583,42 +414,42 @@ export function createSettingsView() {
             ]);
             if (generation !== statsGeneration || cacheViewDisposed || !container.isConnected) return;
             if (!browserStats.available) throw new Error('cache_stats_unavailable');
-            
+
             const imageCount = diskRes.image_count;
             const imageSize = diskRes.image_size;
             const videoCount = diskRes.video_count;
             const videoSize = diskRes.video_size;
             const browserCount = browserStats.count;
             const browserSize = browserStats.totalSize;
-            
+
             const hasAnyCache = imageCount > 0 || videoCount > 0 || browserCount > 0;
-            
+
             if (!hasAnyCache) {
                 cacheStatsPanel.innerHTML = `
-                    <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #888; font-size: 13px;">
+                    <div class="ranking-settings__stat-muted" >
                         ${t('settings.no_cache')}
                     </div>
                 `;
                 lastStatsHTML = cacheStatsPanel.innerHTML;
                 return;
             }
-            
+
             cacheStatsPanel.innerHTML = `
-                <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #aaa; font-size: 13px;">
-                    <span style="color: #ccc;">${t('settings.cache_disk_images')}：</span>${imageCount} ${t('settings.files')} · ${formatSize(imageSize)}
+                <div class="ranking-settings__stat" >
+                    <span class="ranking-settings__stat-title" >${t('settings.cache_disk_images')}：</span>${imageCount} ${t('settings.files')} · ${formatSize(imageSize)}
                 </div>
-                <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #aaa; font-size: 13px;">
-                    <span style="color: #ccc;">${t('settings.cache_disk_videos')}：</span>${videoCount} ${t('settings.files')} · ${formatSize(videoSize)}
+                <div class="ranking-settings__stat" >
+                    <span class="ranking-settings__stat-title" >${t('settings.cache_disk_videos')}：</span>${videoCount} ${t('settings.files')} · ${formatSize(videoSize)}
                 </div>
-                <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #aaa; font-size: 13px;">
-                    <span style="color: #ccc;">${t('settings.cache_browser')}：</span>${browserCount} ${t('settings.files')} · ${formatSize(browserSize)}
+                <div class="ranking-settings__stat" >
+                    <span class="ranking-settings__stat-title" >${t('settings.cache_browser')}：</span>${browserCount} ${t('settings.files')} · ${formatSize(browserSize)}
                 </div>
             `;
             lastStatsHTML = cacheStatsPanel.innerHTML;
         } catch (e) {
             if (generation !== statsGeneration || cacheViewDisposed || !container.isConnected) return;
             cacheStatsPanel.innerHTML = `
-                <div style="padding: 10px 12px; background: rgba(0,0,0,0.2); border-radius: 4px; border-left: 3px solid #9C27B0; color: #888; font-size: 13px;">
+                <div class="ranking-settings__stat-muted" >
                     ${lastStatsHTML === null ? t('settings.cache_stats_unavailable') : t('settings.cache_stats_stale')}
                 </div>
             ` + (lastStatsHTML || '');
@@ -626,21 +457,21 @@ export function createSettingsView() {
             if (statsController === controller) statsController = null;
         }
     }
-    
+
     // 🧹 缓存清理按钮
     const btnClearBrowser = container.querySelector("#btn-clear-browser-cache");
     const btnClearDisk = container.querySelector("#btn-clear-disk-cache");
     const btnClearAll = container.querySelector("#btn-clear-all-cache");
     const clearButtons = [btnClearBrowser, btnClearDisk, btnClearAll].filter(Boolean);
     let clearingCache = false;
-    
+
     async function handleClearCache(btn, action) {
         if (clearingCache || cacheViewDisposed || !container.isConnected) return;
         clearingCache = true;
         const originalText = btn.textContent;
         btn.textContent = t('settings.cache_clearing');
         clearButtons.forEach(button => { button.disabled = true; button.setAttribute('aria-busy', 'true'); });
-        
+
         try {
             if (action === 'browser' || action === 'all') {
                 if (!clearAllCache()) throw new Error('cache_operation_unconfirmed');
@@ -661,14 +492,14 @@ export function createSettingsView() {
             clearButtons.forEach(button => { button.disabled = false; button.removeAttribute('aria-busy'); });
         }
     }
-    
+
     btnClearBrowser.onclick = () => handleClearCache(btnClearBrowser, 'browser');
     if (btnClearDisk) btnClearDisk.onclick = () => handleClearCache(btnClearDisk, 'disk');
     if (btnClearAll) btnClearAll.onclick = () => handleClearCache(btnClearAll, 'all');
-    
+
     // 进入设置页时自动加载缓存统计
     loadCacheStats();
-    
+
     return container;
 }
 

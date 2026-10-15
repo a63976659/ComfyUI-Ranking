@@ -51,16 +51,16 @@ async function renderRefundButton(container, itemData, currentUser, scope, purch
             const hoursLeft = Number(statusRes.refund_hours_left);
             if (!Number.isFinite(hoursLeft) || hoursLeft < 0) throw new Error("Invalid refund hours");
             refundArea.innerHTML = `
-                <div style="margin-top: 12px; padding: 12px; background: rgba(255,152,0,0.1); border: 1px dashed #FF9800; border-radius: 6px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-                        <div style="font-size: 12px; color: #FF9800;">
+                <div class="resource-detail__refund-panel">
+                    <div class="resource-detail__refund-header">
+                        <div class="resource-detail__refund-copy">
                             🔄 ${t('item.regret_mode')}${t('item.hours_left', { hours: hoursLeft.toFixed(1) })}
                         </div>
-                        <button id="btn-refund" style="background: #FF5722; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">
+                        <button type="button" id="btn-refund" class="resource-detail__button resource-detail__button--warning">
                             💸 ${t('item.apply_refund')}
                         </button>
                     </div>
-                    <div style="font-size: 11px; color: #888; margin-top: 8px;">
+                    <div class="resource-detail__refund-warning">
                         ⚠️ ${t('item.refund_warning')}
                     </div>
                 </div>
@@ -71,7 +71,7 @@ async function renderRefundButton(container, itemData, currentUser, scope, purch
             };
         } else {
             refundArea.innerHTML = `
-                <div style="margin-top: 12px; padding: 10px; background: rgba(76,175,80,0.1); border: 1px solid rgba(76,175,80,0.3); border-radius: 6px; font-size: 12px; color: #4CAF50;">
+                <div class="resource-detail__refund-expired">
                     ✅ ${t('item.refund_expired')}
                 </div>
             `;
@@ -121,12 +121,7 @@ export function createItemDetailView(itemData, currentUser) {
     itemData = proxyImages(itemData);
     
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex", flexDirection: "column", gap: "15px", color: "#ccc", 
-        // 🔧 自适应高度：flex 填充剩余空间，内容超出时在容器内部滚动（与主界面保持一致）
-        fontSize: "14px", padding: "15px", overflowY: "auto", flex: "1", minHeight: "0", boxSizing: "border-box",
-        backgroundColor: "#13151c" 
-    });
+    container.className = "resource-page";
 
     const cachedAuthor = getCachedProfile(itemData.author);
     const authorName = cachedAuthor?.name || itemData.author || t('common.unknown_user');
@@ -138,34 +133,32 @@ export function createItemDetailView(itemData, currentUser) {
     // 🗑️ 判断是否有权限删除
     const showDeleteBtn = canDeleteItem(itemData, currentUser);
     const deleteBtnHtml = showDeleteBtn ? `
-        <button id="btn-delete-item" style="background: #F44336; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(244,67,54,0.3); transition: 0.2s; margin-left: 10px;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">🗑️ ${t('common.delete')}</button>
+        <button type="button" id="btn-delete-item" class="resource-detail__button resource-detail__button--danger">🗑️ ${t('common.delete')}</button>
     ` : '';
 
     let authorInfoHtml = `
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <div class="resource-page__author">
             <div>
                 <strong>${t('item.author')}：</strong> <span id="detail-author-name">${escapeHtml(authorName)}</span>
                 <!-- 原创标识 -->
                 ${itemData.is_original ? `
-                <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; 
-                            background: linear-gradient(135deg, #FF6B35, #FF8F00); border-radius: 12px; 
-                            font-size: 11px; color: #fff; font-weight: 500; margin-left: 8px;">
+                <div class="resource-detail__badge resource-detail__badge--original">
                     🎨 ${t('item.original_notice')}
                 </div>
                 ` : ''}
             </div>
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <button id="btn-tip-item" style="background: #E91E63; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; box-shadow: 0 2px 4px rgba(233,30,99,0.3); transition: 0.2s;" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=1">💰 ${t('item.tip_encourage')}</button>
+            <div class="resource-page__actions">
+                <button type="button" id="btn-tip-item" class="resource-detail__button resource-detail__button--tip">💰 ${t('item.tip_encourage')}</button>
                 ${deleteBtnHtml}
             </div>
         </div>
-        <div style="margin-top: 10px; color: #888;">${escapeHtml(t('item.sponsor_thanks'))}</div>
+        <div class="resource-page__thanks">${escapeHtml(t('item.sponsor_thanks'))}</div>
             
         <!-- 🔄 P7后悔模式：退款区域 -->
-        <div id="refund-area"></div>
+        <div id="refund-area" class="resource-page__refund"></div>
             
-        <div style="margin-top: 15px; border-top: 1px dashed #333; padding-top: 15px;">
-            <div style="font-size: 13px; font-weight: bold; color: #E91E63; margin-bottom: 10px;">💖 ${t('item.tip_board_title')}</div>
+        <div class="resource-page__tips">
+            <div class="resource-detail__heading">💖 ${t('item.tip_board_title')}</div>
             ${boardHtml}
         </div>
     `;
@@ -193,24 +186,23 @@ export function createItemDetailView(itemData, currentUser) {
         actionBtnHtml = `<button type="button" id="btn-use-item" class="resource-install__button resource-install__entry" data-install-state="ready">⬇️ ${t('item.get_now')} <span class="resource-install__price">${isFree ? t('item.free') : escapeHtml(itemData.price) + ' ' + t('common.credits')}</span></button>`;
     }
 
-    // 🚀 返回按钮位置可调整参数：margin-left 控制右移，margin-top 控制下移
     container.innerHTML = `
-        <button id="btn-back-detail" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); margin-bottom: 15px; width: fit-content; transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
+        <button type="button" id="btn-back-detail" class="resource-detail__button resource-page__back">
             ⬅ ${t('common.back')}
         </button>
 
-        <div style="background: #181b28; border: 1px solid #2d334a; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); margin-bottom: 15px;">
-            <div style="font-size: 16px; font-weight: bold; color: #00bcd4; margin-bottom: 15px; display: flex; align-items: center; gap: 8px;">
+        <div class="resource-page__section">
+            <div class="resource-page__heading">
                 ⚙️ ${t('item.detail_info')}
             </div>
-            <div style="color: #ddd; line-height: 1.8; font-size: 13px; white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(itemData.fullDesc || itemData.shortDesc)}</div>
+            <div class="resource-page__description">${escapeHtml(itemData.fullDesc || itemData.shortDesc)}</div>
         </div>
 
-        <div style="background: #181b28; border: 1px solid #2d334a; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
-            <div style="font-size: 16px; font-weight: bold; color: #4CAF50; margin-bottom: 15px; display: flex; align-items: center; gap: 8px;">
+        <div class="resource-page__section">
+            <div class="resource-page__heading">
                 🎉 ${t('item.other_info')}
             </div>
-            <div style="color: #eee; line-height: 1.6; font-size: 14px;">
+            <div class="resource-page__info">
                 ${authorInfoHtml}
             </div>
         </div>
@@ -231,7 +223,8 @@ export function createItemDetailView(itemData, currentUser) {
     // 🚀 创建安装状态容器
     const inlineStatusBox = document.createElement("div");
     inlineStatusBox.id = "inline-status-box";
-    Object.assign(inlineStatusBox.style, { display: "none", marginTop: "15px", padding: "12px", background: "var(--comfy-menu-bg)", borderRadius: "6px", border: "1px solid var(--border-color, #333)", fontSize: "13px" });
+    inlineStatusBox.className = "resource-detail__status resource-install__status";
+    inlineStatusBox.style.display = "none";
     container.appendChild(inlineStatusBox);
     if (!localVersionStatus.available) {
         inlineStatusBox.style.display = "block";

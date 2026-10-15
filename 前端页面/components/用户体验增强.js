@@ -10,6 +10,8 @@
 //   - 用户体验_国际化.js (i18n 翻译字典)
 // ==========================================
 
+import { areKeyboardShortcutsEnabled } from '../core/全局配置.js';
+
 import { t, initI18n } from './用户体验_国际化.js';
 
 
@@ -231,7 +233,7 @@ export function registerShortcut(key, handler, options = {}) {
         if (event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
                 && event.key !== 'Escape') return;
         const combo = `${event.ctrlKey || event.metaKey ? 'Ctrl+' : ''}${event.altKey ? 'Alt+' : ''}${event.shiftKey ? 'Shift+' : ''}${event.key}`;
-        if (combo !== key) return;
+        if (combo !== key || ((event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) && !areKeyboardShortcutsEnabled())) return;
         if (preventDefault) event.preventDefault();
         event.stopPropagation();
         handler(event);

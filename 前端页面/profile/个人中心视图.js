@@ -12,7 +12,7 @@ import { openRechargeModal } from "../market/资金与钱包_充值组件.js";
 import { openWithdrawModal } from "../market/资金与钱包_提现组件.js";
 import { buildProfileHTML } from "./个人中心_UI模板.js";
 import { openTipModal } from "./个人中心_赞赏组件.js";
-import { getBannerCacheKey, getCurrentAccount, IS_WEB_MODE, CACHE, UI, API, getCachedProfile, setCachedProfile } from "../core/全局配置.js";
+import { getBannerCacheKey, getCurrentAccount, IS_WEB_MODE, CACHE, UI, API, getCachedProfile, setCachedProfile, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { logoutAndClearUserData, eventBus, EVENTS } from "../core/状态管理.js";
 
 
@@ -33,16 +33,14 @@ function sessionStorages() {
 // ==========================================
 // 作用：当本地无缓存但云端有背景图时，下载并缓存到本地
 async function syncBannerCache(account, bannerUrl, scope, apply) {
-    if (!bannerUrl || !scope.isCurrent() || safeGet(getBannerCacheKey(account))) return;
+    const source = normalizeProfileImageUrl(bannerUrl, true);
+    if (!/^https?:\/\//i.test(source) || !scope.isCurrent()
+        || normalizeProfileImageUrl(safeGet(getBannerCacheKey(account)))) return;
     const controller = new AbortController();
     const release = scope.addCleanup(() => controller.abort());
     const timer = setTimeout(() => controller.abort(), API.BACKGROUND_TIMEOUT);
     try {
-        let fetchUrl;
-        const url = new URL(bannerUrl, window.location.href);
-        if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return;
-        fetchUrl = !IS_WEB_MODE && url.origin !== window.location.origin
-            ? `/community_hub/image?url=${encodeURIComponent(url.href)}` : url.href;
+        const fetchUrl = IS_WEB_MODE ? source : API.LOCAL_IMAGE_PROXY_PREFIX + encodeURIComponent(source);
         const response = await fetch(fetchUrl, { signal: controller.signal });
         if (!response.ok || !scope.isCurrent()) return;
         const blob = await response.blob();
@@ -85,12 +83,7 @@ function _setupTabButton(container, selector, tabId, onSwitch) {
 
 export function showUserProfile(initialUserData, currentUser = null, isMe = true) {
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex", flexDirection: "column", gap: "15px", color: "#eee",
-        // 🔧 自适应高度：flex 填充剩余空间，内容超出时在容器内部滚动（与主界面保持一致）
-        fontSize: "14px", padding: "15px", flex: "1", minHeight: "0", boxSizing: "border-box", overflowY: "auto",
-        background: "var(--comfy-menu-bg)"
-    });
+    container.className = "profile-view";
 
     let isSettingsView = false;
     let activeTab = safeGet(`Profile_ActiveTab_${isMe}`) || "published";

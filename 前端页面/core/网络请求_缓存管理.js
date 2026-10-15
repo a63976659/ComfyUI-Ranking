@@ -31,6 +31,7 @@ let lastStorageBudgetSweepAt = 0;
 // 内存缓存（最快）
 const memoryCache = new Map();
 const memoryCacheOrder = []; // LRU 顺序追踪
+const memoryOnlyEntries = new WeakSet();
 
 /**
  * 生成完整缓存键（带前缀）
@@ -118,6 +119,7 @@ export function setCache(key, value, ttl = DEFAULT_TTL, persist = true, metadata
     const fk = _fullKey(key);
     const expireAt = Date.now() + ttl;
     const cacheData = { schemaVersion: CACHE_SCHEMA_VERSION, value, expireAt, lastAccessAt: Date.now() };
+    memoryOnlyEntries.add(cacheData);
     if (typeof metadata?.etag === "string" && API.CONDITIONAL_ETAG_PATTERN.test(metadata.etag)) cacheData.etag = metadata.etag;
     
     // 内存缓存
@@ -127,7 +129,17 @@ export function setCache(key, value, ttl = DEFAULT_TTL, persist = true, metadata
     
     // 持久化缓存
     if (persist) {
-        const jsonStr = JSON.stringify(cacheData);
+        let jsonStr;
+        try {
+            jsonStr = JSON.stringify(cacheData);
+        } catch {
+            console.warn('缓存无法序列化，保留内存缓存');
+            return;
+        }
+        if ((fk.length + jsonStr.length) * 2 > MAX_STORAGE_BYTES) {
+            console.warn('缓存条目超过持久化预算，保留内存缓存');
+            return;
+        }
         let previousBytes = 0;
         let previousLengthKnown = false;
         try {
@@ -136,6 +148,7 @@ export function setCache(key, value, ttl = DEFAULT_TTL, persist = true, metadata
             previousLengthKnown = true;
         } catch {}
         if (_safeStorageWrite(fk, jsonStr)) {
+            memoryOnlyEntries.delete(cacheData);
             if (storageUsageBytes !== null && previousLengthKnown) {
                 storageUsageBytes += (fk.length + jsonStr.length) * 2 - previousBytes;
             } else {
@@ -181,6 +194,7 @@ export function getCache(key) {
                 // 回填内存缓存
                 memoryCache.set(fk, cached);
                 _updateLRU(fk);
+                _enforceCacheLimit();
                 _touchStorageEntry(fk, cached);
                 return cached.value;
             }
@@ -235,6 +249,7 @@ export function getCacheWithMeta(key, ignoreExpiry = false) {
                 // 回填内存缓存
                 memoryCache.set(fk, cached);
                 _updateLRU(fk);
+                _enforceCacheLimit();
                 _touchStorageEntry(fk, cached);
                 return { value: cached.value, expired, found: true, ...(typeof cached.etag === "string" && API.CONDITIONAL_ETAG_PATTERN.test(cached.etag) ? { etag: cached.etag } : {}) };
             }
@@ -283,10 +298,11 @@ export function getCacheKeysByPrefix(prefix) {
 }
 
 function _touchStorageEntry(key, cached) {
+    if (memoryOnlyEntries.has(cached)) return;
     try {
-        if (localStorage.getItem(key) === null) return;
         const now = Date.now();
         if (Number.isFinite(cached.lastAccessAt) && now - cached.lastAccessAt < 60_000) return;
+        if (localStorage.getItem(key) === null) return;
         cached.lastAccessAt = now;
         localStorage.setItem(key, JSON.stringify(cached));
     } catch {}
@@ -378,7 +394,12 @@ export function removeCache(key) {
  */
 export function removeCacheByPrefix(prefix) {
     if (!prefix) return 0;
-    const candidates = prefix.startsWith(CACHE_PREFIX) ? [prefix] : [_fullKey(prefix), prefix];
+    return _removeCacheByPrefixes([prefix]);
+}
+
+function _removeCacheByPrefixes(prefixes) {
+    const candidates = [...new Set(prefixes.flatMap(prefix =>
+        prefix.startsWith(CACHE_PREFIX) ? [prefix] : [_fullKey(prefix), prefix]))];
     const isMatch = (key) => candidates.some(p => key.startsWith(p));
     const removed = new Set();
 
@@ -458,8 +479,11 @@ function _cleanExpiredStorage(aggressive = false) {
                     // 激进模式：清除所有缓存项
                     keysToRemove.push(key);
                 } else {
+                    let stored;
+                    try { stored = localStorage.getItem(key); } catch { continue; }
+                    if (stored === null) continue;
                     try {
-                        const cached = JSON.parse(localStorage.getItem(key));
+                        const cached = JSON.parse(stored);
                         if (cached.expireAt < now) {
                             keysToRemove.push(key);
                         }
@@ -480,24 +504,29 @@ function _cleanExpiredStorage(aggressive = false) {
 function _evictOldestStorage() {
     try {
         const entries = [];
+        const invalidKeys = [];
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
             if (_isManagedStorageKey(key)) {
+                let stored;
+                try { stored = localStorage.getItem(key); } catch { continue; }
+                if (stored === null) continue;
                 try {
-                    const cached = JSON.parse(localStorage.getItem(key));
+                    const cached = JSON.parse(stored);
                     if (!_isValidCacheEntry(cached)) {
-                        localStorage.removeItem(key);
+                        invalidKeys.push(key);
                         continue;
                     }
                     const writtenAt = Number.isFinite(cached.expireAt) ? cached.expireAt - DEFAULT_TTL : 0;
                     entries.push({ key, lastAccessAt: Number.isFinite(cached.lastAccessAt) ? cached.lastAccessAt : writtenAt });
                 } catch {
-                    localStorage.removeItem(key);
+                    invalidKeys.push(key);
                 }
             }
         }
         
-        if (entries.length === 0) return false;
+        invalidKeys.forEach(key => localStorage.removeItem(key));
+        if (entries.length === 0) return invalidKeys.length > 0;
         
         entries.sort((a, b) => a.lastAccessAt - b.lastAccessAt);
         
@@ -686,11 +715,8 @@ export function invalidateRelatedCache(endpoint, method = null) {
     // 🔧 同时修复：原实现无条件给 pattern 补 CACHE.PREFIX，使上方映射表中的裸键前缀
     // （ComfyCommunity_ProfileCache_，SWR 头像缓存直接写 localStorage、不带前缀）被拼成
     // ComfyRanking_ComfyCommunity_ProfileCache_，永远匹配不到，改头像/昵称后该缓存清不掉。
-    // 现统一走 removeCacheByPrefix：两级缓存一起清，且兼容带前缀与裸键两种键空间。
-    let cleared = 0;
-    for (const pattern of patterns) {
-        cleared += removeCacheByPrefix(pattern);
-    }
+    // 复用两级前缀删除逻辑；同次失效合并为一次存储遍历，兼容带前缀与裸键。
+    const cleared = _removeCacheByPrefixes(patterns);
     
     if (cleared > 0) {
         console.log(`🗑️ 精确清除缓存: ${cleared} 个项`);

@@ -11,7 +11,7 @@
 
 import { api, proxyImages, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
+import { getCoverSandboxHTML, setupImageSandboxEvents, cleanupImageSandbox } from "../components/图片沙盒组件.js";
 import { getVideoPlayerHTML, setupVideoPlayerEvents, cleanupVideoPlayer } from "../components/视频播放器组件.js";
 import { renderTipLevelHTML } from "../components/打赏等级工具.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
@@ -24,6 +24,8 @@ import { createRatingStars, isValidRatingResponse } from "../social/评论与互
 
 import { getUser, eventBus, EVENTS } from "../core/状态管理.js";
 import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
+
+import { isConfirmedDedicatedCommentResponse, isDefiniteCommentRejection } from "../social/评论数据工具.js";
 
 const viewContexts = new WeakMap();
 let postViewSequence = 0;
@@ -48,10 +50,10 @@ function _generateAvatarHtml(avatar, name, size, extraStyle = '') {
     const initial = (name || 'U')[0].toUpperCase();
     // 🔒 XSS防护：avatar / name 均来自他人可修改的资料（昵称首字母可能是 < ），写入 HTML 前必须转义
     if (avatar) {
-        return `<img class="swr-avatar" src="${escapeHtml(avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; ${extraStyle}">`;
+        return `<img alt="" class="swr-avatar post-detail-avatar ${extraStyle === 'border: 2px solid #444;' ? 'post-detail-avatar--border' : extraStyle === 'background: var(--comfy-input-bg);' ? 'post-detail-avatar--panel' : ''}" src="${escapeHtml(avatar)}" style="width: ${size}px; height: ${size}px; ${['border: 2px solid #444;', 'background: var(--comfy-input-bg);'].includes(extraStyle) ? '' : extraStyle}">`;
     }
     const fontSize = Math.max(9, Math.round(size * 0.4));
-    return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${escapeHtml(initial)}</div>`;
+    return `<div class="swr-avatar post-detail-avatar ${extraStyle === 'border: 2px solid #444;' ? 'post-detail-avatar--border' : extraStyle === 'background: var(--comfy-input-bg);' ? 'post-detail-avatar--panel' : ''}" style="width: ${size}px; height: ${size}px; font-size: ${fontSize}px; font-weight: bold;">${escapeHtml(initial)}</div>`;
 }
 
 /**
@@ -66,7 +68,7 @@ function _updateAvatarElement(avatarEl, profile, size, extraStyle = '') {
     if (avatarEl.tagName === 'IMG') {
         avatarEl.src = profile.avatar;
     } else {
-        avatarEl.outerHTML = `<img class="swr-avatar" src="${escapeHtml(profile.avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; ${extraStyle}">`;
+        avatarEl.outerHTML = `<img alt="" class="swr-avatar post-detail-avatar ${extraStyle === 'border: 2px solid #444;' ? 'post-detail-avatar--border' : extraStyle === 'background: var(--comfy-input-bg);' ? 'post-detail-avatar--panel' : ''}" src="${escapeHtml(profile.avatar)}" style="width: ${size}px; height: ${size}px; ${['border: 2px solid #444;', 'background: var(--comfy-input-bg);'].includes(extraStyle) ? '' : extraStyle}">`;
     }
 }
 
@@ -75,31 +77,21 @@ function _updateAvatarElement(avatarEl, profile, size, extraStyle = '') {
  */
 export function createPostDetailView(postId, currentUser) {
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex",
-        flexDirection: "column",
-        gap: "0",
-        color: "#ccc",
-        fontSize: "14px",
-        padding: "0",
-        overflowY: "auto",
-        flex: "1",
-        boxSizing: "border-box"
-    });
+    container.className = "discussion-detail";
     
     container.innerHTML = `
         <!-- 顶部标题栏 -->
-        <div style="display: flex; align-items: center; gap: 10px; padding: 15px; border-bottom: 1px solid #444; background: #1a1a1a;">
-            <button id="btn-back-detail" style="margin-left: 15px; margin-top: 15px; background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); transition: 0.2s;" onmouseover="this.style.background='#4CAF50'; this.style.borderColor='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'; this.style.borderColor='rgba(85,85,85,0.8)'">
+        <div class="post-detail__header">
+            <button type="button" id="btn-back-detail" class="post-detail__back">
                 ⬅ ${t('common.back')}
             </button>
-            <span style="font-size: 16px; font-weight: bold; color: #fff;">${t('post.detail_title')}</span>
+            <span class="post-detail__heading">${t('post.detail_title')}</span>
         </div>
         
         <!-- 内容区域 -->
-        <div id="post-content" style="flex: 1; overflow-y: auto; padding: 15px;">
-            <div style="text-align: center; padding: 60px; color: #888;">
-                <div style="font-size: 24px; margin-bottom: 10px;">⏳</div>
+        <div id="post-content" class="post-detail__body">
+            <div class="post-detail__loading" role="status">
+                <div class="post-detail__icon">⏳</div>
                 ${t('post.loading')}
             </div>
         </div>
@@ -123,6 +115,7 @@ export function createPostDetailView(postId, currentUser) {
     viewContexts.set(container, context); viewContexts.set(contentArea, context);
     const handleRouteBack = () => scope.dispose();
     scope.addCleanup(() => {
+        cleanupImageSandbox(contentArea);
         cleanupVideoPlayer(contentArea);
         contentArea.querySelectorAll('audio').forEach(audio => { audio.pause(); audio.removeAttribute('src'); audio.load(); });
         contentArea.replaceChildren(); observer?.disconnect();
@@ -158,6 +151,7 @@ async function loadPostDetail(container, postId, currentUser) {
     
     // 先清理旧的视频播放器全局事件（如果存在）
     if (contentArea) {
+        cleanupImageSandbox(contentArea);
         cleanupVideoPlayer(contentArea);
     }
     
@@ -182,8 +176,8 @@ async function loadPostDetail(container, postId, currentUser) {
     
     if (!post) {
         contentArea.innerHTML = `
-            <div style="text-align: center; padding: 60px; color: #F44336;">
-                <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
+            <div class="post-detail__error" role="alert">
+                <div class="post-detail__icon">⚠️</div>
                 ${t('post.not_exist')}
             </div>
         `;
@@ -209,92 +203,89 @@ async function loadPostDetail(container, postId, currentUser) {
     
     contentArea.innerHTML = `
             <!-- 图片展示区 -->
-            <div id="images-area" style="margin-bottom: 15px;">
+            <div id="images-area" class="post-detail__media">
                 ${mediaHTML}
             </div>
             
             <!-- 标题 -->
-            <div style="font-size: 18px; font-weight: bold; color: #fff; margin-bottom: 8px; line-height: 1.4;">
+            <div class="post-detail__title">
                 ${escapeHtml(post.title)}
             </div>
             
             <!-- 原创标识 -->
             ${post.is_original ? `
-            <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; 
-                        background: linear-gradient(135deg, #FF6B35, #FF8F00); border-radius: 12px; 
-                        font-size: 11px; color: #fff; font-weight: 500; margin-bottom: 12px;">
+            <div class="post-detail__original">
                 🎨 ${t('publish.original_no_commercial')}
             </div>
             ` : ''}
             
             <!-- 作者信息（SWR 缓存头像） -->
-            <div id="author-row" style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; padding: 10px; background: #1a1a1a; border-radius: 8px; cursor: pointer;">
-                <div class="swr-avatar-container" style="width: 40px; height: 40px;"></div>
-                <div style="flex: 1;">
-                    <div class="swr-name" style="font-size: 14px; font-weight: 500; color: #fff;">${escapeHtml(post.author_name || post.author)}</div>
-                    <div style="font-size: 11px; color: #888;">${formatTime(post.created_at)}</div>
-                </div>
+            <div class="post-detail__author post-detail-author-row">
+                <button type="button" id="author-row" class="post-detail-author-button"><div class="post-detail__avatar-slot swr-avatar-container"></div>
+                <div class="post-detail__identity">
+                    <div class="post-detail__name swr-name">${escapeHtml(post.author_name || post.author)}</div>
+                    <div class="post-detail__timestamp">${formatTime(post.created_at)}</div>
+                </div></button>
                 ${currentUser && currentUser.account === post.author ? `
-                <div style="display: flex; gap: 8px;" onclick="event.stopPropagation()">
-                    ${IS_WEB_MODE ? '' : `<button id="btn-edit-post" style="background: #2196F3; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="${t('common.edit')}">✏️</button>`}
-                    <button id="btn-delete-post" style="background: #F44336; border: none; color: #fff; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;" title="${t('common.delete')}">🗑️</button>
+                <div onclick="event.stopPropagation()" class="post-detail__owner-actions">
+                    ${IS_WEB_MODE ? '' : `<button type="button" id="btn-edit-post" aria-label="${t('common.edit')}" title="${t('common.edit')}" class="post-detail__edit">✏️</button>`}
+                    <button type="button" id="btn-delete-post" aria-label="${t('common.delete')}" title="${t('common.delete')}" class="post-detail__delete">🗑️</button>
                 </div>
                 ` : ''}
             </div>
             
             <!-- 正文内容 -->
-            <div style="font-size: 14px; color: #ddd; line-height: 1.8; margin-bottom: 20px; white-space: pre-wrap; word-wrap: break-word;">
-                ${escapeHtml(post.content)}
-            </div>
+            <div class="post-detail__content">${escapeHtml(post.content)}</div>
             
             <!-- 互动按钮栏 -->
-            <div id="interaction-bar" style="display: flex; align-items: center; gap: 15px; padding: 15px 0; border-top: 1px solid var(--border-color, #333); border-bottom: 1px solid var(--border-color, #333);">
-                <button id="btn-like" style="background: ${isLiked ? '#FF5722' : 'var(--comfy-input-bg)'}; border: 1px solid ${isLiked ? '#FF5722' : '#555'}; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+            <div id="interaction-bar" class="post-detail__interactions">
+                <button type="button" id="btn-like" aria-label="${t('market.like')}" aria-pressed="${isLiked}" class="post-detail-toggle">
                     ❤️ <span id="like-count">${post.likes || 0}</span>
                 </button>
-                <button id="btn-favorite" style="background: ${isFavorited ? '#FFC107' : 'var(--comfy-input-bg)'}; border: 1px solid ${isFavorited ? '#FFC107' : '#555'}; color: ${isFavorited ? '#000' : '#fff'}; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+                <button type="button" id="btn-favorite" aria-label="${t('market.favorite')}" aria-pressed="${isFavorited}" class="post-detail-toggle">
                     🔖 <span id="favorite-count">${post.favorites || 0}</span>
                 </button>
-                <button id="btn-tip" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 6px; transition: 0.2s;">
+                <button type="button" id="btn-tip" class="post-detail__tip">
                     ${t('post.tip_author')}
                 </button>
                 <!-- 👀 浏览量统计（纯展示） -->
-                <div style="display: flex; align-items: center; gap: 12px; margin-left: auto; color: #888; font-size: 13px;">
-                    <span style="display: flex; align-items: center; gap: 4px;">🔥 <span id="post-view-total">${post.views || 0}</span></span>
-                    <span style="display: flex; align-items: center; gap: 4px;">📅 <span id="post-view-daily">${post.daily_views || 0}</span></span>
+                <div class="post-detail__stats">
+                    <span class="post-detail__stat">🔥 <span id="post-view-total">${post.views || 0}</span></span>
+                    <span class="post-detail__stat">📅 <span id="post-view-daily">${post.daily_views || 0}</span></span>
                 </div>
             </div>
             
             <!-- 评分区域 -->
-            <div id="rating-section" style="padding: 12px 0; border-bottom: 1px solid var(--border-color, #333); margin-bottom: 15px;"></div>
+            <div id="rating-section" class="post-detail__rating"></div>
             
             <!-- 打赏榜单 -->
-            <div id="tip-board-area" style="margin-bottom: 15px;">
+            <div id="tip-board-area" class="post-detail__media">
                 ${renderTipBoard(post.tip_board || [])}
             </div>
             
             <!-- 评论区 -->
-            <div style="font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                ${t('post.comments_title')} <span style="color: #888; font-weight: normal;">(${post.comments || 0})</span>
+            <div class="post-detail__comments-heading">
+                ${t('post.comments_title')} <span class="post-detail__comments-count">(${post.comments || 0})</span>
             </div>
             
             <!-- 评论输入框 -->
-            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                <input type="text" id="comment-input" placeholder="${t('post.comment_placeholder')}" style="flex: 1; padding: 10px 12px; background: var(--comfy-input-bg); border: 1px solid #444; border-radius: 20px; color: #fff; font-size: 13px; outline: none;" onfocus="this.style.borderColor='#4CAF50'" onblur="this.style.borderColor='#444'">
-                <button id="btn-send-comment" style="background: #4CAF50; border: none; color: #fff; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: bold; transition: 0.2s;" onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'">
+            <div class="post-detail__comment-composer">
+                <input type="text" id="comment-input" required aria-label="${escapeHtml(t('post.comment_placeholder'))}" placeholder="${t('post.comment_placeholder')}" class="post-detail__comment-input">
+                <button type="button" id="btn-send-comment" class="post-detail__comment-send">
                     ${t('common.send')}
                 </button>
             </div>
             
             <!-- 评论列表 -->
-            <div id="comments-list" style="display: flex; flex-direction: column; gap: 10px;">
-                <div style="text-align: center; padding: 20px; color: #888; font-size: 12px;">
+            <div id="comments-list" class="post-detail__comments-list">
+                <div class="post-detail__comments-loading" role="status">
                     ${t('post.comment_loading')}
                 </div>
             </div>
         `;
         
         // 设置图片沙盒事件（视频帖无沙盒元素，函数会安全返回）
+        contentArea.querySelectorAll("#images-area button:not([type])").forEach(button => { button.type = "button"; });
         setupImageSandboxEvents(contentArea);
         
         // 视频播放器事件绑定
@@ -489,19 +480,19 @@ async function showTipDialog(post, currentUser, container) {
     }
 
     const content = document.createElement("div");
-    content.style.color = "#ccc";
+    content.className = "discussion-modal";
     content.innerHTML = `
-        <div style="margin-bottom: 12px; background: rgba(255,152,0,0.1); padding: 10px; border-radius: 4px; border: 1px solid #FF9800; text-align: center;">
-            ${t('wallet.current_balance')}: <strong style="color:#FF9800;">${balance}</strong> ${t('wallet.credits')}
+        <div class="post-detail__balance">
+            ${t('wallet.current_balance')}: <strong class="post-detail__balance-value">${balance}</strong> ${t('wallet.credits')}
         </div>
-        <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 15px;">
-            <button class="tip-amount" data-amount="10" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">10 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="50" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">50 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="100" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">100 ${t('task.points')}</button>
-            <button class="tip-amount" data-amount="500" style="background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px 20px; border-radius: 6px; cursor: pointer;">500 ${t('task.points')}</button>
+        <div class="post-detail__tip-options">
+            <button type="button" class="post-detail__tip-amount tip-amount" data-amount="10">10 ${t('task.points')}</button>
+            <button type="button" class="post-detail__tip-amount tip-amount" data-amount="50">50 ${t('task.points')}</button>
+            <button type="button" class="post-detail__tip-amount tip-amount" data-amount="100">100 ${t('task.points')}</button>
+            <button type="button" class="post-detail__tip-amount tip-amount" data-amount="500">500 ${t('task.points')}</button>
         </div>
-        <div style="display: flex; gap: 10px;">
-            <button id="tip-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
+        <div class="post-detail__modal-actions">
+            <button type="button" id="tip-cancel" class="post-detail__modal-cancel">${t('common.cancel')}</button>
         </div>
     `;
 
@@ -550,6 +541,13 @@ async function loadComments(container, postId, currentUser) {
     const sendBtn = container.querySelector("#btn-send-comment");
     if (!isCurrent(container)) return;
     const context = viewContexts.get(container);
+    const account = typeof currentUser === "string" ? currentUser : currentUser?.account;
+    let submission = context.commentSubmission;
+    if (!submission || submission.input !== commentInput || submission.button !== sendBtn || submission.account !== account) {
+        submission = context.commentSubmission = { input: commentInput, button: sendBtn, account, phase: "idle", bound: false };
+    }
+    const submissionCurrent = () => isCurrent(container) && context.commentSubmission === submission
+        && commentInput.isConnected && sendBtn.isConnected;
     const generation = context.commentGeneration = (context.commentGeneration || 0) + 1;
     const current = () => isCurrent(container) && context.commentGeneration === generation && commentsList.isConnected;
 
@@ -563,7 +561,7 @@ async function loadComments(container, postId, currentUser) {
 
         if (comments.length === 0) {
             commentsList.innerHTML = `
-                <div style="text-align: center; padding: 30px; color: #666; font-size: 13px;">
+                <div class="post-detail__comments-empty">
                     ${t('post.no_comments')}
                 </div>
             `;
@@ -577,13 +575,13 @@ async function loadComments(container, postId, currentUser) {
                 const avatarHtml = _generateAvatarHtml(avatar, name, 24, 'background: var(--comfy-input-bg);');
 
                 return `
-                    <div id="comment-${idx}" data-account="${escapeHtml(c.author)}" style="background: #1a1a1a; padding: 12px; border-radius: 8px;">
-                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <div id="comment-${idx}" data-account="${escapeHtml(c.author)}" class="post-detail__comment">
+                        <div class="post-detail__comment-author">
                             <div class="swr-avatar-container">${avatarHtml}</div>
-                            <span class="swr-name" style="font-size: 13px; color: #fff; font-weight: 500;">${escapeHtml(name)}</span>
-                            <span style="font-size: 11px; color: #888; margin-left: auto;">${formatTime(c.created_at)}</span>
+                            <span class="post-detail__comment-name swr-name">${escapeHtml(name)}</span>
+                            <span class="post-detail__comment-time">${formatTime(c.created_at)}</span>
                         </div>
-                        <div style="font-size: 13px; color: #ddd; line-height: 1.5; padding-left: 32px;">
+                        <div class="post-detail__comment-content">
                             ${escapeHtml(c.content)}
                         </div>
                     </div>
@@ -607,45 +605,71 @@ async function loadComments(container, postId, currentUser) {
     } catch (err) {
         if (!current()) return;
         commentsList.innerHTML = `
-            <div style="text-align: center; padding: 20px; color: #F44336; font-size: 12px;">
+            <div class="post-detail__comments-error" role="alert">
                 ${t('post.comment_load_failed')}
             </div>
         `;
     }
 
-    // 发送评论
+    if (submission.bound || !submissionCurrent()) return;
+    submission.bound = true;
+    sendBtn.disabled = false;
+    commentInput.readOnly = false;
+    sendBtn.removeAttribute("aria-busy");
+    commentInput.oninput = () => {
+        if (submissionCurrent()) commentInput.removeAttribute("aria-invalid");
+    };
     sendBtn.onclick = async () => {
-        if (!isCurrent(container) || !sendBtn.isConnected || sendBtn.disabled) return;
-        if (!currentUser) {
+        if (!submissionCurrent() || submission.phase !== "idle") return;
+        if (typeof account !== "string" || !account.trim()) {
             showToast(t('auth.login_required'), "warning");
             return;
         }
-        const content = commentInput.value.trim();
+        const originalInput = commentInput.value, content = originalInput.trim();
         if (!content) {
+            commentInput.setAttribute("aria-invalid", "true");
+            commentInput.focus();
             showToast(t('post.comment_required'), "warning");
             return;
         }
+        commentInput.removeAttribute("aria-invalid");
+        submission.phase = "submitting";
+        sendBtn.disabled = true;
+        sendBtn.setAttribute("aria-busy", "true");
+        sendBtn.textContent = t('common.sending');
         try {
-            sendBtn.disabled = true;
-            sendBtn.textContent = t('common.sending');
             const result = await api.addPostComment(postId, content);
-            if (!isCurrent(container) || !sendBtn.isConnected) return;
-            if (result?.status !== "success") throw new Error();
-            if (commentInput.value.trim() === content) commentInput.value = "";
+            if (!submissionCurrent()) return;
+            if (!isConfirmedDedicatedCommentResponse(result, account, content)) throw new Error("Unconfirmed comment");
+            submission.phase = "committed";
+            if (commentInput.value === originalInput) commentInput.value = "";
             showToast(t('post.comment_success'), "success");
-            loadComments(container, postId, currentUser);
+            await loadComments(container, postId, currentUser);
+            if (submissionCurrent()) submission.phase = "idle";
         } catch (err) {
-            if (isCurrent(container) && sendBtn.isConnected) showToast(t('post.comment_failed'), "error");
+            if (!submissionCurrent()) return;
+            if (submission.phase === "committed") {
+                try { showToast(t('social.comment_refresh_required'), "warning"); } catch (_) {}
+                return;
+            }
+            const rejected = isDefiniteCommentRejection(err);
+            submission.phase = rejected ? "idle" : "unconfirmed";
+            showToast(t(rejected ? 'post.comment_failed' : 'social.comment_unconfirmed'), rejected ? "error" : "warning");
         } finally {
-            if (!isCurrent(container) || !sendBtn.isConnected) return;
-            sendBtn.disabled = false;
-            sendBtn.textContent = t('common.send');
+            if (!submissionCurrent()) return;
+            sendBtn.disabled = submission.phase !== "idle";
+            commentInput.readOnly = submission.phase !== "idle";
+            sendBtn.removeAttribute("aria-busy");
+            sendBtn.textContent = t(submission.phase === "unconfirmed" ? 'social.comment_pending' : 'common.send');
         }
     };
 
     // 回车发送
     commentInput.onkeydown = (e) => {
-        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        if (isCurrent(container) && !e.defaultPrevented && e.key === "Enter"
+            && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey
+            && !e.isComposing && e.keyCode !== 229 && !e.repeat
+            && !commentInput.disabled && !commentInput.readOnly) {
             e.preventDefault();
             sendBtn.click();
         }
@@ -665,15 +689,15 @@ function renderTipBoard(tipBoard) {
 function showDeleteConfirmDialog(post, container) {
     if (!isCurrent(container)) return;
     const content = document.createElement("div");
-    content.style.color = "#ccc";
+    content.className = "discussion-modal";
     content.innerHTML = `
-        <div style="text-align: center;">
-            <div style="font-size: 40px; margin-bottom: 15px;">⚠️</div>
-            <div style="font-size: 16px; font-weight: bold; color: #fff; margin-bottom: 10px;">${t('post.delete_confirm_title')}</div>
-            <div style="font-size: 13px; color: #888; margin-bottom: 20px;">${t('post.delete_confirm_desc')}</div>
-            <div style="display: flex; gap: 10px;">
-                <button id="delete-cancel" style="flex: 1; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="delete-confirm" style="flex: 1; background: #F44336; border: none; color: #fff; padding: 10px; border-radius: 6px; cursor: pointer; font-weight: bold;">${t('common.delete')}</button>
+        <div class="post-detail__modal-center">
+            <div class="post-detail__warning-icon">⚠️</div>
+            <div class="post-detail__modal-title">${t('post.delete_confirm_title')}</div>
+            <div class="post-detail__modal-description">${t('post.delete_confirm_desc')}</div>
+            <div class="post-detail__modal-actions">
+                <button type="button" id="delete-cancel" class="post-detail__modal-cancel">${t('common.cancel')}</button>
+                <button type="button" id="delete-confirm" class="post-detail__modal-danger">${t('common.delete')}</button>
             </div>
         </div>
     `;

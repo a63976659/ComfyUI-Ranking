@@ -18,3 +18,12 @@ export function isConfirmedCommentDeletion(response) {
 export function isDefiniteCommentRejection(error) {
     return Number.isInteger(error?.status) && error.status >= 400 && error.status < 500 && error.status !== 408;
 }
+
+export function isConfirmedDedicatedCommentResponse(response, account, content) {
+    const data = response?.data;
+    return typeof account === 'string' && !!account.trim()
+        && typeof content === 'string' && !!content.trim()
+        && response?.status === 'success' && !!data && typeof data === 'object' && !Array.isArray(data)
+        && typeof data.id === 'string' && !!data.id.trim()
+        && data.author === account && data.content === content;
+}

@@ -11,13 +11,13 @@
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { createCommentSection } from "../social/评论与互动组件.js";
 import { renderTipLevelHTML, getTipLevelRuleShort } from "../components/打赏等级工具.js";
-import { getBannerCacheKey, PLACEHOLDERS, getCachedProfile, getProfileWithSWR, escapeHtml, CACHE, API } from "../core/全局配置.js";
+import { getBannerCacheKey, PLACEHOLDERS, getCachedProfile, getProfileWithSWR, escapeHtml, CACHE, API, getSettings, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { api } from "../core/网络请求_业务API.js";
 import { captureRequestSession, requestCancelManager } from "../core/网络请求_基础设施.js";
 import { getUser, eventBus, EVENTS } from "../core/状态管理.js";
 import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
-import { getSettings } from "../components/全局设置组件.js";
 import { t } from "../components/用户体验增强.js";
+import { loadECharts } from "../components/图表脚本加载.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 
@@ -116,31 +116,7 @@ async function handleTipCreator(creatorData, currentUser, onTipSuccess, parentCu
     }, null, { isCurrent: parentCurrent });
 }
 
-let echartsLoading = null, echartsLoadFailures = 0;
-function loadECharts() {
-    if (typeof window.echarts?.init === 'function') return Promise.resolve(window.echarts);
-    if (echartsLoading) return echartsLoading;
-    echartsLoading = new Promise((resolve, reject) => {
-        const script = document.createElement("script");
-        let settled = false;
-        const finish = (error) => {
-            if (settled) return;
-            settled = true; clearTimeout(timer);
-            script.onload = script.onerror = null; script.remove();
-            if (error) { echartsLoadFailures++; reject(new Error('ECharts load failed')); }
-            else { echartsLoadFailures = 0; resolve(window.echarts); }
-        };
-        const timer = setTimeout(() => finish(true), API.PROFILE_RESOURCE_TIMEOUT);
-        const scriptURL = new URL(API.CREATOR_CHART_SCRIPT_URL);
-        // 移除script不保证终止原下载；失败后的读取不能复用未结束的旧URL。
-        if (echartsLoadFailures) scriptURL.searchParams.set('_ranking_retry', `${Date.now()}-${echartsLoadFailures}`);
-        script.src = scriptURL.href;
-        script.onload = () => finish(typeof window.echarts?.init !== 'function');
-        script.onerror = () => finish(true);
-        document.head.appendChild(script);
-    }).finally(() => { echartsLoading = null; });
-    return echartsLoading;
-}
+
 
 /**
  * 渲染打赏榜单条目HTML（匿名/非匿名共用外层结构）
@@ -217,7 +193,7 @@ export function createTipBoardSection(tipBoard = [], title = t('creator.tip_boar
 
         // 从缓存获取初始数据（0延迟渲染）
         const cached = getCachedProfile(entry.account);
-        const avatarUrl = cached?.avatar || cached?.avatarDataUrl || PLACEHOLDERS.AVATAR_SMALL;
+        const avatarUrl = normalizeProfileImageUrl(cached?.avatar) || normalizeProfileImageUrl(cached?.avatarDataUrl) || PLACEHOLDERS.AVATAR_SMALL;
         const userName = cached?.name || entry.account;
 
         // 后台静默校对并更新 DOM
@@ -230,8 +206,9 @@ export function createTipBoardSection(tipBoard = [], title = t('creator.tip_boar
                 const avatarImg = itemContainer.querySelector('.tip-board-avatar');
                 const nameSpan = itemContainer.querySelector('.tip-board-name');
 
-                if (avatarImg && typeof profile.avatar === 'string' && profile.avatar) {
-                    avatarImg.src = profile.avatar;
+                const avatarSource = normalizeProfileImageUrl(profile.avatar);
+                if (avatarImg && avatarSource) {
+                    avatarImg.src = avatarSource;
                 }
                 if (nameSpan && typeof profile.name === 'string' && profile.name) {
                     nameSpan.textContent = profile.name;
@@ -291,7 +268,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
     const summaryView = document.createElement("div");
     summaryView.className = 'creator-card__summary';
 
-    const avatarSrc = creatorData.avatar || PLACEHOLDERS.AVATAR;
+    const avatarSrc = normalizeProfileImageUrl(creatorData.avatar) || PLACEHOLDERS.AVATAR;
 
     // ⚙️ 读取设置：是否显示创作者背景图
     const settings = getSettings();
@@ -301,15 +278,12 @@ export function createCreatorCard(creatorData, currentUser = null) {
     const cacheKey = getBannerCacheKey(creatorData.account);
     let cachedBanner = null;
     try { cachedBanner = localStorage.getItem(cacheKey); } catch (_) { /* 可选装饰缓存不可用时继续构建卡片。 */ }
-    const validBanner = value => typeof value === 'string' && value.trim() ? value : '';
+    const validBanner = normalizeProfileImageUrl;
     const bannerUrl = validBanner(cachedBanner) || validBanner(creatorData.bannerUrl);
     const hasBanner = !!(showBanner && bannerUrl);  // 有效本地缓存优先，受显示设置控制
 
-    // 🖼️ 全覆盖背景图样式
-    // 在使用 bannerUrl 之前添加安全过滤
-    const safeBannerUrl = (bannerUrl || '').replace(/['"()\\]/g, '');
     summaryView.classList.toggle('creator-card__summary--banner', !!hasBanner);
-    if (hasBanner) summaryView.style.backgroundImage = `url("${safeBannerUrl}")`;
+    if (hasBanner) summaryView.style.backgroundImage = `url(${JSON.stringify(bannerUrl)})`;
     const profileName = typeof creatorData.name === 'string' && creatorData.name.trim() ? creatorData.name : creatorData.account;
     const profileLabel = `${t('creator.visit_profile')}: ${profileName}`;
     const stat = (field, label, value, unit = '') => `<div class="creator-card__stat" data-stat="${field}"><span>${escapeHtml(label)}</span><strong class="creator-card__stat-value"><span class="${/^\d+$/.test(String(value)) ? 'creator-card__number' : ''}">${escapeHtml(value)}</span>${unit ? ` <small>${escapeHtml(unit)}</small>` : ''}</strong></div>`;

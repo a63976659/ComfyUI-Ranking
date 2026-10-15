@@ -4,7 +4,7 @@ import { regionData, getSortedCountries } from "../auth/国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { uploadFile } from "../market/发布内容_提交引擎.js";
 import { openImageCropper } from "../components/图片裁剪组件.js";
-import { CACHE, IMAGE_PROCESS, getBackgroundKey, getBannerCacheKey, PLACEHOLDERS, escapeHtml } from "../core/全局配置.js";
+import { CACHE, IMAGE_PROCESS, getBackgroundKey, getBannerCacheKey, PLACEHOLDERS, escapeHtml, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 import { normalizeProfileData, mergeStoredProfile } from "./个人资料工具.js";
 
@@ -14,6 +14,16 @@ function _safeStorageGet(storageName, key) {
 
 function _safeLocalStorageRemove(key) {
     try { window.localStorage.removeItem(key); return true; } catch { return false; }
+}
+
+function _cssBackgroundImage(value) {
+    const image = normalizeProfileImageUrl(value);
+    return image ? `url(${JSON.stringify(image)})` : "none";
+}
+
+function _cloudImageValue(value) {
+    const image = normalizeProfileImageUrl(value, true);
+    return /^https?:\/\//i.test(image) ? image : null;
 }
 
 // 计算年龄工具函数
@@ -79,7 +89,7 @@ function _readAndPreviewImage(file, previewElement, cacheKey, current, readers, 
             if (settled) return;
             if (!current() || signal?.aborted || !previewElement.isConnected) { finish(null); return; }
             const base64 = ev.target.result;
-            if (typeof base64 !== 'string' || !base64.startsWith('data:image/') || !base64.includes(',')) { fail(); return; }
+            if (!normalizeProfileImageUrl(base64) || !base64.startsWith('data:image/')) { fail(); return; }
             if (cacheKey) {
                 try {
                     localStorage.setItem(cacheKey, base64);
@@ -101,7 +111,7 @@ function _readAndPreviewImage(file, previewElement, cacheKey, current, readers, 
                     }
                 }
             }
-            previewElement.style.backgroundImage = `url(${base64})`;
+            previewElement.style.backgroundImage = _cssBackgroundImage(base64);
             previewElement.style.backgroundSize = "cover";
             previewElement.style.backgroundPosition = "center";
             finish(base64);
@@ -121,11 +131,13 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     container.className = 'ranking-settings-form';
     const sessionMatches = captureRequestSession();
     let disposed = false, saving = false;
+    let refreshModerationControls = () => {}, releaseModeration = () => {};
     const readers = new Set(), cropControllers = new Set();
     const current = () => !disposed && container.isConnected && sessionMatches() && (options.isCurrent?.() ?? true);
     container._cleanup = () => {
         if (disposed) return;
         disposed = true;
+        releaseModeration();
         for (const controller of cropControllers) { try { controller.abort(); } catch (_) {} }
         cropControllers.clear();
         for (const reader of readers) { try { reader.abort(); } catch (_) {} }
@@ -145,85 +157,85 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     const countryOptions = sortedCountries.map(c => `<option value="${c}" ${c === userData.country ? 'selected' : ''}>${c}</option>`).join("");
 
     container.innerHTML = `
-        <div style="margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid #444; font-weight: bold; font-size: 16px;">⚙️ ${t('settings_form.title')}</div>
-        <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px;">
-            <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 5px; background: var(--comfy-input-bg); padding: 10px; border-radius: 6px; border: 1px dashed #555;">
-                <img id="setting-avatar-preview" src="${escapeHtml(userData.avatarDataUrl || PLACEHOLDERS.AVATAR)}" style="width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid #666;">
+        <div class="settings-heading">⚙️ ${t('settings_form.title')}</div>
+        <div class="settings-fields">
+            <div class="settings-avatar-panel">
+                <img alt="" class="settings-avatar" id="setting-avatar-preview" src="${escapeHtml(normalizeProfileImageUrl(userData.avatarDataUrl) || PLACEHOLDERS.AVATAR)}">
                 <div>
-                    <button id="btn-trigger-avatar" style="padding: 6px 12px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; margin-bottom: 5px;">${t('settings_form.change_avatar')}</button>
-                    <div style="font-size: 11px; color: #888;">${t('settings_form.avatar_hint')}</div>
+                    <button type="button" class="settings-avatar-action" id="btn-trigger-avatar">${t('settings_form.change_avatar')}</button>
+                    <div class="settings-hint">${t('settings_form.avatar_hint')}</div>
                 </div>
-                <input type="file" id="setting-avatar" accept="image/*" style="display: none;">
+                <input class="settings-file-input" type="file" id="setting-avatar" accept="image/*">
             </div>
 
-            <div style="background: var(--comfy-input-bg); padding: 10px; border-radius: 6px; border: 1px dashed #555;">
-                <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">🇺️ ${t('settings_form.banner_title')}</div>
-                <div id="setting-banner-preview" style="width: 100%; height: 80px; border-radius: 4px; background: ${userData.bannerUrl ? `url(${String(userData.bannerUrl).replace(/['"()\\]/g, '')})` : '#1a1a1a'}; background-size: cover; background-position: center; margin-bottom: 8px; border: 1px solid #444;"></div>
-                <div style="display: flex; gap: 8px;">
-                    <button id="btn-trigger-banner" style="flex: 1; padding: 6px 12px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px;">📷 ${t('settings_form.banner_upload')}</button>
-                    <button id="btn-clear-banner" style="padding: 6px 12px; background: transparent; border: 1px solid #555; color: #888; border-radius: 4px; cursor: pointer; font-size: 12px;">🗑️ ${t('settings_form.banner_clear')}</button>
+            <div class="settings-media-panel">
+                <div class="settings-media-title">🇺️ ${t('settings_form.banner_title')}</div>
+                <div class="settings-banner-preview" id="setting-banner-preview"></div>
+                <div class="settings-media-actions">
+                    <button type="button" class="settings-upload" id="btn-trigger-banner">📷 ${t('settings_form.banner_upload')}</button>
+                    <button type="button" class="settings-clear" id="btn-clear-banner">🗑️ ${t('settings_form.banner_clear')}</button>
                 </div>
-                <div style="font-size: 11px; color: #666; margin-top: 5px;">${t('settings_form.banner_hint')}</div>
-                <input type="file" id="setting-banner" accept="image/*" style="display: none;">
+                <div class="settings-media-hint">${t('settings_form.banner_hint')}</div>
+                <input class="settings-file-input" type="file" id="setting-banner" accept="image/*">
             </div>
 
-            <div style="background: var(--comfy-input-bg); padding: 10px; border-radius: 6px; border: 1px dashed #555;">
-                <div style="font-size: 12px; color: #aaa; margin-bottom: 8px;">🎨 ${t('settings_form.ui_bg_title')}</div>
-                <div id="setting-ui-bg-preview" style="width: 100%; height: 100px; border-radius: 4px; background: #1a1a1a; background-size: cover; background-position: center; margin-bottom: 8px; border: 1px solid #444;"></div>
-                <div style="display: flex; gap: 8px;">
-                    <button id="btn-trigger-ui-bg" style="flex: 1; padding: 6px 12px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; cursor: pointer; font-size: 12px;">📷 ${t('settings_form.banner_upload')}</button>
-                    <button id="btn-clear-ui-bg" style="padding: 6px 12px; background: transparent; border: 1px solid #555; color: #888; border-radius: 4px; cursor: pointer; font-size: 12px;">🗑️ ${t('settings_form.banner_clear')}</button>
+            <div class="settings-media-panel">
+                <div class="settings-media-title">🎨 ${t('settings_form.ui_bg_title')}</div>
+                <div class="settings-background-preview" id="setting-ui-bg-preview"></div>
+                <div class="settings-media-actions">
+                    <button type="button" class="settings-upload" id="btn-trigger-ui-bg">📷 ${t('settings_form.banner_upload')}</button>
+                    <button type="button" class="settings-clear" id="btn-clear-ui-bg">🗑️ ${t('settings_form.banner_clear')}</button>
                 </div>
-                <div style="font-size: 11px; color: #666; margin-top: 5px;">${t('settings_form.ui_bg_hint')}</div>
-                <input type="file" id="setting-ui-bg" accept="image/*" style="display: none;">
+                <div class="settings-media-hint">${t('settings_form.ui_bg_hint')}</div>
+                <input class="settings-file-input" type="file" id="setting-ui-bg" accept="image/*">
             </div>
 
-            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.display_name')}</label><input type="text" id="setting-name" value="${escapeHtml(userData.name || '')}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;"></div>
+            <div><label class="settings-label" for="setting-name">${t('settings_form.display_name')}</label><input class="settings-input" type="text" id="setting-name" value="${escapeHtml(userData.name || '')}"></div>
             
-            <div style="display: flex; gap: 10px;">
-                <div style="flex: 1;"><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.gender')}</label>
-                    <select id="setting-gender" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px;">
+            <div class="settings-row">
+                <div class="settings-field"><label class="settings-label" for="setting-gender">${t('settings_form.gender')}</label>
+                    <select class="settings-select" id="setting-gender">
                         <option value="male" ${userData.gender === 'male' ? 'selected' : ''}>${t('settings_form.gender_male')}</option>
                         <option value="female" ${userData.gender === 'female' ? 'selected' : ''}>${t('settings_form.gender_female')}</option>
                         <option value="other" ${userData.gender === 'other' ? 'selected' : ''}>${t('settings_form.gender_secret')}</option>
                     </select>
                 </div>
-                <div style="flex: 1;">
-                    <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.birthday')}</label>
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                        <input type="date" id="setting-birthday" value="${escapeHtml(userData.birthday || '')}" style="flex: 1; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box;">
-                        <span id="setting-age-display" style="color: #888; font-size: 12px; white-space: nowrap;">${userData.age ? userData.age + ' ' + t('profile.age_years') : ''}</span>
+                <div class="settings-field">
+                    <label class="settings-label" for="setting-birthday">${t('settings_form.birthday')}</label>
+                    <div class="settings-birthday-row">
+                        <input class="settings-birthday" type="date" id="setting-birthday" value="${escapeHtml(userData.birthday || '')}">
+                        <span class="settings-age" id="setting-age-display">${userData.age ? userData.age + ' ' + t('profile.age_years') : ''}</span>
                     </div>
                 </div>
             </div>
 
-            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.country')}</label>
-                <select id="setting-country" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; margin-bottom: 10px;">
+            <div><label class="settings-label" for="setting-country">${t('settings_form.country')}</label>
+                <select class="settings-country" id="setting-country">
                     <option value="">${t('settings_form.select_country')}</option>
                     ${countryOptions}
                 </select>
-                <select id="setting-region" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px;">
+                <select class="settings-select" id="setting-region" aria-label="${escapeHtml(t('auth.region'))}">
                     <option value="${escapeHtml(userData.region || '')}">${escapeHtml(userData.region || t('settings_form.select_country_first'))}</option>
                 </select>
             </div>
 
-            <div><label style="display: block; margin-bottom: 5px; font-size: 12px; color: #aaa;">${t('settings_form.intro')}</label><textarea id="setting-intro" rows="3" placeholder="${t('settings_form.intro_placeholder')}" style="width: 100%; padding: 8px; background: var(--comfy-input-bg); border: 1px solid #555; color: #fff; border-radius: 4px; box-sizing: border-box; resize: vertical;">${escapeHtml(userData.intro || '')}</textarea></div>
+            <div><label class="settings-label" for="setting-intro">${t('settings_form.intro')}</label><textarea class="settings-intro" id="setting-intro" rows="3" placeholder="${t('settings_form.intro_placeholder')}">${escapeHtml(userData.intro || '')}</textarea></div>
             
-            <div style="margin-top: 15px; border-top: 1px solid #444; padding-top: 15px;">
-                <div style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #4CAF50;">🛡️ ${t('settings_form.privacy_title')}</div>
-                <div style="font-size: 11px; color: #888; margin-bottom: 10px;">${t('settings_form.privacy_hint')}</div>
+            <div class="settings-privacy">
+                <div class="settings-section-heading">🛡️ ${t('settings_form.privacy_title')}</div>
+                <div class="settings-privacy-hint">${t('settings_form.privacy_hint')}</div>
                 
-                <div style="display: flex; flex-direction: column; gap: 8px;">
-                    <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #ccc; cursor: pointer;">
+                <div class="settings-privacy-options">
+                    <label class="settings-check">
                         <input type="checkbox" id="hide-follows" ${getPrivacy('follows') ? 'checked' : ''}> ${t('settings_form.hide_follows')}
                     </label>
-                    <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #ccc; cursor: pointer;">
+                    <label class="settings-check">
                         <input type="checkbox" id="hide-likes" ${getPrivacy('likes') ? 'checked' : ''}> ${t('settings_form.hide_likes')}
                     </label>
-                    <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #ccc; cursor: pointer;">
+                    <label class="settings-check">
                         <input type="checkbox" id="hide-favorites" ${getPrivacy('favorites') ? 'checked' : ''}> ${t('settings_form.hide_favorites')}
                     </label>
-                    <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #ccc; cursor: pointer;">
+                    <label class="settings-check">
                         <input type="checkbox" id="hide-downloads" ${getPrivacy('downloads') ? 'checked' : ''}> ${t('settings_form.hide_downloads')}
                     </label>
                 </div>
@@ -231,35 +243,36 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
             
             ${isAdmin ? `
             <!-- 🔒 管理员设置区域 -->
-            <div id="admin-settings-section" style="margin-top: 15px; border-top: 1px solid #9C27B0; padding-top: 15px; background: linear-gradient(135deg, rgba(156,39,176,0.1), transparent); border-radius: 8px; padding: 15px; margin-top: 15px;">
-                <div style="font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #9C27B0; display: flex; align-items: center; gap: 8px;">
+            <div class="settings-admin" id="admin-settings-section">
+                <div class="settings-admin-heading">
                     <span>🔒</span> ${t('settings_form.admin_title')}
-                    <span style="font-size: 10px; background: #9C27B0; color: white; padding: 2px 6px; border-radius: 10px;">Admin</span>
+                    <span class="settings-admin-badge">Admin</span>
                 </div>
-                <div style="font-size: 11px; color: #888; margin-bottom: 12px;">${t('settings_form.admin_hint')}</div>
+                <div class="settings-admin-hint">${t('settings_form.admin_hint')}</div>
                 
-                <div style="display: flex; flex-direction: column; gap: 10px;">
+                <div class="settings-admin-fields">
                     <!-- 图像审核开关 -->
-                    <div style="background: var(--comfy-input-bg); padding: 12px; border-radius: 6px; border: 1px solid #444;">
-                        <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div class="settings-moderation">
+                        <div class="settings-moderation-row">
                             <div>
-                                <div style="font-size: 13px; color: #fff; margin-bottom: 4px;">🖼️ 图像内容审核</div>
-                                <div style="font-size: 11px; color: #888;">启用后上传的图片将自动进行内容安全审核</div>
+                                <div class="settings-moderation-title">🖼️ ${escapeHtml(t('settings_form.image_moderation'))}</div>
+                                <div class="settings-hint" id="moderation-hint">${escapeHtml(t('settings_form.image_moderation_hint'))}</div>
                             </div>
-                            <label class="toggle-switch" style="position: relative; display: inline-block; width: 50px; height: 26px;">
-                                <input type="checkbox" id="admin-image-moderation" style="opacity: 0; width: 0; height: 0;">
-                                <span class="toggle-slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--comfy-input-bg); transition: .3s; border-radius: 26px;"></span>
+                            <label class="settings-switch toggle-switch">
+                                <input class="settings-switch-input" type="checkbox" id="admin-image-moderation" disabled aria-label="${escapeHtml(t('settings_form.image_moderation'))}" aria-describedby="moderation-hint moderation-status"><span class="toggle-slider" aria-hidden="true"></span>
+
                             </label>
                         </div>
-                        <div id="moderation-status" style="margin-top: 8px; font-size: 11px; color: #666;"></div>
+                        <div class="settings-moderation-status" id="moderation-status" role="status" aria-live="polite">${escapeHtml(t('common.loading'))}</div>
+                        <button id="moderation-retry" type="button" hidden>${escapeHtml(t('common.retry'))}</button>
                     </div>
                 </div>
             </div>
             ` : ''}
         </div>
-        <div style="display: flex; gap: 10px; margin-top: 20px;">
-            <button id="btn-cancel-settings" style="flex: 1; padding: 10px; background: transparent; border: 1px solid #555; color: #ccc; border-radius: 4px; cursor: pointer;">${t('settings_form.cancel')}</button>
-            <button id="btn-save-settings" style="flex: 2; padding: 10px; background: #4CAF50; border: none; color: white; border-radius: 4px; cursor: pointer; font-weight: bold;">${t('settings_form.save_all')}</button>
+        <div class="settings-actions">
+            <button type="button" class="settings-cancel" id="btn-cancel-settings">${t('settings_form.cancel')}</button>
+            <button type="button" class="settings-save" id="btn-save-settings">${t('settings_form.save_all')}</button>
         </div>
     `;
 
@@ -270,10 +283,15 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     const settingUiBgInput = container.querySelector("#setting-ui-bg");
     const bannerPreview = container.querySelector("#setting-banner-preview");
     const uiBgPreview = container.querySelector("#setting-ui-bg-preview");
+    const initialBannerBackground = _cssBackgroundImage(userData.bannerUrl);
+    bannerPreview.style.backgroundImage = initialBannerBackground;
+    if (initialBannerBackground !== "none") {
+        bannerPreview.style.backgroundColor = "transparent";
+    }
     const birthdayInput = container.querySelector("#setting-birthday");
     const ageDisplay = container.querySelector("#setting-age-display");
-    let avatarDataUrl = userData.avatarDataUrl;
-    let bannerUrl = userData.bannerUrl || null;
+    let avatarDataUrl = _cloudImageValue(userData.avatarDataUrl);
+    let bannerUrl = _cloudImageValue(userData.bannerUrl);
     
     // 🔧 初始化地区下拉列表：根据当前国家加载所有地区选项
     const currentCountry = userData.country;
@@ -290,88 +308,93 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
     let pendingBannerFile = null;  // 待上传的背景图文件
     let pendingBannerDataUrl = null;  // 用于预览和本地缓存
 
-    // 🔒 管理员开关样式注入
-    if (isAdmin && !document.getElementById('admin-toggle-styles')) {
-        const toggleStyles = document.createElement('style');
-        toggleStyles.id = 'admin-toggle-styles';
-        toggleStyles.textContent = `
-            .toggle-switch input:checked + .toggle-slider {
-                background-color: #4CAF50;
-            }
-            .toggle-slider:before {
-                position: absolute;
-                content: "";
-                height: 20px;
-                width: 20px;
-                left: 3px;
-                bottom: 3px;
-                background-color: white;
-                transition: .3s;
-                border-radius: 50%;
-            }
-            .toggle-switch input:checked + .toggle-slider:before {
-                transform: translateX(24px);
-            }
-        `;
-        document.head.appendChild(toggleStyles);
-    }
-    
-    // 🔒 管理员：初始化图像审核开关状态
     if (isAdmin) {
-        setTimeout(async () => {
-            const moderationToggle = container.querySelector('#admin-image-moderation');
-            if (!current()) return;
-            const statusDiv = container.querySelector('#moderation-status');
-            if (!moderationToggle) return;
-            
-            try {
-                // 获取当前审核状态
-                const res = await api.getSystemConfig('image_moderation');
-                if (!current()) return;
-                const enabled = res?.data?.enabled === true;
-                moderationToggle.checked = enabled;
-                
-                if (statusDiv) {
-                    const quota = res?.data?.quota || {};
-                    statusDiv.innerHTML = enabled
-                        ? `<span style="color: #4CAF50;">✅ ${escapeHtml(t('settings_form.enabled'))}</span> | ${escapeHtml(t('settings_form.moderation_quota', { aliyun: quota.aliyun || 0, tencent: quota.tencent || 0 }))}`
-                        : `<span style="color: #888;">⚪ ${escapeHtml(t('settings_form.disabled'))}</span> | ${escapeHtml(t('settings_form.moderation_skipped'))}`;
-                }
-            } catch (e) {
-                console.warn('获取审核状态失败:', e?.name || 'Error');
+        const moderationToggle = container.querySelector('#admin-image-moderation');
+        const statusDiv = container.querySelector('#moderation-status');
+        const retryButton = container.querySelector('#moderation-retry');
+        let ready = false, busy = false;
+        moderationToggle.indeterminate = true;
+        refreshModerationControls = () => {
+            moderationToggle.disabled = saving || busy || !ready;
+            retryButton.disabled = saving || busy;
+            statusDiv.setAttribute('aria-busy', String(busy));
+        };
+        const confirmState = response => {
+            if (response?.status !== 'success' || typeof response?.data?.enabled !== 'boolean') {
+                throw new Error('invalid moderation response');
             }
-            
-            // 开关变化事件
-            moderationToggle.onchange = async () => {
-                if (!current() || moderationToggle.disabled) return;
-                const newState = moderationToggle.checked;
-                moderationToggle.disabled = true;
-                
-                try {
-                    await api.setSystemConfig('image_moderation', { enabled: newState });
-                    if (!current()) return;
-                    showToast(newState ? t('settings_form.moderation_enabled') : t('settings_form.moderation_disabled'), 'success');
-                    
-                    if (statusDiv) {
-                        statusDiv.innerHTML = newState
-                            ? `<span style="color: #4CAF50;">✅ ${escapeHtml(t('settings_form.enabled'))}</span>`
-                            : `<span style="color: #888;">⚪ ${escapeHtml(t('settings_form.disabled'))}</span> | ${escapeHtml(t('settings_form.moderation_skipped'))}`;
-                    }
-                } catch (e) {
-                    if (!current()) return;
-                    showToast(t('settings_form.save_failed'), 'error');
-                    moderationToggle.checked = !newState;  // 回滚
-                } finally {
-                    if (current()) moderationToggle.disabled = false;
-                }
-            };
-        }, 100);
+            return response.data.enabled;
+        };
+        const showState = enabled => {
+            ready = true;
+            moderationToggle.indeterminate = false;
+            moderationToggle.checked = enabled;
+            retryButton.hidden = true;
+            statusDiv.textContent = enabled ? t('settings_form.enabled')
+                : `${t('settings_form.disabled')} | ${t('settings_form.moderation_skipped')}`;
+        };
+        const showUnknown = message => {
+            ready = false;
+            moderationToggle.indeterminate = true;
+            statusDiv.textContent = message;
+            retryButton.hidden = false;
+        };
+        const loadState = async () => {
+            if (!current() || saving || busy) return;
+            ready = false; busy = true;
+            retryButton.hidden = true;
+            statusDiv.textContent = t('common.loading');
+            refreshModerationControls();
+            try {
+                const response = await api.getSystemConfig('image_moderation');
+                if (!current()) return;
+                showState(confirmState(response));
+            } catch (_) {
+                if (current()) showUnknown(t('settings_form.moderation_read_failed'));
+            } finally {
+                busy = false;
+                if (current()) refreshModerationControls();
+            }
+        };
+        retryButton.onclick = loadState;
+        moderationToggle.onchange = async () => {
+            if (!current() || saving || busy || !ready || moderationToggle.disabled) return;
+            const requested = moderationToggle.checked;
+            ready = false; busy = true;
+            statusDiv.textContent = t('settings_form.moderation_confirming');
+            refreshModerationControls();
+            try {
+                const result = await api.setSystemConfig('image_moderation', { enabled: requested });
+                if (!current()) return;
+                if (result?.status !== 'success') throw new Error('unconfirmed moderation save');
+                const response = await api.getSystemConfig('image_moderation');
+                if (!current()) return;
+                const enabled = confirmState(response);
+                showState(enabled);
+                showToast(enabled === requested
+                    ? t(enabled ? 'settings_form.moderation_enabled' : 'settings_form.moderation_disabled')
+                    : t('settings_form.moderation_changed'), enabled === requested ? 'success' : 'warning');
+            } catch (_) {
+                if (!current()) return;
+                showUnknown(t('settings_form.moderation_unconfirmed'));
+                showToast(t('settings_form.moderation_unconfirmed'), 'warning');
+            } finally {
+                busy = false;
+                if (current()) refreshModerationControls();
+            }
+        };
+        const initialRead = setTimeout(loadState, 100);
+        releaseModeration = () => {
+            clearTimeout(initialRead);
+            moderationToggle.onchange = retryButton.onclick = null;
+        };
+        refreshModerationControls();
     }
 
     // 加载本地界面背景预览（使用账号区分键）
     const savedUiBg = _safeStorageGet('localStorage', getBackgroundKey(userData.account));
     if (typeof savedUiBg === "string" && /^data:image\/(?:png|jpeg|webp);base64,/i.test(savedUiBg)) {
-        uiBgPreview.style.backgroundImage = `url(${savedUiBg})`;
+        uiBgPreview.style.backgroundImage = _cssBackgroundImage(savedUiBg);
         uiBgPreview.style.backgroundSize = "cover";
         uiBgPreview.style.backgroundPosition = "center";
     }
@@ -381,7 +404,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         const age = calculateAge(birthdayInput.value);
         if (age !== null) {
             ageDisplay.textContent = `${age} ${t('profile.age_years')}`;
-            ageDisplay.style.color = "#4CAF50";
+            ageDisplay.classList.add("settings-age--known");
         } else {
             ageDisplay.textContent = "";
         }
@@ -404,8 +427,10 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
             btnTrigger.innerText = t('settings_form.uploading');
             btnTrigger.disabled = true;
             try {
-                const cloudImageUrl = await uploadFile(croppedFile, "avatar");
+                const uploadedUrl = await uploadFile(croppedFile, "avatar");
                 if (!current()) return;
+                const cloudImageUrl = _cloudImageValue(uploadedUrl);
+                if (!cloudImageUrl) throw new Error("Invalid avatar upload");
                 if (cloudImageUrl) {
                     avatarDataUrl = cloudImageUrl;
                     container.querySelector("#setting-avatar-preview").src = cloudImageUrl;
@@ -447,14 +472,14 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         // 「本次没改这个字段」而被跳过，云端旧图残留 —— 表现为点清除并保存后提示成功，
         // 但自己和他人在创作者榜单里看到的背景图依然存在。空串则会真实落库，
         // 且下游 hasBanner / bannerImageUrl 等判断都按 falsy 正确处理。
-        // 注意上方 `let bannerUrl = userData.bannerUrl || null` 的初值仍保持 null：那是「本次未涉及该字段」
+        // 初值只保留网络图片；临时预览或缺省值为 null，表示「本次未涉及该字段」
         // 的语义，可防止 userData 恰好缺 bannerUrl 时把云端图误清掉。
         cancelBannerSelection();
         bannerUrl = "";
         pendingBannerFile = null;
         pendingBannerDataUrl = null;
         bannerPreview.style.backgroundImage = "none";
-        bannerPreview.style.background = "#1a1a1a";
+        bannerPreview.style.backgroundColor = "";
         // 同时清除本地缓存（使用账号区分键）
         if (!_safeLocalStorageRemove(getBannerCacheKey(userData.account))) {
             showToast(t('settings_form.local_storage_unavailable'), "warning");
@@ -484,7 +509,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
             return;
         }
         uiBgPreview.style.backgroundImage = "none";
-        uiBgPreview.style.background = "#1a1a1a";
+        uiBgPreview.style.backgroundColor = "";
         // 立即应用到侧边栏
         window.dispatchEvent(new CustomEvent("comfy-sidebar-bg-update"));
         showToast(t('settings_form.ui_bg_cleared'), "success");
@@ -503,7 +528,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
         for (const [control] of lockedControls) control.disabled = true;
         const unlock = () => {
             for (const [control, disabled] of lockedControls) control.disabled = disabled;
-            saving = false; refreshSaveAvailability();
+            saving = false; refreshSaveAvailability(); refreshModerationControls();
         };
 
         try {
@@ -531,9 +556,10 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
             if (pendingBannerFile) {
                 btn.innerHTML = `⏳ ${escapeHtml(t('settings_form.uploading_banner'))}`;
                 try {
-                    const cloudImageUrl = await uploadFile(pendingBannerFile, "banner", { isCurrent: current, silent: true });
+                    const uploadedUrl = await uploadFile(pendingBannerFile, "banner", { isCurrent: current, silent: true });
                     if (!current()) return;
-                    if (typeof cloudImageUrl !== "string" || !cloudImageUrl.trim()) throw new Error("Invalid banner upload");
+                    const cloudImageUrl = _cloudImageValue(uploadedUrl);
+                    if (!cloudImageUrl) throw new Error("Invalid banner upload");
                     bannerUrl = cloudImageUrl;
                     updateData.bannerUrl = cloudImageUrl;
                     pendingBannerFile = null;

@@ -42,7 +42,7 @@ export async function mountSidebarDomainView({
         contentArea.innerHTML = '';
         const error = document.createElement('div');
         error.setAttribute('role', 'alert');
-        error.style.cssText = 'text-align:center; padding: 40px 20px; color:#F44336;';
+        error.className = 'sidebar-status-message sidebar-status-message--error';
         error.textContent = `❌ ${t(errorKey)}`;
         contentArea.appendChild(error);
     }

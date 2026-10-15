@@ -81,7 +81,7 @@ export function generatePublishHTML(isEditMode, viewTitle, submitBtnText, hasExi
             </label>
             <div id="github-token-container" class="ranking-publish__token" style="display: ${hasExistingToken ? 'block' : 'none'};">
                 <label for="pub-github-token" class="ranking-publish__security-label">🔒 ${escapeHtml(t('publish.pat_label'))} <span class="ranking-publish__required" aria-hidden="true">*</span></label>
-                <div id="publish-pat-hint" class="ranking-publish__hint">${escapeHtml(t('publish.pat_hint'))}</div>
+                <div id="publish-pat-hint" class="ranking-publish__hint">${escapeHtml(t('publish.pat_hint'))} <strong class="ranking-publish__security-emphasis">${escapeHtml(t('publish.pat_privacy'))}</strong></div>
                 <input type="password" id="pub-github-token" value="${escapeHtml(isEditMode ? (safeData.github_token || '') : '')}" placeholder="${hasExistingToken && !safeData.github_token ? escapeHtml(t('publish.token_keep_hint')) : escapeHtml(t('publish.token_placeholder'))}" class="form-input" aria-describedby="publish-pat-hint">
             </div>
         </div>

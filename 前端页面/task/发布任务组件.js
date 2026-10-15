@@ -97,18 +97,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     const isLockedStatus = editTaskData && ["in_progress", "submitted"].includes(editTaskData.status);
     
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex",
-        flexDirection: "column",
-        gap: "0",
-        color: "#ccc",
-        fontSize: "14px",
-        padding: "0",
-        overflowY: "auto",
-        flex: "1",
-        boxSizing: "border-box",
-        background: "#121212"
-    });
+    container.className = "task-publish ranking-publish-form";
     
     // 使用本地日历日期，不通过 UTC 转换选择器的日期。
     const tomorrow = new Date();
@@ -127,114 +116,114 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     
     container.innerHTML = `
         <!-- 顶部导航 -->
-        <div style="display: flex; align-items: center; padding: 12px 15px; background: #1a1a1a; border-bottom: 1px solid var(--border-color, #333);">
-            <button type="button" id="btn-back" style="background: rgba(51,51,51,0.8); border: 1px solid rgba(85,85,85,0.8); color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px;" onmouseover="this.style.background='#4CAF50'" onmouseout="this.style.background='rgba(51,51,51,0.8)'">
+        <div class="task-publish__header">
+            <button type="button" id="btn-back" class="task-publish__back">
                 ⬅ ${t('common.back')}
             </button>
-            <span style="flex: 1; text-align: center; font-size: 15px; font-weight: bold; color: #fff;">📝 ${isEditMode ? t('task.edit_task') : t('task.publish')}</span>
-            <div style="width: 60px;"></div>
+            <span class="task-publish__heading">📝 ${isEditMode ? t('task.edit_task') : t('task.publish')}</span>
+            <div class="task-publish__header-spacer"></div>
         </div>
         
         <!-- 表单内容 -->
-        <div style="padding: 15px; display: flex; flex-direction: column; gap: 15px;">
+        <div class="task-publish__body">
             
             <!-- 任务标题 -->
             <div>
-                <label for="task-title" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
-                    📌 ${t('task.task_title')} <span aria-hidden="true" style="color: #F44336;">*</span>
+                <label for="task-title" class="task-publish__label">
+                    📌 ${t('task.task_title')} <span aria-hidden="true" class="task-publish__required">*</span>
                 </label>
                 <input type="text" id="task-title" required maxlength="50" placeholder="${t('task.title_placeholder')}" value="${escapeHtml(editTitle)}"
-                       style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
+                       class="task-publish__input">
             </div>
             
             <!-- 任务描述 -->
             <div>
-                <label for="task-description" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
-                    📄 ${t('task.description')} <span aria-hidden="true" style="color: #F44336;">*</span>
+                <label for="task-description" class="task-publish__label">
+                    📄 ${t('task.description')} <span aria-hidden="true" class="task-publish__required">*</span>
                 </label>
                 <textarea id="task-description" required aria-describedby="desc-count" rows="6" maxlength="2000" placeholder="${t('task.description_placeholder')}"
-                          style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; resize: none; box-sizing: border-box; line-height: 1.5;">${escapeHtml(editDescription)}</textarea>
-                <div style="text-align: right; font-size: 11px; color: #666; margin-top: 4px;">
+                          class="task-publish__textarea">${escapeHtml(editDescription)}</textarea>
+                <div class="task-publish__counter">
                     <span id="desc-count">${editDescription.length}</span>/2000
                 </div>
             </div>
             
             <!-- 参考图片 -->
             <div>
-                <label for="ref-images" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
+                <label for="ref-images" class="task-publish__label">
                     🖼️ ${t('task.reference_images_optional')}
                 </label>
                 <input type="file" id="ref-images" multiple accept="image/*" 
                        style="display: none;">
-                <div id="image-preview" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px;"></div>
-                <button type="button" id="btn-add-image" style="width: 100%; padding: 12px; background: var(--comfy-menu-bg); border: 1px dashed #555; border-radius: 8px; color: #888; cursor: pointer; font-size: 13px;">
+                <div id="image-preview" class="task-publish__images"></div>
+                <button type="button" id="btn-add-image" class="task-publish__add-image">
                     + ${t('task.add_reference_image')}
                 </button>
             </div>
             
             <!-- 参考链接 -->
             <div>
-                <label for="ref-link" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
+                <label for="ref-link" class="task-publish__label">
                     🔗 ${t('task.reference_link_optional')}
                 </label>
                 <input type="url" id="ref-link" placeholder="https://..." value="${escapeHtml(editRefLink)}"
-                       style="width: 100%; padding: 10px 12px; background: var(--comfy-menu-bg); border: 1px solid var(--border-color, #333); border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;">
+                       class="task-publish__input">
             </div>
             
             <!-- 价格设置 -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div class="task-publish__price-grid">
                 <!-- 总价格 -->
                 <div>
-                    <label for="total-price" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
-                        💰 ${t('task.total_price')} <span aria-hidden="true" style="color: #F44336;">*</span>
+                    <label for="total-price" class="task-publish__label">
+                        💰 ${t('task.total_price')} <span aria-hidden="true" class="task-publish__required">*</span>
                     </label>
-                    <div style="position: relative;">
+                    <div class="task-publish__amount-wrap">
                         <input type="number" id="total-price" required aria-describedby="task-price-hint" min="0" max="${TASK_LIMITS.MAX_PRICE}" step="1" placeholder="100" value="${escapeHtml(editTotalPrice)}" ${isLockedStatus ? 'disabled' : ''}
-                               style="width: 100%; padding: 10px 12px; padding-right: 40px; background: ${isLockedStatus ? 'var(--comfy-input-bg)' : 'var(--comfy-menu-bg)'}; border: 1px solid var(--border-color, #333); border-radius: 8px; color: ${isLockedStatus ? '#666' : '#FF9800'}; font-size: 16px; font-weight: bold; box-sizing: border-box; cursor: ${isLockedStatus ? 'not-allowed' : 'auto'};">
-                        <span style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: #888; font-size: 12px;">${t('common.credits')}</span>
+                               class="task-publish__amount">
+                        <span class="task-publish__credits">${t('common.credits')}</span>
                     </div>
-                    <div id="task-price-hint" style="font-size: 11px; color: #666; margin-top: 4px;">${isLockedStatus ? t('task.price_locked') : t('task.price_range', { max: TASK_LIMITS.MAX_PRICE })}</div>
+                    <div id="task-price-hint" class="task-publish__hint">${isLockedStatus ? t('task.price_locked') : t('task.price_range', { max: TASK_LIMITS.MAX_PRICE })}</div>
                 </div>
                 
                 <!-- 订金比例 -->
                 <div>
-                    <label for="deposit-ratio" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
-                        📊 ${t('task.deposit_ratio')} <span aria-hidden="true" style="color: #F44336;">*</span>
+                    <label for="deposit-ratio" class="task-publish__label">
+                        📊 ${t('task.deposit_ratio')} <span aria-hidden="true" class="task-publish__required">*</span>
                     </label>
-                    <select id="deposit-ratio" required aria-describedby="task-deposit-hint" ${isLockedStatus ? 'disabled' : ''} style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? 'var(--comfy-input-bg)' : 'var(--comfy-menu-bg)'}; border: 1px solid var(--border-color, #333); border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; cursor: ${isLockedStatus ? 'not-allowed' : 'pointer'};">
+                    <select id="deposit-ratio" required aria-describedby="task-deposit-hint" ${isLockedStatus ? 'disabled' : ''} class="task-publish__select">
                         ${TASK_LIMITS.DEPOSIT_RATIOS.map(ratio => `<option value="${ratio}" ${editDepositRatio == ratio ? 'selected' : ''}>${ratio}%</option>`).join('')}
                     </select>
-                    <div id="task-deposit-hint" style="font-size: 11px; color: #666; margin-top: 4px;">${isLockedStatus ? t('task.deposit_locked') : t('task.deposit_deducted_on_assign')}</div>
+                    <div id="task-deposit-hint" class="task-publish__hint">${isLockedStatus ? t('task.deposit_locked') : t('task.deposit_deducted_on_assign')}</div>
                 </div>
             </div>
             
             <!-- 价格说明 -->
-            <div id="price-summary" style="padding: 12px; background: rgba(255,152,0,0.1); border: 1px solid rgba(255,152,0,0.3); border-radius: 8px;">
-                <div style="font-size: 12px; color: #FF9800; margin-bottom: 6px;">💡 ${t('task.price_description')}</div>
-                <div style="font-size: 13px; color: #ccc; line-height: 1.6;">
-                    ${t('task.total_price')}: <span id="summary-total" style="color: #FF9800; font-weight: bold;">0</span> ${t('common.credits')}<br>
-                    ${t('task.deposit_on_assign')}: <span id="summary-deposit" style="color: #2196F3;">0</span> ${t('common.credits')}<br>
+            <div id="price-summary" class="task-publish__summary">
+                <div class="task-publish__summary-title">💡 ${t('task.price_description')}</div>
+                <div class="task-publish__summary-body">
+                    ${t('task.total_price')}: <span id="summary-total" class="task-publish__summary-total">0</span> ${t('common.credits')}<br>
+                    ${t('task.deposit_on_assign')}: <span id="summary-deposit" class="task-publish__summary-deposit">0</span> ${t('common.credits')}<br>
                     ${t('task.remaining_on_accept')}: <span id="summary-remaining">0</span> ${t('common.credits')}
                 </div>
             </div>
             
             <!-- 截止日期 -->
             <div>
-                <label for="deadline" style="display: block; color: #fff; font-size: 13px; font-weight: bold; margin-bottom: 6px;">
-                    ⏰ ${t('task.deadline')} <span aria-hidden="true" style="color: #F44336;">*</span>
+                <label for="deadline" class="task-publish__label">
+                    ⏰ ${t('task.deadline')} <span aria-hidden="true" class="task-publish__required">*</span>
                 </label>
                 <input type="date" id="deadline" required ${isLockedStatus ? 'aria-describedby="task-deadline-hint"' : ''} min="${minDate}" value="${defaultDate}" ${isLockedStatus ? 'disabled' : ''}
-                       style="width: 100%; padding: 10px 12px; background: ${isLockedStatus ? 'var(--comfy-input-bg)' : 'var(--comfy-menu-bg)'}; border: 1px solid var(--border-color, #333); border-radius: 8px; color: ${isLockedStatus ? '#666' : '#fff'}; font-size: 14px; box-sizing: border-box; cursor: ${isLockedStatus ? 'not-allowed' : 'auto'};">
-                ${isLockedStatus ? `<div id="task-deadline-hint" style="font-size: 11px; color: #666; margin-top: 4px;">${t('task.deadline_locked')}</div>` : ''}
+                       class="task-publish__date">
+                ${isLockedStatus ? `<div id="task-deadline-hint" class="task-publish__hint">${t('task.deadline_locked')}</div>` : ''}
             </div>
             
             <!-- 提交按钮 -->
-            <button type="button" id="btn-publish" style="margin-top: 10px; padding: 14px; background: linear-gradient(135deg, #FF9800, #F57C00); border: none; color: #fff; border-radius: 10px; cursor: pointer; font-size: 15px; font-weight: bold; box-shadow: 0 4px 12px rgba(255,152,0,0.3);">
+            <button type="button" id="btn-publish" class="task-publish__submit">
                 🚀 ${isEditMode ? t('task.save_changes') : t('task.publish_task')}
             </button>
             
             <!-- 提示 -->
-            <div style="text-align: center; font-size: 11px; color: #666; padding: 10px 0;">
+            <div class="task-publish__footer">
                 ${t('task.manage_in_task_list')}
             </div>
         </div>
@@ -396,9 +385,9 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     
     const renderImagePreview = () => {
         imagePreview.innerHTML = selectedImages.map((img, i) => `
-            <div style="position: relative; padding-top: 100%; background: var(--comfy-menu-bg); border-radius: 8px; overflow: hidden;">
-                <img alt="${escapeHtml(t('task.reference_images'))} ${i + 1}" src="${escapeHtml(img.dataUrl)}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;">
-                <button type="button" aria-label="${escapeHtml(t('task.remove_reference_image', { index: i + 1 }))}" class="btn-remove-img" data-index="${i}" style="position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; background: rgba(244,67,54,0.9); border: none; border-radius: 50%; color: #fff; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center;">×</button>
+            <div class="task-publish__image">
+                <img alt="${escapeHtml(t('task.reference_images'))} ${i + 1}" src="${escapeHtml(img.dataUrl)}" class="task-publish__preview">
+                <button type="button" aria-label="${escapeHtml(t('task.remove_reference_image', { index: i + 1 }))}" class="btn-remove-img task-publish__remove" data-index="${i}">×</button>
             </div>
         `).join("");
         

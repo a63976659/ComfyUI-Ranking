@@ -15,7 +15,8 @@
 // 🔒 P0安全优化：敏感数据脱敏
 // ==========================================
 
-import { PAGINATION } from "../core/全局配置.js";
+import { API, PAGINATION, LAZY_IMAGES } from "../core/全局配置.js";
+import { t } from "./用户体验_国际化.js";
 // 📦 列表缓存工具需要本地可用的缓存实现；下方「向后兼容重导出」那行是纯转发、
 // 不会生成本地绑定，故此处必须单独 import（勿误删，否则 readListCache 运行时报错）
 import { setCache, getCacheWithMeta, removeCache, getCacheKeysByPrefix } from "../core/网络请求_缓存管理.js";
@@ -429,136 +430,162 @@ export function renderListSearchMessage(container, message) {
 // 特点：
 //   - 使用 IntersectionObserver API
 //   - 支持占位图和加载动画
-//   - 自动重试失败的图片
+//   - 节点移除、读取超时与迟到结果清理
 
-// 默认占位图（Base64 灰色方块）
-const PLACEHOLDER_IMAGE = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect fill='%23f0f0f0' width='100' height='100'/%3E%3Ctext x='50' y='55' text-anchor='middle' fill='%23999' font-size='12'%3E加载中%3C/text%3E%3C/svg%3E";
-
-// 错误占位图
-const ERROR_IMAGE = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect fill='%23ffeaea' width='100' height='100'/%3E%3Ctext x='50' y='55' text-anchor='middle' fill='%23c44' font-size='12'%3E加载失败%3C/text%3E%3C/svg%3E";
-
-// 全局 Observer 实例
+const lazyImages = new Map();
 let lazyLoadObserver = null;
+let lazyRemovalObserver = null;
 
-/**
- * 初始化图片懒加载（全局单例）
- */
+function lazyPlaceholder(failed = false) {
+    const text = t(failed ? 'image.load_failed' : 'image.loading');
+    const fill = failed ? '%23ffeaea' : '%23f0f0f0';
+    const color = failed ? '%23c44' : '%23999';
+    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect fill='${fill}' width='100' height='100'/%3E%3Ctext x='50' y='55' text-anchor='middle' fill='${color}' font-size='12'%3E${encodeURIComponent(text)}%3C/text%3E%3C/svg%3E`;
+}
+
+function releaseLazyImage(record, restore = false) {
+    const img = record.img;
+    if (!img || lazyImages.get(img) !== record) return;
+    if (restore && img.dataset.src === record.src && img.getAttribute('src') === record.placeholder) {
+        img.loading = 'lazy';
+        img.src = record.src;
+        delete img.dataset.src;
+        img.classList.remove('lazy-loading');
+    }
+    lazyImages.delete(img);
+    lazyLoadObserver?.unobserve(img);
+    if (record.timer !== null) clearTimeout(record.timer);
+    record.timer = null;
+    if (record.reader) {
+        record.reader.onload = record.reader.onerror = null;
+        record.reader.src = '';
+        record.reader = null;
+    }
+    if (img._lazyCleanup === record.cleanup) delete img._lazyCleanup;
+    record.img = null;
+    record.cleanup = null;
+    if (!lazyImages.size) {
+        lazyLoadObserver?.disconnect(); lazyLoadObserver = null;
+        lazyRemovalObserver?.disconnect(); lazyRemovalObserver = null;
+    }
+}
+
+function ownsLazyImage(record) {
+    const img = record.img;
+    return !!img && lazyImages.get(img) === record && img.isConnected &&
+        img.dataset.src === record.src && img.getAttribute('src') === record.placeholder;
+}
+
 function _initLazyLoadObserver() {
-    if (lazyLoadObserver) return;
-    
-    // 检查浏览器支持
-    if (!("IntersectionObserver" in window)) {
-        console.warn("⚠️ 浏览器不支持 IntersectionObserver，懒加载降级为直接加载");
+    if (lazyLoadObserver || !('IntersectionObserver' in window)) return;
+    const observer = new IntersectionObserver(entries => {
+        if (lazyLoadObserver !== observer) return;
+        for (const entry of entries) {
+            if (entry.isIntersecting) _loadImage(entry.target);
+        }
+    }, { rootMargin: LAZY_IMAGES.ROOT_MARGIN, threshold: LAZY_IMAGES.THRESHOLD });
+    lazyLoadObserver = observer;
+}
+
+function watchLazyImages() {
+    if (lazyRemovalObserver) return;
+    const observer = new MutationObserver(mutations => {
+        if (lazyRemovalObserver !== observer) return;
+        for (const record of lazyImages.values()) {
+            const img = record.img;
+            if (mutations.some(mutation => [...mutation.addedNodes].some(node => node === img || node.contains?.(img)))) record.seen = true;
+            if (img.isConnected) {
+                record.seen = true;
+                if (!record.reader && record.timer !== null) { clearTimeout(record.timer); record.timer = null; }
+            }
+            if ((!img.isConnected && record.seen) || img.dataset.src !== record.src || img.getAttribute('src') !== record.placeholder) {
+                releaseLazyImage(record, !img.isConnected);
+            }
+        }
+    });
+    lazyRemovalObserver = observer;
+    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'data-src'] });
+}
+
+function registerLazyImage(img, src) {
+    const previous = lazyImages.get(img);
+    if (previous) releaseLazyImage(previous);
+    _initLazyLoadObserver();
+    if (!lazyLoadObserver) {
+        img.classList.add('lazy-image');
+        img.src = src;
+        delete img.dataset.src;
+        img.classList.remove('lazy-loading', 'lazy-error');
         return;
     }
-    
-    lazyLoadObserver = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                const img = entry.target;
-                _loadImage(img);
-                lazyLoadObserver.unobserve(img);
-            }
-        });
-    }, {
-        rootMargin: "200px 0px", // 提前 200px 开始加载
-        threshold: 0.01
-    });
-}
-
-/**
- * 实际加载图片
- */
-function _loadImage(img) {
-    const src = img.dataset.src;
-    if (!src) return;
-    
-    // 创建临时图片测试加载
-    const tempImg = new Image();
-    
-    tempImg.onload = () => {
-        img.src = src;
-        img.classList.remove("lazy-loading");
-        img.classList.add("lazy-loaded");
-        delete img.dataset.src;
-    };
-    
-    tempImg.onerror = () => {
-        // 加载失败，显示错误占位图
-        img.src = ERROR_IMAGE;
-        img.classList.remove("lazy-loading");
-        img.classList.add("lazy-error");
-        
-        // 记录失败，后续可重试
-        img.dataset.retries = (parseInt(img.dataset.retries) || 0) + 1;
-    };
-    
-    tempImg.src = src;
-}
-
-/**
- * 创建懒加载图片元素
- * @param {string} src - 图片真实地址
- * @param {string} alt - 图片描述
- * @param {Object} style - 样式对象
- * @returns {HTMLImageElement}
- */
-export function createLazyImage(src, alt = "", style = {}) {
-    _initLazyLoadObserver();
-    
-    const img = document.createElement("img");
-    img.alt = alt;
-    img.src = PLACEHOLDER_IMAGE;
+    const placeholder = lazyPlaceholder();
     img.dataset.src = src;
-    img.className = "lazy-image lazy-loading";
-    
-    // 应用样式
-    Object.assign(img.style, {
-        transition: "opacity 0.3s ease",
-        ...style
-    });
-    
-    // 添加到观察队列
-    if (lazyLoadObserver) {
-        lazyLoadObserver.observe(img);
-    } else {
-        // 降级：直接加载
-        img.src = src;
+    img.src = placeholder;
+    img.classList.remove('lazy-loaded', 'lazy-error');
+    img.classList.add('lazy-image', 'lazy-loading');
+    const record = { img, src, placeholder, seen: img.isConnected, reader: null, timer: null, cleanup: null };
+    record.cleanup = () => releaseLazyImage(record, true);
+    img._lazyCleanup = record.cleanup;
+    lazyImages.set(img, record);
+    watchLazyImages();
+    if (!record.seen) record.timer = setTimeout(() => {
+        if (ownsLazyImage(record)) { record.seen = true; record.timer = null; }
+        else {
+            const unmounted = !record.seen && img.dataset.src === src && img.getAttribute('src') === placeholder;
+            releaseLazyImage(record);
+            if (unmounted) { img.src = src; delete img.dataset.src; img.classList.remove('lazy-loading'); }
+        }
+    }, LAZY_IMAGES.MOUNT_TIMEOUT);
+    lazyLoadObserver.observe(img);
+}
+
+function _loadImage(img) {
+    const record = lazyImages.get(img);
+    if (!record || record.reader) return;
+    if (!ownsLazyImage(record)) {
+        if (record.seen || img.dataset.src !== record.src || img.getAttribute('src') !== record.placeholder) releaseLazyImage(record, !img.isConnected);
+        return;
     }
-    
+    record.seen = true;
+    lazyLoadObserver?.unobserve(img);
+    if (record.timer !== null) clearTimeout(record.timer);
+    const reader = new Image();
+    record.reader = reader;
+    const finish = failed => {
+        if (!ownsLazyImage(record)) { releaseLazyImage(record, !img.isConnected); return; }
+        const src = record.src;
+        releaseLazyImage(record);
+        img.src = failed ? lazyPlaceholder(true) : src;
+        img.classList.remove('lazy-loading');
+        img.classList.add(failed ? 'lazy-error' : 'lazy-loaded');
+        if (failed) img.dataset.retries = (parseInt(img.dataset.retries) || 0) + 1;
+        else delete img.dataset.src;
+    };
+    reader.onload = () => finish(false);
+    reader.onerror = () => finish(true);
+    record.timer = setTimeout(() => finish(true), LAZY_IMAGES.READ_TIMEOUT);
+    reader.src = record.src;
+}
+
+export function createLazyImage(src, alt = '', style = {}) {
+    const img = document.createElement('img');
+    img.alt = alt;
+    Object.assign(img.style, { transition: 'opacity 0.3s ease', ...style });
+    registerLazyImage(img, src);
     return img;
 }
 
-/**
- * 将现有图片转换为懒加载
- * @param {HTMLImageElement} img - 已存在的图片元素
- */
 export function makeLazy(img) {
     if (!img.src || img.dataset.src) return;
-    
-    _initLazyLoadObserver();
-    
-    img.dataset.src = img.src;
-    img.src = PLACEHOLDER_IMAGE;
-    img.classList.add("lazy-image", "lazy-loading");
-    
-    if (lazyLoadObserver) {
-        lazyLoadObserver.observe(img);
-    }
+    registerLazyImage(img, img.src);
 }
 
-/**
- * 批量设置容器内所有图片为懒加载
- * @param {HTMLElement} container - 容器元素
- * @param {string} selector - 图片选择器，默认 "img"
- */
-export function lazyLoadImages(container, selector = "img") {
-    const images = container.querySelectorAll(selector);
-    images.forEach(img => {
-        // 跳过已处理的和 data URL
-        if (img.dataset.src || img.src.startsWith("data:")) return;
+export function lazyLoadImages(container, selector = 'img') {
+    for (const img of container.querySelectorAll(selector)) {
+        if (img.classList.contains('target-img') && img.closest('.img-viewport')?._sandboxCleanup) continue;
+        if (img.dataset.src || img.src.startsWith('data:')) continue;
         makeLazy(img);
-    });
+    }
 }
 
 
@@ -1392,7 +1419,7 @@ export function isEmptyListRefreshWithExistingData(nextItems, currentItems) {
  * 渲染可访问的列表首屏失败状态，并提供显式重试入口。
  * 使用 DOM/textContent，避免错误文案进入 HTML sink。
  */
-export function renderListLoadError(container, message, onRetry, t) {
+export function renderListLoadError(container, message, onRetry, t, error = null) {
     if (!container) return;
     const status = document.createElement("div");
     status.className = "comfy-ranking-list-error";
@@ -1411,6 +1438,53 @@ export function renderListLoadError(container, message, onRetry, t) {
 
     status.append(text, retry);
     container.replaceChildren(status);
+    appendRequestDiagnostic(container, error, t);
+}
+
+
+export function appendRequestDiagnostic(container, error, t, isCurrent = () => true) {
+    if (!container || !isCurrent()) return;
+    const requestId = error?.requestId;
+    if (typeof requestId !== 'string' || !API.REQUEST_ID_PATTERN.test(requestId)) return;
+
+    const details = document.createElement('details');
+    details.className = 'comfy-ranking-request-diagnostic';
+    const summary = document.createElement('summary');
+    summary.textContent = t('feedback.diagnostic_details');
+    const label = document.createElement('label');
+    label.className = 'comfy-ranking-request-diagnostic__label';
+    label.textContent = t('feedback.request_id');
+    const input = document.createElement('input');
+    input.type = 'text'; input.readOnly = true; input.spellcheck = false;
+    input.value = requestId;
+    label.append(input);
+    const copy = document.createElement('button');
+    copy.type = 'button'; copy.textContent = t('common.copy');
+    const feedback = document.createElement('p');
+    feedback.className = 'comfy-ranking-request-diagnostic__feedback';
+    feedback.setAttribute('role', 'status');
+    feedback.setAttribute('aria-live', 'polite');
+    let copying = false;
+    copy.addEventListener('click', async () => {
+        if (copying || !details.isConnected || !isCurrent()) return;
+        copying = true; copy.setAttribute('aria-busy', 'true');
+        try {
+            if (typeof navigator.clipboard?.writeText !== 'function') throw new Error();
+            await navigator.clipboard.writeText(requestId);
+            if (details.isConnected && isCurrent()) feedback.textContent = t('feedback.copied');
+        } catch {
+            if (details.isConnected && isCurrent()) {
+                feedback.textContent = t('feedback.copy_id_manually');
+                if (document.activeElement === copy) { input.focus(); input.select(); }
+            }
+        } finally {
+            copying = false;
+            if (details.isConnected && isCurrent()) copy.setAttribute('aria-busy', 'false');
+        }
+    });
+    details.append(summary, label, copy, feedback);
+    container.append(details);
+    return details;
 }
 
 /**

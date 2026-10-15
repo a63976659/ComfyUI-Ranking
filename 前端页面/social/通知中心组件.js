@@ -1,9 +1,10 @@
 // 前端页面/social/通知中心组件.js
-import { createUnreadBadgeUpdate } from "./未读角标工具.js";
+import { loadUnreadCount } from "./未读角标工具.js";
+export { loadUnreadCount };
 import { api, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
-import { API, CACHE, PLACEHOLDERS } from "../core/全局配置.js";
+import { API, CACHE, PLACEHOLDERS, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
@@ -165,7 +166,7 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             
             html += `
                 <article class="notif-item${isSystem ? ' notif-item--system' : ''}${isUnread ? ' notif-item--unread' : ''}" data-account="${escapeHtml(msg.from_user)}" data-type="${escapeHtml(msg.type)}" data-item-id="${escapeHtml(msg.target_item_id || '')}">
-                    <img class="notification-avatar" alt="" src="${escapeHtml(msg.from_avatar || PLACEHOLDERS.AVATAR)}">
+                    <img class="notification-avatar" alt="" src="${escapeHtml(normalizeProfileImageUrl(msg.from_avatar) || PLACEHOLDERS.AVATAR)}">
                     <div class="notification-body">
                         <div class="notification-meta">${nameLabel}<time class="notification-time" datetime="${date.toISOString()}">${timeStr}</time></div>
                         <div class="notification-action">${actionText}</div>
@@ -274,15 +275,4 @@ export async function openNotificationCenter(currentUser, bellBtn) {
         if (scope.isCurrent()) void loadUnreadCount(currentUser, bellBtn);
     } catch (_) { if (scope.isCurrent() && messages.length === 0) listArea.innerHTML = `<div class="notification-status" role="alert">${t('common.error')}</div>`; }
 
-}
-
-export async function loadUnreadCount(currentUser, bellBtn) {
-    const update = createUnreadBadgeUpdate(bellBtn, '#unread-badge', currentUser?.account);
-    if (!currentUser?.account || !bellBtn?.querySelector("#unread-badge")) return;
-    try {
-        const res = await api.getUnreadCount(currentUser.account);
-        if (res?.status === "success" && Number.isSafeInteger(res.unread_count) && res.unread_count >= 0) {
-            update.render(res.unread_count);
-        }
-    } catch (_) {}
 }

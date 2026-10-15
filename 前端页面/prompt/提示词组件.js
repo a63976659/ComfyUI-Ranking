@@ -15,6 +15,7 @@
 // ==========================================
 
 import { createPromptCategorySync, isPromptCategoryList } from "./提示词分类同步.js";
+import { getPromptPriceState } from "./价格校验.js";
 import { createCardNavigationScope } from "../components/卡片导航生命周期.js";
 import { api, proxyImages, captureRequestSession } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
@@ -30,6 +31,20 @@ import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具�
 const CACHE_KEY_PREFIX = "PromptsCache";
 const CATEGORIES_CACHE_PREFIX = "PromptsCategoriesCache";  // 📴 分类缓存键前缀（离线容灾）
 const PAGE_SIZE = 20;
+
+function promptListCacheKey(type, category, sort) {
+    const filter = category ? `category_${JSON.stringify([category, sort])}` : `all_${sort}`;
+    return `${CACHE_KEY_PREFIX}_${type}_${filter}`;
+}
+
+function readPromptListCache(type, category, sort) {
+    const cached = readListCache(promptListCacheKey(type, category, sort));
+    if (cached || !category) return cached;
+    const legacy = readListCache(`${CACHE_KEY_PREFIX}_${type}_${category}_${sort}`);
+    if (!legacy || legacy.some(item => item.category !== category ||
+        (item.prompt_type != null && item.prompt_type !== type))) return null;
+    return legacy;
+}
 
 // 缓存当前用户
 let currentUserCache = null;
@@ -84,10 +99,10 @@ function _catLabel(name) {
  */
 function _renderEmptyState() {
     return `
-        <div style="grid-column: span 2; text-align: center; padding: 60px 20px; color: #666;">
-            <div style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;">🧩</div>
-            <div style="font-size: 14px; margin-bottom: 8px;">${t('prompt.no_prompts')}</div>
-            <div style="font-size: 12px; color: #888;">${t('prompt.be_first')}</div>
+        <div class="prompt-board__empty" role="status">
+            <div class="prompt-board__empty-icon" aria-hidden="true">🧩</div>
+            <div class="prompt-board__empty-title">${t('prompt.no_prompts')}</div>
+            <div class="prompt-board__empty-hint">${t('prompt.be_first')}</div>
         </div>
     `;
 }
@@ -95,14 +110,13 @@ function _renderEmptyState() {
 /**
  * 🖼️ 生成头像 HTML 字符串
  */
-function _generateAvatarHtml(avatar, name, size) {
+function _generateAvatarHtml(avatar, name) {
     const initial = (name || 'U')[0].toUpperCase();
     // 🔒 XSS防护：avatar / name 均来自他人可修改的资料（昵称首字母可能是 < ），写入 HTML 前必须转义
     if (avatar) {
-        return `<img class="swr-avatar" alt="" src="${escapeHtml(avatar)}" style="width: ${size}px; height: ${size}px; border-radius: 50%; object-fit: cover; border: 1px solid #444; background: #333;">`;
+        return `<img class="swr-avatar prompt-card__avatar" alt="" src="${escapeHtml(avatar)}">`;
     }
-    const fontSize = Math.max(9, Math.round(size * 0.5));
-    return `<div class="swr-avatar" style="width: ${size}px; height: ${size}px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: ${fontSize}px; font-weight: bold;">${escapeHtml(initial)}</div>`;
+    return `<div class="swr-avatar prompt-card__avatar prompt-card__avatar--initial" aria-hidden="true">${escapeHtml(initial)}</div>`;
 }
 
 /**
@@ -116,18 +130,6 @@ export function createPromptsView(currentUser, keyword = "") {
 
     const container = document.createElement("div");
     container.className = "prompt-board";
-    Object.assign(container.style, {
-        display: "flex",
-        flexDirection: "column",
-        gap: "0",
-        color: "var(--rk-text, var(--fg-color, #ddd))",
-        fontSize: "14px",
-        padding: "0",
-        overflowY: "auto",
-        flex: "1",
-        boxSizing: "border-box"
-    });
-
     container.innerHTML = `
         <!-- 🎨 模块切换（图像/视频/音乐） -->
         <div id="prompt-type-tabs" class="prompt-board__types" role="group" aria-label="${escapeHtml(t('prompt.type_label'))}">
@@ -144,19 +146,19 @@ export function createPromptsView(currentUser, keyword = "") {
 
         <!-- 🏷️ 分类选择条（换行自适应侧边栏宽度） -->
         <div id="prompt-category-bar" class="prompt-board__categories" role="group" aria-label="${escapeHtml(t('prompt.category_label'))}">
-            <div style="color: #888; font-size: 12px; padding: 6px 0;">⏳</div>
+            <div class="prompt-board__category-loading" aria-hidden="true">⏳</div>
         </div>
 
         <!-- 🎯 瀑布流容器 -->
-        <div id="prompts-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 15px; overflow-y: auto; flex: 1;">
-            <div id="prompts-loading" style="grid-column: span 2; text-align: center; padding: 40px; color: #888;">
-                <div style="font-size: 24px; margin-bottom: 10px;">⏳</div>
+        <div id="prompts-grid" class="prompt-board__grid">
+            <div id="prompts-loading" class="prompt-board__loading" role="status">
+                <div class="prompt-board__loading-icon" aria-hidden="true">⏳</div>
                 ${t('prompt.loading')}
             </div>
         </div>
 
         <!-- 加载更多 -->
-        <div id="load-more-wrapper" style="display: none; padding: 15px; text-align: center; border-top: 1px solid var(--border-color, #333);">
+        <div id="load-more-wrapper" class="prompt-board__pagination" style="display: none;">
             <button type="button" id="btn-load-more" class="prompt-board__more">
                 ${t('post.load_more')}
             </button>
@@ -385,7 +387,7 @@ export function createPromptsView(currentUser, keyword = "") {
             // 🚀 本地排序优先：已有数据时直接本地排序渲染
             if (allPromptsData.length > 0) {
                 const sorted = sortPromptsLocally(allPromptsData, currentSort);
-                renderPromptsFromCache(sorted);
+                renderPromptsFromCache(sorted, true);
                 // 后台静默刷新最新数据
                 silentRefresh();
             } else {
@@ -408,7 +410,7 @@ export function createPromptsView(currentUser, keyword = "") {
         listViewGeneration++;
         if (allPromptsData.length > 0) {
             const sorted = sortPromptsLocally(allPromptsData, currentSort);
-            renderPromptsFromCache(sorted);
+            renderPromptsFromCache(sorted, true);
         }
         silentRefresh();
     };
@@ -416,27 +418,19 @@ export function createPromptsView(currentUser, keyword = "") {
 
     // 显示骨架屏
     const showSkeleton = () => {
-        promptsGrid.innerHTML = "";
+        promptsGrid.innerHTML = `<div class="prompt-board__loading prompt-board__loading--skeleton" role="status">${t('prompt.loading')}</div>`;
         for (let i = 0; i < 4; i++) {
             const skeletonCard = document.createElement("div");
-            skeletonCard.style.cssText = "background: var(--comfy-input-bg); border-radius: 10px; overflow: hidden; animation: pulse 1.5s infinite;";
+            skeletonCard.className = "prompt-board__skeleton";
+            skeletonCard.setAttribute("aria-hidden", "true");
             skeletonCard.innerHTML = `
-                <div style="width: 100%; padding-top: 120%; background: linear-gradient(90deg, #2a2a2a 25%, #333 50%, #2a2a2a 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite;"></div>
-                <div style="padding: 10px;">
-                    <div style="height: 14px; background: #333; border-radius: 4px; margin-bottom: 8px;"></div>
-                    <div style="height: 12px; background: #333; border-radius: 4px; width: 60%;"></div>
+                <div class="prompt-board__skeleton-cover"></div>
+                <div class="prompt-board__skeleton-body">
+                    <div class="prompt-board__skeleton-line"></div>
+                    <div class="prompt-board__skeleton-line prompt-board__skeleton-line--short"></div>
                 </div>
             `;
             promptsGrid.appendChild(skeletonCard);
-        }
-        if (!document.getElementById("prompts-skeleton-style")) {
-            const style = document.createElement("style");
-            style.id = "prompts-skeleton-style";
-            style.textContent = `
-                @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-                @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
-            `;
-            document.head.appendChild(style);
         }
     };
 
@@ -447,11 +441,11 @@ export function createPromptsView(currentUser, keyword = "") {
         const requestedType = currentType;
         const requestedCategory = currentCategory;
         const requestedSort = currentSort;
-        const cacheKey = `${CACHE_KEY_PREFIX}_${requestedType}_${requestedCategory || 'all'}_${requestedSort}`;
+        const cacheKey = promptListCacheKey(requestedType, requestedCategory, requestedSort);
 
         // ✅ 优先从本地缓存读取（含过期缓存：离线容灾，与插件榜/工作流/推荐榜策略一致）
         if (!append && page === 1) {
-            const cachedData = readListCache(cacheKey);
+            const cachedData = readPromptListCache(requestedType, requestedCategory, requestedSort);
             if (cachedData) {
                 allPromptsData = proxyImages(cachedData);
                 renderPromptsFromCache(allPromptsData, true);
@@ -558,13 +552,13 @@ export function createPromptsView(currentUser, keyword = "") {
             console.error("加载提示词失败");
             // 网络失败时尝试从缓存读取（包括过期缓存，离线容灾）
             if (!append) {
-                const cachedData = readListCache(cacheKey);
+                const cachedData = readPromptListCache(requestedType, requestedCategory, requestedSort);
                 if (cachedData) {
                     allPromptsData = proxyImages(cachedData);
                     renderPromptsFromCache(allPromptsData);
                     showToast(t('prompt.network_cache'), "warning");
                 } else {
-                    renderListLoadError(promptsGrid, t('prompt.load_failed'), () => loadPrompts(1, false), t);
+                    renderListLoadError(promptsGrid, t('prompt.load_failed'), () => loadPrompts(1, false), t, err);
                 }
             }
         }
@@ -573,6 +567,7 @@ export function createPromptsView(currentUser, keyword = "") {
     // 从缓存渲染提示词列表
     const renderPromptsFromCache = (prompts, deferSearchScan = false) => {
         firstPageReady = true;
+        const restoreFocus = cardNavigation.captureListFocus(promptsGrid);
         promptsGrid.innerHTML = "";
 
         // 🔍 搜索过滤
@@ -588,6 +583,7 @@ export function createPromptsView(currentUser, keyword = "") {
                 promptsGrid.innerHTML = _renderEmptyState();
                 loadMoreWrapper.style.display = "none";
             }
+            restoreFocus();
             return;
         }
 
@@ -615,6 +611,7 @@ export function createPromptsView(currentUser, keyword = "") {
         } else {
             loadMoreWrapper.style.display = "none";
         }
+        restoreFocus();
     };
 
     // 后台静默更新
@@ -624,7 +621,7 @@ export function createPromptsView(currentUser, keyword = "") {
         const requestedType = currentType;
         const requestedCategory = currentCategory;
         const requestedSort = currentSort;
-        const cacheKey = `${CACHE_KEY_PREFIX}_${requestedType}_${requestedCategory || 'all'}_${requestedSort}`;
+        const cacheKey = promptListCacheKey(requestedType, requestedCategory, requestedSort);
         const requestGeneration = ++networkRequestGeneration;
         try {
             isLoadingFromNetwork = true;
@@ -678,10 +675,23 @@ export function createPromptsView(currentUser, keyword = "") {
     const _promptsDataChanged = (oldData, newData) => {
         if (!oldData || !newData) return true;
         if (oldData.length !== newData.length) return true;
-        const checkCount = Math.min(10, oldData.length);
+        const checkCount = oldData.length;
         const COMPARE_FIELDS = ['likes', 'favorites', 'views', 'daily_views', 'comments'];
+        const contentFields = ["title", "content", "category", "prompt_type", "media_type", "price", "created_at", "author", "author_name"];
+        const mediaFields = ["cover_image", "author_avatar"];
+        const normalizedImage = value => typeof value === 'string'
+            ? proxyImages({ cover_image: value }).cover_image : value;
         for (let i = 0; i < checkCount; i++) {
             if ((oldData[i].id) !== (newData[i].id)) return true;
+            for (const field of contentFields) {
+                if (!Object.is(oldData[i][field], newData[i][field])) return true;
+            }
+            for (const field of mediaFields) {
+                if (!Object.is(normalizedImage(oldData[i][field]), normalizedImage(newData[i][field]))) return true;
+            }
+            const oldTags = Array.isArray(oldData[i].tags) ? oldData[i].tags : [];
+            const newTags = Array.isArray(newData[i].tags) ? newData[i].tags : [];
+            if (oldTags.length !== newTags.length || oldTags.some((value, index) => !Object.is(value, newTags[index]))) return true;
             for (const f of COMPARE_FIELDS) {
                 if ((oldData[i][f] || 0) !== (newData[i][f] || 0)) return true;
             }
@@ -741,75 +751,67 @@ export function createPromptsView(currentUser, keyword = "") {
  */
 function createPromptCard(prompt, currentUser = currentUserCache, isCurrent = () => true, captureNavigation = () => isCurrent) {
     const card = document.createElement("div");
-    card.className = "business-list-card";
-    Object.assign(card.style, {
-        background: "var(--comfy-menu-bg)",
-        borderRadius: "8px",
-        overflow: "hidden",
-        cursor: "pointer",
-        transition: "transform 0.2s, box-shadow 0.2s",
-        border: "1px solid var(--border-color, #333)"
-    });
+    card.className = "business-list-card prompt-card";
+    if (typeof prompt.id === 'string' || (typeof prompt.id === 'number' && Number.isFinite(prompt.id))) {
+        card._rankingListId = String(prompt.id);
+    }
 
     // 格式化时间
     const timeStr = formatTime(prompt.created_at);
 
     // 判断是否为视频封面
     const isVideo = prompt.media_type === "video";
+    const initialAuthor = isCurrent() && typeof prompt.author === 'string' ? getCachedProfile(prompt.author) : null;
+    const initialAuthorName = [initialAuthor?.name, prompt.author_name, prompt.author].find(value => typeof value === 'string' && value) || '';
 
-    // 价格徽标：免费绿色 / 💎价格金色
-    const priceHtml = (prompt.price > 0)
-        ? `<span style="background: linear-gradient(135deg, #FFD700, #FFA000); color: #333; font-size: 10px; font-weight: bold; padding: 2px 8px; border-radius: 10px;">💎 ${escapeHtml(prompt.price)}</span>`
-        : `<span style="background: rgba(76, 175, 80, 0.25); color: #4CAF50; font-size: 10px; font-weight: bold; padding: 2px 8px; border-radius: 10px; border: 1px solid rgba(76, 175, 80, 0.5);">${t('prompt.free')}</span>`;
+    // 价格徽标
+    const priceState = getPromptPriceState(prompt.price);
+    const priceHtml = priceState !== 'free'
+        ? `<span class="prompt-card__badge prompt-card__badge--paid">💎 ${escapeHtml(priceState === 'paid' ? prompt.price : t('common.unknown'))}</span>`
+        : `<span class="prompt-card__badge prompt-card__badge--free">${t('prompt.free')}</span>`;
 
     card.innerHTML = `
         <!-- 封面图 -->
-        <div style="position: relative; width: 100%; padding-top: 100%; background: #111;">
-            <img src="${escapeHtml(prompt.cover_image || 'data:image/svg+xml,...')}"
-                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;"
-                 alt="">
+        <div class="prompt-card__cover">
+            <img class="prompt-card__image" src="${escapeHtml(prompt.cover_image || 'data:image/svg+xml,...')}" alt="">
             ${isVideo ? `
             <!-- 视频播放按钮 -->
-            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-                        width: 48px; height: 48px; background: rgba(0,0,0,0.6); border-radius: 50%;
-                        display: flex; align-items: center; justify-content: center; pointer-events: none;">
-                <div style="width: 0; height: 0; border-left: 16px solid rgba(255,255,255,0.9);
-                            border-top: 10px solid transparent; border-bottom: 10px solid transparent;
-                            margin-left: 4px;"></div>
+            <div class="prompt-card__play">
+                <div class="prompt-card__play-icon"></div>
             </div>
             ` : ''}
             <!-- 价格徽标 -->
-            <div style="position: absolute; top: 8px; right: 8px; pointer-events: none;">
+            <div class="prompt-card__price">
                 ${priceHtml}
             </div>
             <!-- 🔒 付费锁标识 -->
-            ${prompt.price > 0 ? `
-            <div style="position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.6); border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 12px; pointer-events: none;">🔒</div>
+            ${priceState !== 'free' ? `
+            <div class="prompt-card__lock">🔒</div>
             ` : ''}
         </div>
-        
+
         <!-- 内容区 -->
-        <div style="padding: 10px;">
+        <div class="prompt-card__body">
             <!-- 标题 -->
             <button type="button" class="business-list-card__title">
                 ${escapeHtml(prompt.title)}
             </button>
-            
+
             <!-- 分类标签 -->
-            <div style="margin-bottom: 6px;">
-                <span style="display: inline-block; background: rgba(118, 75, 162, 0.25); border: 1px solid rgba(118, 75, 162, 0.5); color: #CE93D8; font-size: 10px; padding: 2px 8px; border-radius: 10px;">${escapeHtml(_catLabel(prompt.category || ''))}</span>
-                ${(Array.isArray(prompt.tags) && prompt.tags.length) ? prompt.tags.slice(0, 3).map(tag => `<span style="display: inline-block; background: rgba(0,188,212,0.12); border: 1px solid rgba(0,188,212,0.35); color: #4DD0E1; font-size: 10px; padding: 2px 6px; border-radius: 10px; margin-left: 4px;">#${escapeHtml(tag)}</span>`).join('') : ''}
+            <div class="prompt-card__tags">
+                <span class="prompt-card__badge prompt-card__badge--category">${escapeHtml(_catLabel(prompt.category || ''))}</span>
+                ${(Array.isArray(prompt.tags) && prompt.tags.length) ? prompt.tags.slice(0, 3).map(tag => `<span class="prompt-card__badge prompt-card__badge--tag">#${escapeHtml(tag)}</span>`).join('') : ''}
             </div>
-            
+
             <!-- 作者信息（SWR 缓存头像） -->
-            <div class="business-list-card__author" style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;"></div>
-            
+            <div class="business-list-card__author prompt-card__author">${_generateAvatarHtml('', initialAuthorName)}<span class="swr-name prompt-card__name">${escapeHtml(initialAuthorName)}</span></div>
+
             <!-- 互动数据 -->
-            <div style="display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--rk-muted, var(--descrip-text, #888));">
+            <div class="prompt-card__stats">
                 <span>❤️ ${escapeHtml(prompt.likes || 0)}</span>
                 <span>🔖 ${escapeHtml(prompt.favorites || 0)}</span>
                 <span>🔥 ${escapeHtml(prompt.views || 0)}</span>
-                <span style="margin-left: auto; font-size: 10px;">${escapeHtml(timeStr)}</span>
+                <span class="prompt-card__time">${escapeHtml(timeStr)}</span>
             </div>
         </div>
     `;
@@ -821,31 +823,33 @@ function createPromptCard(prompt, currentUser = currentUserCache, isCurrent = ()
         if (!authorContainer) return;
 
         const account = prompt.author;
-        const cached = getCachedProfile(account);
-        const avatar = cached?.avatar || '';
-        const name = cached?.name || account || '';
+        const cached = initialAuthor;
+        const avatar = [cached?.avatar, prompt.author_avatar].find(value => typeof value === 'string' && value) || '';
+        const name = initialAuthorName;
 
         // 渲染初始头像
-        const avatarHtml = _generateAvatarHtml(avatar, name, 18);
+        const avatarHtml = _generateAvatarHtml(avatar, name);
 
-        authorContainer.innerHTML = `${avatarHtml}<span class="swr-name" style="font-size: 11px; color: var(--rk-muted, var(--descrip-text, #999)); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(name)}</span>`;
+        authorContainer.innerHTML = `${avatarHtml}<span class="swr-name prompt-card__name">${escapeHtml(name)}</span>`;
 
         // 后台静默校对
-        getProfileWithSWR(account, api.getUserProfile, (profile) => {
+        const updateAuthor = (profile) => {
             if (!isCurrent() || !card.isConnected) return;
             const avatarEl = authorContainer.querySelector('.swr-avatar');
             const nameEl = authorContainer.querySelector('.swr-name');
-            if (avatarEl && profile.avatar) {
+            if (avatarEl && typeof profile.avatar === 'string' && profile.avatar) {
                 if (avatarEl.tagName === 'IMG') {
-                    avatarEl.src = profile.avatar;
+                    if (avatarEl.getAttribute('src') !== profile.avatar) avatarEl.src = profile.avatar;
                 } else {
-                    avatarEl.outerHTML = _generateAvatarHtml(profile.avatar, profile.name || name, 18);
+                    avatarEl.outerHTML = _generateAvatarHtml(profile.avatar, typeof profile.name === 'string' && profile.name ? profile.name : name);
                 }
             }
-            if (nameEl && profile.name) {
+            if (nameEl && typeof profile.name === 'string' && profile.name && nameEl.textContent !== profile.name) {
                 nameEl.textContent = profile.name;
             }
-        });
+        };
+        const latestCached = getProfileWithSWR(account, api.getUserProfile, updateAuthor);
+        if (latestCached) updateAuthor(latestCached);
     }, 0);
 
     const cover = card.querySelector('img');

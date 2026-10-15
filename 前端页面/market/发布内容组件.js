@@ -6,7 +6,7 @@ import { handlePublishSubmit } from "./发布内容_提交引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { showConfirm, showToast } from "../components/UI交互提示组件.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
-import { escapeHtml } from "../core/全局配置.js";
+import { escapeHtml, TYPE_RULES, areKeyboardShortcutsEnabled } from "../core/全局配置.js";
 
 // ==========================================
 // 📌 模块级常量
@@ -14,28 +14,7 @@ import { escapeHtml } from "../core/全局配置.js";
 
 // 📋 四榜发布表单声明式规则：tool 插件榜 / skill Skill榜 / app 工作流 / recommend 推荐榜
 // UI 显隐、联动、校验统一读取此配置，避免类型分支散落多处
-export const TYPE_RULES = {
-    tool: {
-        recommendForm: false, resType: { selectable: ['link', 'netdisk'] },
-        privateRepoWhenLink: true, price: true, refund: true, originalRequired: true
-    },
-    skill: {
-        recommendForm: false, resType: { selectable: ['link', 'netdisk'] },
-        privateRepoWhenLink: true, price: true, refund: true, originalRequired: true
-    },
-    app: {
-        recommendForm: false, resType: { fixed: 'json' },
-        privateRepoWhenLink: true, price: true, refund: true, originalRequired: true
-    },
-    recommend: {
-        recommendForm: true, resType: { lockedByForm: true },
-        privateRepoWhenLink: false, price: false, refund: false, originalRequired: false,
-        formToResType: { recommend_tool: 'link', recommend_skill: 'link', recommend_app: 'json', recommend_link: 'netdisk' }
-    }
-};
-
-// 封面标签统一样式
-const _COVER_LABEL_STYLE = 'position: absolute; top: 2px; left: 2px; background: #4CAF50; color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 2px; pointer-events: none;';
+export { TYPE_RULES };
 
 /**
  * 创建单个图片预览 wrapper 元素
@@ -45,11 +24,12 @@ const _COVER_LABEL_STYLE = 'position: absolute; top: 2px; left: 2px; background:
  */
 function _createImagePreviewWrapper(imgUrl, idx) {
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position: relative; width: 80px; height: 80px;';
+    wrapper.className = 'ranking-publish__image';
+    wrapper.classList.toggle('ranking-publish__image--cover', idx === 0);
     wrapper.innerHTML = `
-        <img src="${escapeHtml(imgUrl)}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 4px; border: 2px solid ${idx === 0 ? '#4CAF50' : '#444'};">
-        ${idx === 0 ? `<span class="cover-label" style="${_COVER_LABEL_STYLE}">${t('post.cover')}</span>` : ''}
-        <button data-action="remove" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #F44336; color: #fff; border: none; cursor: pointer; font-size: 12px; line-height: 1;">×</button>
+        <img src="${escapeHtml(imgUrl)}" class="ranking-publish__thumbnail" alt="">
+        ${idx === 0 ? `<span class="cover-label ranking-publish__cover-label">${t('post.cover')}</span>` : ''}
+        <button type="button" data-action="remove" class="ranking-publish__image-remove" aria-label="${escapeHtml(t('post.remove_image', { index: idx + 1 }))}">×</button>
     `;
     return wrapper;
 }
@@ -68,14 +48,22 @@ function updateCoverMark(previewContainer) {
     wrappers.forEach((wrapper, idx) => {
         const img = wrapper.querySelector('img');
         const coverLabel = wrapper.querySelector('.cover-label');
+        wrapper.tabIndex = 0;
+        wrapper.setAttribute('role', 'group');
+        wrapper.setAttribute('aria-label', t('post.image_position', { index: idx + 1, total: wrappers.length }));
+        const shortcutsEnabled = areKeyboardShortcutsEnabled();
+        wrapper.title = shortcutsEnabled ? t('post.image_move_hint') : t('post.image_drag_hint');
+        if (shortcutsEnabled) wrapper.setAttribute('aria-keyshortcuts', 'Alt+ArrowLeft Alt+ArrowRight');
+        else wrapper.removeAttribute('aria-keyshortcuts');
+        const removeBtn = wrapper.querySelector('button[data-action="remove"]');
+        if (removeBtn) removeBtn.setAttribute('aria-label', t('post.remove_image', { index: idx + 1 }));
         if (img) {
-            img.style.borderColor = idx === 0 ? '#4CAF50' : '#444';
+            wrapper.classList.toggle('ranking-publish__image--cover', idx === 0);
         }
         if (idx === 0) {
             if (!coverLabel) {
                 const label = document.createElement('span');
-                label.className = 'cover-label';
-                label.style.cssText = _COVER_LABEL_STYLE;
+                label.className = 'cover-label ranking-publish__cover-label';
                 label.textContent = t('post.cover');
                 wrapper.appendChild(label);
             }
@@ -85,16 +73,44 @@ function updateCoverMark(previewContainer) {
     });
 }
 
+const imageSortOwners = new WeakMap();
+
 // ✅ 为图片预览容器设置拖拽排序
-function setupImageDragSort(previewContainer, fileArray) {
+function setupImageDragSort(previewContainer, fileArray, options = {}) {
+    const owner = {};
+    imageSortOwners.set(previewContainer, owner);
     const wrappers = Array.from(previewContainer.querySelectorAll(':scope > div'));
     if (wrappers.length === 0) return;
+    updateCoverMark(previewContainer);
+    const canInteract = () => previewContainer.isConnected &&
+        typeof options.isCurrent === 'function' && options.isCurrent();
 
+    const isActiveBinding = () => imageSortOwners.get(previewContainer) === owner && canInteract();
     let dragSrcEl = null;
-    let dragSrcIndex = -1;
+    let dragSrcFile = null;
+    const resetDrag = () => {
+        dragSrcEl = null;
+        dragSrcFile = null;
+        Array.from(previewContainer.children).forEach(w => {
+            w.classList.remove('ranking-publish__image--dragging');
+            w.classList.remove('ranking-publish__image--target');
+        });
+    };
+    const getDragState = (target) => {
+        if (!isActiveBinding() || !dragSrcEl) return null;
+        const current = Array.from(previewContainer.children);
+        const from = current.indexOf(dragSrcEl);
+        const to = current.indexOf(target);
+        if (current.length !== fileArray.length || from < 0 || to < 0 ||
+            from >= fileArray.length || to >= fileArray.length || fileArray[from] !== dragSrcFile) return null;
+        return { current, from, to };
+    };
 
     // 清除所有旧事件，防止重复绑定
     wrappers.forEach(wrapper => {
+        wrapper.classList.remove('ranking-publish__image--dragging');
+        wrapper.classList.remove('ranking-publish__image--target');
+        wrapper.onkeydown = null;
         wrapper.ondragstart = null;
         wrapper.ondragover = null;
         wrapper.ondragleave = null;
@@ -104,101 +120,103 @@ function setupImageDragSort(previewContainer, fileArray) {
 
     wrappers.forEach(wrapper => {
         wrapper.draggable = true;
-        wrapper.style.cursor = 'grab';
+        wrapper.classList.add('ranking-publish__image--sortable');
 
         // 绑定删除按钮
         const removeBtn = wrapper.querySelector('button[data-action="remove"]');
         if (removeBtn) {
             removeBtn.onclick = null; // 清除旧事件，防止重复绑定
             removeBtn.onclick = (e) => {
-                e.stopPropagation();
+                if (!isActiveBinding() || removeBtn.disabled) return;
                 const currentIdx = Array.from(previewContainer.children).indexOf(wrapper);
+                if (currentIdx < 0 || currentIdx >= fileArray.length) return;
+                const ownedFocus = document.activeElement === removeBtn || document.activeElement === wrapper;
+                e.stopPropagation();
                 fileArray.splice(currentIdx, 1);
                 wrapper.remove();
                 updateCoverMark(previewContainer);
-                setupImageDragSort(previewContainer, fileArray);
+                setupImageDragSort(previewContainer, fileArray, options);
+                if (ownedFocus && canInteract() && document.activeElement === document.body) {
+                    const remaining = Array.from(previewContainer.children);
+                    const next = remaining[Math.min(currentIdx, remaining.length - 1)];
+                    if (next) next.focus({ preventScroll: true });
+                    else options.focusEmpty?.();
+                }
             };
         }
 
-        wrapper.ondragstart = (e) => {
+        wrapper.onkeydown = (e) => {
+            if (!areKeyboardShortcutsEnabled() || e.defaultPrevented || e.keyCode === 229 ||
+                e.target !== wrapper || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey ||
+                e.repeat || e.isComposing || !isActiveBinding() ||
+                !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+            const current = Array.from(previewContainer.children);
+            const from = current.indexOf(wrapper);
+            const to = from + (e.key === 'ArrowLeft' ? -1 : 1);
+            e.preventDefault();
             e.stopPropagation();
+            if (from < 0 || to < 0 || to >= current.length) return;
+            const [moved] = fileArray.splice(from, 1);
+            fileArray.splice(to, 0, moved);
+            previewContainer.insertBefore(wrapper, to > from ? current[to].nextSibling : current[to]);
+            updateCoverMark(previewContainer);
+            wrapper.focus({ preventScroll: true });
+        };
+
+        wrapper.ondragstart = (e) => {
+            if (!isActiveBinding() || e.defaultPrevented || !e.dataTransfer ||
+                typeof e.dataTransfer.setData !== 'function') return;
+            const current = Array.from(previewContainer.children);
+            const index = current.indexOf(wrapper);
+            if (current.length !== fileArray.length || index < 0 || index >= fileArray.length) return;
+            resetDrag();
             dragSrcEl = wrapper;
-            dragSrcIndex = Array.from(previewContainer.children).indexOf(wrapper);
-            wrapper.style.opacity = '0.5';
+            dragSrcFile = fileArray[index];
+            e.stopPropagation();
+            wrapper.classList.add('ranking-publish__image--dragging');
             e.dataTransfer.effectAllowed = 'move';
-            e.dataTransfer.setData('text/plain', String(dragSrcIndex));
+            e.dataTransfer.setData('text/plain', String(index));
         };
 
         wrapper.ondragover = (e) => {
+            const state = getDragState(wrapper);
+            if (!state || e.defaultPrevented || !e.dataTransfer) return;
             e.preventDefault();
             e.stopPropagation();
             e.dataTransfer.dropEffect = 'move';
-
-            const targetIndex = Array.from(previewContainer.children).indexOf(wrapper);
-            if (targetIndex === dragSrcIndex) {
-                Array.from(previewContainer.children).forEach(w => {
-                    w.style.borderLeft = '';
-                    w.style.paddingLeft = '';
-                });
-                return;
-            }
-
-            // 清除所有插入指示
-            Array.from(previewContainer.children).forEach(w => {
-                w.style.borderLeft = '';
-                w.style.paddingLeft = '';
-            });
-
-            // 在当前目标左侧显示绿色竖线指示插入位置
-            wrapper.style.borderLeft = '3px solid #4CAF50';
-            wrapper.style.paddingLeft = '5px';
+            state.current.forEach(w => w.classList.remove('ranking-publish__image--target'));
+            if (state.from !== state.to) wrapper.classList.add('ranking-publish__image--target');
         };
 
         wrapper.ondragleave = () => {
-            wrapper.style.borderLeft = '';
-            wrapper.style.paddingLeft = '';
+            if (!isActiveBinding() || !dragSrcEl) return;
+            wrapper.classList.remove('ranking-publish__image--target');
         };
 
         wrapper.ondrop = (e) => {
+            const state = getDragState(wrapper);
+            if (!state || e.defaultPrevented || !e.dataTransfer) return;
             e.preventDefault();
             e.stopPropagation();
-            const targetIndex = Array.from(previewContainer.children).indexOf(wrapper);
-            if (targetIndex === dragSrcIndex || dragSrcIndex === -1) return;
-
-            // 移动数组元素（splice 方式，不是交换）
-            const [moved] = fileArray.splice(dragSrcIndex, 1);
-            fileArray.splice(targetIndex, 0, moved);
-
-            // 移动 DOM 元素
-            if (targetIndex > dragSrcIndex) {
-                previewContainer.insertBefore(dragSrcEl, wrapper.nextSibling);
-            } else {
-                previewContainer.insertBefore(dragSrcEl, wrapper);
-            }
-
-            // 更新封面标记
+            const source = dragSrcEl;
+            resetDrag();
+            if (state.from === state.to) return;
+            const [moved] = fileArray.splice(state.from, 1);
+            fileArray.splice(state.to, 0, moved);
+            previewContainer.insertBefore(source, state.to > state.from ? state.current[state.to].nextSibling : wrapper);
             updateCoverMark(previewContainer);
         };
 
         wrapper.ondragend = () => {
-            dragSrcEl = null;
-            dragSrcIndex = -1;
-            Array.from(previewContainer.children).forEach(w => {
-                w.style.opacity = '';
-                w.style.borderLeft = '';
-                w.style.paddingLeft = '';
-            });
+            if (!isActiveBinding()) return;
+            resetDrag();
         };
     });
 }
 
 export function createPublishView(currentUser, onBackCallback, onSuccessCallback, editItemData = null, initialType = null) {
     const container = document.createElement("div");
-    Object.assign(container.style, {
-        display: "flex", flexDirection: "column", gap: "15px", color: "#ccc", 
-        // 🔧 自适应高度：flex 填充剩余空间，内容超出时在容器内部滚动（与主界面保持一致）
-        fontSize: "14px", padding: "15px", overflowY: "auto", flex: "1", minHeight: "0", boxSizing: "border-box"
-    });
+    container.className = 'ranking-publish-view';
 
     const isEditMode = !!editItemData;
     const viewTitle = isEditMode ? `✏️ ${t('publish.edit_content')}` : `🚀 ${t('publish.new_content')}`;
@@ -286,7 +304,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
             if (effectiveTime > now) {
                 const hoursLeft = Math.ceil((effectiveTime - now) / (1000 * 60 * 60));
                 pendingHint.style.display = "block";
-                pendingHint.innerHTML = `⏳ ${t('publish.current_price')} <strong>${editItemData.price}</strong> ${t('common.credits')} → ${t('publish.will_change_in')} <strong>${hoursLeft}</strong> ${t('publish.hours_later')} <strong style="color:#4CAF50;">${editItemData.pending_price}</strong> ${t('common.credits')}`;
+                pendingHint.innerHTML = `⏳ ${t('publish.current_price')} <strong>${escapeHtml(String(editItemData.price))}</strong> ${t('common.credits')} → ${t('publish.will_change_in')} <strong>${hoursLeft}</strong> ${t('publish.hours_later')} <strong class="ranking-publish__pending-value">${escapeHtml(String(editItemData.pending_price))}</strong> ${t('common.credits')}`;
             }
         }
 
@@ -300,7 +318,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
         if (editImageUrls.length > 0) {
             container.querySelector("#cover-file-hint").style.display = "inline";
             renderImagePreviews(editImageUrls, imagesPreview);
-            setupImageDragSort(imagesPreview, editImageUrls);
+            setupImageDragSort(imagesPreview, editImageUrls, { isCurrent: () => submissionScope?.isCurrent(), focusEmpty: () => { if (submissionScope?.isCurrent() && imagesInput.isConnected) imagesInput.focus({ preventScroll: true }); } });
         }
 
         if (!editItemData.type.startsWith("recommend")) {
@@ -483,7 +501,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
                 const url = URL.createObjectURL(file); previewUrls.add(url);
                 imagesPreview.appendChild(_createImagePreviewWrapper(url, index));
             }
-            updateCoverMark(imagesPreview); setupImageDragSort(imagesPreview, imageFiles);
+            updateCoverMark(imagesPreview); setupImageDragSort(imagesPreview, imageFiles, { isCurrent: () => submissionScope?.isCurrent(), focusEmpty: () => { if (submissionScope?.isCurrent() && imagesInput.isConnected) imagesInput.focus({ preventScroll: true }); } });
         } catch (_) {
             if (generation === previewGeneration && submissionScope.isCurrent()) {
                 releasePreviews(); imageFiles = []; imagesPreview.replaceChildren();
@@ -521,22 +539,23 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
     const showOriginalConfirmModal = (onConfirm, onCancel) => {
         if (!submissionScope?.isCurrent()) return;
         const contentDiv = document.createElement("div");
+        contentDiv.className = "ranking-original-confirm";
         contentDiv.innerHTML = `
-            <div style="line-height: 1.6; color: #ccc;">
-                <p style="margin-bottom: 15px;">${t('publish.original_confirm_desc')}</p>
-                <p style="margin-bottom: 10px; color: #fff; font-weight: bold;">${t('publish.original_confirm_subtitle')}</p>
-                <ul style="margin: 0 0 15px 20px; padding: 0; color: #aaa;">
-                    <li style="margin-bottom: 5px;">${t('publish.original_confirm_item1')}</li>
-                    <li style="margin-bottom: 5px;">${t('publish.original_confirm_item2')}</li>
-                    <li style="margin-bottom: 5px;">${t('publish.original_confirm_item3')}</li>
+            <div class="ranking-original-confirm__copy">
+                <p class="ranking-original-confirm__description">${t('publish.original_confirm_desc')}</p>
+                <p class="ranking-original-confirm__subtitle">${t('publish.original_confirm_subtitle')}</p>
+                <ul class="ranking-original-confirm__list">
+                    <li>${t('publish.original_confirm_item1')}</li>
+                    <li>${t('publish.original_confirm_item2')}</li>
+                    <li>${t('publish.original_confirm_item3')}</li>
                 </ul>
-                <p style="margin-top: 15px; padding: 10px; background: rgba(255,152,0,0.1); border-left: 3px solid #FF9800; border-radius: 3px; font-size: 12px; color: #FF9800;">
+                <p class="ranking-original-confirm__warning">
                     💡 ${t('publish.original_confirm_warning')}
                 </p>
             </div>
-            <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end;">
-                <button id="btn-original-cancel" style="padding: 8px 16px; background: #444; color: #fff; border: none; border-radius: 4px; cursor: pointer;">${t('common.cancel')}</button>
-                <button id="btn-original-confirm" style="padding: 8px 16px; background: #4CAF50; color: #fff; border: none; border-radius: 4px; cursor: pointer;">${t('common.confirm')}</button>
+            <div class="ranking-original-confirm__actions">
+                <button type="button" id="btn-original-cancel" class="ranking-original-confirm__button">${t('common.cancel')}</button>
+                <button type="button" id="btn-original-confirm" class="ranking-original-confirm__button ranking-original-confirm__button--confirm">${t('common.confirm')}</button>
             </div>
         `;
         

@@ -212,10 +212,11 @@ export function createTasksView(currentUser, keyword = "") {
                 sorted.sort((a, b) => (b.daily_views || 0) - (a.daily_views || 0));
                 break;
             case "price":
-                sorted.sort((a, b) => (b.price || 0) - (a.price || 0));
+                sorted.sort((a, b) => (b.total_price || 0) - (a.total_price || 0));
                 break;
             case "deadline":
-                sorted.sort((a, b) => (a.deadline || Infinity) - (b.deadline || Infinity));
+                const deadlineTime = value => parseTaskDeadline(value) ?? Infinity;
+                sorted.sort((a, b) => deadlineTime(a.deadline) - deadlineTime(b.deadline));
                 break;
             default: // latest
                 sorted.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
@@ -344,7 +345,7 @@ export function createTasksView(currentUser, keyword = "") {
                     showToast(t('task.network_cache'), "warning");
                     continueSearchPagination();
                 } else {
-                    renderListLoadError(tasksList, t('task.load_failed'), () => loadTasks(1, false), t);
+                    renderListLoadError(tasksList, t('task.load_failed'), () => loadTasks(1, false), t, err);
                 }
             }
         }
@@ -353,6 +354,7 @@ export function createTasksView(currentUser, keyword = "") {
     // 从缓存渲染任务列表
     const renderTasksFromCache = (tasks) => {
         firstPageReady = true;
+        const restoreFocus = cardNavigation.captureListFocus(tasksList);
         tasksList.innerHTML = "";
         
         // 🔍 搜索过滤
@@ -366,6 +368,7 @@ export function createTasksView(currentUser, keyword = "") {
                 tasksList.innerHTML = _renderNoTasksView();
                 loadMoreWrapper.style.display = "none";
             }
+            restoreFocus();
             return;
         }
         
@@ -390,6 +393,7 @@ export function createTasksView(currentUser, keyword = "") {
         } else {
             loadMoreWrapper.style.display = "none";
         }
+        restoreFocus();
     };
     
     // 后台静默更新
@@ -450,10 +454,20 @@ export function createTasksView(currentUser, keyword = "") {
     const _tasksDataChanged = (oldData, newData) => {
         if (!oldData || !newData) return true;
         if (oldData.length !== newData.length) return true;
-        const checkCount = Math.min(10, oldData.length);
+        const checkCount = oldData.length;
+        const contentFields = ["title", "description", "total_price", "deadline", "is_overdue", "publisher", "publisher_name", "created_at"];
+        const mediaFields = ["publisher_avatar"];
+        const normalizedImage = value => typeof value === 'string'
+            ? proxyImages({ cover_image: value }).cover_image : value;
         for (let i = 0; i < checkCount; i++) {
             if (oldData[i].id !== newData[i].id) return true;
             if (oldData[i].status !== newData[i].status) return true;
+            for (const field of contentFields) {
+                if (!Object.is(oldData[i][field], newData[i][field])) return true;
+            }
+            for (const field of mediaFields) {
+                if (!Object.is(normalizedImage(oldData[i][field]), normalizedImage(newData[i][field]))) return true;
+            }
             for (const field of COMPARE_FIELDS) {
                 if ((oldData[i][field] || 0) !== (newData[i][field] || 0)) return true;
             }
@@ -561,6 +575,9 @@ export function createTasksView(currentUser, keyword = "") {
 function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => true, captureNavigation = () => isCurrent) {
     const card = document.createElement("div");
     card.className = "task-card";
+    if (typeof task.id === 'string' || (typeof task.id === 'number' && Number.isFinite(task.id))) {
+        card._rankingListId = String(task.id);
+    }
     card.setAttribute("role", "button");
     card.tabIndex = 0;
     
@@ -583,7 +600,7 @@ function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => 
     const deadline = formatDeadline(task.deadline);
     
     // 检查是否逾期（进行中但超过截止日期）
-    const isOverdue = task.is_overdue || (task.status === "in_progress" && task.deadline && task.deadline < new Date().toISOString().slice(0, 10));
+    const isOverdue = task.is_overdue === true || (task.status === "in_progress" && parseTaskDeadline(task.deadline) != null && task.deadline.slice(0, 10) < new Date().toISOString().slice(0, 10));
     const overdueTag = isOverdue ? `<span class="task-card__overdue">${t('task.overdue')}</span>` : "";
     
     // 过期卡片样式
@@ -591,6 +608,10 @@ function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => 
         card.classList.add("task-card--stale");
     }
     
+    const initialAuthor = isCurrent() && typeof task.publisher === 'string' ? getCachedProfile(task.publisher) : null;
+    const initialAuthorName = [initialAuthor?.name, task.publisher_name, task.publisher].find(value => typeof value === 'string' && value) || '';
+    const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Ccircle cx='18' cy='18' r='18' fill='%23333'/%3E%3Ccircle cx='18' cy='14' r='6' fill='%23666'/%3E%3Cpath d='M6 32c0-6.6 5.4-12 12-12s12 5.4 12 12' fill='%23666'/%3E%3C/svg%3E";
+
     card.innerHTML = `
         <!-- 顶部：状态 + 价格 -->
         <div class="task-card__header">
@@ -618,7 +639,7 @@ function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => 
         <!-- 底部信息 -->
         <div class="task-card__footer">
             <!-- 发布者（SWR 缓存头像） -->
-            <div class="task-card__author"></div>
+            <div class="task-card__author"><img class="swr-avatar task-card__avatar" alt="" src="${escapeHtml(DEFAULT_AVATAR_SVG)}"><span class="swr-name">${escapeHtml(initialAuthorName)}</span></div>
             
             <!-- 截止日期 + 申请人数 + 访问量 + 点赞 + 收藏 -->
             <div class="task-card__stats">
@@ -638,12 +659,10 @@ function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => 
         if (!authorContainer) return;
         
         const account = task.publisher;
-        const cached = getCachedProfile(account);
-        const avatar = cached?.avatar || task.publisher_avatar || '';
-        const name = cached?.name || task.publisher_name || account || '';
+        const cached = initialAuthor;
+        const avatar = [cached?.avatar, task.publisher_avatar].find(value => typeof value === 'string' && value) || '';
+        const name = initialAuthorName;
         
-        // 内联 SVG 默认头像（用户剪影图标）
-        const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Ccircle cx='18' cy='18' r='18' fill='%23333'/%3E%3Ccircle cx='18' cy='14' r='6' fill='%23666'/%3E%3Cpath d='M6 32c0-6.6 5.4-12 12-12s12 5.4 12 12' fill='%23666'/%3E%3C/svg%3E";
         
         // 渲染头像（始终使用 img 标签）
         const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
@@ -653,17 +672,19 @@ function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => 
         authorContainer.innerHTML = `${avatarHtml}<span class="swr-name">${escapeHtml(name)}</span>`;
         
         // 后台静默校对
-        getProfileWithSWR(account, api.getUserProfile, (profile) => {
+        const updateAuthor = (profile) => {
             if (!isCurrent() || !card.isConnected) return;
             const avatarEl = authorContainer.querySelector('.swr-avatar');
             const nameEl = authorContainer.querySelector('.swr-name');
-            if (avatarEl && profile.avatar) {
-                avatarEl.src = profile.avatar;
+            if (avatarEl && typeof profile.avatar === 'string' && profile.avatar) {
+                if (avatarEl.getAttribute('src') !== profile.avatar) avatarEl.src = profile.avatar;
             }
-            if (nameEl && profile.name) {
+            if (nameEl && typeof profile.name === 'string' && profile.name && nameEl.textContent !== profile.name) {
                 nameEl.textContent = profile.name;
             }
-        });
+        };
+        const latestCached = getProfileWithSWR(account, api.getUserProfile, updateAuthor);
+        if (latestCached) updateAuthor(latestCached);
     }, 0);
     
     // 点击进入详情；捕获创建视图的用户和点击时的导航范围。
@@ -697,26 +718,42 @@ function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => 
     return card;
 }
 
+function parseTaskDeadline(value) {
+    if (typeof value !== 'string' || value.trim() !== value ||
+        !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(value)) return null;
+    const year = Number(value.slice(0, 4));
+    const month = Number(value.slice(5, 7));
+    const day = Number(value.slice(8, 10));
+    if (year < 1 || month < 1 || month > 12 || day < 1) return null;
+    const leap = year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0);
+    const lastDay = month === 2 ? (leap ? 29 : 28) : ([4, 6, 9, 11].includes(month) ? 30 : 31);
+    if (day > lastDay) return null;
+    const time = Date.parse(value);
+    return Number.isFinite(time) ? time : null;
+}
+
 /**
  * 📅 格式化截止日期
  */
 function formatDeadline(deadline) {
-    if (!deadline) return t('time.unlimited');
+    if (deadline == null || deadline === '') return t('time.unlimited');
+    const timestamp = parseTaskDeadline(deadline);
+    if (timestamp == null) return t('common.unknown');
     
     try {
-        const date = new Date(deadline);
+        const day = deadline.slice(0, 10);
         const now = new Date();
-        const diff = date - now;
-        
-        if (diff < 0) return t('time.deadline_ended');
-        
-        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const today = new Date(0);
+        today.setUTCFullYear(now.getFullYear(), now.getMonth(), now.getDate());
+        const days = Math.round((Date.parse(day) - today.getTime()) / (1000 * 60 * 60 * 24));
+        if (!Number.isFinite(days)) return t('common.unknown');
+        if (days < 0) return t('time.deadline_ended');
         if (days === 0) return t('time.deadline_today');
         if (days === 1) return t('time.deadline_tomorrow');
         if (days < 7) return t('time.deadline_days', { n: days });
         
-        return `${date.getMonth() + 1}/${date.getDate()}`;
+        return `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
     } catch {
-        return deadline;
+        return t('common.unknown');
     }
 }

@@ -6,7 +6,7 @@
 // 接口：openImageViewer(imageUrls, startIndex, options)
 // ==========================================
 
-import { escapeHtml } from "../core/全局配置.js";
+import { escapeHtml, API, IS_WEB_MODE } from "../core/全局配置.js";
 import { t } from "./用户体验增强.js";
 
 // ==========================================
@@ -400,10 +400,14 @@ function _calcGridLayout(displayWidth, displayHeight, maxGridSize) {
  */
 class CyberImageViewer {
     constructor(imageUrls, startIndex = 0) {
-        // 处理URL，确保使用本地缓存代理
+        // 按运行模式处理图片地址
         this.imageUrls = imageUrls.map(url => this._proxyImageUrl(url));
         this.currentIndex = Math.max(0, Math.min(startIndex, this.imageUrls.length - 1));
         this.preloadCache = new Map();
+        this._preloadRequests = new Map();
+        this._imageReads = new Set();
+        this._loadGeneration = 0;
+        this._mainLoadController = null;
         this.isAnimating = false;
         this.container = null;
         this.elements = {};
@@ -412,30 +416,163 @@ class CyberImageViewer {
         // 自动播放状态管理
         this._autoPlayEnabled = false;
         this._autoPlayTimerId = null;
+        this._autoWaitTimerId = null;
         this._autoPlayInterval = 1000; // 默认1秒展示时间
         this._autoPlayStateChangeCallbacks = []; // 状态变化回调
         this._returnFocus = document.activeElement;
+        this._frames = new Map();
+        this._timers = new Map();
+        this._eventCleanups = [];
+        this._removalObserver = null;
+        this._wasMounted = false;
+        this._disposed = false;
+    }
+
+    _isActive(allowClosing = false) {
+        return !this._disposed && (!this._isClosing || allowClosing) && !!this.container?.isConnected;
+    }
+
+    _scheduleFrame(callback, allowClosing = false) {
+        if (!this._isActive(allowClosing)) return null;
+        const record = {};
+        const id = requestAnimationFrame(time => {
+            if (this._frames.get(id) !== record) return;
+            this._frames.delete(id);
+            if (!this._isActive(allowClosing)) {
+                if (!this.container?.isConnected) this._dispose();
+                return;
+            }
+            callback(time);
+        });
+        this._frames.set(id, record);
+        return id;
+    }
+
+    _scheduleTimer(callback, delay, onCancel = null, allowClosing = false) {
+        if (!this._isActive(allowClosing)) { onCancel?.(); return null; }
+        const record = { onCancel };
+        const id = setTimeout(() => {
+            if (this._timers.get(id) !== record) return;
+            this._timers.delete(id);
+            if (!this._isActive(allowClosing)) {
+                onCancel?.();
+                if (!this.container?.isConnected) this._dispose();
+                return;
+            }
+            callback();
+        }, delay);
+        this._timers.set(id, record);
+        return id;
+    }
+
+    _cancelTimer(id) {
+        if (id == null) return;
+        const record = this._timers.get(id);
+        if (!record) return;
+        this._timers.delete(id);
+        clearTimeout(id);
+        record.onCancel?.();
+    }
+
+    _listen(target, type, callback, options) {
+        const owned = event => {
+            if (!this._isActive()) return;
+            this._watchRemoval();
+            callback(event);
+        };
+        target.addEventListener(type, owned, options);
+        this._eventCleanups.push(() => target.removeEventListener(type, owned, options));
+    }
+
+    _watchRemoval() {
+        if (this._disposed || this._removalObserver) return;
+        const container = this.container;
+        const inspect = records => {
+            if (this._disposed || this._removalObserver !== observer) return;
+            if (container.isConnected) { this._wasMounted = true; return; }
+            const appeared = records.some(record => [...record.addedNodes, ...record.removedNodes]
+                .some(node => node === container || node.contains?.(container)));
+            if (this._wasMounted || appeared) this._dispose();
+        };
+        const observer = new MutationObserver(inspect);
+        this._removalObserver = observer;
+        observer.observe(document.body, { childList: true, subtree: true });
+        queueMicrotask(() => {
+            if (this._disposed || this._removalObserver !== observer) return;
+            inspect(observer.takeRecords());
+            if (!container.isConnected && !this._wasMounted && !this._disposed) {
+                observer.disconnect();
+                this._removalObserver = null;
+            }
+        });
+    }
+
+    _cancelAnimationWork() {
+        this._animationId++;
+        for (const id of this._frames.keys()) cancelAnimationFrame(id);
+        this._frames.clear();
+        for (const id of [...this._timers.keys()]) this._cancelTimer(id);
+        this.container?.querySelectorAll('.cyber-blocks-container, .cyber-particles-container').forEach(node => node.remove());
+        this.isAnimating = false;
+        this._autoPlayTimerId = null;
+        this._autoWaitTimerId = null;
+    }
+
+    _stopOwnedWork() {
+        this._loadGeneration++;
+        this._mainLoadController?.abort();
+        this._mainLoadController = null;
+        for (const cancel of [...this._imageReads]) cancel();
+        for (const controller of this._preloadRequests.values()) controller.abort();
+        this._preloadRequests.clear();
+        for (const image of this.preloadCache.values()) image.src = '';
+        this.preloadCache.clear();
+        const wasPlaying = this._autoPlayEnabled;
+        this._autoPlayEnabled = false;
+        this._cancelTimer(this._autoPlayTimerId);
+        this._autoPlayTimerId = null;
+        if (wasPlaying && this.container?.isConnected) {
+            try { this._updateAutoPlayUI(); } catch (_) { console.warn('Image viewer playback cleanup failed'); }
+        }
+        this._cancelAnimationWork();
+        for (const cleanup of this._eventCleanups) cleanup();
+        this._eventCleanups = [];
+        this._keydownHandler = null;
+    }
+
+    _dispose() {
+        if (this._disposed) return;
+        this._disposed = true;
+        this._isClosing = true;
+        this._stopOwnedWork();
+        this._removalObserver?.disconnect();
+        this._removalObserver = null;
+        this._returnFocus = null;
+        this._autoPlayStateChangeCallbacks = [];
+        this.container?.querySelectorAll('img').forEach(image => image.removeAttribute('src'));
+        this.imageUrls = [];
     }
 
     /**
-     * 将URL转换为本地缓存代理格式
+     * 按本地或网页模式处理图片地址
      * 自动识别代理URL、data: URL、blob: URL和普通HTTP(S) URL
      */
     _proxyImageUrl(url) {
-        if (!url) return '';
-        // data: URL 和 blob: URL 直接使用不转换
-        if (url.startsWith('data:') || url.startsWith('blob:')) {
-            return url;
+        if (typeof url !== 'string' || !url) return '';
+        const prefix = API.LOCAL_IMAGE_PROXY_PREFIX;
+        if (IS_WEB_MODE) {
+            let original = url;
+            for (let depth = 0; depth < 10 && original.startsWith(prefix); depth++) {
+                let encoded = original.slice(prefix.length);
+                if (encoded.endsWith(API.COMPLETE_IMAGE_QUERY_SUFFIX)) {
+                    encoded = encoded.slice(0, -API.COMPLETE_IMAGE_QUERY_SUFFIX.length);
+                }
+                try { original = decodeURIComponent(encoded); } catch (_) { break; }
+            }
+            return original;
         }
-        // 如果已经是代理格式，直接返回
-        if (url.startsWith('/community_hub/image?url=')) {
-            return url;
-        }
-        // 如果是HTTP/HTTPS链接，添加代理前缀
-        if (url.startsWith('http')) {
-            return `/community_hub/image?url=${encodeURIComponent(url)}`;
-        }
-        return url;
+        if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith(prefix)) return url;
+        return url.startsWith('http') ? prefix + encodeURIComponent(url) : url;
     }
 
     /**
@@ -534,6 +671,7 @@ class CyberImageViewer {
         // 渲染缩略图
         this._renderThumbnails();
 
+        this._watchRemoval();
         // 加载初始图片
         this._loadImage(this.currentIndex);
 
@@ -571,7 +709,7 @@ class CyberImageViewer {
      * 开始自动播放
      */
     _startAutoPlay() {
-        if (this._autoPlayEnabled) return;
+        if (!this._isActive() || this._autoPlayEnabled) return;
         
         console.log('▶️ 自动播放开始');
         this._autoPlayEnabled = true;
@@ -580,6 +718,8 @@ class CyberImageViewer {
         // 如果当前没有动画，立即开始第一张图片的计时
         if (!this.isAnimating) {
             this._scheduleNextAutoPlay();
+        } else {
+            this._waitForBlockAnimationAndSchedule(this._animationId);
         }
     }
 
@@ -591,10 +731,12 @@ class CyberImageViewer {
         
         console.log('⏸️ 自动播放停止');
         this._autoPlayEnabled = false;
+        this._cancelTimer(this._autoWaitTimerId);
+        this._autoWaitTimerId = null;
         
         // 清除定时器
         if (this._autoPlayTimerId) {
-            clearTimeout(this._autoPlayTimerId);
+            this._cancelTimer(this._autoPlayTimerId);
             this._autoPlayTimerId = null;
         }
         
@@ -632,6 +774,7 @@ class CyberImageViewer {
      * @param {Function} callback - 回调函数，参数为新的自动播放状态
      */
     onAutoPlayStateChange(callback) {
+        if (this._isClosing || this._disposed) return;
         this._autoPlayStateChangeCallbacks.push(callback);
     }
 
@@ -642,7 +785,7 @@ class CyberImageViewer {
     _scheduleNextAutoPlay() {
         // 清除之前的定时器
         if (this._autoPlayTimerId) {
-            clearTimeout(this._autoPlayTimerId);
+            this._cancelTimer(this._autoPlayTimerId);
             this._autoPlayTimerId = null;
         }
         
@@ -652,7 +795,7 @@ class CyberImageViewer {
         
         console.log(`⏱️ 自动播放：等待 ${this._autoPlayInterval}ms 后切换`);
         
-        this._autoPlayTimerId = setTimeout(() => {
+        this._autoPlayTimerId = this._scheduleTimer(() => {
             // 检查动画ID守卫
             if (currentAnimId !== this._animationId) {
                 console.log('⛔ 自动播放定时器：动画已被中断，跳过本次切换');
@@ -692,7 +835,10 @@ class CyberImageViewer {
         if (!this._autoPlayEnabled) return;
         
         // 递增动画ID，用于中断检测
-        this._animationId++;
+        this._cancelAnimationWork();
+        this._loadGeneration++;
+        this._mainLoadController?.abort();
+        this._mainLoadController = null;
         const currentAnimId = this._animationId;
         
         // 计算下一张索引（循环播放）
@@ -728,7 +874,10 @@ class CyberImageViewer {
      * @param {number} expectedAnimId - 期望的动画ID
      */
     _waitForBlockAnimationAndSchedule(expectedAnimId) {
+        this._cancelTimer(this._autoWaitTimerId);
+        this._autoWaitTimerId = null;
         const checkAndSchedule = () => {
+            this._autoWaitTimerId = null;
             // 检查动画ID守卫
             if (expectedAnimId !== this._animationId) {
                 console.log('⛔ 自动播放等待：动画已被中断');
@@ -743,7 +892,7 @@ class CyberImageViewer {
             
             // 如果动画还在进行，继续等待
             if (this.isAnimating) {
-                setTimeout(checkAndSchedule, 100);
+                this._autoWaitTimerId = this._scheduleTimer(checkAndSchedule, 100);
                 return;
             }
             
@@ -762,6 +911,7 @@ class CyberImageViewer {
     _bindEvents() {
         // 键盘导航
         this._keydownHandler = (e) => {
+            if (!this._isActive()) return;
             if (e.defaultPrevented || e.isComposing || e.keyCode === 229
                     || e.ctrlKey || e.metaKey || e.altKey || (e.shiftKey && e.key !== 'Tab')) return;
             if (e.key === 'Tab') {
@@ -783,29 +933,29 @@ class CyberImageViewer {
 
             }
         };
-        this.container.addEventListener('keydown', this._keydownHandler);
+        this._listen(this.container, 'keydown', this._keydownHandler);
 
         // 点击导航区域 - 传递点击位置用于波浪效果
-        this.elements.navLeft.addEventListener('click', (e) => {
+        this._listen(this.elements.navLeft, 'click', (e) => {
             this._stopAutoPlay(); // 手动切换时停止自动播放
             this.prev(e.clientX, e.clientY);
         });
-        this.elements.navRight.addEventListener('click', (e) => {
+        this._listen(this.elements.navRight, 'click', (e) => {
             this._stopAutoPlay(); // 手动切换时停止自动播放
             this.next(e.clientX, e.clientY);
         });
 
         // 关闭按钮
-        this.elements.closeBtn.addEventListener('click', () => this.close());
+        this._listen(this.elements.closeBtn, 'click', () => this.close());
 
         // 自动播放按钮
-        this.elements.autoPlayBtn.addEventListener('click', () => this.toggleAutoPlay());
+        this._listen(this.elements.autoPlayBtn, 'click', () => this.toggleAutoPlay());
 
         // 阻止右键菜单
-        this.container.addEventListener('contextmenu', (e) => e.preventDefault());
+        this._listen(this.container, 'contextmenu', (e) => e.preventDefault());
 
         // 阻止拖拽
-        this.elements.mainImage.addEventListener('dragstart', (e) => e.preventDefault());
+        this._listen(this.elements.mainImage, 'dragstart', (e) => e.preventDefault());
     }
 
     /**
@@ -823,7 +973,7 @@ class CyberImageViewer {
             thumb.setAttribute('aria-current', i === this.currentIndex ? 'true' : 'false');
             // 🔒 XSS防护：图片 URL 来自其他用户发布的内容，写入 innerHTML 前必须转义
             thumb.innerHTML = `<img src="${escapeHtml(this.imageUrls[i])}" alt="">`;
-            thumb.addEventListener('click', (e) => {
+            this._listen(thumb, 'click', (e) => {
                 this._stopAutoPlay(); // 手动切换时停止自动播放
                 this.goTo(i, e.clientX, e.clientY);
             });
@@ -854,69 +1004,89 @@ class CyberImageViewer {
      * 加载指定索引的图片
      */
     async _loadImage(index) {
-        if (index < 0 || index >= this.imageUrls.length) return;
-
-        const url = this.imageUrls[index];
+        if (this._isClosing || index < 0 || index >= this.imageUrls.length) return;
+        this._mainLoadController?.abort();
+        const controller = new AbortController();
+        this._mainLoadController = controller;
+        const generation = ++this._loadGeneration;
+        const container = this.container;
         const img = this.elements.mainImage;
-        const loader = this.elements.loader;
-
-        // 隐藏当前图片，准备加载新图片（同步立即隐藏，无过渡）
+        const url = this.imageUrls[index];
+        const current = () => !this._isClosing && generation === this._loadGeneration &&
+            this.container === container && this.elements.mainImage === img;
         img.style.transition = 'none';
         img.style.opacity = '0';
         img.style.visibility = 'hidden';
         img.classList.remove('visible');
-        loader.style.display = 'flex';
-
-        // 检查缓存
-        if (this.preloadCache.has(url)) {
-            const cachedImg = this.preloadCache.get(url);
-            img.src = cachedImg.src;
-            this._onImageLoaded();
-        } else {
-            // 加载图片
-            try {
-                await this._loadImageAsync(url);
+        this.elements.loader.style.display = 'flex';
+        let loaded = false;
+        try {
+            if (this.preloadCache.has(url)) {
+                if (!container.isConnected) return;
+                img.src = this.preloadCache.get(url).src;
+                this._onImageLoaded(generation);
+            } else {
+                await this._loadImageAsync(url, { signal: controller.signal });
+                if (!current() || !container.isConnected) return;
+                this._watchRemoval();
                 img.src = url;
-                this._onImageLoaded();
-            } catch (err) {
-                console.error('图片加载失败:', err);
-                this._onImageError();
+                this._onImageLoaded(generation);
             }
+            loaded = true;
+        } catch (error) {
+            if (!current() || !container.isConnected || controller.signal.aborted) return;
+            this._watchRemoval();
+            console.error('图片加载失败');
+            this._onImageError();
+        } finally {
+            if (this._mainLoadController === controller) this._mainLoadController = null;
         }
-
-        // 更新计数器
+        if (!current()) return;
         this.elements.counterCurrent.textContent = index + 1;
-        this.elements.mainImage.alt = t('image.viewer.image_position', { current: index + 1, total: this.imageUrls.length });
+        img.alt = t('image.viewer.image_position', { current: index + 1, total: this.imageUrls.length });
         this._updateThumbnails();
-
-        // 预加载相邻图片
-        this._preloadAdjacent(index);
+        if (loaded) this._preloadAdjacent(index);
     }
 
-    /**
-     * 异步加载图片
-     */
-    _loadImageAsync(url) {
+    _loadImageAsync(url, { signal } = {}) {
         return new Promise((resolve, reject) => {
+            if (this._isClosing || signal?.aborted) {
+                reject(new DOMException('Image read cancelled', 'AbortError'));
+                return;
+            }
             const img = new Image();
-            console.log('📥 开始加载图片');
-            img.onload = () => {
-                console.log('✅ 图片加载成功');
-                resolve(img);
+            let settled = false;
+            let timer = null;
+            const finish = error => {
+                if (settled) return;
+                settled = true;
+                if (timer !== null) clearTimeout(timer);
+                img.onload = img.onerror = null;
+                signal?.removeEventListener('abort', cancel);
+                this._imageReads.delete(cancel);
+                if (error) {
+                    img.src = '';
+                    reject(error);
+                } else resolve(img);
             };
-            img.onerror = (err) => {
-                console.error('❌ 图片加载失败:', err?.name || 'Error');
-                reject(new Error('图片加载失败'));
-            };
-            img.src = url;
+            const cancel = () => finish(new DOMException('Image read cancelled', 'AbortError'));
+            this._imageReads.add(cancel);
+            signal?.addEventListener('abort', cancel, { once: true });
+            img.onload = () => finish(null);
+            img.onerror = () => finish(new Error('Image read failed'));
+            timer = setTimeout(() => finish(new Error('Image read timed out')), API.TIMEOUT);
+            try { img.src = url; } catch (error) { finish(error); }
         });
     }
 
     /**
      * 图片加载完成回调 - 触发方块合并动画
      */
-    _onImageLoaded() {
-        requestAnimationFrame(() => {
+    _onImageLoaded(generation = this._loadGeneration) {
+        const container = this.container;
+        this._scheduleFrame(() => {
+            if (this._isClosing || generation !== this._loadGeneration ||
+                    this.container !== container || !container.isConnected) return;
             this.elements.loader.style.display = 'none';
             // 确保图片初始隐藏，不要在这里显示图片（同步立即隐藏，无过渡）
             const img = this.elements.mainImage;
@@ -941,10 +1111,13 @@ class CyberImageViewer {
      * 使用与粒子消散相同的网格参数和背景图裁切方式
      */
     _playBlockAssemblyAnimation() {
+        if (!this._isActive()) return;
+        this.isAnimating = true;
         const currentAnimId = this._animationId; // 记录当前动画ID
         const img = this.elements.mainImage;
         const wrapper = this.elements.wrapper;
         const imgSrc = img.src;
+        const imageBackground = `url(${JSON.stringify(imgSrc)})`;
 
         // 调试日志
         console.log('🎬 方块聚合动画开始');
@@ -1009,8 +1182,7 @@ class CyberImageViewer {
                 block.style.top = `${r * blockSide}px`;
                 
                 // 使用与粒子消散相同的背景图设置方式
-                // 注意：URL已经由_proxyImageUrl处理过，直接使用，不要再次编码
-                block.style.backgroundImage = `url("${imgSrc}")`;
+                block.style.backgroundImage = imageBackground;
                 block.style.backgroundSize = `${displayWidth}px ${displayHeight}px`;
                 // 背景定位：根据正方形方块的实际位置计算
                 const bgPosX = c * blockSide;
@@ -1056,8 +1228,8 @@ class CyberImageViewer {
         blocksContainer.getBoundingClientRect();
 
         // 触发方块聚合动画 - 使用双重requestAnimationFrame确保浏览器已渲染初始状态
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
+        this._scheduleFrame(() => {
+            this._scheduleFrame(() => {
                 // 检查动画是否已被中断
                 if (currentAnimId !== this._animationId) {
                     console.log('⛔ 方块聚合动画被中断，跳过动画触发');
@@ -1078,7 +1250,7 @@ class CyberImageViewer {
         console.log('⏱️ 动画持续时间:', animationDuration, 'ms');
 
         // 动画完成后显示完整图片并清理方块
-        setTimeout(() => {
+        this._scheduleTimer(() => {
             // 检查动画是否已被中断
             if (currentAnimId !== this._animationId) {
                 // 动画已被中断，只做清理
@@ -1109,7 +1281,7 @@ class CyberImageViewer {
             blocksContainer.style.transition = 'opacity 0.15s ease';
 
             // 等待方块淡出完成后移除容器，然后恢复transition
-            setTimeout(() => {
+            this._scheduleTimer(() => {
                 // 内层timeout也要检查
                 if (currentAnimId !== this._animationId) {
                     if (blocksContainer.parentNode) {
@@ -1137,10 +1309,12 @@ class CyberImageViewer {
      * 支持多种路径类型：弧线(90%)、S形(5%)、直线(5%)
      */
     async _playParticleDisperseAnimation(clickX, clickY) {
+        if (!this._isActive()) return;
         const currentAnimId = this._animationId; // 记录当前动画ID
         const img = this.elements.mainImage;
         const wrapper = this.elements.wrapper;
         const imgSrc = img.src;
+        const imageBackground = `url(${JSON.stringify(imgSrc)})`;
 
         console.log('💨 粒子消散动画开始');
 
@@ -1257,7 +1431,7 @@ class CyberImageViewer {
                     particleInner = document.createElement('div');
                     particleInner.style.width = '100%';
                     particleInner.style.height = '100%';
-                    particleInner.style.backgroundImage = `url("${imgSrc}")`;
+                    particleInner.style.backgroundImage = imageBackground;
                     particleInner.style.backgroundSize = `${displayWidth}px ${displayHeight}px`;
                     particleInner.style.backgroundPosition = `-${c * particleSide}px -${r * particleSide}px`;
                     particleInner.style.backgroundRepeat = 'no-repeat';
@@ -1342,7 +1516,7 @@ class CyberImageViewer {
                     particle.style.left = `${c * particleSide}px`;
                     particle.style.top = `${r * particleSide}px`;
 
-                    particle.style.backgroundImage = `url("${imgSrc}")`;
+                    particle.style.backgroundImage = imageBackground;
                     particle.style.backgroundSize = `${displayWidth}px ${displayHeight}px`;
                     particle.style.backgroundPosition = `-${c * particleSide}px -${r * particleSide}px`;
                     particle.style.backgroundRepeat = 'no-repeat';
@@ -1388,8 +1562,8 @@ class CyberImageViewer {
         particlesContainer.getBoundingClientRect();
 
         // 触发消散动画 - 使用双重requestAnimationFrame
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
+        this._scheduleFrame(() => {
+            this._scheduleFrame(() => {
                 console.log('🎭 开始粒子消散动画');
                 particles.forEach(({ element, innerElement, disperseX, disperseY, rotate, pathType }) => {
                     if (pathType === 'arc' || pathType === 's-curve') {
@@ -1416,7 +1590,7 @@ class CyberImageViewer {
 
         // 等待动画完成
         return new Promise(resolve => {
-            setTimeout(() => {
+            this._scheduleTimer(() => {
                 console.log('✨ 粒子消散动画完成');
                 // 无论是否被中断，都要清理粒子容器
                 if (particlesContainer.parentNode) {
@@ -1430,7 +1604,7 @@ class CyberImageViewer {
                     img.classList.remove('visible');
                 }
                 resolve();
-            }, animationDuration);
+            }, animationDuration, resolve);
         });
     }
 
@@ -1441,35 +1615,51 @@ class CyberImageViewer {
         this.elements.loader.style.display = 'none';
         this.elements.mainImage.src = this._createErrorPlaceholder();
         // 错误图片直接显示，不使用方块动画
+        this.elements.mainImage.style.visibility = 'visible';
+        this.elements.mainImage.style.opacity = '1';
         this.elements.mainImage.classList.add('visible');
+        this.isAnimating = false;
     }
 
     /**
      * 创建错误占位图
      */
     _createErrorPlaceholder() {
-        return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='300' viewBox='0 0 400 300'%3E%3Crect fill='%231a1a1a' width='400' height='300'/%3E%3Ctext x='200' y='140' text-anchor='middle' fill='%23ff6b6b' font-size='48'%3E⚠️%3C/text%3E%3Ctext x='200' y='180' text-anchor='middle' fill='%23888' font-size='14'%3E图片加载失败%3C/text%3E%3C/svg%3E`;
+        return 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300"><rect fill="#1a1a1a" width="400" height="300"/><text x="200" y="140" text-anchor="middle" fill="#ff6b6b" font-size="48">⚠️</text><text x="200" y="180" text-anchor="middle" fill="#888" font-size="14">${escapeHtml(t('image.load_failed'))}</text></svg>`);
     }
 
     /**
      * 预加载相邻图片
      */
     _preloadAdjacent(currentIndex) {
-        const indices = [
-            currentIndex - 1,
-            currentIndex + 1
-        ].filter(i => i >= 0 && i < this.imageUrls.length);
-
-        indices.forEach(index => {
-            const url = this.imageUrls[index];
-            if (!this.preloadCache.has(url)) {
-                const img = new Image();
-                img.onload = () => {
-                    this.preloadCache.set(url, img);
-                };
-                img.src = url;
+        if (this._isClosing || !this.container?.isConnected) return;
+        const wanted = new Set([currentIndex - 1, currentIndex + 1]
+            .filter(index => index >= 0 && index < this.imageUrls.length)
+            .map(index => this.imageUrls[index]));
+        const retained = new Set([...wanted, this.imageUrls[currentIndex]]);
+        for (const [url, image] of this.preloadCache) {
+            if (!retained.has(url)) {
+                image.src = '';
+                this.preloadCache.delete(url);
             }
-        });
+        }
+        for (const [url, controller] of this._preloadRequests) {
+            if (!wanted.has(url)) {
+                controller.abort();
+                this._preloadRequests.delete(url);
+            }
+        }
+        for (const url of wanted) {
+            if (this.preloadCache.has(url) || this._preloadRequests.has(url)) continue;
+            const controller = new AbortController();
+            this._preloadRequests.set(url, controller);
+            this._loadImageAsync(url, { signal: controller.signal }).then(img => {
+                if (!this._isClosing && this.container?.isConnected && !controller.signal.aborted &&
+                        this._preloadRequests.get(url) === controller) this.preloadCache.set(url, img);
+            }).catch(() => {}).finally(() => {
+                if (this._preloadRequests.get(url) === controller) this._preloadRequests.delete(url);
+            });
+        }
     }
 
     /**
@@ -1480,22 +1670,22 @@ class CyberImageViewer {
      * @param {number} clickY - 点击位置的Y坐标（用于波浪效果）
      */
     async goTo(index, clickX, clickY) {
+        if (this._isClosing || !this.container?.isConnected) return;
         if (index === this.currentIndex) return;
         if (index < 0 || index >= this.imageUrls.length) return;
 
         // 递增动画ID，用于中断检测
-        this._animationId++;
+        const interrupted = this.isAnimating;
+        this._cancelAnimationWork();
+        this._loadGeneration++;
+        this._mainLoadController?.abort();
+        this._mainLoadController = null;
         const currentAnimId = this._animationId;
 
         // 如果正在动画中，立即清理并跳过载出动画，直接切换到新图片
-        if (this.isAnimating) {
+        if (interrupted) {
+            this.isAnimating = true;
             console.log('⚡ 快速切换：跳过载出动画，直接切换到图片索引:', index);
-            
-            // 清理所有动画容器
-            const blocks = this.container.querySelector('.cyber-blocks-container');
-            if (blocks) blocks.remove();
-            const particles = this.container.querySelector('.cyber-particles-container');
-            if (particles) particles.remove();
             
             // 立即隐藏当前图片（同步操作，防止旧图闪现）
             const img = this.elements.mainImage;
@@ -1525,7 +1715,7 @@ class CyberImageViewer {
         if (currentAnimId !== this._animationId) return;
 
         // 2. 载出动画完全结束后，等待0.5秒间隔
-        await new Promise(resolve => setTimeout(resolve, 250));
+        await new Promise(resolve => this._scheduleTimer(resolve, 250, resolve));
 
         // 检查是否被新的切换中断
         if (currentAnimId !== this._animationId) return;
@@ -1566,27 +1756,24 @@ class CyberImageViewer {
      * 关闭查看器
      */
     close() {
-        if (this._isClosing) return;
+        if (this._isClosing || this._disposed) return;
         this._isClosing = true;
-        // 停止自动播放并清除定时器
-        this._stopAutoPlay();
-        
-        // 清理事件监听
-        this.container.removeEventListener('keydown', this._keydownHandler);
-
-        // 添加关闭动画
-        this.container.style.opacity = '1';
-        this.container.style.transition = 'opacity 0.3s ease';
-        
-        requestAnimationFrame(() => {
-            this.container.style.opacity = '0';
-            setTimeout(() => {
-                if (this.container.parentNode) {
-                    this.container.parentNode.removeChild(this.container);
-                }
-                if (this._returnFocus?.isConnected && typeof this._returnFocus.focus === 'function') this._returnFocus.focus();
-            }, 300);
-        });
+        this._stopOwnedWork();
+        if (!this.container?.isConnected) { this._dispose(); return; }
+        const container = this.container;
+        container.style.opacity = '1';
+        container.style.transition = 'opacity 0.3s ease';
+        this._scheduleFrame(() => {
+            container.style.opacity = '0';
+            this._scheduleTimer(() => {
+                const restore = container.contains(document.activeElement);
+                const previousFocus = this._returnFocus;
+                container.remove();
+                this._dispose();
+                if (restore && document.activeElement === document.body && previousFocus?.isConnected &&
+                        typeof previousFocus.focus === 'function') previousFocus.focus();
+            }, 300, null, true);
+        }, true);
     }
 }
 
@@ -1619,10 +1806,10 @@ export function openImageViewer(imageUrls, startIndex = 0, options = {}) {
     viewer.elements.closeBtn.focus();
 
     // 添加入场动画
-    requestAnimationFrame(() => {
+    viewer._scheduleFrame(() => {
         container.style.opacity = '0';
         container.style.transition = 'opacity 0.3s ease';
-        requestAnimationFrame(() => {
+        viewer._scheduleFrame(() => {
             container.style.opacity = '1';
         });
     });

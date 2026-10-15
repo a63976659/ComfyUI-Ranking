@@ -1,12 +1,10 @@
 // 前端页面/components/顶部导航组件.js
-import { createAuthView } from "../auth/用户注册登录组件.js";
 import { openUserProfileModal } from "../profile/个人中心视图.js";
 import { openChatModal, loadChatUnreadCount } from "../social/私信聊天组件.js";
 import { api, captureRequestSession } from "../core/网络请求API.js";
 import { showToast } from "./UI交互提示组件.js";
 import { showAboutInfo } from "./关于插件组件.js";
-import { openNotificationCenter, loadUnreadCount } from "../social/通知中心组件.js";
-import { openSettingsPage } from "./全局设置组件.js";  // ⚙️ 新增
+import { loadUnreadCount } from "../social/未读角标工具.js";
 import { setUser, updateUser, initUserState } from "../core/状态管理.js";
 import { readUserSession, sessionProfile } from "../core/用户会话存储.js";
 import { API, CACHE, PLACEHOLDERS } from "../core/全局配置.js";
@@ -58,7 +56,13 @@ export function createTopNav() {
     settingsBtn.textContent = "⚙️";
     settingsBtn.title = t('nav.settings');
     settingsBtn.setAttribute("aria-label", t('nav.settings'));
-    settingsBtn.onclick = (e) => { e.stopPropagation(); openSettingsPage(); };
+    settingsBtn.onclick = (e) => {
+        e.stopPropagation();
+        return openDeferredView(async () => {
+            const { createSettingsView } = await import('./全局设置组件.js');
+            return createSettingsView;
+        }, settingsBtn);
+    };
 
     const titleWrapper = document.createElement("div");
     titleWrapper.className = "top-nav__heading";
@@ -84,13 +88,69 @@ export function createTopNav() {
     bellBtn.setAttribute("aria-label", t('social.notifications'));
 
     let currentUser = null;
+    let navigationGeneration = 0;
     chatEntryBtn.onclick = () => openChatModal(currentUser);
-    bellBtn.onclick = () => openNotificationCenter(currentUser, bellBtn);
+    bellBtn.onclick = () => {
+        if (!currentUser?.account) return showToast(t('notif.login_required'), 'warning');
+        const notificationUser = currentUser;
+        return openDeferredView(async () => {
+            const { openNotificationCenter } = await import('../social/通知中心组件.js');
+            return () => openNotificationCenter(notificationUser, bellBtn);
+        }, bellBtn, { ownsRoute: true });
+    };
     const sessionStorages = () => ['localStorage', 'sessionStorage'].map(name => { try { return window[name]; } catch (_) { return null; } });
     const restoredSession = readUserSession(sessionStorages(), CACHE.LEGACY_KEYS);
     currentUser = restoredSession?.user || null;
 
+    async function openDeferredView(loadFactory, trigger, { ownsRoute = false } = {}) {
+        const generation = navigationGeneration;
+        const matchesSession = captureRequestSession();
+        const loadingView = document.createElement('div');
+        loadingView.className = 'hub-inline-load-state';
+        const message = document.createElement('span');
+        message.textContent = t('common.loading');
+        message.setAttribute('role', 'status');
+        message.setAttribute('aria-live', 'polite');
+        const back = document.createElement('button');
+        back.type = 'button'; back.className = 'ranking-publish-back';
+        back.textContent = t('common.back');
+        let active = true;
+        loadingView._cleanup = () => { active = false; back.onclick = null; };
+        loadingView.appendChild(message); loadingView.appendChild(back);
+        const currentLoad = () => active && loadingView.isConnected && userHeader.isConnected
+            && _navInstance?.dom === userHeader && navigationGeneration === generation && matchesSession();
+        back.onclick = () => {
+            if (!active || !loadingView.isConnected || _navInstance?.dom !== userHeader) return;
+            window.dispatchEvent(new CustomEvent('comfy-route-back'));
+            if (trigger.isConnected) trigger.focus();
+        };
+        window.dispatchEvent(new CustomEvent('comfy-route-view', { detail: { view: loadingView } }));
+        try {
+            const createView = await loadFactory();
+            if (!currentLoad()) return;
+            if (ownsRoute) {
+                await createView();
+                if (currentLoad()) back.onclick();
+                return;
+            }
+            const view = createView();
+            if (!currentLoad()) { try { view._cleanup?.(); } finally { view.remove(); } return; }
+            window.dispatchEvent(new CustomEvent('comfy-route-view', { detail: { view } }));
+        } catch {
+            if (currentLoad()) {
+                message.textContent = t('common.operation_failed');
+                message.setAttribute('role', 'alert'); message.setAttribute('aria-live', 'assertive');
+            }
+        } finally {
+            if (active && !currentLoad()) {
+                if (loadingView.isConnected && _navInstance?.dom === userHeader) window.dispatchEvent(new CustomEvent('comfy-route-back'));
+                else { loadingView._cleanup(); loadingView.remove(); }
+            }
+        }
+    }
+
     const updateUserButtonState = () => {
+        navigationGeneration++;
         if (currentUser) {
             const avatar = document.createElement("img");
             avatar.className = "top-nav__avatar";
@@ -121,8 +181,9 @@ export function createTopNav() {
             bellBtn.querySelector("#unread-badge").style.display = "none";
             chatEntryBtn.querySelector("#chat-unread-badge").style.display = "none";
             
-            userActionBtn.onclick = () => {
-                const view = createAuthView(async (formData, context) => {
+            userActionBtn.onclick = () => openDeferredView(async () => {
+                const { createAuthView } = await import('../auth/用户注册登录组件.js');
+                return () => createAuthView(async (formData, context) => {
                     const originalSession = captureRequestSession();
                     const current = () => context.isCurrent() && userHeader.isConnected
                         && _navInstance?.dom === userHeader && originalSession();
@@ -157,7 +218,7 @@ export function createTopNav() {
                         showToast(t(isRegister ? 'auth.register_success' : 'auth.login_success'), 'success');
                         // 凭证已发布即完成登录，资料补充不阻塞页面返回。
                         window.dispatchEvent(new CustomEvent('comfy-route-back'));
-                        updateUserButtonState(); window.dispatchEvent(new CustomEvent('comfy-user-login'));
+                        window.dispatchEvent(new CustomEvent('comfy-user-login')); updateUserButtonState();
                         const applyProfile = data => {
                             if (!sameLogin() || data?.account !== account) return;
                             currentUser = sessionProfile({ ...currentUser, ...data });
@@ -195,8 +256,7 @@ export function createTopNav() {
                         }
                     }
                 });
-                window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
-            };
+            }, userActionBtn);
         }
     };
 

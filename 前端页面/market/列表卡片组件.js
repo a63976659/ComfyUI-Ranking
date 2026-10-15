@@ -4,7 +4,7 @@ import { api, captureRequestSession } from "../core/网络请求API.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { recordView, escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：escapeHtml 局部副本已移除
 import { renderItemTrendChart } from "../components/图表渲染组件.js";
-import { getCoverSandboxHTML, setupImageSandboxEvents } from "../components/图片沙盒组件.js";
+import { getCoverSandboxHTML, setupImageSandboxEvents, cleanupImageSandbox } from "../components/图片沙盒组件.js";
 import { setupResourceInstall, checkItemStatus } from "./资源安装引擎.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
@@ -366,14 +366,21 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
 
     let isRendered = false;
     let commentUI = null;
+    let trendChart = null;
+    let trendChartStopped = false;
     const toggleButton = summaryView.querySelector('.card-summary__toggle');
     const setExpanded = (expanded) => {
-        if (expanded) mountComments();
+        if (expanded) {
+            mountComments();
+            if (isRendered) setupImageSandboxEvents(detailView);
+        } else cleanupImageSandbox(detailView);
         commentUI?._setActive?.(expanded);
         if (!expanded && detailView.contains(document.activeElement)) toggleButton.focus();
         detailView.hidden = !expanded;
         detailView.style.display = expanded ? "block" : "none";
         toggleButton.setAttribute("aria-expanded", String(expanded));
+        if (expanded && !trendChart && !trendChartStopped) trendChart = renderItemTrendChart(detailView.querySelector(`#${chartContainerId}`), itemData);
+        trendChart?.setActive(expanded);
     };
     summaryView.onclick = (event) => {
         // 摘要中的作者、评分等独立控件不触发折叠；标题按钮使用浏览器原生键盘行为。
@@ -383,7 +390,6 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
         setExpanded(isHidden);
 
         if (isHidden && !isRendered) {
-            renderItemTrendChart(detailView.querySelector(`#${chartContainerId}`), itemData);
             setupImageSandboxEvents(detailView);
             isRendered = true;
 
@@ -455,7 +461,7 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
     // 🖼️ 启用图片懒加载（跳过 data URL 和已处理的）
     lazyLoadImages(card);
 
-    card._cleanup = () => commentUI?._cleanup?.();
+    card._cleanup = () => { trendChartStopped = true; trendChart?.cleanup(); cleanupImageSandbox(detailView); commentUI?._cleanup?.(); };
     card.appendChild(summaryView);
     card.appendChild(detailView);
     return card;

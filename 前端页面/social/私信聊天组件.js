@@ -1,7 +1,7 @@
 import { createUnreadBadgeUpdate, validUnreadCount } from "./未读角标工具.js";
 import { api, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
-import { API, CACHE, UI, PAGINATION, PLACEHOLDERS } from "../core/全局配置.js";
+import { API, CACHE, UI, PAGINATION, PLACEHOLDERS, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t } from "../components/用户体验增强.js";
 // 🔒 XSS防护：对用户可控字段进行 HTML 转义（🧹 P2归一：使用统一版）
@@ -187,7 +187,7 @@ export function openChatModal(currentUser, targetAccount = null) {
         list.forEach(chat => {
             const acc = chat.target_account || chat.account || chat.receiver || chat.sender;
             const name = chat.target_name || chat.name || acc;
-            const avatar = chat.avatar || chat.target_avatar || PLACEHOLDERS.AVATAR_SMALL;
+            const avatar = normalizeProfileImageUrl(chat.avatar) || normalizeProfileImageUrl(chat.target_avatar) || PLACEHOLDERS.AVATAR_SMALL;
             const lastMsg = chat.last_message || "";
             const unread = validUnreadCount(chat.unread_count);
 
@@ -255,8 +255,8 @@ export function openChatModal(currentUser, targetAccount = null) {
         const visibleMsgs = msgs.slice(startIdx);
 
         messagesArea.innerHTML = "";
-        const myAvatar = currentUser.avatar || currentUser.avatarDataUrl || PLACEHOLDERS.AVATAR_SMALL;
-        const otherAvatar = targetAvatar || PLACEHOLDERS.AVATAR_SMALL;
+        const myAvatar = normalizeProfileImageUrl(currentUser.avatar) || normalizeProfileImageUrl(currentUser.avatarDataUrl) || PLACEHOLDERS.AVATAR_SMALL;
+        const otherAvatar = normalizeProfileImageUrl(targetAvatar) || PLACEHOLDERS.AVATAR_SMALL;
 
         // 🚀 P0-3：如果有更多历史消息，显示"加载更多"按钮
         if (startIdx > 0) {
@@ -348,7 +348,7 @@ export function openChatModal(currentUser, targetAccount = null) {
         requestCancelManager.cancelAll(`${componentId}-history`);
         const current = () => scope.isCurrent() && currentChatTarget === targetAccount && generation === historyGeneration;
         const displayName = targetName && targetName !== 'undefined' ? targetName : targetAccount;
-        const avatar = targetAvatar || PLACEHOLDERS.AVATAR_SMALL;
+        const avatar = normalizeProfileImageUrl(targetAvatar) || PLACEHOLDERS.AVATAR_SMALL;
         currentTargetInfo = { account: targetAccount, name: displayName, avatar };
         try { localStorage.setItem(getLastChatKey(currentUser.account), JSON.stringify({ account: targetAccount })); } catch (_) {}
 
@@ -455,7 +455,10 @@ export function openChatModal(currentUser, targetAccount = null) {
 
     // 🚀 P1-2: Enter 发送，Shift+Enter 换行
     inputField.onkeydown = (e) => {
-        if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        if (scope.isCurrent() && !e.defaultPrevented && e.key === "Enter"
+            && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey
+            && !e.isComposing && e.keyCode !== 229 && !e.repeat
+            && !inputField.disabled && !inputField.readOnly) {
             e.preventDefault();
             sendBtn.click();
         }

@@ -6,16 +6,11 @@
 // 由 侧边栏入口注册.js 动态加载
 // ==========================================
 
-import { createPublishView } from "../market/发布内容组件.js";
-import { createPublishTaskView } from "../task/发布任务组件.js";  // 🎯 新增：任务发布
-import { createPublishPostView } from "../post/发布帖子组件.js";  // 🎯 新增：帖子发布
-import { createPublishPromptView } from "../prompt/发布提示词组件.js";  // 🎯 新增：提示词发布
 import { createTopNav } from "../components/顶部导航组件.js";
 import { loadSidebarContent, disposeSidebarContent } from "./侧边栏数据引擎.js";
-import { createItemDetailView } from "../market/资源详情页面组件.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { api, captureRequestSession } from "./网络请求API.js";  // 🔴 编辑模式需调用详情API获取完整数据
-import { CACHE, UI, getBackgroundKey, IS_WEB_MODE } from "./全局配置.js";
+import { CACHE, UI, getBackgroundKey, IS_WEB_MODE, normalizeProfileImageUrl } from "./全局配置.js";
 import { debounce } from "../components/性能优化工具.js";
 import { scrollCardIntoView } from "../components/动画音效引擎.js";
 import { cleanupImageSandbox } from "../components/图片沙盒组件.js";  // 🔧 P3优化：导入清理函数
@@ -27,7 +22,7 @@ import { initUXEnhancements, t, getLanguage } from "../components/用户体验�
 try {
     initUXEnhancements();
 } catch (e) {
-    console.warn('🎯 UX 增强初始化失败:', e);
+    console.warn('🎯 UX 增强初始化失败');
 }
 
 // 统一设计 tokens 与键盘焦点样式；样式表只挂载一次，保持 ComfyUI 主题变量适配。
@@ -79,7 +74,7 @@ const BackgroundStore = {
         try {
             localStorage.setItem(getBackgroundKey(), base64);
         } catch (e) {
-            console.warn("⚠️ 界面背景保存失败（存储空间不足或不可用）:", e.message);
+            console.warn("⚠️ 界面背景保存失败（存储空间不足或不可用）");
         }
     },
     load() {
@@ -117,6 +112,29 @@ function _onSidebarWindow(event, handler) {
     _sidebarWindowListeners.push({ event, handler });
 }
 
+async function loadDetailFactory() {
+    return (await import('../market/资源详情页面组件.js')).createItemDetailView;
+}
+
+async function loadPublishFactory(kind) {
+    if (kind === 'resource') return (await import('../market/发布内容组件.js')).createPublishView;
+    if (kind === 'task') return (await import('../task/发布任务组件.js')).createPublishTaskView;
+    if (kind === 'post') return (await import('../post/发布帖子组件.js')).createPublishPostView;
+    if (kind === 'prompt') return (await import('../prompt/发布提示词组件.js')).createPublishPromptView;
+    throw new Error('Invalid publish view');
+}
+
+function _applySidebarBackground(container, value) {
+    const source = normalizeProfileImageUrl(value);
+    const valid = !!source;
+    container.style.backgroundImage = valid ? `url(${JSON.stringify(source)})` : "none";
+    container.style.backgroundColor = valid ? "transparent" : "var(--comfy-menu-bg)";
+    if (valid) {
+        container.style.backgroundSize = "cover";
+        container.style.backgroundPosition = "center";
+    }
+}
+
 export function buildSidebarDOM() {
     // 🔧 P1修复：重建前先清理上一轮的 window 监听，避免重复注册
     _cleanupSidebarWindowListeners();
@@ -125,13 +143,8 @@ export function buildSidebarDOM() {
     container.className = "comfy-ranking-root";
     
     // 加载本地背景图
-    const savedBg = BackgroundStore.load();
-    const bgStyle = savedBg 
-        ? `background-image: url(${savedBg}); background-size: cover; background-position: center;`
-        : `background-color: var(--comfy-menu-bg);`;
+    _applySidebarBackground(container, BackgroundStore.load());
     
-    container.style.cssText += bgStyle;
-
     const topNav = createTopNav();
     const sidebarInstanceId = `comfy-ranking-${++_sidebarInstanceSequence}`;
 
@@ -286,16 +299,7 @@ export function buildSidebarDOM() {
     
     // 监听从设置页面触发的背景更新事件
     _onSidebarWindow("comfy-sidebar-bg-update", () => {
-        const newBg = BackgroundStore.load();
-        if (newBg) {
-            container.style.backgroundImage = `url(${newBg})`;
-            container.style.backgroundSize = "cover";
-            container.style.backgroundPosition = "center";
-            container.style.backgroundColor = "transparent";
-        } else {
-            container.style.backgroundImage = "none";
-            container.style.backgroundColor = "var(--comfy-menu-bg)";
-        }
+        _applySidebarBackground(container, BackgroundStore.load());
     });
     // =========================================================================
 
@@ -356,77 +360,120 @@ export function buildSidebarDOM() {
 
     _onSidebarWindow("comfy-open-detail", (e) => {
         const { itemData, currentUser } = e.detail;
-        const view = createItemDetailView(itemData, currentUser);
-        showInlineView(view);
+        void openDetailView(itemData, currentUser);
     });
 
-    // 监听进入修改编辑页面的请求
-    // 🔴 修复：编辑时先获取详情API数据，确保 has_private_token 等字段完整（列表缓存可能缺少该字段）
-    _onSidebarWindow("comfy-route-edit-publish", async (e) => {
-        // 📱 Web 模式中央兜底：发布族功能仅本地 ComfyUI 可用
-        if (IS_WEB_MODE) return showToast(t('web.publish_not_supported'), "warning");
-        const { itemData, currentUser } = e.detail;
+    const openInlineViewAfterLoad = async (prepareView, ownerCurrent) => {
         const matchesSession = captureRequestSession();
-        if (!currentUser?.account || topNav.getCurrentUser()?.account !== currentUser.account) return;
-
-        // 先展示加载状态，避免用户感知延迟
-        const loadingView = document.createElement("div");
-        loadingView.style.cssText = "display:flex;flex-direction:column;align-items:center;justify-content:center;height:400px;color:#888;font-size:14px;";
-        loadingView.innerHTML = `<div style=\"font-size:24px;margin-bottom:10px;\">⏳</div><div>${t('common.loading')}</div>`;
+        const renderToken = getRenderToken();
+        const loadingView = document.createElement('div');
+        loadingView.className = 'hub-inline-load-state';
+        const loadingMessage = document.createElement('span');
+        loadingMessage.setAttribute('role', 'status');
+        loadingMessage.setAttribute('aria-live', 'polite');
+        loadingMessage.textContent = t('common.loading');
+        const returnButton = document.createElement('button');
+        returnButton.type = 'button';
+        returnButton.className = 'ranking-publish-back';
+        returnButton.textContent = t('common.back');
+        const returnFocus = document.activeElement;
+        loadingView.appendChild(loadingMessage);
+        loadingView.appendChild(returnButton);
+        loadingView._cleanup = () => { returnButton.onclick = null; };
         showInlineView(loadingView);
-
-        const isCurrent = () => matchesSession() && topNav.getCurrentUser()?.account === currentUser.account
+        const isCurrent = () => !sidebarDisposed && matchesSession() && ownerCurrent()
+            && renderToken === getRenderToken()
             && activeInlineView === loadingView && loadingView.isConnected;
-        let enrichedItemData;
+        returnButton.onclick = () => {
+            if (activeInlineView !== loadingView || sidebarDisposed) return;
+            hideInlineView();
+            if (returnFocus?.isConnected) returnFocus.focus();
+        };
         try {
-            const detailRes = await api.getItemById(itemData.id, { noStore: true });
+            const createView = await prepareView(isCurrent);
             if (!isCurrent()) return;
-            const data = detailRes?.data, revision = data?.edit_revision === undefined ? 0 : data.edit_revision;
-            if (detailRes?.status !== 'success' || data?.id !== itemData.id || data?.author !== currentUser.account
-                || !Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid edit detail');
-            enrichedItemData = { ...data, edit_revision: revision };
-        } catch (_) {
-            if (!isCurrent()) return;
-            loadingView.textContent = t('common.operation_failed');
-            loadingView.setAttribute('role', 'alert');
-            return;
+            const view = createView();
+            if (!isCurrent()) {
+                try { view._cleanup?.(); }
+                catch { console.warn('Unshown inline view cleanup failed'); }
+                try { cleanupImageSandbox(view); }
+                finally { view.remove(); }
+                return;
+            }
+            showInlineView(view);
+        } catch {
+            if (isCurrent()) {
+                loadingMessage.textContent = t('common.operation_failed');
+                loadingMessage.setAttribute('role', 'alert');
+                loadingMessage.setAttribute('aria-live', 'assertive');
+            }
+        } finally {
+            if (activeInlineView === loadingView && !isCurrent()) hideInlineView();
         }
-        if (!isCurrent()) return;
+    };
 
-        const publishView = createPublishView(currentUser, 
-            () => hideInlineView(), 
-            () => { hideInlineView(); triggerLoad(true); },
-            enrichedItemData 
-        );
-        showInlineView(publishView);
+    const openDetailView = async (itemData, currentUser) => {
+        const account = currentUser?.account;
+        const ownerCurrent = () => topNav.getCurrentUser()?.account === account;
+        if (!ownerCurrent()) return;
+        await openInlineViewAfterLoad(async () => {
+            const createView = await loadDetailFactory();
+            return () => createView(itemData, currentUser);
+        }, ownerCurrent);
+    };
+
+    const openPublishView = async (kind, currentUser, editData = null, initialType) => {
+        if (IS_WEB_MODE) return showToast(t('web.publish_not_supported'), 'warning');
+        const account = currentUser?.account;
+        const ownerCurrent = () => topNav.getCurrentUser()?.account === account;
+        if (!account || !ownerCurrent()) return;
+        await openInlineViewAfterLoad(async isCurrent => {
+            let preparedData = editData;
+            if (kind === 'resource' && editData) {
+                const itemId = editData.id;
+                const detailRes = await api.getItemById(itemId, { noStore: true });
+                if (!isCurrent()) return;
+                const data = detailRes?.data, revision = data?.edit_revision === undefined ? 0 : data.edit_revision;
+                if (detailRes?.status !== 'success' || data?.id !== itemId || data?.author !== account
+                    || !Number.isSafeInteger(revision) || revision < 0) throw new Error('Invalid edit detail');
+                preparedData = { ...data, edit_revision: revision };
+            }
+            const createView = await loadPublishFactory(kind);
+            if (!isCurrent()) return;
+            return () => {
+                let view;
+                if (kind === 'resource') {
+                    view = createView(currentUser,
+                        () => { if (activeInlineView === view) hideInlineView(); },
+                        () => { if (activeInlineView === view) { hideInlineView(); triggerLoad(true); } },
+                        preparedData, initialType);
+                } else {
+                    view = createView(currentUser, preparedData);
+                }
+                return view;
+            };
+        }, ownerCurrent);
+    };
+
+    _onSidebarWindow("comfy-route-edit-publish", async (e) => {
+        const { itemData, currentUser } = e.detail;
+        await openPublishView('resource', currentUser, itemData);
     });
 
     // 监听进入任务编辑页面的请求
-    _onSidebarWindow("comfy-route-edit-task", (e) => {
-        if (IS_WEB_MODE) return showToast(t('web.publish_not_supported'), "warning");
+    _onSidebarWindow("comfy-route-edit-task", async (e) => {
         const { taskData, currentUser } = e.detail;
-        try {
-            const view = createPublishTaskView(currentUser, taskData);
-            showInlineView(view);
-        } catch (err) {
-            console.error('创建编辑任务视图失败:', err);
-        }
+        await openPublishView('task', currentUser, taskData);
     });
 
-    // 监听进入帖子编辑页面的请求
-    _onSidebarWindow("comfy-route-edit-post", (e) => {
-        if (IS_WEB_MODE) return showToast(t('web.publish_not_supported'), "warning");
+    _onSidebarWindow("comfy-route-edit-post", async (e) => {
         const { postData, currentUser } = e.detail;
-        const view = createPublishPostView(currentUser, postData);
-        showInlineView(view);
+        await openPublishView('post', currentUser, postData);
     });
 
-    // 监听进入提示词编辑页面的请求
-    _onSidebarWindow("comfy-route-edit-prompt", (e) => {
-        if (IS_WEB_MODE) return showToast(t('web.publish_not_supported'), "warning");
+    _onSidebarWindow("comfy-route-edit-prompt", async (e) => {
         const { promptData, currentUser } = e.detail;
-        const view = createPublishPromptView(currentUser, promptData);
-        showInlineView(view);
+        await openPublishView('prompt', currentUser, promptData);
     });
 
     // 🔔 通知跳转：切换到对应Tab并展开指定卡片
@@ -545,33 +592,11 @@ export function buildSidebarDOM() {
         triggerLoad(e.detail?.force ?? false); 
     });
 
-    sortContainer.querySelector("#btn-open-publish").onclick = () => {
+    sortContainer.querySelector("#btn-open-publish").onclick = async () => {
         const currentUser = topNav.getCurrentUser();
-        if (!currentUser) return showToast(t('auth.login_required'), "warning");
-        
-        // 🎯 根据当前Tab打开对应的发布界面
-        if (currentTab === "tasks") {
-            // 任务榜 -> 打开发布任务界面
-            const view = createPublishTaskView(currentUser);
-            showInlineView(view);
-        } else if (currentTab === "posts") {
-            // 讨论区 -> 打开发布帖子界面
-            const view = createPublishPostView(currentUser);
-            showInlineView(view);
-        } else if (currentTab === "prompts") {
-            // 🧩 提示词 -> 打开发布提示词界面
-            const view = createPublishPromptView(currentUser);
-            showInlineView(view);
-        } else {
-            // 工具/Skill/应用/推荐 -> 打开发布内容界面，并自动设置对应类型
-            const publishView = createPublishView(currentUser, 
-                () => hideInlineView(), 
-                () => { hideInlineView(); triggerLoad(true); },
-                null,  // editItemData
-                currentTab  // initialType: tools/skills/apps/recommends
-            );
-            showInlineView(publishView);
-        }
+        if (!currentUser) return showToast(t('auth.login_required'), 'warning');
+        const kind = { tasks: 'task', posts: 'post', prompts: 'prompt' }[currentTab] || 'resource';
+        await openPublishView(kind, currentUser, null, currentTab);
     };
 
     tabs.forEach(tab => {
