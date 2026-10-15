@@ -14,13 +14,13 @@ def _register_local_routes():
         from server import PromptServer
     except Exception as _e:
         PromptServer = None
-        print(f"[ComfyUI-Ranking] ⚠️ 无法获取 PromptServer，API 路由未注册: {_e}")
+        print(f"[ComfyUI-Ranking] ⚠️ 无法获取 PromptServer，API 路由未注册: error_type={type(_e).__name__}")
 
     if PromptServer is not None:
         try:
-            from .api_tool import install_tool_handler, install_private_tool_handler, install_tool_stream_handler, install_private_tool_stream_handler, install_preview_handler
+            from .后端文件.api_tool import install_tool_handler, install_private_tool_handler, install_tool_stream_handler, install_private_tool_stream_handler, install_preview_handler
             try:
-                from .api_tool import recover_installations, CUSTOM_NODES_DIR
+                from .后端文件.api_tool import recover_installations, CUSTOM_NODES_DIR
                 recovered = recover_installations(CUSTOM_NODES_DIR)
                 if recovered:
                     print('[ComfyUI-Ranking] Recovered interrupted installations: ' + str(recovered)
@@ -30,20 +30,25 @@ def _register_local_routes():
         except Exception as _e:
             install_tool_handler = install_private_tool_handler = None
             install_tool_stream_handler = install_private_tool_stream_handler = install_preview_handler = None
-            print(f"[ComfyUI-Ranking] ⚠️ api_tool 导入失败，插件安装路由不可用: {_e}")
+            print(f"[ComfyUI-Ranking] ⚠️ api_tool 导入失败，插件安装路由不可用: error_type={type(_e).__name__}")
         try:
-            from .api_app import download_app_handler, download_app_stream_handler, workflow_response
+            from .后端文件.api_app import download_app_handler, download_app_stream_handler, workflow_response
         except Exception as _e:
             download_app_handler = download_app_stream_handler = None
-            print(f"[ComfyUI-Ranking] ⚠️ api_app 导入失败，应用下载路由不可用: {_e}")
+            print(f"[ComfyUI-Ranking] ⚠️ api_app 导入失败，应用下载路由不可用: error_type={type(_e).__name__}")
         try:
-            from .api_cache import cache_image_handler, cache_video_handler, cache_stats_handler, cache_clear_handler  # 🟢 引入缓存代理模块（图片+视频+统计清理）
+            from .后端文件.api_cache import cache_image_handler, cache_video_handler, cache_stats_handler, cache_clear_handler  # 🟢 引入缓存代理模块（图片+视频+统计清理）
         except Exception as _e:
             cache_image_handler = cache_video_handler = cache_stats_handler = cache_clear_handler = None
-            print(f"[ComfyUI-Ranking] ⚠️ api_cache 导入失败，缓存代理路由不可用: {_e}")
+            print(f"[ComfyUI-Ranking] ⚠️ api_cache 导入失败，缓存代理路由不可用: error_type={type(_e).__name__}")
 
     if PromptServer is not None:
         routes = PromptServer.instance.routes
+        try:
+            from .后端文件.frontend_assets import frontend_asset_handler
+            routes.get("/community_hub/frontend/{asset:.*}")(frontend_asset_handler)
+        except Exception as asset_error:
+            print('[ComfyUI-Ranking] Frontend asset route unavailable: ' + type(asset_error).__name__)
         # 逐组 try 化：单路由注册失败不影响其余路由
         try:
             if install_tool_handler and install_private_tool_handler and install_tool_stream_handler and install_private_tool_stream_handler and install_preview_handler:
@@ -53,7 +58,7 @@ def _register_local_routes():
                 routes.post("/community_hub/install_tool_stream")(install_tool_stream_handler)
                 routes.post("/community_hub/install_private_tool_stream")(install_private_tool_stream_handler)
         except Exception as _e:
-            print(f"[ComfyUI-Ranking] ⚠️ 插件安装路由注册失败: {_e}")
+            print(f"[ComfyUI-Ranking] ⚠️ 插件安装路由注册失败: error_type={type(_e).__name__}")
         try:
             if download_app_handler and download_app_stream_handler:
                 routes.post("/community_hub/download_app")(download_app_handler)
@@ -62,7 +67,7 @@ def _register_local_routes():
                 if workflow_response.shutdown not in application.on_cleanup:
                     application.on_cleanup.append(workflow_response.shutdown)
         except Exception as _e:
-            print(f"[ComfyUI-Ranking] ⚠️ 应用下载路由注册失败: {_e}")
+            print(f"[ComfyUI-Ranking] ⚠️ 应用下载路由注册失败: error_type={type(_e).__name__}")
         try:
             if cache_image_handler and cache_video_handler and cache_stats_handler and cache_clear_handler:
                 routes.get("/community_hub/image")(cache_image_handler)  # 🟢 注册图片缓存路由
@@ -70,7 +75,7 @@ def _register_local_routes():
                 routes.get("/community_hub/cache/stats")(cache_stats_handler)   # 📊 注册缓存统计路由
                 routes.post("/community_hub/cache/clear")(cache_clear_handler)  # 🧹 注册缓存清理路由
         except Exception as _e:
-            print(f"[ComfyUI-Ranking] ⚠️ 缓存代理路由注册失败: {_e}")
+            print(f"[ComfyUI-Ranking] ⚠️ 缓存代理路由注册失败: error_type={type(_e).__name__}")
 
 
 
