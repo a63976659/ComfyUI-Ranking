@@ -21,7 +21,7 @@ import { showToast } from "../components/UI交互提示组件.js";
 import { readListCache, writeListCache, requireListResponseData, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
 import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
-import { API, CACHE, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { API, CACHE, getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { createRatingStars } from "../social/评论与互动组件.js";
 import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
@@ -75,6 +75,7 @@ function _renderEmptyState(t) {
  * @param {string} name - 用户名（用于首字母回退）
  */
 function _generateAvatarHtml(avatar, name) {
+    avatar = normalizeProfileImageUrl(avatar);
     const initial = (name || 'U')[0].toUpperCase();
     if (avatar) {
         return `<img class="swr-avatar posts-card__avatar" alt="" src="${escapeHtml(avatar)}">`;
@@ -670,7 +671,7 @@ function createPostCard(post, currentUser = currentUserCache, isCurrent = () => 
         
         const account = post.author;
         const cached = initialAuthor;
-        const avatar = [cached?.avatar, post.author_avatar].find(value => typeof value === 'string' && value) || '';
+        const avatar = [cached?.avatar, post.author_avatar].map(value => normalizeProfileImageUrl(value)).find(Boolean) || '';
         const name = initialAuthorName;
         const initial = (name || 'U')[0].toUpperCase();
         
@@ -684,11 +685,12 @@ function createPostCard(post, currentUser = currentUserCache, isCurrent = () => 
             if (!isCurrent() || !card.isConnected) return;
             const avatarEl = authorContainer.querySelector('.swr-avatar');
             const nameEl = authorContainer.querySelector('.swr-name');
-            if (avatarEl && typeof profile.avatar === 'string' && profile.avatar) {
+            const avatar = normalizeProfileImageUrl(profile?.avatar);
+            if (avatarEl && avatar) {
                 if (avatarEl.tagName === 'IMG') {
-                    if (avatarEl.getAttribute('src') !== profile.avatar) avatarEl.src = profile.avatar;
+                    if (avatarEl.getAttribute('src') !== avatar) avatarEl.src = avatar;
                 } else {
-                    avatarEl.outerHTML = _generateAvatarHtml(profile.avatar, typeof profile.name === 'string' && profile.name ? profile.name : name);
+                    avatarEl.outerHTML = _generateAvatarHtml(avatar, typeof profile.name === 'string' && profile.name ? profile.name : name);
                 }
             }
             if (nameEl && typeof profile.name === 'string' && profile.name && nameEl.textContent !== profile.name) {

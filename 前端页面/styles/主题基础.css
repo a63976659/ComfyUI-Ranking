@@ -2748,6 +2748,20 @@ button.ranking-rating__star { cursor: pointer; min-width: 28px; min-height: 28px
 
 .comfy-ranking-root .profile-view { display:flex; flex-direction:column; gap:.9375rem; padding:.9375rem; flex:1; min-width:0; min-height:0; box-sizing:border-box; overflow-y:auto; background:var(--rk-bg,var(--comfy-menu-bg,#202020)); color:var(--rk-text,var(--fg-color,#eee)); font-size:.875rem; overflow-wrap:anywhere; }
 
+.skill-directory { display:flex; flex-direction:column; gap:.75rem; min-width:0; color:inherit; overflow-wrap:anywhere; }
+.skill-directory p { margin:0; }
+.skill-directory__label { display:flex; flex-direction:column; gap:.375rem; min-width:0; }
+.skill-directory input { box-sizing:border-box; width:100%; min-width:0; padding:.5rem; font:inherit; color:inherit; background:var(--rk-panel,var(--comfy-input-bg,#222)); border:1px solid var(--rk-border,var(--border-color,#555)); border-radius:.375rem; }
+.skill-directory__actions { display:flex; flex-wrap:wrap; gap:.5rem; }
+.skill-directory button { min-height:2.25rem; padding:.375rem .625rem; font:inherit; text-align:start; white-space:normal; overflow-wrap:anywhere; cursor:pointer; color:inherit; background:var(--rk-panel,var(--comfy-input-bg,#222)); border:1px solid var(--rk-border,var(--border-color,#555)); border-radius:.375rem; }
+.skill-directory button:disabled { opacity:.55; cursor:default; }
+.skill-directory :is(button,input):focus-visible { outline:2px solid var(--rk-accent,#4c9ffe); outline-offset:2px; }
+.skill-directory__list { list-style:none; padding:0; margin:0; max-height:18rem; overflow-y:auto; }
+.skill-directory__list button { width:100%; margin-bottom:.25rem; }
+.skill-install-preview { min-width:0; text-align:start; overflow-wrap:anywhere; }
+.skill-install-preview ul { max-height:18rem; overflow-y:auto; padding-inline-start:1.5rem; }
+@media (forced-colors:active) { .skill-directory :is(input,button) { border-color:ButtonText; } .skill-directory :is(input,button):focus-visible { outline-color:Highlight; } }
+
 .comfy-ranking-root .resource-trend { --resource-trend-text: var(--rk-text); --resource-trend-border: var(--rk-border); --resource-trend-line: var(--rk-text); --resource-trend-panel: var(--rk-panel); min-width:0; min-height:10rem; max-width:100%; transition-property:none; font-family:inherit; font-size:.75rem; color:var(--rk-text); }
 .comfy-ranking-root .resource-trend__state { display:flex; justify-content:center; align-items:center; min-height:160px; box-sizing:border-box; padding:1rem; text-align:center; font:inherit; line-height:1.5; overflow-wrap:anywhere; color:var(--rk-text); }
 .comfy-ranking-root .resource-trend__state[role=alert] { border-inline-start:2px solid var(--rk-danger); }

@@ -6,13 +6,14 @@
 // ==========================================
 
 import { api, proxyImages, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
+import { disputeImageURL } from "./申诉数据工具.js";
 import { hasAppliedToTask } from "./任务数据工具.js";
 import { loadTaskSnapshot } from "./任务详情加载.js";
 import { eventBus, EVENTS } from "../core/状态管理.js";
 import { createTaskViewScope, subscribeTaskSessionChanges } from "./任务视图生命周期.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
-import { API, CACHE, PLACEHOLDERS, TASK_LIMITS, getCachedProfile, getProfileWithSWR, isAdmin, IS_WEB_MODE } from "../core/全局配置.js";
+import { API, CACHE, PLACEHOLDERS, TASK_LIMITS, getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl, isAdmin, IS_WEB_MODE } from "../core/全局配置.js";
 import { removeCache, findInListCache, requireListResponseData } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
@@ -240,7 +241,7 @@ function renderTaskDetail(contentEl, task, currentUser, preview = false) {
         
         <!-- 发布者信息 -->
         <div class="task-detail__publisher">
-            <img src="${escapeHtml(task.publisher_avatar || PLACEHOLDERS.AVATAR_SMALL)}"
+            <img src="${escapeHtml(normalizeProfileImageUrl(task.publisher_avatar) || PLACEHOLDERS.AVATAR_SMALL)}"
                  class="task-detail__avatar-main" id="publisher-avatar" alt="">
             <div class="task-detail__grow">
                 <div class="task-detail__publisher-name">${escapeHtml(task.publisher_name || task.publisher)}</div>
@@ -348,7 +349,7 @@ ${escapeHtml(task.description)}</div>
             <div class="task-detail__assignee">
                 <div class="task-detail__assignee-heading">👷 ${t('task.assignee')}</div>
                 <div class="task-detail__person">
-                    <img alt="" src="${escapeHtml(task.assignee_avatar || PLACEHOLDERS.AVATAR_SMALL)}"
+                    <img alt="" src="${escapeHtml(normalizeProfileImageUrl(task.assignee_avatar) || PLACEHOLDERS.AVATAR_SMALL)}"
                          class="task-detail__avatar">
                     <span class="task-detail__person-name">${escapeHtml(task.assignee_name || task.assignee)}</span>
                 </div>
@@ -373,7 +374,7 @@ ${escapeHtml(task.description)}</div>
                 <div id="applicants-list" class="task-detail__applicants">
                     ${applicants.map(app => `
                         <div class="task-detail__applicant">
-                            <img alt="" src="${escapeHtml(app.avatar || PLACEHOLDERS.AVATAR_SMALL)}"
+                            <img alt="" src="${escapeHtml(normalizeProfileImageUrl(app.avatar) || PLACEHOLDERS.AVATAR_SMALL)}"
                                  class="task-detail__avatar">
                             <div class="task-detail__grow">
                                 <div class="task-detail__applicant-name">${escapeHtml(app.name || app.account)}</div>
@@ -1118,6 +1119,7 @@ function renderTipBoard(tipBoard) {
  * 🖼️ 渲染评论头像HTML
  */
 function _renderCommentAvatar(name, avatarUrl) {
+    avatarUrl = normalizeProfileImageUrl(avatarUrl);
     const initial = String(name || 'U')[0].toUpperCase();
     // 🔒 XSS防护：评论者昵称与头像均来自他人可修改的资料，写入 HTML 前必须转义
     return avatarUrl 
@@ -1173,7 +1175,7 @@ async function loadTaskComments(container, taskId, currentUser) {
             // 🚀 SWR 头像渲染：评论作者头像
             commentsList.innerHTML = comments.map((c, idx) => {
                 const cached = getCachedProfile(c.author);
-                const avatar = cached?.avatar || c.author_avatar || '';
+                const avatar = [cached?.avatar, c.author_avatar].map(value => normalizeProfileImageUrl(value)).find(Boolean) || '';
                 const name = cached?.name || c.author_name || c.author || '';
                 const avatarHtml = _renderCommentAvatar(name, avatar);
                 
@@ -1208,8 +1210,9 @@ async function loadTaskComments(container, taskId, currentUser) {
                     const avatarContainer = commentEl.querySelector('.swr-avatar-container');
                     const nameEl = commentEl.querySelector('.swr-name');
                     
-                    if (avatarContainer && profile.avatar) {
-                        avatarContainer.innerHTML = _renderCommentAvatar(profile.name || nameEl?.textContent || c.author_name || c.author, profile.avatar);
+                    const avatar = normalizeProfileImageUrl(profile.avatar);
+                    if (avatarContainer && avatar) {
+                        avatarContainer.innerHTML = _renderCommentAvatar(profile.name || nameEl?.textContent || c.author_name || c.author, avatar);
                     }
                     if (nameEl && profile.name) nameEl.textContent = profile.name;
                 });
@@ -1517,10 +1520,9 @@ function showDisputeDialog(task, currentUser) {
                 if (!taskModalCurrent(content)) return;
                 const res = await api.uploadFile(processedFile, "dispute");
                 if (!taskModalCurrent(content)) return;
-                if (res?.status !== "success" || typeof res.url !== "string" || !res.url.trim()) {
-                    throw new Error("Invalid evidence upload response");
-                }
-                evidenceUrls.push(res.url);
+                const url = res?.status === "success" ? disputeImageURL(res.url) : "";
+                if (!url) throw new Error("Invalid evidence upload response");
+                evidenceUrls.push(url);
             }
             
             // 提交申诉

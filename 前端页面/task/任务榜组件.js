@@ -23,7 +23,7 @@ import { showToast } from "../components/UI交互提示组件.js";
 import { readListCache, writeListCache, requireListResponseData, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
 import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
-import { API, CACHE, getCachedProfile, getProfileWithSWR } from "../core/全局配置.js";
+import { API, CACHE, getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 缓存配置
@@ -660,7 +660,7 @@ function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => 
         
         const account = task.publisher;
         const cached = initialAuthor;
-        const avatar = [cached?.avatar, task.publisher_avatar].find(value => typeof value === 'string' && value) || '';
+        const avatar = [cached?.avatar, task.publisher_avatar].map(value => normalizeProfileImageUrl(value)).find(Boolean) || '';
         const name = initialAuthorName;
         
         
@@ -676,8 +676,9 @@ function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => 
             if (!isCurrent() || !card.isConnected) return;
             const avatarEl = authorContainer.querySelector('.swr-avatar');
             const nameEl = authorContainer.querySelector('.swr-name');
-            if (avatarEl && typeof profile.avatar === 'string' && profile.avatar) {
-                if (avatarEl.getAttribute('src') !== profile.avatar) avatarEl.src = profile.avatar;
+            const avatar = normalizeProfileImageUrl(profile?.avatar);
+            if (avatarEl && avatar) {
+                if (avatarEl.getAttribute('src') !== avatar) avatarEl.src = avatar;
             }
             if (nameEl && typeof profile.name === 'string' && profile.name && nameEl.textContent !== profile.name) {
                 nameEl.textContent = profile.name;

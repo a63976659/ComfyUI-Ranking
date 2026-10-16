@@ -1,7 +1,7 @@
 // 前端页面/social/评论与互动组件.js
 import { api } from "../core/网络请求API.js";
 import { t } from "../components/用户体验增强.js";
-import { getCachedProfile, getProfileWithSWR, isAdmin } from "../core/全局配置.js";
+import { getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl, isAdmin } from "../core/全局配置.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 // 🧹 P2归一：escapeHtml 局部副本已移除，改用统一版
 import { escapeHtml } from "../components/互动工具函数.js";
@@ -109,7 +109,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             // 🚀 SWR 缓存优先获取头像
             const account = comment.author;
             const cached = getCachedProfile(account);
-            const avatar = cached?.avatar || comment.avatar || '';
+            const avatar = [cached?.avatar, comment.avatar].map(value => normalizeProfileImageUrl(value)).find(Boolean) || '';
             const avatarSrc = avatar || DEFAULT_AVATAR_SVG;
 
             itemDiv.innerHTML = `
@@ -132,8 +132,9 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
                 const nameEl = itemDiv.querySelector('.swr-name');
                 if (profileGeneration !== generation || !profileCurrent() || !profile || typeof profile !== 'object' || Array.isArray(profile)
                     || (profile.account != null && profile.account !== account)) return;
-                if (avatarEl && typeof profile.avatar === 'string' && profile.avatar) {
-                    avatarEl.src = profile.avatar;
+                const avatar = normalizeProfileImageUrl(profile.avatar);
+                if (avatarEl && avatar) {
+                    avatarEl.src = avatar;
                 }
                 if (nameEl && typeof profile.name === 'string' && profile.name) {
                     nameEl.textContent = profile.name;

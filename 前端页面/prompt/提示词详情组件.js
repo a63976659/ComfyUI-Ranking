@@ -18,7 +18,7 @@ import { getCoverSandboxHTML, setupImageSandboxEvents, cleanupImageSandbox } fro
 import { getVideoPlayerHTML, setupVideoPlayerEvents, cleanupVideoPlayer } from "../components/视频播放器组件.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
-import { getCachedProfile, getProfileWithSWR, IS_WEB_MODE, API, CACHE } from "../core/全局配置.js";
+import { getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl, IS_WEB_MODE, API, CACHE } from "../core/全局配置.js";
 import { findInListCache } from "../components/性能优化工具.js";
 import { globalModal } from "../components/全局弹窗管理器.js";
 import { recordView, handleToggleLike, handleToggleFavorite, renderTipBoardHTML as renderCommonTipBoardHTML, escapeHtml, formatTime } from "../components/互动工具函数.js";  // 🧹 P2归一：局部 formatTime 已移除
@@ -44,6 +44,7 @@ function openOwnedModal(node, title, content, options) {
  * 🖼️ 生成头像 HTML 字符串
  */
 function _generateAvatarHtml(avatar, name, size, extraStyle = '') {
+    avatar = normalizeProfileImageUrl(avatar);
     const initial = (name || 'U')[0].toUpperCase();
     // 🔒 XSS防护：avatar / name 均来自他人可修改的资料（昵称首字母可能是 < ），写入 HTML 前必须转义
     if (avatar) {
@@ -56,11 +57,12 @@ function _generateAvatarHtml(avatar, name, size, extraStyle = '') {
  * 🔄 用 SWR 回调更新已渲染的头像元素
  */
 function _updateAvatarElement(avatarEl, profile, size, extraStyle = '') {
-    if (!avatarEl || !profile.avatar) return;
+    const avatar = normalizeProfileImageUrl(profile?.avatar);
+    if (!avatarEl || !avatar) return;
     if (avatarEl.tagName === 'IMG') {
-        avatarEl.src = profile.avatar;
+        avatarEl.src = avatar;
     } else {
-        avatarEl.outerHTML = `<img class="swr-avatar prompt-detail__avatar ${size === 24 ? 'prompt-detail__avatar--small' : 'prompt-detail__avatar--large'}" alt="" src="${escapeHtml(profile.avatar)}">`;
+        avatarEl.outerHTML = `<img class="swr-avatar prompt-detail__avatar ${size === 24 ? 'prompt-detail__avatar--small' : 'prompt-detail__avatar--large'}" alt="" src="${escapeHtml(avatar)}">`;
     }
 }
 
@@ -327,7 +329,7 @@ async function loadPromptDetail(container, promptId, currentUser) {
 
             const account = prompt.author;
             const cached = getCachedProfile(account);
-            const avatar = cached?.avatar || prompt.author_avatar || '';
+            const avatar = [cached?.avatar, prompt.author_avatar].map(value => normalizeProfileImageUrl(value)).find(Boolean) || '';
             const name = cached?.name || prompt.author_name || account || '';
 
             if (avatarContainer) {
@@ -735,7 +737,7 @@ async function loadComments(container, promptId, currentUser) {
             // 🚀 SWR 头像渲染：评论作者头像
             commentsList.innerHTML = comments.map((c, idx) => {
                 const cached = getCachedProfile(c.author);
-                const avatar = cached?.avatar || c.author_avatar || '';
+                const avatar = [cached?.avatar, c.author_avatar].map(value => normalizeProfileImageUrl(value)).find(Boolean) || '';
                 const name = cached?.name || c.author_name || c.author || '';
 
                 const avatarHtml = _generateAvatarHtml(avatar, name, 24, 'background: var(--comfy-input-bg);');
