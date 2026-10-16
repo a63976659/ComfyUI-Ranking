@@ -13,22 +13,56 @@ import errno
 import sys
 import time
 
+LEASE_DIRECTORY = Path(__file__).resolve().parent / '缓存' / 'install-locks'
+
+
+def _lease_storage(directory):
+    root = Path(directory).absolute()
+    missing = []
+    current = root
+    while not os.path.lexists(current):
+        missing.append(current)
+        current = current.parent
+    for ancestor in (current, *current.parents):
+        info = ancestor.lstat()
+        if (not stat.S_ISDIR(info.st_mode)
+                or getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
+                or stat.S_ISLNK(info.st_mode)):
+            raise ValueError('invalid directory lease storage')
+    for child in reversed(missing):
+        child.mkdir(exist_ok=True)
+        info = child.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)):
+            raise ValueError('invalid directory lease storage')
+    root = Path(os.path.realpath(root))
+    info = root.lstat()
+    if (not stat.S_ISDIR(info.st_mode)
+            or getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)):
+        raise ValueError('invalid directory lease storage')
+    return root, (info.st_dev, info.st_ino)
+
 
 @contextlib.contextmanager
-def directory_lease(directory, timeout=0):
+def directory_lease(directory, timeout=0, *, lock_directory=None, check_cancel=None):
     """稳定OS协调文件；不依赖aiohttp，不删除锁文件或阻塞后降级。"""
     path=Path(directory).absolute()
     parent=Path(os.path.realpath(path.parent))
     key=os.path.normcase(str(parent/path.name))
-    lock=parent/('.ranking-install.'+hashlib.sha256(key.encode('utf-8')).hexdigest()+'.lock')
+    storage, identity = _lease_storage(LEASE_DIRECTORY if lock_directory is None else lock_directory)
+    lock=storage/('.ranking-install.'+hashlib.sha256(key.encode('utf-8')).hexdigest()+'.lock')
     if lock.is_symlink(): raise ValueError('invalid directory lease')
     fd=os.open(lock,os.O_RDWR|os.O_CREAT|getattr(os,'O_NOFOLLOW',0),0o600)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode): raise ValueError('invalid directory lease')
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)):
+            raise ValueError('invalid directory lease')
         with os.fdopen(fd,'r+b') as stream:
             fd=None
             deadline=time.monotonic()+timeout
             while True:
+                if check_cancel: check_cancel()
                 try:
                     if sys.platform=='win32':
                         import msvcrt
@@ -41,6 +75,13 @@ def directory_lease(directory, timeout=0):
                     if error.errno not in (errno.EACCES,errno.EAGAIN,errno.EDEADLK): raise
                     if time.monotonic()>=deadline: raise TimeoutError('directory lease busy') from None
                     time.sleep(.05)
+            current = storage.lstat()
+            linked = lock.lstat()
+            if ((current.st_dev, current.st_ino) != identity
+                    or (linked.st_dev, linked.st_ino) != (info.st_dev, info.st_ino)
+                    or linked.st_nlink != 1):
+                raise ValueError('directory lease storage changed')
+            if check_cancel: check_cancel()
             # Linux保护进程可继承同一open-file-description，父进程退出不先解锁。
             # 退出只关闭本端，不调用LOCK_UN，其他持有者仍保留flock。
             yield stream.fileno()
@@ -119,7 +160,7 @@ def _replace_bootstrap(source, destination):
 def _validate_staging(staging):
     if not staging.is_dir():
         raise ValueError("Missing staging directory")
-    required = ('__init__.py', 'update_engine.py', '后端文件/api_app.py', '后端文件/api_cache.py', '后端文件/api_tool.py', '后端文件/control_request.py', '后端文件/frontend_assets.py', '后端文件/media_proxy.py', '后端文件/media_transfer.py', '后端文件/process_guard.py', '后端文件/workflow_response.py', '后端文件/zip_install_reader.py', '前端页面/core/侧边栏入口注册.js')
+    required = ('__init__.py', 'update_engine.py', '后端文件/api_app.py', '后端文件/api_cache.py', '后端文件/api_tool.py', '后端文件/control_request.py', '后端文件/frontend_assets.py', '后端文件/media_proxy.py', '后端文件/media_transfer.py', '后端文件/process_guard.py', '后端文件/workflow_response.py', '后端文件/zip_install_reader.py', '后端文件/skill_packages.py', '后端文件/skill_publication.py', '后端文件/skill_install_session.py', '后端文件/skill_install.py', '前端页面/core/侧边栏入口注册.js')
     for name in required:
         if not (staging / name).is_file():
             raise ValueError("Incomplete update")
