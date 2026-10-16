@@ -49,6 +49,14 @@ except ImportError:
     _control_reader = importlib.util.module_from_spec(_control_spec)
     _control_spec.loader.exec_module(_control_reader)
 
+try:
+    from . import media_proxy as _cloud_proxy
+except ImportError:
+    import importlib.util
+    _proxy_spec = importlib.util.spec_from_file_location('ranking_install_proxy', Path(__file__).with_name('media_proxy.py'))
+    _cloud_proxy = importlib.util.module_from_spec(_proxy_spec)
+    _proxy_spec.loader.exec_module(_cloud_proxy)
+
 THIS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CUSTOM_NODES_DIR = os.path.dirname(THIS_DIR)
 
@@ -124,52 +132,11 @@ def _install_publish_guard(target_path, timeout=None, check_cancel=None):
             break
         if time.monotonic() >= deadline:
             raise TimeoutError('installation publication lock timed out')
-    handle = None
     try:
-        target = os.path.abspath(target_path)
-        parent = os.path.realpath(os.path.dirname(target))
-        key = os.path.normcase(os.path.join(parent, os.path.basename(target)))
-        # 父目录只增加非Python普通文件，避免ComfyUI把协调目录当成插件加载。
-        path = os.path.join(parent, '.ranking-install.' + hashlib.sha256(key.encode('utf-8')).hexdigest() + '.lock')
-        # 不沿用预先存在的文件链接；POSIX同时以O_NOFOLLOW关闭文件打开竞态。
-        if os.path.islink(path):
-            raise ValueError('invalid installation coordination path')
-        descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
-        try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise ValueError('invalid installation coordination file')
-            handle = os.fdopen(descriptor, 'r+b')
-        except BaseException:
-            os.close(descriptor)
-            raise
-        while True:
-            if check_cancel:
-                check_cancel()
-            try:
-                if sys.platform == 'win32':
-                    import msvcrt
-                    handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as error:
-                if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
-                    raise
-                if time.monotonic() >= deadline:
-                    raise TimeoutError('installation publication lock timed out') from None
-                time.sleep(.05)
-        if check_cancel:
-            check_cancel()
-        yield
+        with directory_lease(target_path, timeout=max(0, deadline-time.monotonic()), check_cancel=check_cancel):
+            yield
     finally:
-        try:
-            if handle is not None:
-                # 关闭句柄释放OS锁，协调文件保留，避免不同进程争用不同inode。
-                handle.close()
-        finally:
-            _INSTALL_PUBLISH_LOCK.release()
+        _INSTALL_PUBLISH_LOCK.release()
 
 
 def _install_journal_path(target_path):
@@ -744,6 +711,10 @@ async def _spawn_git_process(*command,lease_fd=None,**options):
     try:
         spec=importlib.util.spec_from_file_location('ranking_process_guard',helper)
         guard=importlib.util.module_from_spec(spec); spec.loader.exec_module(guard)
+        helper_python = getattr(sys, '_base_executable', None) if sys.platform == 'win32' else sys.executable
+        if sys.platform == 'win32' and (not isinstance(helper_python, str)
+                or not Path(helper_python).is_absolute() or not Path(helper_python).is_file()):
+            raise OSError('standard-library guard interpreter unavailable')
         job=guard.WindowsProcessJob() if sys.platform=='win32' else None
     except (OSError,ImportError):
         raise _GitInstallError('process_guard_unavailable','无法建立安装进程保护，请检查插件文件与宿主环境。') from None
@@ -773,7 +744,7 @@ async def _spawn_git_process(*command,lease_fd=None,**options):
     process=None
     assigned=False
     try:
-        process=await asyncio.create_subprocess_exec(sys.executable,'-I',str(helper),*command,
+        process=await asyncio.create_subprocess_exec(helper_python,'-I','-S',str(helper),*command,
             stdin=asyncio.subprocess.PIPE,creationflags=subprocess.CREATE_NO_WINDOW,**options)
         job.assign(process.pid)
         assigned=True
@@ -792,12 +763,27 @@ async def _spawn_git_process(*command,lease_fd=None,**options):
         raise
 
 
+def _git_clone_environment(url, environment):
+    env = environment.copy()
+    scheme = urlsplit(url).scheme
+    if scheme not in ('http', 'https'):
+        return env
+    if any(key in env for key in (scheme + '_proxy', scheme.upper() + '_PROXY', 'all_proxy', 'ALL_PROXY')):
+        return env
+    proxy = _cloud_proxy.system_proxies(url).get(scheme)
+    if proxy:
+        env[scheme + '_proxy'] = proxy
+    return env
+
+
 async def _run_git_clone(url, target, env, timeout=1200, *, check_cancel=None, heartbeat=None, resource_check=None, lease_fd=None):
     """共享非交互克隆；输出不进内存，取消/超时均终止并收回子进程。"""
     if check_cancel:
         check_cancel()
+    env = _git_clone_environment(url, env)
     proc = await _spawn_git_process(
-        "git", "-c", "credential.helper=", "clone", "--depth", "1", "--single-branch", "--no-tags", url, target,
+        "git", "-c", "credential.helper=", *(["-c", "core.longpaths=true"] if sys.platform == "win32" else []),
+        "clone", "--depth", "1", "--single-branch", "--no-tags", url, target,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
         env=env,
@@ -829,7 +815,7 @@ async def _run_git_clone(url, target, env, timeout=1200, *, check_cancel=None, h
         await _stop_git_clone(proc, clone_task)
 
 
-async def _get_git_head_short(target_path: str, timeout: int = 15, *, lease_fd=None):
+async def _get_git_head_short(target_path: str, timeout: int = 15, *, lease_fd=None, full=False):
     """读取已克隆仓库当前 HEAD 的 commit 短 hash（前 7 位）
 
     用途：安装成功后把"真实安装的版本"回传前端，作为本地版本戳（LocalVer）。
@@ -847,7 +833,8 @@ async def _get_git_head_short(target_path: str, timeout: int = 15, *, lease_fd=N
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         if proc.returncode == 0:
             head = (stdout or b"").decode("utf-8", errors="ignore").strip()
-            return head[:7] if re.fullmatch(r"[0-9a-fA-F]{40}", head) else None
+            if re.fullmatch(r"[0-9a-fA-F]{40}", head):
+                return head.lower() if full else head[:7]
     except asyncio.CancelledError:
         raise
     except asyncio.TimeoutError:
@@ -944,6 +931,9 @@ async def _run_install_file_worker(operation, cancel_event, check_cancel=None):
 INSTALL_CONCURRENCY = 2
 INSTALL_MAX_QUEUED = 8
 INSTALL_QUEUE_TIMEOUT = 120
+SKILL_CONTROL_CONCURRENCY = 2
+SKILL_CONTROL_MAX_QUEUED = 8
+SKILL_CONTROL_QUEUE_TIMEOUT = 15
 
 
 def _try_install_slot(kind, count):
@@ -958,19 +948,23 @@ def _try_install_slot(kind, count):
 
 
 async def _acquire_install_capacity(cancel_event, *, request=None, send_progress=None,
-                                    error_class=_GitInstallError):
+                                    error_class=_GitInstallError, skill_control=False):
     """同目录共享两个活跃和八个等待槽位；排队不占下载线程。"""
     started=time.monotonic()
     last_notice=None
     waiting_lease=None
     active_lease=None
+    active_kind, waiting_kind = ('skill-control-capacity', 'skill-control-waiting') if skill_control else ('capacity', 'waiting')
+    concurrency = SKILL_CONTROL_CONCURRENCY if skill_control else INSTALL_CONCURRENCY
+    max_queued = SKILL_CONTROL_MAX_QUEUED if skill_control else INSTALL_MAX_QUEUED
+    timeout = SKILL_CONTROL_QUEUE_TIMEOUT if skill_control else INSTALL_QUEUE_TIMEOUT
     try:
         while True:
             if request is not None: _check_install_request(request,cancel_event)
             _raise_if_install_cancelled(cancel_event)
-            if waiting_lease is not None and time.monotonic()-started>=INSTALL_QUEUE_TIMEOUT:
+            if waiting_lease is not None and time.monotonic()-started>=timeout:
                 raise error_class('install_queue_timeout','安装任务繁忙，请稍后重试。',503)
-            lease=_try_install_slot('capacity',INSTALL_CONCURRENCY)
+            lease=_try_install_slot(active_kind,concurrency)
             if lease is not None:
                 active_lease=lease
                 try:
@@ -982,11 +976,11 @@ async def _acquire_install_capacity(cancel_event, *, request=None, send_progress
                     active_lease=None
                     raise
             if waiting_lease is None:
-                waiting_lease=_try_install_slot('waiting',INSTALL_MAX_QUEUED)
+                waiting_lease=_try_install_slot(waiting_kind,max_queued)
                 if waiting_lease is None:
                     raise error_class('install_queue_full','安装队列已满，请稍后重试。',503)
             now=time.monotonic()
-            if now-started>=INSTALL_QUEUE_TIMEOUT:
+            if now-started>=timeout:
                 raise error_class('install_queue_timeout','安装任务繁忙，请稍后重试。',503)
             if send_progress and (last_notice is None or now-last_notice>=15):
                 await send_progress('queued',5,'等待其它安装任务完成...')
@@ -1002,7 +996,18 @@ async def _acquire_install_capacity(cancel_event, *, request=None, send_progress
             raise
 
 
-async def _install_git_core(item_url, account, *, request=None, cancel_event=None, send_progress=None):
+def _skill_preparation_target(value):
+    path = Path(value).absolute()
+    if (path.name != 'source'
+            or not re.fullmatch(r'\.ranking-skill\.[0-9a-f]{32}\.disabled', path.parent.name)
+            or path.parent.resolve(strict=True) != path.parent):
+        raise ValueError('invalid skill preparation target')
+    _install_directory_identity(path.parent)
+    return str(path)
+
+
+async def _install_git_core(item_url, account, *, request=None, cancel_event=None, send_progress=None,
+                            prepare_target=None, capacity_held=False):
     """JSON/SSE共用校验、克隆、回退及发布；失败只清理本次暂存目录。"""
     cancel_event = cancel_event if cancel_event is not None else threading.Event()
 
@@ -1025,7 +1030,9 @@ async def _install_git_core(item_url, account, *, request=None, cancel_event=Non
     name, target = _resolve_install_target(item_url)
     if not name:
         raise _GitInstallError("invalid_target", "安装目标目录名不合法，已拦截", 400)
-    is_self = _is_self_update(name)
+    if prepare_target is not None:
+        target = _skill_preparation_target(prepare_target)
+    is_self = prepare_target is None and _is_self_update(name)
     staging = _get_staging_path(target)
     committed = False
     staging_owned = False
@@ -1061,8 +1068,9 @@ async def _install_git_core(item_url, account, *, request=None, cancel_event=Non
         committed = True
 
     try:
-        capacity_lease=await _acquire_install_capacity(cancel_event,request=request,
-                                                      send_progress=send_progress)
+        if not capacity_held:
+            capacity_lease=await _acquire_install_capacity(cancel_event,request=request,
+                                                          send_progress=send_progress)
         check_cancel()
         await progress("cleanup", 15, "准备安全暂存目录...")
         await _run_install_file_worker(prepare_staging, cancel_event, check_cancel)
@@ -1099,7 +1107,12 @@ async def _install_git_core(item_url, account, *, request=None, cancel_event=Non
         if is_self:
             await _run_install_file_worker(publish_installation, cancel_event, check_cancel)
             return {"status": "success", "message": "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！"}
-        installed_version = await _get_git_head_short(staging,lease_fd=staging_lease_fd)
+        if prepare_target is None:
+            installed_version = await _get_git_head_short(staging,lease_fd=staging_lease_fd)
+        else:
+            installed_version = await _get_git_head_short(staging,lease_fd=staging_lease_fd,full=True)
+            if not installed_version:
+                raise _GitInstallError('install_failed', '无法核实技能包版本，请重新准备安装。')
         check_cancel()
         await _run_install_file_worker(publish_installation, cancel_event, check_cancel)
         return {"status": "success", "installed_version": installed_version}
@@ -1162,6 +1175,11 @@ class _ZipNoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _cloud_opener(url):
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler(_cloud_proxy.system_proxies(url)), _ZipNoRedirect())
+
+
 def _cleanup_install_zip(path):
     if not path:
         return
@@ -1177,10 +1195,10 @@ def _cleanup_install_zip(path):
     print("[ComfyUI-Ranking] ZIP临时文件清理暂未完成")
 
 
-def _install_zip_sync(data, target, cancel_event, report):
+def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decoder=None):
     """单工作线程拥有响应、临时文件和解压；关闭后才清理，取消不重试。"""
     paths = []
-    is_self = _is_self_update(os.path.basename(target))
+    is_self = skill_source_decoder is None and _is_self_update(os.path.basename(target))
     self_staging = _get_staging_path(target) if is_self else None
     self_staging_owned = False
     staging_lease = None
@@ -1193,9 +1211,10 @@ def _install_zip_sync(data, target, cancel_event, report):
         headers = {'Content-Type': 'application/json'}
         if data.get("token"):
             headers['Authorization'] = f"Bearer {data['token']}"
-        opener = urllib.request.build_opener(_ZipNoRedirect())
+        opener = _cloud_opener(_ZIP_PROXY_URL)
         downloaded_path = None
         installed_version = None
+        skill_source = None
         for attempt in range(3):
             _raise_if_install_cancelled(cancel_event)
             report("downloading", 30, "从云端下载资源包...")
@@ -1208,6 +1227,16 @@ def _install_zip_sync(data, target, cancel_event, report):
                 read_chunk = getattr(response, 'read1', response.read)
                 version = response.headers.get('X-Installed-Version') or ''
                 installed_version = version.lower() if re.fullmatch(r'[0-9a-fA-F]{40}', version) else None
+                if skill_source_decoder is not None:
+                    try:
+                        for header in ('X-Installed-Version', 'X-Ranking-Skill-Source', 'X-Ranking-Skill-Revision'):
+                            values = (response.headers.get_all(header) or []) if hasattr(response.headers, 'get_all') else (
+                                [response.headers[header]] if response.headers.get(header) is not None else [])
+                            if len(values) != 1:
+                                raise ValueError()
+                        skill_source = skill_source_decoder(response.headers, installed_version)
+                    except ValueError:
+                        raise _ZipInstallError('invalid_archive', '无法核实技能包来源，请重新准备安装。') from None
                 raw_length = response.headers.get('Content-Length')
                 if raw_length is not None and (not isinstance(raw_length, str) or not re.fullmatch(r'[0-9]+', raw_length)):
                     raise _ZipInstallError("remote_rejected", "云端拒绝访问或无法获取资源，请检查权限和资源地址。", 403)
@@ -1290,7 +1319,10 @@ def _install_zip_sync(data, target, cancel_event, report):
             committed = True
             return {"status": "success", "message": "✅ 新版本已准备就绪，重启 ComfyUI 即可生效！"}
         committed = True
-        return {"status": "success", "installed_version": installed_version}
+        result = {"status": "success", "installed_version": installed_version}
+        if skill_source_decoder is not None:
+            result['skill_source'] = skill_source
+        return result
     except OSError as error:
         classified = _install_file_error(error, _ZipInstallError)
         if classified is not None:
@@ -1306,12 +1338,20 @@ def _install_zip_sync(data, target, cancel_event, report):
             if staging_lease is not None: staging_lease.__exit__(None,None,None)
 
 
-async def _install_zip_core(data, *, request=None, cancel_event=None, send_progress=None):
+async def _install_zip_core(data, *, request=None, cancel_event=None, send_progress=None,
+                            prepare_target=None, skill_source_decoder=None, capacity_held=False):
     if not isinstance(data, dict) or not all(isinstance(data.get(key), str) and data[key] for key in ('url', 'id', 'account')) or (data.get('token') is not None and not isinstance(data['token'], str)):
         raise _ZipInstallError("missing_params", "缺少核心鉴权参数", 400)
-    name, target = _resolve_install_target(data['url'])
-    if not name:
-        raise _ZipInstallError("invalid_target", "安装目标目录名不合法，已拦截", 400)
+    if prepare_target is not None:
+        if not callable(skill_source_decoder):
+            raise _ZipInstallError('invalid_target', '无法核实技能包安装目录。', 400)
+        target = _skill_preparation_target(prepare_target)
+    else:
+        if skill_source_decoder is not None:
+            raise _ZipInstallError('invalid_target', '无法核实技能包安装目录。', 400)
+        name, target = _resolve_install_target(data['url'])
+        if not name:
+            raise _ZipInstallError("invalid_target", "安装目标目录名不合法，已拦截", 400)
     cancel_event = cancel_event if cancel_event is not None else threading.Event()
     events = queue.Queue(maxsize=32)
     last_event = ("downloading", 30, "正在处理资源包...")
@@ -1341,14 +1381,19 @@ async def _install_zip_core(data, *, request=None, cancel_event=None, send_progr
     _raise_if_install_cancelled(cancel_event)
     if send_progress:
         await send_progress("validate", 5, "校验安装参数...")
-    capacity_lease=await _acquire_install_capacity(cancel_event,request=request,
-        send_progress=send_progress,error_class=_ZipInstallError)
+    capacity_lease = None
+    if not capacity_held:
+        capacity_lease=await _acquire_install_capacity(cancel_event,request=request,
+            send_progress=send_progress,error_class=_ZipInstallError)
     try:
         if send_progress:
             await send_progress("auth", 15, "验证购买权限...")
         # Executor Future不在all_tasks中；宿主取消所有Task时不会先取消线程外壳，
         # 请求仍能等待真正持有响应/文件的线程完成取消清理。
-        worker = asyncio.get_running_loop().run_in_executor(None, _install_zip_sync, data, target, cancel_event, report)
+        operation = (lambda: _install_zip_sync(data, target, cancel_event, report,
+                                               skill_source_decoder=skill_source_decoder)) if skill_source_decoder is not None else None
+        worker = (asyncio.get_running_loop().run_in_executor(None, operation) if operation is not None
+                  else asyncio.get_running_loop().run_in_executor(None, _install_zip_sync, data, target, cancel_event, report))
         last_heartbeat = time.monotonic()
         try:
             while not worker.done():
@@ -1375,7 +1420,8 @@ async def _install_zip_core(data, *, request=None, cancel_event=None, send_progr
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 worker.result()
     finally:
-        capacity_lease.__exit__(None,None,None)
+        if capacity_lease is not None:
+            capacity_lease.__exit__(None,None,None)
 
 
 async def install_private_tool_handler(request):

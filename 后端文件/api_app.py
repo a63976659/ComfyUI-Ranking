@@ -23,6 +23,15 @@ except ImportError:
     workflow_response = importlib.util.module_from_spec(_response_spec)
     _response_spec.loader.exec_module(workflow_response)
 
+try:
+    from . import media_proxy as _proxy
+except ImportError:
+    import importlib.util
+    _proxy_spec = importlib.util.spec_from_file_location(
+        'ranking_workflow_proxy', os.path.join(os.path.dirname(__file__), 'media_proxy.py'))
+    _proxy = importlib.util.module_from_spec(_proxy_spec)
+    _proxy_spec.loader.exec_module(_proxy)
+
 # 📦 三发行版兼容：folder_paths 仅存在于 ComfyUI 运行时，try 化防止脱离宿主时拖垮导入链
 try:
     import folder_paths
@@ -106,11 +115,12 @@ class _WorkflowNoRedirect(urllib.request.HTTPRedirectHandler):
     http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 
 
-def _workflow_proxy_opener(context):
+def _workflow_proxy_opener(context, proxy_api_url):
     if not isinstance(context, ssl.SSLContext) or not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
         raise ValueError("workflow proxy requires verified TLS")
     # 请求级opener，不受宿主install_opener影响；保留系统代理和CA信任配置。
-    return urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), _WorkflowNoRedirect())
+    return urllib.request.build_opener(urllib.request.ProxyHandler(_proxy.system_proxies(proxy_api_url)),
+                                      urllib.request.HTTPSHandler(context=context), _WorkflowNoRedirect())
 
 
 def _validate_workflow_proxy_url(url):
@@ -269,7 +279,7 @@ def _sync_download(proxy_api_url, payload, ssl_context, timeout=120, token="", *
     """同步下载函数（在线程池中运行，避免阻塞事件循环）"""
     _check_workflow_cancel(cancel_event)
     _validate_workflow_proxy_url(proxy_api_url)
-    opener = _workflow_proxy_opener(ssl_context)
+    opener = _workflow_proxy_opener(ssl_context, proxy_api_url)
     headers = {'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0', 'Accept-Encoding': 'identity'}
     # 🔒 P0安全加固：转发用户 JWT，云端以 Authorization Token 为准鉴权
     req = urllib.request.Request(

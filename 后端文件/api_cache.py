@@ -20,7 +20,7 @@ from aiohttp.abc import AbstractResolver
 
 try:
     from . import control_request as _control_reader
-    from ..update_engine import directory_lease
+    from ..update_engine import directory_lease as _directory_lease
 except ImportError:
     import importlib.util
     _control_spec = importlib.util.spec_from_file_location('ranking_cache_control', Path(__file__).with_name('control_request.py'))
@@ -29,7 +29,11 @@ except ImportError:
     _lease_spec = importlib.util.spec_from_file_location('ranking_cache_lease', Path(__file__).resolve().parents[1] / 'update_engine.py')
     _lease_module = importlib.util.module_from_spec(_lease_spec)
     _lease_spec.loader.exec_module(_lease_module)
-    directory_lease = _lease_module.directory_lease
+    _directory_lease = _lease_module.directory_lease
+
+
+def directory_lease(directory, timeout=0):
+    return _directory_lease(directory, timeout=timeout, lock_directory=Path(directory).absolute().parent)
 
 try:
     from . import media_transfer as _media
@@ -1212,7 +1216,8 @@ async def _cache_management_rejection(request, error):
 
 def _try_cache_management_slot(kind, count):
     for index in range(count):
-        lease = directory_lease(Path(CUSTOM_NODES_DIR)/('.ranking-cache-'+kind+'-'+str(index)))
+        lease = _directory_lease(Path(CUSTOM_NODES_DIR)/('.ranking-cache-'+kind+'-'+str(index)),
+                                 lock_directory=Path(IMAGE_CACHE_DIR).parent/'maintenance-locks')
         try:
             lease.__enter__()
         except TimeoutError:

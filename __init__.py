@@ -37,6 +37,11 @@ def _register_local_routes():
             download_app_handler = download_app_stream_handler = None
             print(f"[ComfyUI-Ranking] ⚠️ api_app 导入失败，应用下载路由不可用: error_type={type(_e).__name__}")
         try:
+            from .后端文件.skill_install import skill_install_handler, recover_skill_installations, shutdown_skill_installations
+        except Exception as _e:
+            skill_install_handler = None
+            print(f"[ComfyUI-Ranking] Skill installation unavailable: error_type={type(_e).__name__}")
+        try:
             from .后端文件.api_cache import cache_image_handler, cache_video_handler, cache_stats_handler, cache_clear_handler  # 🟢 引入缓存代理模块（图片+视频+统计清理）
         except Exception as _e:
             cache_image_handler = cache_video_handler = cache_stats_handler = cache_clear_handler = None
@@ -59,6 +64,16 @@ def _register_local_routes():
                 routes.post("/community_hub/install_private_tool_stream")(install_private_tool_stream_handler)
         except Exception as _e:
             print(f"[ComfyUI-Ranking] ⚠️ 插件安装路由注册失败: error_type={type(_e).__name__}")
+        try:
+            if skill_install_handler:
+                routes.post('/community_hub/skill_install')(skill_install_handler)
+                application = PromptServer.instance.app
+                if recover_skill_installations not in application.on_startup:
+                    application.on_startup.append(recover_skill_installations)
+                if shutdown_skill_installations not in application.on_cleanup:
+                    application.on_cleanup.append(shutdown_skill_installations)
+        except Exception as _e:
+            print(f"[ComfyUI-Ranking] Skill installation route unavailable: error_type={type(_e).__name__}")
         try:
             if download_app_handler and download_app_stream_handler:
                 routes.post("/community_hub/download_app")(download_app_handler)

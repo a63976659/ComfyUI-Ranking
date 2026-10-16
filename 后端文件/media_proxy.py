@@ -36,6 +36,30 @@ def _windows_bypass(host, authority):
     return False
 
 
+def _system_proxy_value(target, proxies):
+    value = proxies.get(target.scheme)
+    if (not value and os.name == 'nt'
+            and not any(key.lower() == f'{target.scheme}_proxy' for key in os.environ)):
+        try:
+            value = urllib.request.getproxies_registry().get(target.scheme)
+        except OSError:
+            value = None
+    return value
+
+
+def system_proxies(url):
+    target = urllib.parse.urlsplit(url)
+    proxies = dict(urllib.request.getproxies())
+    if (urllib.request.proxy_bypass_environment(target.hostname, proxies)
+            or _windows_bypass(target.hostname.lower(), target.netloc.lower())):
+        proxies.pop(target.scheme, None)
+        return proxies
+    value = _system_proxy_value(target, proxies)
+    if value:
+        proxies[target.scheme] = value
+    return proxies
+
+
 def select_proxy(url):
     target = urllib.parse.urlsplit(url)
     setting = os.environ.get('COMFYUI_RANKING_MEDIA_PROXY', '').strip()
@@ -46,13 +70,7 @@ def select_proxy(url):
         return None
     if not setting and _windows_bypass(target.hostname.lower(), target.netloc.lower()):
         return None
-    value = setting or proxies.get(target.scheme)
-    if (not value and not setting and os.name == 'nt'
-            and not any(key.lower() == f'{target.scheme}_proxy' for key in os.environ)):
-        try:
-            value = urllib.request.getproxies_registry().get(target.scheme)
-        except OSError:
-            value = None
+    value = setting or _system_proxy_value(target, proxies)
     if not value:
         return None
     try:
