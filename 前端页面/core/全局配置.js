@@ -104,6 +104,19 @@ export const API = {
 };
 
 
+export const SKILL_INSTALL = Object.freeze({
+    PATH: '/community_hub/skill_install',
+    PREFLIGHT_TIMEOUT: 30000,
+    CONTROL_TIMEOUT: 45000,
+    RESULT_TIMEOUT: 5000,
+    STREAM_TIMEOUT: 1200000,
+    RESPONSE_MAX_BYTES: 1024 * 1024,
+    PATH_MAX_BYTES: 32768,
+    MAX_DIRECTORIES: 128,
+    MAX_ITEMS: 1,
+    MODAL_WIDTH: '640px'
+});
+
 export const CHART_LIFECYCLE = Object.freeze({
     WIDTH_WAIT_TIMEOUT: 5000,
     RESIZE_DELAY: 300
@@ -597,7 +610,7 @@ export function escapeHtml(str) {
 }
 
 /** 资料图片只接受明确的图片表示或网络地址，不相对宿主解析业务路径。 */
-export function normalizeProfileImageUrl(value, unwrapProxy = false) {
+export function normalizeProfileImageUrl(value, unwrapProxy = false, serviceBaseUrl = API.BASE_URL) {
     if (typeof value !== 'string' || !value || value.trim() !== value || /[\u0000-\u001f\u007f]/.test(value)) return '';
     let source = value;
     let layers = 0;
@@ -627,7 +640,7 @@ export function normalizeProfileImageUrl(value, unwrapProxy = false) {
         const host = url.hostname.toLowerCase().replace(/\.$/, '');
         if (/^\d+\.\d+\.\d+\.\d+$/.test(host)
             && authority.replace(/:[0-9]+$/, '').replace(/\.$/, '').toLowerCase() !== host) return '';
-        const base = new URL(API.BASE_URL);
+        const base = new URL(serviceBaseUrl);
         const baseHost = base.hostname.toLowerCase().replace(/\.$/, '');
         if (host === baseHost) {
             const expectedPath = base.pathname.replace(/\/$/, '') + API.IMAGE_PROXY_PATH;

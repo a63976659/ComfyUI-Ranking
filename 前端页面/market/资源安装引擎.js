@@ -3,7 +3,7 @@ import { showToast, showConfirm, createInstallProgress } from "../components/UI�
 import { api } from "../core/网络请求API.js";
 import { requestSSE, request } from "../core/网络请求_基础设施.js";
 import { openUserProfileModal } from "../profile/个人中心视图.js";
-import { API, CACHE, IS_WEB_MODE, escapeHtml } from "../core/全局配置.js";
+import { API, CACHE, SKILL_INSTALL, IS_WEB_MODE, escapeHtml } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 import { createResourceOperationScope } from "./资源操作生命周期.js";
 import { isValidPurchaseStatus } from "./购买状态生命周期.js";
@@ -363,13 +363,16 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
         activeOperations.set(operationKey, scope);
         ++latestWalletRefresh;  // 新操作使先前余额补新失效。
         phase = "preflight"; btnUse.disabled = true; btnUse.setAttribute("aria-busy", "true");
+        let restoreFocus = false;
         try {
             const price = itemData.price ?? 0;
             if (!Number.isSafeInteger(price) || price < 0 || !itemData.id) {
                 showToast(t('acquire.invalid_id'), "error"); return;
             }
             const isFree = price === 0 || account === itemData.author;
-            const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool' || itemData.type === 'skill' || itemData.type === 'recommend_skill';
+            const isTool = itemData.type === 'tool' || itemData.type === 'recommend_tool';
+            const isSkill = itemData.type === 'skill' || itemData.type === 'recommend_skill';
+            let skillFlow, skillTarget;
             const isApp = itemData.type === 'app' || itemData.type === 'recommend_app';
             if (IS_WEB_MODE && isFree) return showToast(t('web.install_on_desktop'), "warning");
 
@@ -389,6 +392,14 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 return;
             }
             if (IS_WEB_MODE && alreadyOwned) return showToast(t('item.owned_purchased'), "warning");
+
+            if (!IS_WEB_MODE && isSkill && itemData.is_netdisk !== true) {
+                skillFlow = await import('./Skill安装流程.js');
+                if (!isCurrent()) return;
+                skillTarget = await skillFlow.chooseSkillDirectory(scope);
+                if (!isCurrent()) return;
+                if (!skillTarget) { restoreFocus = true; return; }
+            }
 
             if (!isFree && !alreadyOwned) {
                 let balance;
@@ -413,7 +424,8 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     inlineStatusBox.textContent = t('acquire.validation_running');
                     const validationController = new AbortController();
                     const removeValidationCleanup = scope.addCleanup(() => validationController.abort());
-                    const timeout = setTimeout(() => validationController.abort(), API.BACKGROUND_TIMEOUT);
+                    const timeout = setTimeout(() => validationController.abort(), isSkill ? SKILL_INSTALL.PREFLIGHT_TIMEOUT : API.BACKGROUND_TIMEOUT);
+                    let validationMessage = t('common.network_error_retry');
                     try {
                         const response = await fetch(`${API.BASE_URL}/api/validate_resource`, {
                             method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
@@ -423,9 +435,18 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         if (!isCurrent()) return;
                         const data = await response.json();
                         if (!isCurrent()) return;
+                        if (isSkill && !response.ok) {
+                            validationMessage = t(data?.error_code === 'invalid_repository' ? 'install.error_invalid_repository'
+                                : data?.error_code === 'invalid_skill_package' ? 'skill.invalid_package' : 'skill.source_unavailable');
+                            throw new Error();
+                        }
                         if (!response.ok || data?.status !== "success" || data.error) throw new Error();
+                        if (isSkill && data.skill_repository_verified !== true) {
+                            validationMessage = t('skill.cloud_update_required');
+                            throw new Error();
+                        }
                     } catch (_) {
-                        if (isCurrent()) inlineStatusBox.textContent = t('acquire.validation_blocked', { message: t('common.network_error_retry') });
+                        if (isCurrent()) inlineStatusBox.textContent = t('acquire.validation_blocked', { message: validationMessage });
                         return;
                     } finally { clearTimeout(timeout); removeValidationCleanup(); }
                 }
@@ -491,6 +512,57 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 btnUse.innerHTML = `✅ ${escapeHtml(t('common.acquired'))}`;
                 btnUse.setAttribute("data-install-state", "success");
                 return;  // ← 提前返回，不进入 Git 安装流程
+            }
+
+            if (isSkill) {
+                if (!skillFlow) {
+                    skillFlow = await import('./Skill安装流程.js');
+                    if (!isCurrent()) return;
+                    skillTarget = await skillFlow.chooseSkillDirectory(scope);
+                    if (!isCurrent()) return;
+                    if (!skillTarget) { restoreFocus = true; return; }
+                }
+                phase = 'install';
+                const progress = trackProgress();
+                const controller = new AbortController();
+                const removeCancel = scope.addCleanup(() => controller.abort());
+                progress.addCancelButton(t('install.cancel_in_progress'), () => controller.abort());
+                try {
+                    const result = await skillFlow.runSkillInstall({
+                        target: skillTarget, credentials: { account, token, item_id: String(itemData.id) }, scope,
+                        signal: controller.signal,
+                        confirm: (html, options) => showConfirm(html, { ...options, signal: controller.signal }),
+                        onProgress: event => {
+                            if (!isCurrent()) return;
+                            const stageKey = Object.hasOwn(INSTALL_STAGE_KEYS, event.stage) ? INSTALL_STAGE_KEYS[event.stage] : 'skill.preparing';
+                            const label = event.skillAction === 'status' ? t('skill.checking_result')
+                                : event.skillAction === 'prepare' && event.stage === 'complete' ? t('skill.prepared') : t(stageKey);
+                            progress.update(event.progress, label);
+                        }
+                    });
+                    if (!isCurrent()) return;
+                    if (result.status === 'cancelled') { restoreFocus = true; progress.error(t('skill.cancelled')); return; }
+                    if (result.outcomeUnknown) {
+                        phase = 'unknown'; btnUse.removeAttribute('aria-busy');
+                        progress.error(t('skill.outcome_unknown')); return;
+                    }
+                    if (result.status !== 'success' || result.installed !== true) {
+                        progress.error(skillFlow.skillErrorMessage({ code: result.error_code })); return;
+                    }
+                    progress.complete(t('install.complete'));
+                    _recordToolInstalledVersion(itemData.id, result);
+                    saveAcquiredItem(itemData);
+                    btnUse.textContent = `✅ ${t('common.installed')}`;
+                    btnUse.setAttribute('data-install-state', 'success');
+                    try { await api.recordItemUse(itemData.id); if (isCurrent()) clearUsesCache(); } catch {}
+                } catch (error) {
+                    if (isCurrent()) progress.error(controller.signal.aborted ? t('skill.cancelled') : skillFlow.skillErrorMessage(error));
+                } finally {
+                    removeCancel(); controller.abort();
+                    if (phase === 'install') phase = 'idle';
+                    releaseButton();
+                }
+                return;
             }
 
             if (isTool) {
@@ -946,7 +1018,11 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             }
         } catch (_) {
             if (isCurrent()) { inlineStatusBox.style.display = "block"; inlineStatusBox.textContent = t('common.error'); }
-        } finally { if (phase === "preflight") phase = "idle"; releaseButton(); }
+        } finally {
+            if (phase === "preflight") phase = "idle";
+            releaseButton();
+            if (restoreFocus && phase === "idle" && isCurrent()) btnUse.focus();
+        }
     };
     return scope;
 }

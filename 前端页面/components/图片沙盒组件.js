@@ -12,7 +12,7 @@
 // ==========================================
 
 import { t } from "./用户体验增强.js";
-import { escapeHtml, API, UI } from "../core/全局配置.js";
+import { escapeHtml, API, UI, IS_WEB_MODE, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { openImageViewer } from "./图片展示测试.js";
 
 // 🔧 通用SVG占位图生成函数
@@ -71,9 +71,9 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
     // 兼容：接受单个URL或数组
     let imageUrls = [];
     if (Array.isArray(imageSource)) {
-        imageUrls = imageSource.filter(url => typeof url === 'string' && url.trim());
+        imageUrls = imageSource.map(url => normalizeProfileImageUrl(url, IS_WEB_MODE)).filter(Boolean);
     } else if (typeof imageSource === 'string' && imageSource.trim()) {
-        imageUrls = [imageSource];
+        imageUrls = [normalizeProfileImageUrl(imageSource, IS_WEB_MODE)].filter(Boolean);
     }
     
     if (imageUrls.length === 0) return '';
@@ -134,10 +134,17 @@ export function setupImageSandboxEvents(detailView) {
     let imageUrls;
     try { imageUrls = JSON.parse(viewport.dataset.images || '[]'); } catch (_) { imageUrls = []; }
     if (!Array.isArray(imageUrls)) imageUrls = [];
-    imageUrls = imageUrls.filter(url => typeof url === 'string' && url.trim());
-    if (!imageUrls.length) return;
     let currentIndex = Number.parseInt(viewport.dataset.current || '0', 10);
     if (!Number.isInteger(currentIndex) || currentIndex < 0 || currentIndex >= imageUrls.length) currentIndex = 0;
+    const normalizedUrls = imageUrls.map(url => normalizeProfileImageUrl(url, IS_WEB_MODE));
+    imageUrls = normalizedUrls.filter(Boolean);
+    if (!imageUrls.length) {
+        targetImg.removeAttribute('src');
+        delete targetImg.dataset.src;
+        return;
+    }
+    currentIndex = Math.min(normalizedUrls.slice(0, currentIndex).filter(Boolean).length, imageUrls.length - 1);
+    viewport.dataset.images = JSON.stringify(imageUrls);
     let disposed = false, generation = 0, readController = null, closeViewer = null;
     let observer = null, wasMounted = false, fallbackNode = null, fallbackTimer = null;
     const stops = [];

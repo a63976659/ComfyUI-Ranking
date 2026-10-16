@@ -6,7 +6,7 @@
 // 接口：openImageViewer(imageUrls, startIndex, options)
 // ==========================================
 
-import { escapeHtml, API, IS_WEB_MODE } from "../core/全局配置.js";
+import { escapeHtml, API, IS_WEB_MODE, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { t } from "./用户体验增强.js";
 
 // ==========================================
@@ -401,8 +401,10 @@ function _calcGridLayout(displayWidth, displayHeight, maxGridSize) {
 class CyberImageViewer {
     constructor(imageUrls, startIndex = 0) {
         // 按运行模式处理图片地址
-        this.imageUrls = imageUrls.map(url => this._proxyImageUrl(url));
-        this.currentIndex = Math.max(0, Math.min(startIndex, this.imageUrls.length - 1));
+        const sources = Array.isArray(imageUrls) ? imageUrls.map(url => this._proxyImageUrl(url)) : [];
+        const requestedIndex = Number.isInteger(startIndex) ? Math.max(0, Math.min(startIndex, sources.length - 1)) : 0;
+        this.imageUrls = sources.filter(Boolean);
+        this.currentIndex = Math.max(0, Math.min(sources.slice(0, requestedIndex).filter(Boolean).length, this.imageUrls.length - 1));
         this.preloadCache = new Map();
         this._preloadRequests = new Map();
         this._imageReads = new Set();
@@ -558,21 +560,10 @@ class CyberImageViewer {
      * 自动识别代理URL、data: URL、blob: URL和普通HTTP(S) URL
      */
     _proxyImageUrl(url) {
-        if (typeof url !== 'string' || !url) return '';
-        const prefix = API.LOCAL_IMAGE_PROXY_PREFIX;
-        if (IS_WEB_MODE) {
-            let original = url;
-            for (let depth = 0; depth < 10 && original.startsWith(prefix); depth++) {
-                let encoded = original.slice(prefix.length);
-                if (encoded.endsWith(API.COMPLETE_IMAGE_QUERY_SUFFIX)) {
-                    encoded = encoded.slice(0, -API.COMPLETE_IMAGE_QUERY_SUFFIX.length);
-                }
-                try { original = decodeURIComponent(encoded); } catch (_) { break; }
-            }
-            return original;
-        }
-        if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith(prefix)) return url;
-        return url.startsWith('http') ? prefix + encodeURIComponent(url) : url;
+        const source = normalizeProfileImageUrl(url, IS_WEB_MODE);
+        if (!source) return '';
+        return !IS_WEB_MODE && /^https?:\/\//i.test(source)
+            ? API.LOCAL_IMAGE_PROXY_PREFIX + encodeURIComponent(source) : source;
     }
 
     /**
@@ -582,6 +573,7 @@ class CyberImageViewer {
      * @param {boolean} options.opaque - 是否不透明背景，默认true
      */
     create(options = {}) {
+        if (!this.imageUrls.length) return null;
         const { background = '#0a0a0a', opaque = true } = options;
 
         // 注入样式
@@ -1791,7 +1783,7 @@ class CyberImageViewer {
  * @returns {Function} 关闭播放器的函数
  */
 export function openImageViewer(imageUrls, startIndex = 0, options = {}) {
-    if (!imageUrls || imageUrls.length === 0) {
+    if (!Array.isArray(imageUrls) || imageUrls.length === 0) {
         console.warn('图片数组为空，无法打开查看器');
         return () => {};
     }
@@ -1800,6 +1792,7 @@ export function openImageViewer(imageUrls, startIndex = 0, options = {}) {
 
     const viewer = new CyberImageViewer(imageUrls, startIndex);
     const container = viewer.create(options);
+    if (!container) return () => {};
 
     // 添加到body
     document.body.appendChild(container);
