@@ -487,7 +487,7 @@ function _showConfirmDialog({ scope, title, icon, message, description, confirmT
             await onSuccess(content);
         } catch (err) {
             if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
-            const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            const rejected = (err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
             phase = rejected ? "idle" : "unconfirmed";
             showToast(rejected ? errorText : t('task.operation_unconfirmed'), rejected ? "error" : "warning");
         } finally {
@@ -559,7 +559,7 @@ function bindTaskTextSubmission({ content, taskId, input, button, confirmText, e
             await onSuccess();
         } catch (err) {
             if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
-            const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            const rejected = (err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
             phase = rejected ? "idle" : "unconfirmed";
             showToast(rejected ? errorText : t('task.operation_unconfirmed'), rejected ? "error" : "warning");
         } finally {
@@ -764,7 +764,7 @@ function showDeleteCommentConfirmDialog(taskId, comment, container, currentUser)
             await loadTaskComments(container, taskId, currentUser);
         } catch (err) {
             if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
-            const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            const rejected = (err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
             phase = rejected ? "idle" : "unconfirmed";
             showToast(t(rejected ? 'post.delete_comment_failed' : 'task.comment_unconfirmed'), rejected ? "error" : "warning");
         } finally {
@@ -919,7 +919,7 @@ function showSubmitDialog(task, currentUser) {
     content.classList.add("task-modal");
     content.innerHTML = `
         <div class="task-detail__spaced">
-            <label for="deliverable-files" class="task-detail__file-label">${t('task.deliverable_images')} <span aria-hidden="true">*</span></label>
+            <label for="deliverable-files" class="task-detail__file-label">${t('task.deliverable_images')} <span aria-hidden="true" class="ranking-required-marker"></span></label>
             <input type="file" aria-required="true" aria-describedby="deliverable-hint" id="deliverable-files" multiple accept="image/*" class="task-detail__file-input">
             <div id="deliverable-hint" class="task-detail__hint">${t('task.support_multiple_images')}</div>
         </div>
@@ -990,7 +990,7 @@ function showSubmitDialog(task, currentUser) {
             if (container && currentUser) await loadTaskDetail(container, taskId, currentUser);
         } catch (err) {
             if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
-            const unknown = saveAttempted && ![400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            const unknown = saveAttempted && !(err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
             phase = unknown ? "unconfirmed" : "idle";
             showToast(t(unknown ? 'task.operation_unconfirmed' : (saveAttempted ? 'task.submit_failed' : 'task.upload_failed_retry')),
                 unknown ? "warning" : "error");
@@ -1277,7 +1277,7 @@ async function loadTaskComments(container, taskId, currentUser) {
                 if (isCurrent()) state.phase = "idle";
             } catch (err) {
                 if (!isCurrent() || state.phase === "committed") return;
-                const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+                const rejected = (err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
                 state.phase = rejected ? "idle" : "unconfirmed";
                 showToast(t(rejected ? 'post.comment_failed' : 'task.comment_unconfirmed'), rejected ? "error" : "warning");
             } finally {
@@ -1374,7 +1374,7 @@ function showDeleteTaskConfirm(task, contentEl) {
             window.dispatchEvent(new CustomEvent("comfy-route-back"));
         } catch (err) {
             if (!taskModalCurrent(content) || phase === "closed" || phase === "committed") return;
-            const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            const rejected = (err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
             phase = rejected ? "idle" : "unconfirmed";
             showToast(t(rejected ? 'task.delete_failed' : 'task.delete_unconfirmed'), rejected ? "error" : "warning");
         } finally {
@@ -1396,7 +1396,7 @@ function showDisputeDialog(task, currentUser) {
     content.className = "task-dispute";
     content.innerHTML = `
         <div class="task-dispute__field">
-            <label for="dispute-reason" class="task-dispute__label">${t('dispute.reason')} <span aria-hidden="true" class="task-dispute__required">*</span></label>
+            <label for="dispute-reason" class="task-dispute__label">${t('dispute.reason')} <span aria-hidden="true" class="task-dispute__required ranking-required-marker"></span></label>
             <textarea id="dispute-reason" aria-required="true" placeholder="${t('dispute.reason_placeholder')}" class="task-dispute__reason"></textarea>
         </div>
         

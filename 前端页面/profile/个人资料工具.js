@@ -20,6 +20,9 @@ export function normalizeProfileData(value, account, own = false) {
     }
     result.privacy = Object.fromEntries(['follows', 'followers', 'likes', 'favorites', 'downloads']
         .map(key => [key, value.privacy?.[key] === true]));
+    result.following_count = !own && Number.isSafeInteger(value.following_count) && value.following_count >= 0
+        ? value.following_count : result.following.length;
+    if (!own && result.privacy.follows) result.following = [];
     result.is_admin = value.is_admin === true || (own && value.isAdmin === true);
     if (own) Object.assign(result, normalizeWalletData({ ...value, status: 'success' }));
     return result;

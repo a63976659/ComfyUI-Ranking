@@ -1,3 +1,4 @@
+import { captureListRead } from "../core/榜单数据来源.js";
 // 前端页面/post/讨论区组件.js
 // ==========================================
 // 💬 讨论区组件（小红书风格瀑布流列表）
@@ -18,7 +19,7 @@ import { createCardNavigationScope } from "../components/卡片导航生命周�
 import { api, captureRequestSession } from "../core/网络请求API.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { readListCache, writeListCache, requireListResponseData, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
+import { readListCache, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
 import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { API, CACHE, getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl } from "../core/全局配置.js";
@@ -26,7 +27,7 @@ import { createRatingStars } from "../social/评论与互动组件.js";
 import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 缓存配置
-const CACHE_KEY_PREFIX = "PostsCache";
+const CACHE_KEY_PREFIX = CACHE.PUBLIC_LISTS.posts.prefix.slice(0, -1);
 const PAGE_SIZE = 20;
 
 // 缓存当前用户
@@ -86,7 +87,7 @@ function _generateAvatarHtml(avatar, name) {
 /**
  * 💬 创建讨论区视图
  */
-export function createPostsView(currentUser, keyword = "") {
+export function createPostsView(currentUser, keyword = "", { sort: initialSort = "latest", force: initialForce = false } = {}) {
     if (activeViewCleanup) activeViewCleanup();
     
     currentUserCache = currentUser;
@@ -116,13 +117,14 @@ export function createPostsView(currentUser, keyword = "") {
     // 🔌 绑定事件
     
     // 加载帖子数据
-    let currentSort = "latest";
+    let currentSort = initialSort;
     let allPostsData = [];  // 全量数据缓存
     let isLoadingFromNetwork = false;
     let listViewGeneration = 0;
     let networkRequestGeneration = 0;
     let disposed = false;
     let firstPageReady = false;
+    let forceRefreshPending = initialForce === true;
     const cardNavigation = createCardNavigationScope(window, () => !disposed, {
         captureSession: captureRequestSession,
         storageKeys: [CACHE.LEGACY_KEYS.TOKEN, CACHE.LEGACY_KEYS.USER]
@@ -136,9 +138,11 @@ export function createPostsView(currentUser, keyword = "") {
     const loadMorePosts = async (page, pageSize, { isCurrent = () => true } = {}) => {
         if (disposed || !isCurrent()) return [];
         try {
+            const readResponse = captureListRead(`${CACHE_KEY_PREFIX}_${currentSort}`);
             const res = await api.getPosts(page, pageSize, currentSort);
             if (disposed || !isCurrent()) return [];
-            const posts = requireListResponseData(res);
+            const responseData = readResponse(res);
+            const posts = responseData.data;
             
             if (posts.length === 0) {
                 if (searchKeyword && !allPostsData.some(post => _matchesSearch(post, searchKeyword))) {
@@ -191,6 +195,7 @@ export function createPostsView(currentUser, keyword = "") {
         
         currentPaginator = createPaginationLoader({
             container: scrollContainer,
+            focusContainer: postsGrid,
             canLoad: () => !disposed && firstPageReady && !isLoadingFromNetwork,
             loadMore: loadMorePosts,
             pageSize: PAGE_SIZE,
@@ -313,8 +318,10 @@ export function createPostsView(currentUser, keyword = "") {
         postsGrid.appendChild(status);
     };
     
-    const loadPosts = async (page = 1, append = false) => {
+    const loadPosts = async (page = 1, append = false, forceRequest = false) => {
         if (disposed) return;
+        const forceRefresh = !append && page === 1 && (forceRefreshPending || forceRequest === true);
+        if (forceRefresh) forceRefreshPending = false;
         if (!append && page === 1) firstPageReady = false;
         const viewGeneration = !append && page === 1 ? ++listViewGeneration : listViewGeneration;
         const requestedSort = currentSort;
@@ -328,7 +335,7 @@ export function createPostsView(currentUser, keyword = "") {
                 allPostsData = proxyImages(cachedData);
                 renderPostsFromCache(allPostsData, true);
                 // 后台静默更新
-                silentRefresh().finally(() => {
+                silentRefresh(forceRefresh).finally(() => {
                     if (disposed || viewGeneration !== listViewGeneration) return;
                     if (searchKeyword && !allPostsData.some(post => _matchesSearch(post, searchKeyword))) {
                         currentPaginator?.load();
@@ -346,7 +353,8 @@ export function createPostsView(currentUser, keyword = "") {
             
             requestGeneration = ++networkRequestGeneration;
             isLoadingFromNetwork = true;
-            const res = await api.getPosts(page, PAGE_SIZE, requestedSort);
+            const readResponse = captureListRead(cacheKey);
+            const res = await api.getPosts(page, PAGE_SIZE, requestedSort, ...(forceRefresh ? [{ noCache: true }] : []));
             if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
                 if (requestGeneration === networkRequestGeneration) {
                     isLoadingFromNetwork = false;
@@ -354,7 +362,8 @@ export function createPostsView(currentUser, keyword = "") {
                 }
                 return;
             }
-            const posts = requireListResponseData(res);
+            const responseData = readResponse(res);
+            const posts = responseData.data;
             if (page === 1) firstPageReady = true;
             const total = res.total || 0;
             isLoadingFromNetwork = false;
@@ -362,7 +371,7 @@ export function createPostsView(currentUser, keyword = "") {
             // 缓存第一页数据
             if (page === 1) {
                 allPostsData = proxyImages(posts);
-                writeListCache(cacheKey, posts, getCacheTTL());  // 存原始数据，离线时经图片代理后可展示
+                responseData.write(getCacheTTL());  // 存原始数据，离线时经图片代理后可展示
             } else {
                 allPostsData = [...allPostsData, ...proxyImages(posts)];
             }
@@ -437,7 +446,10 @@ export function createPostsView(currentUser, keyword = "") {
                     renderPostsFromCache(allPostsData);
                     showToast(t('post.network_cache'), "warning");
                 } else {
-                    renderListLoadError(postsGrid, t('post.load_failed'), () => loadPosts(1, false), t, err);
+                    renderListLoadError(postsGrid, err?.name === 'ListCacheChangedError' ? t('feedback.list_changed_retry') : t('post.load_failed'), () => {
+                        if (disposed || isLoadingFromNetwork || requestedSort !== currentSort) return;
+                        return loadPosts(1, false, forceRefresh);
+                    }, t, err);
                 }
             }
         }
@@ -494,7 +506,7 @@ export function createPostsView(currentUser, keyword = "") {
     };
     
     // 后台静默更新
-    const silentRefresh = async () => {
+    const silentRefresh = async (notifyFailure = false) => {
         if (disposed || isLoadingFromNetwork) return;
         const viewGeneration = listViewGeneration;
         const requestedSort = currentSort;
@@ -502,6 +514,7 @@ export function createPostsView(currentUser, keyword = "") {
         const requestGeneration = ++networkRequestGeneration;
         try {
             isLoadingFromNetwork = true;
+            const readResponse = captureListRead(cacheKey);
             const res = await api.getPosts(1, PAGE_SIZE, requestedSort, {
                 noCache: true,
                 timeout: API.BACKGROUND_TIMEOUT,
@@ -514,14 +527,15 @@ export function createPostsView(currentUser, keyword = "") {
                 }
                 return;
             }
-            const posts = requireListResponseData(res);
+            const responseData = readResponse(res);
+            const posts = responseData.data;
             isLoadingFromNetwork = false;
             
             if (isEmptyListRefreshWithExistingData(posts, allPostsData)) {
                 console.warn(`🛡️ 讨论区 ${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
                 // 更新缓存
-                writeListCache(cacheKey, posts, getCacheTTL());
+                responseData.write(getCacheTTL());
 
                 // 对比新旧数据，有变化时重新渲染
                 if (_postsDataChanged(allPostsData, posts)) {
@@ -542,6 +556,8 @@ export function createPostsView(currentUser, keyword = "") {
             }
             isLoadingFromNetwork = false;
             console.warn("后台更新帖子失败（保留当前内容）");
+            if (notifyFailure === true) showToast(t(err?.name === 'ListCacheChangedError'
+                ? 'feedback.list_changed_retry' : 'feedback.refresh_failed_cached'), 'warning');
         }
         if (searchKeyword && !allPostsData.some(post => _matchesSearch(post, searchKeyword))) {
             currentPaginator?.load();

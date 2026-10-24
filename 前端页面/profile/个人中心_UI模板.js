@@ -68,7 +68,7 @@ export function buildProfileHTML(userData, isMe, isSettingsView, isFollowing, fo
                 <span>👍 ${t('profile.received_likes')}: <strong class="profile-count">${escapeHtml(userData.receivedLikes || 0)}</strong></span>
                 <span>🔖 ${t('profile.received_favorites')}: <strong class="profile-count">${escapeHtml(userData.receivedFavorites || 0)}</strong></span>
                 <button type="button" class="profile-count-link" id="btn-followers">👥 ${t('profile.followers_count')}: <strong class="profile-count">${userData.followers ? userData.followers.length : 0}</strong></button>
-                <button type="button" class="profile-count-link" id="btn-following">🏃 ${t('profile.following_count')}: <strong class="profile-count">${escapeHtml(followingCount)}</strong></button>
+                <button type="button" class="profile-count-link" id="btn-following"${!isMe && userData.privacy?.follows === true ? ' disabled' : ''}>🏃 ${t('profile.following_count')}: <strong class="profile-count">${escapeHtml(followingCount)}</strong></button>
             </div>
         </div>
     `;

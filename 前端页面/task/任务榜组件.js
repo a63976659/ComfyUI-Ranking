@@ -1,3 +1,4 @@
+import { captureListRead } from "../core/榜单数据来源.js";
 // 前端页面/task/任务榜组件.js
 // ==========================================
 // 📝 任务榜组件（任务列表视图）
@@ -20,14 +21,14 @@ import { api, captureRequestSession } from "../core/网络请求API.js";
 import { getTaskApplicantCount } from "./任务数据工具.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { readListCache, writeListCache, requireListResponseData, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
+import { readListCache, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
 import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { API, CACHE, getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 缓存配置
-const CACHE_KEY_PREFIX = "TasksCache";
+const CACHE_KEY_PREFIX = CACHE.PUBLIC_LISTS.tasks.prefix.slice(0, -1);
 const PAGE_SIZE = 20;
 
 // 缓存当前用户
@@ -77,8 +78,8 @@ function _filterTasksByKeyword(tasks, keyword) {
  */
 function _renderNoTasksView() {
     return `
-        <div class="task-board__empty">
-            <div class="task-board__empty-icon">📝</div>
+        <div class="task-board__empty" role="status">
+            <div class="task-board__empty-icon" aria-hidden="true">📝</div>
             <div class="task-board__empty-title">${t('task.no_tasks')}</div>
             <div class="task-board__empty-hint">${t('task.be_first')}</div>
         </div>
@@ -88,7 +89,7 @@ function _renderNoTasksView() {
 /**
  * 📝 创建任务榜视图
  */
-export function createTasksView(currentUser, keyword = "") {
+export function createTasksView(currentUser, keyword = "", { sort: initialSort = "latest", status: initialStatus = "", force: initialForce = false } = {}) {
     if (activeViewCleanup) activeViewCleanup();
     currentUserCache = currentUser;
     const searchKeyword = keyword.toLowerCase();
@@ -119,14 +120,15 @@ export function createTasksView(currentUser, keyword = "") {
     const loadMoreWrapper = container.querySelector("#load-more-wrapper");
     const loadMoreBtn = container.querySelector("#btn-load-more");
     
-    let currentStatus = "";
-    let currentSort = "latest";
+    let currentStatus = initialStatus;
+    let currentSort = initialSort;
     let allTasksData = [];  // 全量数据缓存
     let isLoadingFromNetwork = false;
     let listViewGeneration = 0;
     let networkRequestGeneration = 0;
     let disposed = false;
     let firstPageReady = false;
+    let forceRefreshPending = initialForce === true;
     const cardNavigation = createCardNavigationScope(window, () => !disposed, {
         captureSession: captureRequestSession,
         storageKeys: [CACHE.LEGACY_KEYS.TOKEN, CACHE.LEGACY_KEYS.USER]
@@ -233,8 +235,10 @@ export function createTasksView(currentUser, keyword = "") {
     };
     
     // 加载任务列表（支持缓存优先）
-    const loadTasks = async (page = 1, append = false) => {
+    const loadTasks = async (page = 1, append = false, forceRequest = false) => {
         if (disposed) return;
+        const forceRefresh = !append && page === 1 && (forceRefreshPending || forceRequest === true);
+        if (forceRefresh) forceRefreshPending = false;
         if (!append && page === 1) firstPageReady = false;
         const viewGeneration = !append && page === 1 ? ++listViewGeneration : listViewGeneration;
         const requestedStatus = currentStatus;
@@ -249,7 +253,7 @@ export function createTasksView(currentUser, keyword = "") {
                 allTasksData = proxyImages(cachedData);
                 renderTasksFromCache(allTasksData);
                 // 后台静默更新
-                silentRefresh().finally(continueSearchPagination);
+                silentRefresh(forceRefresh).finally(continueSearchPagination);
                 return;
             }
         }
@@ -263,7 +267,8 @@ export function createTasksView(currentUser, keyword = "") {
             requestGeneration = ++networkRequestGeneration;
             isLoadingFromNetwork = true;
             
-            const res = await api.getTasks(page, PAGE_SIZE, requestedStatus || null, requestedSort);
+            const readResponse = captureListRead(cacheKey);
+            const res = await api.getTasks(page, PAGE_SIZE, requestedStatus || null, requestedSort, ...(forceRefresh ? [{ noCache: true }] : []));
             if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
                 if (requestGeneration === networkRequestGeneration) {
                     isLoadingFromNetwork = false;
@@ -271,7 +276,8 @@ export function createTasksView(currentUser, keyword = "") {
                 }
                 return;
             }
-            const tasks = requireListResponseData(res);
+            const responseData = readResponse(res);
+            const tasks = responseData.data;
             if (page === 1) firstPageReady = true;
             const total = res.total || 0;
             isLoadingFromNetwork = false;
@@ -279,7 +285,7 @@ export function createTasksView(currentUser, keyword = "") {
             // 缓存第一页数据
             if (page === 1) {
                 allTasksData = tasks;
-                writeListCache(cacheKey, tasks, getCacheTTL());  // 持久化到 localStorage，供离线容灾
+                responseData.write(getCacheTTL());  // 持久化到 localStorage，供离线容灾
             } else {
                 allTasksData = [...allTasksData, ...tasks];
             }
@@ -345,7 +351,10 @@ export function createTasksView(currentUser, keyword = "") {
                     showToast(t('task.network_cache'), "warning");
                     continueSearchPagination();
                 } else {
-                    renderListLoadError(tasksList, t('task.load_failed'), () => loadTasks(1, false), t, err);
+                    renderListLoadError(tasksList, err?.name === 'ListCacheChangedError' ? t('feedback.list_changed_retry') : t('task.load_failed'), () => {
+                        if (disposed || isLoadingFromNetwork || requestedStatus !== currentStatus || requestedSort !== currentSort) return;
+                        return loadTasks(1, false, forceRefresh);
+                    }, t, err);
                 }
             }
         }
@@ -397,7 +406,7 @@ export function createTasksView(currentUser, keyword = "") {
     };
     
     // 后台静默更新
-    const silentRefresh = async () => {
+    const silentRefresh = async (notifyFailure = false) => {
         if (disposed || isLoadingFromNetwork) return;
         const viewGeneration = listViewGeneration;
         const requestedStatus = currentStatus;
@@ -406,6 +415,7 @@ export function createTasksView(currentUser, keyword = "") {
         const requestGeneration = ++networkRequestGeneration;
         try {
             isLoadingFromNetwork = true;
+            const readResponse = captureListRead(cacheKey);
             const res = await api.getTasks(1, PAGE_SIZE, requestedStatus || null, requestedSort, {
                 noCache: true,
                 timeout: API.BACKGROUND_TIMEOUT,
@@ -418,14 +428,15 @@ export function createTasksView(currentUser, keyword = "") {
                 }
                 return;
             }
-            const tasks = requireListResponseData(res);
+            const responseData = readResponse(res);
+            const tasks = responseData.data;
             isLoadingFromNetwork = false;
             
             if (isEmptyListRefreshWithExistingData(tasks, allTasksData)) {
                 console.warn(`🛡️ 任务榜 ${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
                 // 更新缓存
-                writeListCache(cacheKey, tasks, getCacheTTL());
+                responseData.write(getCacheTTL());
 
                 // 对比新旧数据，有变化时重新渲染
                 if (_tasksDataChanged(allTasksData, tasks)) {
@@ -446,6 +457,8 @@ export function createTasksView(currentUser, keyword = "") {
             }
             isLoadingFromNetwork = false;
             console.warn("后台更新任务失败（保留当前内容）");
+            if (notifyFailure === true) showToast(t(err?.name === 'ListCacheChangedError'
+                ? 'feedback.list_changed_retry' : 'feedback.refresh_failed_cached'), 'warning');
         }
         continueSearchPagination();
     };
@@ -493,14 +506,17 @@ export function createTasksView(currentUser, keyword = "") {
             const scrollContainer = container.closest('.sidebar-scroll-container') || container;
             paginator = createPaginationLoader({
                 container: scrollContainer,
+                focusContainer: tasksList,
                 canLoad: () => !disposed && firstPageReady && !isLoadingFromNetwork,
                 autoFill: () => Boolean(searchKeyword) && !allTasksData.some(task => _filterTasksByKeyword([task], searchKeyword).length),
                 loadMore: async (page, pageSize, { isCurrent = () => true } = {}) => {
                     if (disposed || !isCurrent()) return [];
                     try {
+                        const readResponse = captureListRead(`${CACHE_KEY_PREFIX}_${currentStatus}_${currentSort}`);
                         const res = await api.getTasks(page, pageSize, currentStatus || null, currentSort);
                         if (disposed || !isCurrent()) return [];
-                        const tasks = requireListResponseData(res);
+                        const responseData = readResponse(res);
+                        const tasks = responseData.data;
                         if (tasks.length === 0) {
                             if (searchKeyword && !allTasksData.some(task => _filterTasksByKeyword([task], searchKeyword).length)) {
                                 renderListSearchMessage(tasksList, t('pagination.search_empty'));

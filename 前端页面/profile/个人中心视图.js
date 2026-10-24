@@ -12,7 +12,7 @@ import { openRechargeModal } from "../market/资金与钱包_充值组件.js";
 import { openWithdrawModal } from "../market/资金与钱包_提现组件.js";
 import { buildProfileHTML } from "./个人中心_UI模板.js";
 import { openTipModal } from "./个人中心_赞赏组件.js";
-import { getBannerCacheKey, getCurrentAccount, IS_WEB_MODE, CACHE, UI, API, getCachedProfile, setCachedProfile, normalizeProfileImageUrl } from "../core/全局配置.js";
+import { getBannerCacheKey, getCurrentAccount, IS_WEB_MODE, CACHE, UI, API, getCachedProfile, setCachedProfile, captureProfileRead, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { logoutAndClearUserData, eventBus, EVENTS } from "../core/状态管理.js";
 
 
@@ -43,7 +43,28 @@ async function syncBannerCache(account, bannerUrl, scope, apply) {
         const fetchUrl = IS_WEB_MODE ? source : API.LOCAL_IMAGE_PROXY_PREFIX + encodeURIComponent(source);
         const response = await fetch(fetchUrl, { signal: controller.signal });
         if (!response.ok || !scope.isCurrent()) return;
-        const blob = await response.blob();
+        const type = new Blob([], { type: response.headers.get('Content-Type') || '' }).type;
+        if (!/^image\/(png|jpeg|webp|gif)$/.test(type)) return;
+        const length = response.headers.get('Content-Length');
+        if (length && /^\d+$/.test(length) && Number(length) > UI.PROFILE_BANNER_CACHE_BYTES) return;
+        if (!response.body?.getReader) return;
+        const reader = response.body.getReader();
+        const chunks = [];
+        let bytes = 0, complete = false;
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (!scope.isCurrent()) return;
+                if (done) { complete = true; break; }
+                if (!(value instanceof Uint8Array) || value.byteLength > UI.PROFILE_BANNER_CACHE_BYTES - bytes) return;
+                bytes += value.byteLength;
+                chunks.push(value);
+            }
+        } finally {
+            if (!complete) { try { await reader.cancel(); } catch (_) {} }
+            reader.releaseLock();
+        }
+        const blob = new Blob(chunks, { type });
         if (!scope.isCurrent() || !/^image\/(png|jpeg|webp|gif)$/.test(blob.type)) return;
         if (blob.size <= UI.PROFILE_BANNER_CACHE_BYTES) {
             const data = await new Promise(resolve => {
@@ -61,7 +82,7 @@ async function syncBannerCache(account, bannerUrl, scope, apply) {
         scope.addCleanup(() => URL.revokeObjectURL(blobUrl));
         apply(blobUrl);
     } catch (_) { /* 背景同步失败保留当前背景，不影响资料。 */ }
-    finally { clearTimeout(timer); release(); }
+    finally { clearTimeout(timer); controller.abort(); release(); }
 }
 
 async function _fetchProfileAndWallet(account, { own = false, options = {} } = {}) {
@@ -120,8 +141,19 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
     observer.observe(document.body, { childList: true, subtree: true });
     scope.addCleanup(() => { observer.disconnect(); releaseChild(); });
 
-    function render() {
+    function restoreOwnedFocus(target, owned) {
+        if (owned && scope.isCurrent() && container.isConnected && document.hasFocus()
+            && document.activeElement === document.body && target?.isConnected
+            && !target.disabled && target.getClientRects().length) target.focus({ preventScroll: true });
+    }
+
+    function render(focusTarget = null, allowBodyFocus = false) {
         if (!scope.isCurrent()) return;
+        const focused = document.activeElement;
+        const ownedFocus = document.hasFocus() && container.contains(focused);
+        const focusedTab = ownedFocus && focused.matches('.profile-tab-btn') ? focused.dataset.id : null;
+        const focusedControl = ownedFocus && focused.matches('.profile-header button[id]') ? focused.id : null;
+        const actionFocus = focusTarget && (ownedFocus || (allowBodyFocus && focused === document.body));
         releaseChild();
         const generation = ++renderGeneration;
         const current = () => scope.isCurrent() && renderGeneration === generation;
@@ -131,7 +163,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
         if (currentUser && userData.followers) { isFollowing = userData.followers.includes(currentUser.account); }
 
         const privacy = userData.privacy || {};
-        const followingCount = (!isMe && privacy.follows) ? "***" : (userData.following ? userData.following.length : 0);
+        const followingCount = userData.following_count;
 
         const tabs = [{ id: "published", label: isMe ? t('profile.my_published') : t('profile.their_published') }];
         if (isMe) tabs.push({ id: "acquired", label: t('profile.my_purchased') });
@@ -150,20 +182,34 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
         container.innerHTML = buildProfileHTML(userData, isMe, isSettingsView, isFollowing, followingCount, activeTab, tabs);
 
         if (isSettingsView && isMe) {
+            let settingsSubmitFocused = false;
             const settingsContainer = createSettingsForm(
                 userData,
-                () => { if (!current()) return; isSettingsView = false; render(); },
+                () => { if (!current()) return; isSettingsView = false; render('btn-open-settings'); },
                 (newUserData) => {
                     if (!current()) return;
                     userData = normalizeProfileData(newUserData, userData.account, true);
                     if (container.updateData) container.updateData(userData);
                     isSettingsView = false;
-                    render();
+                    render('btn-open-settings', settingsSubmitFocused);
                 },
                 { isCurrent: current }
             );
+            const captureSettingsSubmitFocus = event => {
+                if (!current() || !settingsContainer.isConnected) return;
+                const saveButton = settingsContainer.querySelector('#btn-save-settings');
+                if (saveButton?.contains(event.target)) {
+                    settingsSubmitFocused = document.hasFocus() && settingsContainer.contains(document.activeElement);
+                }
+            };
+            settingsContainer.addEventListener('click', captureSettingsSubmitFocus, true);
+            const cleanupSettings = settingsContainer._cleanup;
+            settingsContainer._cleanup = () => {
+                settingsContainer.removeEventListener('click', captureSettingsSubmitFocus, true);
+                cleanupSettings();
+            };
             container.appendChild(settingsContainer);
-            container.querySelector("#btn-back-profile").onclick = () => { isSettingsView = false; render(); };
+            container.querySelector("#btn-back-profile").onclick = () => { isSettingsView = false; render('btn-open-settings'); };
         } else {
             container.querySelector("#btn-back-profile").onclick = () => window.dispatchEvent(new CustomEvent("comfy-route-back"));
 
@@ -172,22 +218,8 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                     if (!current()) return;
                     openRechargeModal(currentUser, (newBalance) => { if (!current()) return; userData.balance = newBalance; render(); });
                 };
-                container.querySelector("#btn-withdraw").onclick = async () => {
+                container.querySelector("#btn-withdraw").onclick = () => {
                     if (!current()) return;
-                    const button = container.querySelector('#btn-withdraw');
-                    if (button.disabled) return;
-                    button.disabled = true;
-                    // 点击提现按钮前先刷新钱包数据
-                    try {
-                        const freshWallet = await api.getWallet(currentUser.account, { componentId });
-                        if (!current()) return;
-                        Object.assign(currentUser, normalizeWalletData(freshWallet));
-                    } catch (err) {
-                        if (!current()) return;
-                        console.warn("刷新钱包数据失败");
-                    }
-                    if (!current()) return;
-                    button.disabled = false;
                     openWithdrawModal(currentUser, async () => {
                         if (!current()) return;
                         // 提现成功后重新拉取用户数据刷新余额
@@ -207,7 +239,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                     });
                 };
 
-                container.querySelector("#btn-open-settings").onclick = () => { isSettingsView = true; render(); };
+                container.querySelector("#btn-open-settings").onclick = () => { isSettingsView = true; render('setting-name'); };
                 container.querySelector("#btn-logout").onclick = async () => {
                     if (!current() || logoutPending) return;
                     const currentAccount = getCurrentAccount();
@@ -242,6 +274,7 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                     btnFollow.onclick = async () => {
                         if (!current()) return;
                         if (!currentUser) return showToast(t('feedback.login_required'), "warning");
+                        const followFocusOwned = document.hasFocus() && document.activeElement === btnFollow;
                         btnFollow.innerHTML = `⏳ ${t('common.processing')}...`; btnFollow.disabled = true;
                         try {
                             const newStatus = !isFollowing;
@@ -253,9 +286,15 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
                             if (!userData.followers) userData.followers = [];
                             if (isFollowing) { if (!userData.followers.includes(currentUser.account)) userData.followers.push(currentUser.account); }
                             else { userData.followers = userData.followers.filter(a => a !== currentUser.account); }
-                            render();
+                            const restoreFollow = followFocusOwned && [document.body, btnFollow].includes(document.activeElement);
+                            render(restoreFollow ? 'btn-follow-user' : null, restoreFollow);
                         } catch (_) { if (!current()) return; showToast(t('feedback.operation_failed'), "error"); btnFollow.innerHTML = isFollowing ? `✔️ ${t('social.followed')}` : `➕ ${t('social.follow')}`; }
-                        finally { if (current()) btnFollow.disabled = false; }
+                        finally {
+                            if (current()) {
+                                btnFollow.disabled = false;
+                                restoreOwnedFocus(btnFollow, followFocusOwned);
+                            }
+                        }
                     };
                 }
 
@@ -288,6 +327,12 @@ export function showUserProfile(initialUserData, currentUser = null, isMe = true
             listDOM._profileAddCleanup = cleanup => scope.addCleanup(cleanup);
             renderProfileListContent(activeTab, listDOM, userData, currentUser, openOtherUserProfileModal);
         }
+        if (current()) {
+            const target = actionFocus ? container.querySelector('#' + focusTarget)
+                : focusedTab ? [...container.querySelectorAll('.profile-tab-btn')].find(button => button.dataset.id === focusedTab)
+                : focusedControl ? [...container.querySelectorAll('.profile-header button[id]')].find(button => button.id === focusedControl) : null;
+            restoreOwnedFocus(target, actionFocus || focusedTab || focusedControl);
+        }
     }
 
     container.updateData = function(newUserData) {
@@ -310,8 +355,9 @@ export function openUserProfileModal(userData) {
     ++profileNavigation;
     const view = showUserProfile(userData, userData, true);
     window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+    const profileCurrent = captureProfileRead(userData.account);
     _fetchProfileAndWallet(userData.account, { own: true, options: view._profileReadOptions }).then(freshData => {
-        if (!view._profileScope.isCurrent()) return;
+        if (!view._profileScope.isCurrent() || !profileCurrent()) return;
         mergeStoredProfile(userData.account, freshData, sessionStorages(), CACHE.LEGACY_KEYS.USER);
         view.updateData(freshData);
         if (freshData.bannerUrl) syncBannerCache(userData.account, freshData.bannerUrl, view._profileScope,
@@ -322,6 +368,7 @@ export function openUserProfileModal(userData) {
 export async function openOtherUserProfileModal(targetAccount, currentUser) {
     if (currentUser && currentUser.account === targetAccount) return openUserProfileModal(currentUser);
     const generation = ++profileNavigation;
+    const profileCurrent = captureProfileRead(targetAccount);
     const sessionMatches = captureRequestSession();
     const componentId = `profile-open-${++profileSequence}`;
     let activeContainer = null;
@@ -340,7 +387,7 @@ export async function openOtherUserProfileModal(targetAccount, currentUser) {
     const unsubscribe = subscribeTaskSessionChanges(force => { if (force || !sessionMatches()) cancel(); }, {
         target: window, eventBus, events: EVENTS, userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN
     });
-    const current = () => !obsolete && generation === profileNavigation && sessionMatches()
+    const current = () => !obsolete && generation === profileNavigation && sessionMatches() && profileCurrent()
         && (!activeContainer || activeContainer._profileScope.isCurrent());
     try {
         const freshData = await _fetchProfileAndWallet(targetAccount, {

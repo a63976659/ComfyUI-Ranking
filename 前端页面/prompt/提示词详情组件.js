@@ -469,18 +469,25 @@ function copyToClipboard(text, btnEl, current) {
 }
 
 function fallbackCopy(text, onSuccess, onFail) {
+    const previousFocus = document.activeElement;
+    let ta;
+    let copied = false;
     try {
-        const ta = document.createElement("textarea");
+        ta = document.createElement("textarea");
         ta.value = text;
         ta.style.cssText = "position: fixed; top: -9999px; opacity: 0;";
         document.body.appendChild(ta);
         ta.select();
-        const ok = document.execCommand("copy");
-        ta.remove();
-        ok ? onSuccess() : onFail();
+        copied = document.execCommand("copy");
     } catch (e) {
-        onFail();
+    } finally {
+        const restoreFocus = ta && document.activeElement === ta;
+        ta?.remove();
+        if (restoreFocus && previousFocus?.isConnected && previousFocus.getClientRects().length && document.hasFocus()) {
+            previousFocus.focus({ preventScroll: true });
+        }
     }
+    copied ? onSuccess() : onFail();
 }
 
 /**
@@ -495,12 +502,32 @@ async function showPurchaseConfirmDialog(contentArea, prompt, currentUser) {
     const context = viewContexts.get(contentArea);
     if (!context?.scope.isCurrent() || context.purchasePending) return;
     context.purchasePending = true;
+    const content = document.createElement("div");
+    content.className = "prompt-detail-dialog";
+    content.setAttribute('aria-busy', 'true');
+    const loading = document.createElement('div');
+    loading.setAttribute('role', 'status'); loading.setAttribute('aria-live', 'polite');
+    loading.textContent = t('common.loading'); content.append(loading);
+    const modal = openOwnedModal(contentArea, `💎 ${t('prompt.purchase_confirm_title')}`, content, { width: "320px" });
+    if (!modal) { context.purchasePending = false; return; }
+    let submitted = false, closed = false;
+    context.purchaseSequence = (context.purchaseSequence || 0) + 1;
+    const componentId = `${context.readOptions.componentId}-purchase-${context.purchaseSequence}`;
+    const readOptions = { ...context.readOptions, componentId };
+    const release = content._cleanup;
+    content._cleanup = () => {
+        if (closed) return;
+        closed = true;
+        try { requestCancelManager.cancelAll(componentId); }
+        finally { release?.(); if (!submitted) context.purchasePending = false; }
+    };
+    const current = () => !closed && isCurrent(contentArea) && modal.isConnected;
     let balance;
     let expectedPrice;
     let purchaseTitle;
     try {
-        const detailRes = await api.getPromptDetail(prompt.id, context.readOptions);
-        if (!isCurrent(contentArea)) return;
+        const detailRes = await api.getPromptDetail(prompt.id, readOptions);
+        if (!current()) return;
         const latest = detailRes?.data;
         if (detailRes?.status !== "success" || !latest || Array.isArray(latest) || latest.id !== prompt.id ||
             typeof latest.owned !== "boolean" || !Number.isSafeInteger(latest.price) || latest.price < 0) throw new Error();
@@ -511,26 +538,29 @@ async function showPurchaseConfirmDialog(contentArea, prompt, currentUser) {
             prompt.price = latest.price;
             renderPromptTextArea(contentArea, prompt, currentUser, true);
             context.purchasePending = false;
+            const restore = modal.contains(document.activeElement);
+            globalModal.closeModal(modal);
+            if (restore && isCurrent(contentArea) && document.activeElement === document.body) contentArea.querySelector('#btn-copy-prompt')?.focus({ preventScroll: true });
             return;
         }
         if (latest.price_confirmation_supported !== true) {
             context.purchasePending = false;
+            globalModal.closeModal(modal);
             showToast(t('acquire.purchase_verification_unavailable'), "warning");
             return;
         }
         expectedPrice = latest.price;
         purchaseTitle = typeof latest.title === "string" ? latest.title : prompt.title;
-        const walletRes = await api.getWallet(currentUser.account, context.readOptions);
-        if (!isCurrent(contentArea)) return;
+        const walletRes = await api.getWallet(currentUser.account, readOptions);
+        if (!current()) return;
         if (walletRes?.status !== "success" || !Number.isSafeInteger(walletRes.balance) || walletRes.balance < 0) throw new Error();
         balance = walletRes.balance;
     } catch (_) {
-        if (isCurrent(contentArea)) { context.purchasePending = false; showToast(t('common.error'), "error"); }
+        if (current()) { globalModal.closeModal(modal); showToast(t('common.error'), "error"); }
         return;
     }
 
-    const content = document.createElement("div");
-    content.className = "prompt-detail-dialog";
+    content.setAttribute('aria-busy', 'false');
     content.innerHTML = `
         <div class="prompt-detail-dialog__center">
             <div class="prompt-detail-dialog__icon" aria-hidden="true">💎</div>
@@ -546,10 +576,6 @@ async function showPurchaseConfirmDialog(contentArea, prompt, currentUser) {
         </div>
     `;
 
-    const modal = openOwnedModal(contentArea, `💎 ${t('prompt.purchase_confirm_title')}`, content, { width: "320px" });
-    let submitted = false;
-    const release = content._cleanup;
-    content._cleanup = () => { release?.(); if (!submitted) context.purchasePending = false; };
     content.querySelector("#purchase-cancel").onclick = () => globalModal.closeModal(modal);
     content.querySelector("#purchase-confirm").onclick = async () => {
         if (submitted || !isCurrent(contentArea) || !modal?.isConnected) return;
@@ -636,19 +662,36 @@ async function showTipDialog(prompt, currentUser, container) {
     const context = viewContexts.get(container);
     if (!isCurrent(container) || context.tipPending) return;
     context.tipPending = true;
+    const content = document.createElement("div");
+    content.className = "prompt-detail-dialog";
+    content.setAttribute('aria-busy', 'true');
+    const loading = document.createElement('div');
+    loading.setAttribute('role', 'status'); loading.setAttribute('aria-live', 'polite');
+    loading.textContent = t('common.loading'); content.append(loading);
+    const modal = openOwnedModal(container, `🎁 ${t('prompt.tip_dialog_title')}`, content, { width: "300px" });
+    if (!modal) { context.tipPending = false; return; }
+    let submitted = false, closed = false;
+    context.tipSequence = (context.tipSequence || 0) + 1;
+    const walletComponentId = `${context.readOptions.componentId}-tip-${context.tipSequence}`;
+    const release = content._cleanup;
+    content._cleanup = () => {
+        if (closed) return;
+        closed = true;
+        try { requestCancelManager.cancelAll(walletComponentId); }
+        finally { release?.(); if (!submitted) context.tipPending = false; }
+    };
+    const current = () => !closed && isCurrent(container) && modal.isConnected;
     let balance;
     try {
-        const res = await api.getWallet(currentUser.account, viewContexts.get(container).readOptions);
-        if (!isCurrent(container)) return;
+        const res = await api.getWallet(currentUser.account, { ...context.readOptions, componentId: walletComponentId });
+        if (!current()) return;
         if (res?.status !== "success" || !Number.isSafeInteger(res.balance) || res.balance < 0) throw new Error();
         balance = res.balance;
     } catch (_) {
-        if (isCurrent(container)) { context.tipPending = false; showToast(t('common.error'), "error"); }
+        if (current()) { globalModal.closeModal(modal); showToast(t('common.error'), "error"); }
         return;
     }
-
-    const content = document.createElement("div");
-    content.className = "prompt-detail-dialog";
+    content.setAttribute('aria-busy', 'false');
     content.innerHTML = `
         <div class="prompt-detail-dialog__balance">
             ${t('wallet.current_balance')}: <strong class="prompt-detail-dialog__value">${balance}</strong> ${t('wallet.credits')}
@@ -664,12 +707,7 @@ async function showTipDialog(prompt, currentUser, container) {
         </div>
     `;
 
-    const modal = openOwnedModal(container, `🎁 ${t('prompt.tip_dialog_title')}`, content, { width: "300px" });
-
     content.querySelector("#tip-cancel").onclick = () => globalModal.closeModal(modal);
-    let submitted = false;
-    const release = content._cleanup;
-    content._cleanup = () => { release?.(); if (!submitted) context.tipPending = false; };
 
     content.querySelectorAll(".tip-amount").forEach(btn => {
         btn.onclick = async () => {

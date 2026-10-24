@@ -470,19 +470,36 @@ async function showTipDialog(post, currentUser, container) {
     const context = viewContexts.get(container);
     if (!isCurrent(container) || context.tipPending) return;
     context.tipPending = true;
+    const content = document.createElement("div");
+    content.className = "discussion-modal";
+    content.setAttribute('aria-busy', 'true');
+    const loading = document.createElement('div');
+    loading.setAttribute('role', 'status'); loading.setAttribute('aria-live', 'polite');
+    loading.textContent = t('common.loading'); content.append(loading);
+    const modal = openOwnedModal(container, `🎁 ${t('post.tip_dialog_title')}`, content, { width: "300px" });
+    if (!modal) { context.tipPending = false; return; }
+    let submitted = false, closed = false;
+    context.tipSequence = (context.tipSequence || 0) + 1;
+    const walletComponentId = `${context.readOptions.componentId}-tip-${context.tipSequence}`;
+    const release = content._cleanup;
+    content._cleanup = () => {
+        if (closed) return;
+        closed = true;
+        try { requestCancelManager.cancelAll(walletComponentId); }
+        finally { release?.(); if (!submitted) context.tipPending = false; }
+    };
+    const current = () => !closed && isCurrent(container) && modal.isConnected;
     let balance;
     try {
-        const res = await api.getWallet(currentUser.account, viewContexts.get(container).readOptions);
-        if (!isCurrent(container)) return;
+        const res = await api.getWallet(currentUser.account, { ...context.readOptions, componentId: walletComponentId });
+        if (!current()) return;
         if (res?.status !== "success" || !Number.isSafeInteger(res.balance) || res.balance < 0) throw new Error();
         balance = res.balance;
     } catch (_) {
-        if (isCurrent(container)) { context.tipPending = false; showToast(t('common.error'), "error"); }
+        if (current()) { globalModal.closeModal(modal); showToast(t('common.error'), "error"); }
         return;
     }
-
-    const content = document.createElement("div");
-    content.className = "discussion-modal";
+    content.setAttribute('aria-busy', 'false');
     content.innerHTML = `
         <div class="post-detail__balance">
             ${t('wallet.current_balance')}: <strong class="post-detail__balance-value">${balance}</strong> ${t('wallet.credits')}
@@ -498,12 +515,7 @@ async function showTipDialog(post, currentUser, container) {
         </div>
     `;
 
-    const modal = openOwnedModal(container, `🎁 ${t('post.tip_dialog_title')}`, content, { width: "300px" });
-
     content.querySelector("#tip-cancel").onclick = () => globalModal.closeModal(modal);
-    let submitted = false;
-    const release = content._cleanup;
-    content._cleanup = () => { release?.(); if (!submitted) context.tipPending = false; };
 
     content.querySelectorAll(".tip-amount").forEach(btn => {
         btn.onclick = async () => {

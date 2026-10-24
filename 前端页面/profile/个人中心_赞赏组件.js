@@ -49,6 +49,14 @@ export async function openTipModal(currentUser, targetUser, onSuccess, itemId = 
     observer = new MutationObserver(() => { scope.isCurrent(); });
     observer.observe(document.body, { childList: true, subtree: true });
     container._cleanup = () => scope.dispose();
+    if (!scope.isCurrent()) return;
+    container.setAttribute('aria-busy', 'true');
+    const loadingStatus = element('div', 'tip-dialog__muted', t('common.loading'));
+    loadingStatus.setAttribute('role', 'status');
+    loadingStatus.setAttribute('aria-live', 'polite');
+    container.append(loadingStatus);
+    modal = globalModal.openModal(t('tip.dialog_title', { name: targetUser.name || target }), container, { width: "340px" });
+    loading = false;
     const readOptions = { componentId, noCache: true, timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES };
     let balance;
     try {
@@ -81,7 +89,7 @@ export async function openTipModal(currentUser, targetUser, onSuccess, itemId = 
     anonymousLabel.append(anonymousInput, document.createTextNode(t('tip.anonymous')));
     const status = element("div", "tip-dialog__status"); status.hidden = true; status.setAttribute("role", "alert");
     const submit = element("button", "tip-dialog__submit", t('tip.confirm')); submit.type = "button";
-    container.append(balanceRow, amountLabel, amountInput, preview, rules, anonymousLabel, status, submit);
+    container.replaceChildren(balanceRow, amountLabel, amountInput, preview, rules, anonymousLabel, status, submit);
     const amountValue = () => amountInput.value.trim() ? Number(amountInput.value) : NaN;
     const updatePreview = () => {
         if (!scope.isCurrent()) return;
@@ -149,7 +157,6 @@ export async function openTipModal(currentUser, targetUser, onSuccess, itemId = 
         }
     };
     updatePreview();
-    modal = globalModal.openModal(t('tip.dialog_title', { name: targetUser.name || target }), container, { width: "340px" });
-    loading = false;
+    container.setAttribute('aria-busy', 'false');
     return modal;
 }

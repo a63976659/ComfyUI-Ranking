@@ -1,3 +1,4 @@
+import { captureListRead } from "../core/榜单数据来源.js";
 // ==========================================
 // 🧩 提示词组件（小红书风格瀑布流列表）
 // ==========================================
@@ -21,14 +22,14 @@ import { api, proxyImages, captureRequestSession } from "../core/网络请求API
 import { showToast } from "../components/UI交互提示组件.js";
 // 📦 列表缓存走 readListCache/writeListCache 统一口径；分类缓存形态不同（空数组也是
 // 有效缓存态），仍用底层 setCache/getCacheWithMeta
-import { setCache, getCacheWithMeta, readListCache, writeListCache, requireListResponseData, isEmptyListRefreshWithExistingData, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
+import { setCache, getCacheWithMeta, readListCache, isEmptyListRefreshWithExistingData, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
 import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
 import { API, CACHE, getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { escapeHtml, formatTime, getCacheTTL } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 // 缓存配置
-const CACHE_KEY_PREFIX = "PromptsCache";
+const CACHE_KEY_PREFIX = CACHE.PUBLIC_LISTS.prompts.prefix.slice(0, -1);
 const CATEGORIES_CACHE_PREFIX = "PromptsCategoriesCache";  // 📴 分类缓存键前缀（离线容灾）
 const PAGE_SIZE = 20;
 
@@ -123,7 +124,7 @@ function _generateAvatarHtml(avatar, name) {
 /**
  * 🧩 创建提示词视图
  */
-export function createPromptsView(currentUser, keyword = "") {
+export function createPromptsView(currentUser, keyword = "", { sort: initialSort = "latest", type: initialType = "image", category: initialCategory = null, onFiltersChange, force: initialForce = false } = {}) {
     if (activeViewCleanup) activeViewCleanup();
 
     currentUserCache = currentUser;
@@ -167,9 +168,10 @@ export function createPromptsView(currentUser, keyword = "") {
     `;
 
     // 🔌 状态与元素引用
-    let currentSort = "latest";
-    let currentType = "image";      // 当前模块：image / video / music
-    let currentCategory = null;     // 当前分类（null = 全部）
+    let currentSort = initialSort;
+    let currentType = initialType;
+    let currentCategory = initialCategory;
+    const notifyFilters = () => onFiltersChange?.({ type: currentType, category: currentCategory });
     let allPromptsData = [];        // 全量数据缓存
     let isLoadingFromNetwork = false;
     let listViewGeneration = 0;
@@ -177,6 +179,7 @@ export function createPromptsView(currentUser, keyword = "") {
     let currentPaginator = null;
     let disposed = false;
     let firstPageReady = false;
+    let forceRefreshPending = initialForce === true;
     const cardNavigation = createCardNavigationScope(window, () => !disposed, {
         captureSession: captureRequestSession,
         storageKeys: [CACHE.LEGACY_KEYS.TOKEN, CACHE.LEGACY_KEYS.USER]
@@ -226,6 +229,7 @@ export function createPromptsView(currentUser, keyword = "") {
         chip.onclick = () => {
             if (disposed || currentCategory === value) return;
             currentCategory = value;
+            notifyFilters();
             allPromptsData = [];
             resetPagination();
             loadCategoriesAndReload();
@@ -279,9 +283,11 @@ export function createPromptsView(currentUser, keyword = "") {
     const loadMorePrompts = async (page, pageSize, { isCurrent = () => true } = {}) => {
         if (disposed || !isCurrent()) return [];
         try {
+            const readResponse = captureListRead(promptListCacheKey(currentType, currentCategory, currentSort));
             const res = await api.getPrompts(currentType, currentCategory, page, pageSize, currentSort);
             if (disposed || !isCurrent()) return [];
-            const prompts = requireListResponseData(res);
+            const responseData = readResponse(res);
+            const prompts = responseData.data;
 
             if (prompts.length === 0) {
                 if (searchKeyword && !allPromptsData.some(prompt => _matchesSearch(prompt, searchKeyword))) {
@@ -334,6 +340,7 @@ export function createPromptsView(currentUser, keyword = "") {
 
         currentPaginator = createPaginationLoader({
             container: scrollContainer,
+            focusContainer: promptsGrid,
             canLoad: () => !disposed && firstPageReady && !isLoadingFromNetwork,
             loadMore: loadMorePrompts,
             pageSize: PAGE_SIZE,
@@ -435,8 +442,10 @@ export function createPromptsView(currentUser, keyword = "") {
         }
     };
 
-    const loadPrompts = async (page = 1, append = false) => {
+    const loadPrompts = async (page = 1, append = false, forceRequest = false) => {
         if (disposed) return;
+        const forceRefresh = !append && page === 1 && (forceRefreshPending || forceRequest === true);
+        if (forceRefresh) forceRefreshPending = false;
         if (!append && page === 1) firstPageReady = false;
         const viewGeneration = !append && page === 1 ? ++listViewGeneration : listViewGeneration;
         const requestedType = currentType;
@@ -451,7 +460,7 @@ export function createPromptsView(currentUser, keyword = "") {
                 allPromptsData = proxyImages(cachedData);
                 renderPromptsFromCache(allPromptsData, true);
                 // 后台静默更新
-                silentRefresh().finally(() => {
+                silentRefresh(forceRefresh).finally(() => {
                     if (disposed || viewGeneration !== listViewGeneration) return;
                     if (searchKeyword && !allPromptsData.some(prompt => _matchesSearch(prompt, searchKeyword))) {
                         currentPaginator?.load();
@@ -469,7 +478,8 @@ export function createPromptsView(currentUser, keyword = "") {
 
             requestGeneration = ++networkRequestGeneration;
             isLoadingFromNetwork = true;
-            const res = await api.getPrompts(requestedType, requestedCategory, page, PAGE_SIZE, requestedSort);
+            const readResponse = captureListRead(cacheKey);
+            const res = await api.getPrompts(requestedType, requestedCategory, page, PAGE_SIZE, requestedSort, ...(forceRefresh ? [{ noCache: true }] : []));
             if (viewGeneration !== listViewGeneration || requestGeneration !== networkRequestGeneration) {
                 if (requestGeneration === networkRequestGeneration) {
                     isLoadingFromNetwork = false;
@@ -477,7 +487,8 @@ export function createPromptsView(currentUser, keyword = "") {
                 }
                 return;
             }
-            const prompts = requireListResponseData(res);
+            const responseData = readResponse(res);
+            const prompts = responseData.data;
             if (page === 1) firstPageReady = true;
             const total = res.total || 0;
             isLoadingFromNetwork = false;
@@ -485,7 +496,7 @@ export function createPromptsView(currentUser, keyword = "") {
             // 缓存第一页数据
             if (page === 1) {
                 allPromptsData = proxyImages(prompts);
-                writeListCache(cacheKey, prompts, getCacheTTL());  // 存原始数据，离线时经图片代理后可展示
+                responseData.write(getCacheTTL());  // 存原始数据，离线时经图片代理后可展示
             } else {
                 allPromptsData = [...allPromptsData, ...proxyImages(prompts)];
             }
@@ -559,7 +570,10 @@ export function createPromptsView(currentUser, keyword = "") {
                     renderPromptsFromCache(allPromptsData);
                     showToast(t('prompt.network_cache'), "warning");
                 } else {
-                    renderListLoadError(promptsGrid, t('prompt.load_failed'), () => loadPrompts(1, false), t, err);
+                    renderListLoadError(promptsGrid, err?.name === 'ListCacheChangedError' ? t('feedback.list_changed_retry') : t('prompt.load_failed'), () => {
+                        if (disposed || isLoadingFromNetwork || requestedType !== currentType || requestedCategory !== currentCategory || requestedSort !== currentSort) return;
+                        return loadPrompts(1, false, forceRefresh);
+                    }, t, err);
                 }
             }
         }
@@ -616,7 +630,7 @@ export function createPromptsView(currentUser, keyword = "") {
     };
 
     // 后台静默更新
-    const silentRefresh = async () => {
+    const silentRefresh = async (notifyFailure = false) => {
         if (disposed || isLoadingFromNetwork) return;
         const viewGeneration = listViewGeneration;
         const requestedType = currentType;
@@ -626,6 +640,7 @@ export function createPromptsView(currentUser, keyword = "") {
         const requestGeneration = ++networkRequestGeneration;
         try {
             isLoadingFromNetwork = true;
+            const readResponse = captureListRead(cacheKey);
             const res = await api.getPrompts(requestedType, requestedCategory, 1, PAGE_SIZE, requestedSort, {
                 noCache: true,
                 timeout: API.BACKGROUND_TIMEOUT,
@@ -638,14 +653,15 @@ export function createPromptsView(currentUser, keyword = "") {
                 }
                 return;
             }
-            const prompts = requireListResponseData(res);
+            const responseData = readResponse(res);
+            const prompts = responseData.data;
             isLoadingFromNetwork = false;
 
             if (isEmptyListRefreshWithExistingData(prompts, allPromptsData)) {
                 console.warn(`🛡️ 提示词 ${requestedType}/${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
                 // 更新缓存
-                writeListCache(cacheKey, prompts, getCacheTTL());
+                responseData.write(getCacheTTL());
 
                 // 对比新旧数据，有变化时重新渲染
                 if (_promptsDataChanged(allPromptsData, prompts)) {
@@ -666,6 +682,8 @@ export function createPromptsView(currentUser, keyword = "") {
             }
             isLoadingFromNetwork = false;
             console.warn("后台更新提示词失败（保留当前内容）");
+            if (notifyFailure === true) showToast(t(err?.name === 'ListCacheChangedError'
+                ? 'feedback.list_changed_retry' : 'feedback.refresh_failed_cached'), 'warning');
         }
         if (searchKeyword && !allPromptsData.some(prompt => _matchesSearch(prompt, searchKeyword))) {
             currentPaginator?.load();
@@ -706,6 +724,7 @@ export function createPromptsView(currentUser, keyword = "") {
             if (disposed || btn.dataset.type === currentType) return;
             currentType = btn.dataset.type;
             currentCategory = null;
+            notifyFilters();
             allPromptsData = [];
             syncTypeTabState();
             resetPagination();

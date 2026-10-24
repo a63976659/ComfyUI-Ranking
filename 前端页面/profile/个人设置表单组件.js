@@ -246,7 +246,7 @@ export function createSettingsForm(initialUserData, onCancelCallback, onSaveSucc
             <div class="settings-admin" id="admin-settings-section">
                 <div class="settings-admin-heading">
                     <span>🔒</span> ${t('settings_form.admin_title')}
-                    <span class="settings-admin-badge">Admin</span>
+                    <span class="settings-admin-badge">${escapeHtml(t('settings_form.admin_badge'))}</span>
                 </div>
                 <div class="settings-admin-hint">${t('settings_form.admin_hint')}</div>
                 

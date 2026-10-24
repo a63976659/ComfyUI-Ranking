@@ -630,18 +630,23 @@ function createTaskItem(task, statusColors, statusLabels, currentUser) {
  * 📅 格式化截止日期
  */
 function formatDeadline(deadline) {
-    if (!deadline) return t('time.unlimited');
-    try {
-        const date = new Date(deadline);
-        const now = new Date();
-        const diff = date - now;
-        if (diff < 0) return t('time.deadline_ended');
-        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-        if (days === 0) return t('time.deadline_today');
-        if (days === 1) return t('time.deadline_tomorrow');
-        if (days < 7) return t('time.deadline_days', { n: days });
-        return `${date.getMonth() + 1}/${date.getDate()}`;
-    } catch { return deadline; }
+    if (deadline == null || deadline === '') return t('time.unlimited');
+    if (typeof deadline !== 'string' || deadline.trim() !== deadline
+        || !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(deadline)) return t('common.unknown');
+    const day = deadline.slice(0, 10);
+    const date = new Date(day + 'T00:00:00Z');
+    if (Number(day.slice(0, 4)) < 1 || !Number.isFinite(date.getTime())
+        || date.toISOString().slice(0, 10) !== day || !Number.isFinite(Date.parse(deadline))) return t('common.unknown');
+    const now = new Date();
+    const today = new Date(0);
+    today.setUTCFullYear(now.getFullYear(), now.getMonth(), now.getDate());
+    const days = Math.round((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (!Number.isFinite(days)) return t('common.unknown');
+    if (days < 0) return t('time.deadline_ended');
+    if (days === 0) return t('time.deadline_today');
+    if (days === 1) return t('time.deadline_tomorrow');
+    if (days < 7) return t('time.deadline_days', { n: days });
+    return `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
 }
 
 /**

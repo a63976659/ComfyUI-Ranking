@@ -130,7 +130,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             <!-- 任务标题 -->
             <div>
                 <label for="task-title" class="task-publish__label">
-                    📌 ${t('task.task_title')} <span aria-hidden="true" class="task-publish__required">*</span>
+                    📌 ${t('task.task_title')} <span aria-hidden="true" class="task-publish__required ranking-required-marker"></span>
                 </label>
                 <input type="text" id="task-title" required maxlength="50" placeholder="${t('task.title_placeholder')}" value="${escapeHtml(editTitle)}"
                        class="task-publish__input">
@@ -139,7 +139,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             <!-- 任务描述 -->
             <div>
                 <label for="task-description" class="task-publish__label">
-                    📄 ${t('task.description')} <span aria-hidden="true" class="task-publish__required">*</span>
+                    📄 ${t('task.description')} <span aria-hidden="true" class="task-publish__required ranking-required-marker"></span>
                 </label>
                 <textarea id="task-description" required aria-describedby="desc-count" rows="6" maxlength="2000" placeholder="${t('task.description_placeholder')}"
                           class="task-publish__textarea">${escapeHtml(editDescription)}</textarea>
@@ -175,7 +175,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                 <!-- 总价格 -->
                 <div>
                     <label for="total-price" class="task-publish__label">
-                        💰 ${t('task.total_price')} <span aria-hidden="true" class="task-publish__required">*</span>
+                        💰 ${t('task.total_price')} <span aria-hidden="true" class="task-publish__required ranking-required-marker"></span>
                     </label>
                     <div class="task-publish__amount-wrap">
                         <input type="number" id="total-price" required aria-describedby="task-price-hint" min="0" max="${TASK_LIMITS.MAX_PRICE}" step="1" placeholder="100" value="${escapeHtml(editTotalPrice)}" ${isLockedStatus ? 'disabled' : ''}
@@ -188,7 +188,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
                 <!-- 订金比例 -->
                 <div>
                     <label for="deposit-ratio" class="task-publish__label">
-                        📊 ${t('task.deposit_ratio')} <span aria-hidden="true" class="task-publish__required">*</span>
+                        📊 ${t('task.deposit_ratio')} <span aria-hidden="true" class="task-publish__required ranking-required-marker"></span>
                     </label>
                     <select id="deposit-ratio" required aria-describedby="task-deposit-hint" ${isLockedStatus ? 'disabled' : ''} class="task-publish__select">
                         ${TASK_LIMITS.DEPOSIT_RATIOS.map(ratio => `<option value="${ratio}" ${editDepositRatio == ratio ? 'selected' : ''}>${ratio}%</option>`).join('')}
@@ -210,7 +210,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             <!-- 截止日期 -->
             <div>
                 <label for="deadline" class="task-publish__label">
-                    ⏰ ${t('task.deadline')} <span aria-hidden="true" class="task-publish__required">*</span>
+                    ⏰ ${t('task.deadline')} <span aria-hidden="true" class="task-publish__required ranking-required-marker"></span>
                 </label>
                 <input type="date" id="deadline" required ${isLockedStatus ? 'aria-describedby="task-deadline-hint"' : ''} min="${minDate}" value="${defaultDate}" ${isLockedStatus ? 'disabled' : ''}
                        class="task-publish__date">
@@ -511,7 +511,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
         } catch (err) {
             if (!scope.isCurrent() || committed) return;
             console.error(isEditMode ? "修改任务失败" : "发布任务失败");
-            outcomeUnknown = saveAttempted && ![400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            outcomeUnknown = saveAttempted && !(err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
             showToast(t(outcomeUnknown ? 'publish.save_unconfirmed' : (isEditMode ? 'task.edit_failed' : 'task.publish_failed')),
                 outcomeUnknown ? 'warning' : 'error');
         } finally {

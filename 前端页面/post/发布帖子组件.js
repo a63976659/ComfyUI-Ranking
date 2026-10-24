@@ -403,7 +403,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
             <!-- 图片上传区 -->
             <div id="image-upload-section" class="post-publish__upload-section">
                 <label for="images-input" class="post-publish__field-label">
-                    🖼️ ${t('post.upload_images')} <span class="post-publish__required">*</span>
+                    🖼️ ${t('post.upload_images')} <span class="post-publish__required ranking-required-marker"></span>
                     <span class="post-publish__hint">（${t('post.max_9_images')}）</span>
                 </label>
                 <input type="file" id="images-input" accept="image/*" multiple style="display: none;">
@@ -418,7 +418,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
             <!-- 视频上传区 -->
             <div id="video-upload-section" style="display: none;" class="post-publish__upload-section">
                 <label for="video-input" class="post-publish__field-label">
-                    🎬 ${t('post.upload_video')} <span class="post-publish__required">*</span>
+                    🎬 ${t('post.upload_video')} <span class="post-publish__required ranking-required-marker"></span>
                     <span class="post-publish__hint">${t('post.video_limits_hint', { megabytes: PUBLISH_MEDIA_LIMITS.VIDEO_MAX_BYTES / (1024 * 1024), minutes: PUBLISH_MEDIA_LIMITS.VIDEO_MAX_SECONDS / 60 })}</span>
                 </label>
                 <input type="file" id="video-input" accept="video/mp4,video/webm,video/quicktime" style="display: none;">
@@ -462,7 +462,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
             <!-- 标题输入 -->
             <div class="post-publish__field-group">
                 <label for="title-input" class="post-publish__field-label">
-                    📝 ${t('post.title_label')} <span class="post-publish__required">*</span>
+                    📝 ${t('post.title_label')} <span class="post-publish__required ranking-required-marker"></span>
                 </label>
                 <input type="text" id="title-input" class="ranking-publish-input" value="${escapeHtml(editTitle)}" placeholder="${t('post.title_placeholder')}" maxlength="50">
                 <div class="post-publish__counter">
@@ -1088,6 +1088,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
     // 删除视频
     btnRemoveVideo.onclick = (e) => {
         if (!scope.isCurrent()) return;
+        const hadFocus = document.activeElement === btnRemoveVideo;
         e.stopPropagation();
         invalidateVideoSelection();
         videoFile = null;
@@ -1098,6 +1099,10 @@ export function createPublishPostView(currentUser, editPostData = null) {
         currentCoverUrl = '';
         videoInput.value = '';
         renderVideoPreview();
+        if (hadFocus && scope.isCurrent() && videoPreviewArea.isConnected &&
+            (document.activeElement === btnRemoveVideo || document.activeElement === document.body)) {
+            videoPreviewArea.focus({ preventScroll: true });
+        }
     };
     
     // 截取当前帧
@@ -1291,7 +1296,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 
             } catch (err) {
                 if (!scope.isCurrent() || committed) return;
-                outcomeUnknown = saveAttempted && ![400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+                outcomeUnknown = saveAttempted && !(err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
                 showToast(t(outcomeUnknown ? 'publish.save_unconfirmed' : (isEditMode ? 'post.edit_failed' : 'post.publish_failed')),
                     outcomeUnknown ? 'warning' : 'error');
             } finally {
@@ -1379,7 +1384,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
             
         } catch (err) {
             if (!scope.isCurrent() || committed) return;
-            outcomeUnknown = saveAttempted && ![400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            outcomeUnknown = saveAttempted && !(err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
             showToast(t(outcomeUnknown ? 'publish.save_unconfirmed' : (isEditMode ? 'post.edit_failed' : 'post.publish_failed')),
                 outcomeUnknown ? 'warning' : 'error');
         } finally {

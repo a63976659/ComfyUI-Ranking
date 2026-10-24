@@ -395,7 +395,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             <!-- 分类选择 -->
             <div class="prompt-publish__field">
-                <label for="category-select" class="prompt-publish__label">🏷️ ${t('prompt.category_label')} <span class="prompt-publish__required">*</span></label>
+                <label for="category-select" class="prompt-publish__label">🏷️ ${t('prompt.category_label')} <span class="prompt-publish__required ranking-required-marker"></span></label>
                 <select id="category-select" class="ranking-publish-input prompt-publish__select">
                     <option value="">${t('prompt.category_select')}</option>
                 </select>
@@ -412,7 +412,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             <!-- 标题输入 -->
             <div class="prompt-publish__field">
-                <label for="title-input" class="prompt-publish__label">📝 ${t('prompt.title_label')} <span class="prompt-publish__required">*</span></label>
+                <label for="title-input" class="prompt-publish__label">📝 ${t('prompt.title_label')} <span class="prompt-publish__required ranking-required-marker"></span></label>
                 <input type="text" id="title-input" class="ranking-publish-input" value="${escapeAttr(editTitle)}" placeholder="${t('prompt.title_placeholder')}" maxlength="50">
                 <div class="prompt-publish__count">
                     <span id="title-count">${editTitle.length}</span>/50
@@ -421,7 +421,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             <!-- 文案/简介输入 -->
             <div class="prompt-publish__field">
-                <label for="content-input" class="prompt-publish__label">✍️ ${t('prompt.content_label')} <span class="prompt-publish__required">*</span></label>
+                <label for="content-input" class="prompt-publish__label">✍️ ${t('prompt.content_label')} <span class="prompt-publish__required ranking-required-marker"></span></label>
                 <textarea id="content-input" class="ranking-publish-input prompt-publish__description" placeholder="${t('prompt.content_placeholder')}" maxlength="2000">${escapeHtml(editContent)}</textarea>
                 <div class="prompt-publish__count">
                     <span id="content-count">${editContent.length}</span>/2000
@@ -430,7 +430,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             <!-- 提示词正文（付费内容） -->
             <div class="prompt-publish__field">
-                <label for="text-input" class="prompt-publish__label">🔑 ${t('prompt.text_label')} <span class="prompt-publish__required">*</span></label>
+                <label for="text-input" class="prompt-publish__label">🔑 ${t('prompt.text_label')} <span class="prompt-publish__required ranking-required-marker"></span></label>
                 <textarea id="text-input" class="ranking-publish-input prompt-publish__text" placeholder="${t('prompt.text_placeholder')}" maxlength="20000">${escapeHtml(editText)}</textarea>
                 <div class="prompt-publish__count">
                     <span id="text-count">${editText.length}</span>/20000
@@ -457,7 +457,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             <!-- 图片上传区（图像提示词专用：多图 + 拖拽排序，首张为封面） -->
             <div id="image-upload-section" class="prompt-publish__field">
-                <label class="prompt-publish__label">🖼️ ${t('post.upload_images')} <span class="prompt-publish__required">*</span>
+                <label class="prompt-publish__label">🖼️ ${t('post.upload_images')} <span class="prompt-publish__required ranking-required-marker"></span>
                     <span class="prompt-publish__optional">（${t('post.max_9_images')}）</span>
                 </label>
                 <input type="file" id="images-input" accept="image/*" multiple style="display: none;">
@@ -471,7 +471,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             <!-- 视频上传区（视频提示词专用：截取当前帧或手动上传封面） -->
             <div id="video-upload-section" style="display: none;" class="prompt-publish__media-section">
-                <label class="prompt-publish__label">🎬 ${t('prompt.video_label')} <span id="video-required-mark" class="prompt-publish__required">*</span><span id="video-optional-mark" style="display: none;" class="prompt-publish__optional">${t('prompt.optional_mark')}</span></label>
+                <label class="prompt-publish__label">🎬 ${t('prompt.video_label')} <span id="video-required-mark" class="prompt-publish__required ranking-required-marker"></span><span id="video-optional-mark" style="display: none;" class="prompt-publish__optional">${t('prompt.optional_mark')}</span></label>
                 <input type="file" id="video-input" accept="video/mp4,video/webm,video/quicktime" style="display: none;">
                 <div id="video-preview-area" class="prompt-publish__media">
                     <div id="video-empty-state" class="prompt-publish__empty">
@@ -512,7 +512,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
             <!-- 🎵 音频上传区（音乐提示词专用：图片+音频方案，视频可选） -->
             <div id="audio-upload-section" style="display: none;" class="prompt-publish__media-section">
-                <label class="prompt-publish__label">🎵 ${t('prompt.audio_label')} <span class="prompt-publish__required">*</span></label>
+                <label class="prompt-publish__label">🎵 ${t('prompt.audio_label')} <span class="prompt-publish__required ranking-required-marker"></span></label>
                 <div class="prompt-publish__media-hint">${t('prompt.music_media_hint')}</div>
                 <input type="file" id="audio-input" accept="audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/x-m4a,audio/ogg,.mp3,.wav,.m4a,.ogg" style="display: none;">
                 <div id="audio-preview-area" class="prompt-publish__media">
@@ -859,9 +859,16 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     }
 
     // ========== 标签管理（自定义 + 推荐快加 + 搜索过滤） ==========
+    function restoreTagFocus(hadFocus, parent, index) {
+        if (!hadFocus || !scope.isCurrent() || document.activeElement !== document.body) return;
+        const controls = parent.querySelectorAll("button");
+        const target = controls[Math.min(index, controls.length - 1)] || tagInput;
+        if (target.isConnected) target.focus({ preventScroll: true });
+    }
+
     function renderSelectedTags() {
         tagsSelectedEl.innerHTML = "";
-        selectedTags.forEach(tag => {
+        selectedTags.forEach((tag, index) => {
             const chip = document.createElement("span");
             chip.className = "prompt-publish__tag";
             chip.textContent = "#" + tag;
@@ -871,7 +878,13 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             rm.type = "button";
             rm.setAttribute("aria-label", `${t("common.delete")} ${tag}`);
             rm.onclick = () => {
-        if (!scope.isCurrent()) return; selectedTags = selectedTags.filter(x => x !== tag); renderSelectedTags(); renderRecommendTags(); };
+                if (!scope.isCurrent() || rm.disabled || !rm.isConnected || !tagsSelectedEl.contains(rm)) return;
+                const hadFocus = document.activeElement === rm;
+                selectedTags = selectedTags.filter(x => x !== tag);
+                renderSelectedTags();
+                renderRecommendTags();
+                restoreTagFocus(hadFocus, tagsSelectedEl, index);
+            };
             chip.appendChild(rm);
             tagsSelectedEl.appendChild(chip);
         });
@@ -889,12 +902,17 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             tagRecommendList.innerHTML = `<span class="prompt-publish__muted">${t('prompt.tag_no_recommend')}</span>`;
             return;
         }
-        list.forEach(name => {
+        list.forEach((name, index) => {
             const chip = document.createElement("button");
             chip.className = "prompt-publish__tag";
             chip.type = "button";
             chip.textContent = "+ " + name;
-            chip.onclick = () => addTag(name);
+            chip.onclick = () => {
+                if (!scope.isCurrent() || chip.disabled || !chip.isConnected || !tagRecommendList.contains(chip)) return;
+                const hadFocus = document.activeElement === chip;
+                addTag(name);
+                restoreTagFocus(hadFocus, tagRecommendList, index);
+            };
             tagRecommendList.appendChild(chip);
         });
     }
@@ -1328,6 +1346,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     // 删除视频
     btnRemoveVideo.onclick = (e) => {
         if (!scope.isCurrent()) return;
+        const hadFocus = document.activeElement === btnRemoveVideo;
         e.stopPropagation();
         invalidateVideoSelection();
         videoFile = null;
@@ -1338,6 +1357,10 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
         currentCoverUrl = '';
         videoInput.value = '';
         renderVideoPreview();
+        if (hadFocus && scope.isCurrent() && videoPreviewArea.isConnected &&
+            (document.activeElement === btnRemoveVideo || document.activeElement === document.body)) {
+            videoPreviewArea.focus({ preventScroll: true });
+        }
     };
 
     // 截取当前帧作为封面
@@ -1475,12 +1498,17 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     // 删除音频
     btnRemoveAudio.onclick = (e) => {
         if (!scope.isCurrent()) return;
+        const hadFocus = document.activeElement === btnRemoveAudio;
         e.stopPropagation();
         audioFile = null;
         if (audioObjectUrl) { URL.revokeObjectURL(audioObjectUrl); audioObjectUrl = null; }
         currentAudioUrl = '';
         audioInput.value = '';
         renderAudioPreview();
+        if (hadFocus && scope.isCurrent() && audioPreviewArea.isConnected &&
+            (document.activeElement === btnRemoveAudio || document.activeElement === document.body)) {
+            audioPreviewArea.focus({ preventScroll: true });
+        }
     };
 
     // 阻止音频区域的拖拽冒泡到 ComfyUI 画布
@@ -1694,7 +1722,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             if (!scope.isCurrent()) return;
             if (committed) return;
             console.error("提示词发布失败");
-            outcomeUnknown = saveAttempted && ![400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+            outcomeUnknown = saveAttempted && !(err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
             showToast(t(outcomeUnknown ? 'publish.save_unconfirmed' : 'prompt.publish_failed'),
                 outcomeUnknown ? 'warning' : 'error');
         } finally {
