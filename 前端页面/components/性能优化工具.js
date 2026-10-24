@@ -240,6 +240,8 @@ export function createPaginationLoader(options) {
     let debounceTimer = null;
     let generation = 0;  // 🔄 轻量级取消令牌，reset 时递增以丢弃飞行中请求
     let stopped = false;  // 保持创建后可手动加载；stop 后仅 start 能重新启用。
+    const focusContainer = options.focusContainer || container;
+    let retryFocus = null;
     
     // 加载指示器
     const loadingIndicator = document.createElement("div");
@@ -258,6 +260,7 @@ export function createPaginationLoader(options) {
     // "没有更多"提示
     const endIndicator = document.createElement("div");
     endIndicator.className = "pagination-end";
+    endIndicator.tabIndex = -1;
     endIndicator.setAttribute("role", "status");
     endIndicator.setAttribute("aria-live", "polite");
     endIndicator.textContent = translate("pagination.end");
@@ -276,6 +279,73 @@ export function createPaginationLoader(options) {
     retryIndicator.append(retryMessage, retryButton);
     retryIndicator.style.display = "none";
     
+    const moveIndicatorsToEnd = () => {
+        const parent = loadingIndicator.parentNode;
+        if (!parent || endIndicator.parentNode !== parent || retryIndicator.parentNode !== parent) return;
+        if (parent.lastChild === retryIndicator && retryIndicator.previousSibling === endIndicator &&
+            endIndicator.previousSibling === loadingIndicator) return;
+        parent.appendChild(loadingIndicator);
+        parent.appendChild(endIndicator);
+        parent.appendChild(retryIndicator);
+    };
+
+    const clearRetryFocus = () => {
+        if (!retryFocus) return;
+        retryFocus.doc.removeEventListener('focusin', retryFocus.onFocus, true);
+        retryFocus.doc.removeEventListener('pointerdown', retryFocus.onPointer, true);
+        retryFocus = null;
+    };
+    const captureRetryFocus = () => {
+        clearRetryFocus();
+        const doc = container.ownerDocument;
+        if (doc.activeElement !== retryButton) return;
+        const record = { generation, children: new Set(focusContainer.children), doc };
+        record.onFocus = event => { if (event.target !== retryButton && event.target !== doc.body) clearRetryFocus(); };
+        record.onPointer = () => clearRetryFocus();
+        retryFocus = record;
+        doc.addEventListener('focusin', record.onFocus, true);
+        doc.addEventListener('pointerdown', record.onPointer, true);
+    };
+    const focusableSelector = 'button, a[href], input, select, textarea, [tabindex]';
+    const firstFocusable = element => {
+        const candidates = [element, ...element.querySelectorAll(focusableSelector)];
+        return candidates.find(node => node.matches(focusableSelector) && !node.disabled && node.tabIndex >= 0
+            && !node.closest('[inert], [aria-hidden="true"]') && node.getClientRects().length > 0
+            && node.ownerDocument.defaultView.getComputedStyle(node).visibility !== 'hidden');
+    };
+    const restoreRetryFocus = willContinue => {
+        if (!retryFocus) return;
+        const doc = container.ownerDocument;
+        if (stopped || retryFocus.generation !== generation || !container.isConnected || !focusContainer.isConnected
+            || !doc.hasFocus() || !focusContainer.getClientRects().length
+            || doc.defaultView.getComputedStyle(focusContainer).visibility === 'hidden'
+            || (doc.activeElement !== doc.body && doc.activeElement !== retryButton)) {
+            clearRetryFocus();
+            return;
+        }
+        let target;
+        if (retryIndicator.style.display !== 'none') target = retryButton;
+        else {
+            const children = Array.from(focusContainer.children);
+            for (const child of children) {
+                if (!retryFocus.children.has(child) && (target = firstFocusable(child))) break;
+            }
+            if (!target && willContinue) return;
+            if (!target && !hasMore) target = endIndicator;
+            if (!target) {
+                for (const child of children.reverse()) {
+                    if ((target = firstFocusable(child))) break;
+                }
+            }
+            if (!target) {
+                if (!focusContainer.hasAttribute('tabindex')) focusContainer.tabIndex = -1;
+                target = focusContainer;
+            }
+        }
+        clearRetryFocus();
+        target.focus({ preventScroll: true });
+    };
+
     // 滚动事件处理（带防抖）
     const handleScroll = () => {
         if (stopped) return;
@@ -294,9 +364,14 @@ export function createPaginationLoader(options) {
     };
     
     // 加载下一页
-    const _loadNextPage = async () => {
-        if (stopped || isLoading || !hasMore) return;
+    const _loadNextPage = async (retry = false) => {
+        if (stopped || isLoading || (!hasMore && !retry)) return;
         if (typeof canLoad === "function" && !canLoad()) return;
+        if (retry) {
+            captureRetryFocus();
+            retryIndicator.style.display = "none";
+            hasMore = true;
+        }
         
         isLoading = true;
         loadingIndicator.style.display = "block";
@@ -335,23 +410,22 @@ export function createPaginationLoader(options) {
             }
         } finally {
             if (savedGen === generation) {
+                moveIndicatorsToEnd();
                 isLoading = false;
                 loadingIndicator.style.display = "none";
                 // Search callers can scan pages with no local matches without
                 // changing pagination behavior for other lists.
-                if (hasMore && typeof autoFill === "function" &&
-                    (autoFill() || container.scrollHeight <= container.clientHeight + threshold)) {
-                    _loadNextPage();
-                }
+                const willContinue = hasMore && typeof autoFill === "function" &&
+                    (autoFill() || container.scrollHeight <= container.clientHeight + threshold);
+                restoreRetryFocus(willContinue);
+                if (willContinue) _loadNextPage();
             }
         }
     };
 
     retryButton.addEventListener("click", () => {
         if (stopped || isLoading) return;
-        retryIndicator.style.display = "none";
-        hasMore = true;
-        _loadNextPage();
+        _loadNextPage(true);
     });
     
     // 启动监听
@@ -367,6 +441,7 @@ export function createPaginationLoader(options) {
     
     // 停止监听
     const stop = () => {
+        clearRetryFocus();
         stopped = true;
         generation++;
         if (isLoading) currentPage = Math.max(1, currentPage - 1);
@@ -382,6 +457,7 @@ export function createPaginationLoader(options) {
     
     // 重置状态
     const reset = () => {
+        clearRetryFocus();
         generation++;  // 🔄 递增使飞行中请求结果被忽略
         currentPage = 1;  // 首屏已渲染第1页，分页器从第2页开始
         hasMore = true;
@@ -671,7 +747,7 @@ export function endTimer(label) {
 // 🎨 骨架屏生成器
 // ==========================================
 // 特点：
-//   - 适配深色主题
+//   - 跟随界面主题
 //   - 多种卡片类型
 //   - 流畅的动画效果
 
@@ -684,42 +760,6 @@ export function endTimer(label) {
 export function createSkeleton(type = "card", count = 1) {
     const container = document.createElement("div");
     container.className = "skeleton-container";
-    
-    // 🎨 深色主题骨架屏样式
-    const skeletonStyles = `
-        .skeleton-container {
-            padding: 8px;
-        }
-        .skeleton-item {
-            background: linear-gradient(90deg, #2a2a2a 25%, #3a3a3a 50%, #2a2a2a 75%);
-            background-size: 200% 100%;
-            animation: skeleton-shimmer 1.5s ease-in-out infinite;
-            border-radius: 6px;
-        }
-        .skeleton-card {
-            background: var(--comfy-menu-bg);
-            border: 1px solid var(--border-color, #333);
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 12px;
-        }
-        @keyframes skeleton-shimmer {
-            0% { background-position: 200% 0; }
-            100% { background-position: -200% 0; }
-        }
-        @keyframes skeleton-pulse {
-            0%, 100% { opacity: 0.4; }
-            50% { opacity: 0.8; }
-        }
-    `;
-    
-    // 注入样式（仅一次）
-    if (!document.getElementById("skeleton-styles-v2")) {
-        const styleEl = document.createElement("style");
-        styleEl.id = "skeleton-styles-v2";
-        styleEl.textContent = skeletonStyles;
-        document.head.appendChild(styleEl);
-    }
     
     for (let i = 0; i < count; i++) {
         const item = document.createElement("div");
@@ -1434,7 +1474,10 @@ export function renderListLoadError(container, message, onRetry, t, error = null
     retry.type = "button";
     retry.className = "comfy-ranking-list-error__retry";
     retry.textContent = t("common.retry");
-    retry.addEventListener("click", () => onRetry?.());
+    retry.addEventListener("click", () => {
+        if (!status.isConnected || status.parentNode !== container) return;
+        onRetry?.();
+    });
 
     status.append(text, retry);
     container.replaceChildren(status);

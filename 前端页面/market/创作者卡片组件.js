@@ -345,7 +345,7 @@ export function createCreatorCard(creatorData, currentUser = null) {
     let commentUI = null;
     let isDetailLoaded = false;
     let isChartRendered = false;
-    let chartInstance = null;
+    let chartInstance = null, removeChartAppearance = null;
     let generation = 0, detailPending = false, chartPending = false, detailRead = null;
     let widthObserver = null, widthTimer = null, resizeTimer = null;
     let stopTrackingRemoval = null, resizeSubscribed = false;
@@ -368,6 +368,9 @@ export function createCreatorCard(creatorData, currentUser = null) {
     });
     const current = token => scope.isCurrent() && card.isConnected && detailView.style.display !== 'none' && token === generation;
     const clearChartWork = () => {
+        removeChartAppearance?.(); removeChartAppearance = null;
+        const chartDom = detailView.querySelector('.creator-card__chart');
+        chartDom?.removeAttribute('role'); chartDom?.removeAttribute('aria-label');
         widthObserver?.disconnect(); widthObserver = null;
         clearTimeout(widthTimer); clearTimeout(resizeTimer); widthTimer = resizeTimer = null;
         chartPending = false;
@@ -487,40 +490,78 @@ export function createCreatorCard(creatorData, currentUser = null) {
         renderTrendChart(detailData.trendData);
     }
 
-    // 📊 渲染趋势图表
+    function bindChartAppearance(chartDom, trendData, token) {
+        removeChartAppearance?.(); removeChartAppearance = null;
+        const instance = chartInstance;
+        const data = trendData || { months: [], tools: [], skills: [], apps: [], recommends: [] };
+        const refresh = () => {
+            if (!current(token) || chartInstance !== instance || !chartDom.isConnected) return;
+            try {
+                const theme = getComputedStyle(chartDom);
+                const textColor = theme.getPropertyValue('--rk-text').trim() || theme.color;
+                const borderColor = theme.getPropertyValue('--rk-border').trim() || theme.borderColor;
+                const panelColor = theme.getPropertyValue('--rk-panel').trim() || theme.backgroundColor;
+                const measuredSize = parseFloat(theme.fontSize);
+                const fontSize = Number.isFinite(measuredSize) ? measuredSize : 12;
+                const series = [
+                    { name: t('creator.chart.series.tools'), type: 'line', data: data.tools, smooth: true, itemStyle: { color: '#4CAF50' }, lineStyle: { width: 2, type: 'dashed' } },
+                    { name: t('creator.chart.series.skills'), type: 'line', data: data.skills || [], smooth: true, itemStyle: { color: '#7C4DFF' }, lineStyle: { width: 2, type: 'dashed' } },
+                    { name: t('creator.chart.series.apps'), type: 'line', data: data.apps, smooth: true, itemStyle: { color: '#2196F3' }, lineStyle: { width: 2, type: 'dashed' } },
+                    { name: t('creator.chart.series.recommends'), type: 'line', data: data.recommends, smooth: true, itemStyle: { color: '#FF9800' }, lineStyle: { width: 2, type: 'dashed' } }
+                ];
+                instance.setOption({
+                    animation: getSettings().enableAnimations !== false && !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+                    textStyle: { color: textColor, fontFamily: theme.fontFamily, fontSize },
+                    tooltip: { trigger: 'axis', backgroundColor: panelColor, borderColor, textStyle: { color: textColor, fontSize } },
+                    grid: { top: fontSize, bottom: fontSize * 1.5, left: fontSize, right: fontSize, containLabel: true },
+                    xAxis: { type: 'category', data: data.months, axisLabel: { color: textColor, fontSize, hideOverlap: true, formatter: value => String(value).replace('-', '\n'), showMinLabel: true, showMaxLabel: true, alignMinLabel: 'left', alignMaxLabel: 'right' }, axisLine: { lineStyle: { color: borderColor } } },
+                    yAxis: { type: 'value', splitLine: { lineStyle: { color: borderColor, type: 'dashed' } }, axisLabel: { color: textColor, fontSize }, minInterval: 1 },
+                    series
+                });
+                chartDom.setAttribute('role', 'img');
+                chartDom.setAttribute('aria-label', series.map(entry => t('chart.data_description', {
+                    series: entry.name,
+                    values: data.months.flatMap((month, index) => entry.data?.[index] == null ? [] : [t('chart.month_value', { month, value: entry.data[index] })]).join('; ')
+                })).join(' '));
+                instance.resize();
+            } catch (_) {
+                if (!current(token) || chartInstance !== instance) return;
+                clearChartWork(); instance.dispose(); chartInstance = null; isChartRendered = false;
+                chartDom.innerHTML = `<div class="creator-card__chart-status creator-card__chart-status--error" role="status">${t('creator.chart.load_failed')}</div>`;
+            }
+        };
+        refresh();
+        if (!current(token) || chartInstance !== instance) return false;
+        const observer = new MutationObserver(refresh);
+        for (let ancestor = chartDom.parentElement; ancestor; ancestor = ancestor.parentElement) {
+            observer.observe(ancestor, { attributes: true, attributeFilter: ['class', 'style', 'data-theme', 'data-color-scheme'] });
+        }
+        const queries = ['(prefers-color-scheme: dark)', '(forced-colors: active)', '(prefers-reduced-motion: reduce)'].map(query => window.matchMedia(query));
+        for (const query of queries) query.addEventListener('change', refresh);
+        window.addEventListener('comfy-settings-changed', refresh);
+        removeChartAppearance = () => {
+            observer.disconnect();
+            for (const query of queries) query.removeEventListener('change', refresh);
+            window.removeEventListener('comfy-settings-changed', refresh);
+        };
+        return true;
+    }
+
     function _initTrendChart(chartDom, trendData, token) {
         if (!current(token)) return;
         loadECharts().then(echarts => {
             if (!current(token) || !chartDom.isConnected) return;
             chartDom.innerHTML = "";
-            const theme = getComputedStyle(card);
-            const textColor = theme.getPropertyValue('--rk-text').trim() || theme.color;
-            const borderColor = theme.getPropertyValue('--rk-border').trim() || theme.borderColor;
             chartInstance = echarts.init(chartDom, null, { backgroundColor: 'transparent' });
-
-            const data = trendData || { months: [], tools: [], skills: [], apps: [], recommends: [] };
-
-            chartInstance.setOption({
-                tooltip: { trigger: 'axis', textStyle: { fontSize: 11 } },
-                grid: { top: 10, bottom: 20, left: 35, right: 10, containLabel: true },
-                xAxis: { type: 'category', data: data.months, axisLabel: { color: textColor, fontSize: 10 }, axisLine: { lineStyle: { color: borderColor } } },
-                yAxis: { type: 'value', splitLine: { lineStyle: { color: borderColor, type: 'dashed' } }, axisLabel: { color: textColor, fontSize: 10 }, minInterval: 1 },
-                series: [
-                    { name: t('creator.chart.series.tools'), type: 'line', data: data.tools, smooth: true, itemStyle: { color: '#4CAF50' }, lineStyle: { width: 2, type: 'dashed' } },
-                    { name: t('creator.chart.series.skills'), type: 'line', data: data.skills || [], smooth: true, itemStyle: { color: '#7C4DFF' }, lineStyle: { width: 2, type: 'dashed' } },
-                    { name: t('creator.chart.series.apps'), type: 'line', data: data.apps, smooth: true, itemStyle: { color: '#2196F3' }, lineStyle: { width: 2, type: 'dashed' } },
-                    { name: t('creator.chart.series.recommends'), type: 'line', data: data.recommends, smooth: true, itemStyle: { color: '#FF9800' }, lineStyle: { width: 2, type: 'dashed' } }
-                ]
-            });
-            isChartRendered = true;
-
-            // 初始化完成后延迟调用resize确保正确渲染
+            isChartRendered = bindChartAppearance(chartDom, trendData, token);
+            if (!isChartRendered) return;
             resizeTimer = setTimeout(() => {
                 resizeTimer = null;
                 if (current(token) && chartInstance) chartInstance.resize();
             }, 300);
         }).catch(() => {
             if (!current(token)) return;
+            clearChartWork();
             chartInstance?.dispose(); chartInstance = null; isChartRendered = false;
             chartDom.innerHTML = `<div class="creator-card__chart-status creator-card__chart-status--error" role="status">${t('creator.chart.load_failed')}</div>`;
         }).finally(() => { if (current(token)) chartPending = false; });
@@ -529,11 +570,11 @@ export function createCreatorCard(creatorData, currentUser = null) {
     function renderTrendChart(trendData) {
         const token = generation;
         if (!current(token)) return;
-        if (isChartRendered) { chartInstance?.resize(); return; }
+        const chartDom = detailView.querySelector(`#${chartContainerId}`);
+        if (!chartDom) return;
+        if (isChartRendered) { bindChartAppearance(chartDom, trendData, token); return; }
         if (chartPending) return;
         chartPending = true;
-        const chartDom = detailView.querySelector(`#${chartContainerId}`);
-        if (!chartDom) { chartPending = false; return; }
 
         chartDom.innerHTML = `<div class="creator-card__chart-status" role="status">${t('creator.chart.loading')}</div>`;
 

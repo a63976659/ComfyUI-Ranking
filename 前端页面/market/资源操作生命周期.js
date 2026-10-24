@@ -9,7 +9,7 @@ let sequence = 0;
 export function createResourceOperationScope(button, statusBox, account, options = {}) {
     scopes.get(button)?.dispose();
     const matches = captureRequestSession(), componentId = `resource-operation-${++sequence}`;
-    const confirmation = new AbortController(), cleanups = new Set();
+    const confirmation = new AbortController(), cleanups = new Set(), cleanupNodes = new Map();
     let inner, observer, disposed = false;
     const cleanup = () => {
         if (disposed) return;
@@ -18,15 +18,17 @@ export function createResourceOperationScope(button, statusBox, account, options
         button.disabled = true; button.removeAttribute("aria-busy");
         statusBox.replaceChildren(); statusBox.style.display = "none";
         for (const callback of cleanups) { try { callback(); } catch (_) {} }
-        cleanups.clear();
+        cleanups.clear(); cleanupNodes.clear();
     };
     const scope = {
         readOptions: { noCache: true, componentId, timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES },
         confirmationSignal: confirmation.signal,
         dispose() { if (inner) inner.dispose(); else cleanup(); },
-        addCleanup(callback) {
-            if (disposed) { callback(); return () => {}; }
-            cleanups.add(callback); return () => cleanups.delete(callback);
+        addCleanup(callback, node = null) {
+            if (disposed || node && !node.isConnected) { callback(); return () => {}; }
+            cleanups.add(callback);
+            if (node) cleanupNodes.set(callback, node);
+            return () => { cleanupNodes.delete(callback); return cleanups.delete(callback); };
         },
         isCurrent() {
             if (disposed) return false;
@@ -41,7 +43,15 @@ export function createResourceOperationScope(button, statusBox, account, options
                     cancelReads: () => requestCancelManager.cancelAll(componentId), invalidate: () => {}
                 });
                 inner.addCleanup(cleanup);
-                observer = new MutationObserver(() => { scope.isCurrent(); });
+                observer = new MutationObserver(() => {
+                    if (!scope.isCurrent()) return;
+                    for (const [callback, node] of cleanupNodes) {
+                        if (!node.isConnected) {
+                            cleanupNodes.delete(callback); cleanups.delete(callback);
+                            try { callback(); } catch (_) {}
+                        }
+                    }
+                });
                 observer.observe(document.body, { childList: true, subtree: true });
             }
             return inner.isCurrent();

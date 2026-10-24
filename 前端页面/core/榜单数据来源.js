@@ -1,6 +1,40 @@
 import { api, requestCancelManager } from './网络请求API.js';
 import { API, CACHE, PAGINATION } from './全局配置.js';
-import { requireListResponseData, getCacheWithMeta, removeCache } from '../components/性能优化工具.js';
+import { requireListResponseData, getCacheWithMeta, removeCache, writeListCache } from '../components/性能优化工具.js';
+
+import { captureCacheWrite, isCreatorsSessionCacheCurrent, markCreatorsSessionCacheCurrent } from './网络请求_缓存管理.js';
+import { getResponseCacheSource } from './网络请求_基础设施.js';
+
+
+export function captureListRead(cacheKey) {
+    const definition = Object.values(CACHE.PUBLIC_LISTS).find(list => typeof cacheKey === 'string' && cacheKey.startsWith(list.prefix));
+    if (!definition) throw new TypeError('Unsupported list cache');
+    const listCurrent = captureCacheWrite(cacheKey);
+    const apiCurrent = captureCacheWrite(`api_${definition.endpoint}`);
+    const isCurrent = () => listCurrent() && apiCurrent();
+    return response => {
+        const source = getResponseCacheSource(response);
+        if (!isCurrent() || (source && !source.source?.isAvailable())) {
+            const error = new Error();
+            error.name = 'ListCacheChangedError';
+            throw error;
+        }
+        const data = requireListResponseData(response);
+        return {
+            data,
+            write(ttl) {
+                if (!isCurrent()) return false;
+                requireListResponseData({ status: 'success', data });
+                if (source) return source.source.copyTo(cacheKey, data);
+                writeListCache(cacheKey, data, ttl);
+                return true;
+            }
+        };
+    };
+}
+
+const sidebarResponseSources = new WeakMap();
+export const getSidebarResponseCacheSource = data => sidebarResponseSources.get(data) || null;
 
 const itemTypes = Object.freeze({ tools: 'tool', skills: 'skill', apps: 'app', recommends: 'recommend' });
 
@@ -9,6 +43,8 @@ export async function fetchSidebarList({ tab, sort, keyword = '', force = false,
     const options = background
         ? { noCache: true, timeout: API.BACKGROUND_TIMEOUT, retries: API.BACKGROUND_RETRIES }
         : (force ? { noCache: true } : {});
+    const endpoint = Object.hasOwn(itemTypes, tab) ? "/api/items" : keyword ? "/api/creators/search" : "/api/creators";
+    const isCurrent = captureCacheWrite(`api_${endpoint}`);
     let response;
     if (Object.hasOwn(itemTypes, tab)) {
         response = await api.getItems(itemTypes[tab], sort, PAGINATION.SIDEBAR_ITEM_FETCH_LIMIT, options);
@@ -22,7 +58,21 @@ export async function fetchSidebarList({ tab, sort, keyword = '', force = false,
     } else {
         throw new TypeError('Unsupported sidebar list');
     }
-    return requireListResponseData(response);
+    if (!isCurrent()) {
+        const error = new Error();
+        error.name = "ListCacheChangedError";
+        throw error;
+    }
+    const source = getResponseCacheSource(response);
+    if (source && !source.source?.isAvailable()) {
+        const error = new Error();
+        error.name = "ListCacheChangedError";
+        throw error;
+    }
+    const data = requireListResponseData(response);
+    sidebarResponseSources.delete(data);
+    if (source) sidebarResponseSources.set(data, source);
+    return data;
 }
 
 function validCreatorList(data) {
@@ -49,6 +99,7 @@ export function readSidebarListCache(key, { creators = false } = {}) {
 }
 
 export function readCreatorsSessionCache() {
+    if (!isCreatorsSessionCacheCurrent()) return null;
     let raw;
     try { raw = sessionStorage.getItem(CACHE.LOCAL_KEYS.CREATORS_SESSION); }
     catch { return null; } // 无法读取不等于损坏，保留未知内容。
@@ -66,6 +117,7 @@ export function writeCreatorsSessionCache(data) {
     if (!validCreatorList(data)) return false;
     try {
         sessionStorage.setItem(CACHE.LOCAL_KEYS.CREATORS_SESSION, JSON.stringify(data));
+        markCreatorsSessionCacheCurrent();
         return true;
     } catch { return false; }
 }

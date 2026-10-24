@@ -1,4 +1,5 @@
 import { SKILL_INSTALL, escapeHtml } from '../core/全局配置.js';
+import { describeInstallSource } from './安装来源.js';
 import { readLocalJSON } from '../core/本机请求读取.js';
 import { requestSSE } from '../core/网络请求_基础设施.js';
 import { t } from '../components/用户体验_国际化.js';
@@ -157,6 +158,7 @@ function validReady(result, plan, target) {
     return object(result) && result.status === 'success' && result.phase === 'ready'
         && result.installed === false && (!Object.hasOwn(result, 'outcomeUnknown') || result.outcomeUnknown === false)
         && !Object.hasOwn(result, 'error') && !Object.hasOwn(result, 'error_code') && versionId(result.installed_version)
+        && describeInstallSource(result.repository) !== null
         && object(result.preview) && result.preview.id === plan && pathText(result.preview.target) && result.preview.target === target
         && Array.isArray(result.preview.items) && result.preview.items.length > 0
         && result.preview.items.length <= SKILL_INSTALL.MAX_ITEMS
@@ -181,7 +183,9 @@ export async function runSkillInstall({ target, credentials, scope, confirm, onP
         const ready = await stream('prepare');
         if (!scope.isCurrent() || signal.aborted) return { status: 'cancelled' };
         if (!validReady(ready, plan, target)) throw failure(ready?.error_code || 'invalid_metadata');
-        const html = `<div class="skill-install-preview"><p>${escapeHtml(t('skill.preview_target', { path: ready.preview.target }))}</p>`
+        const source = describeInstallSource(ready.repository);
+        const html = `<div class="skill-install-preview"><p>${escapeHtml(t('install.source', { source: source.label }))}</p>`
+            + `<p>${escapeHtml(t('skill.preview_target', { path: ready.preview.target }))}</p>`
             + `<p>${escapeHtml(t('skill.preview_hint'))}</p><ul>`
             + ready.preview.items.map(row => `<li>${escapeHtml(row.name)} — ${escapeHtml(t(row.exists ? 'skill.preview_replace' : 'skill.preview_new'))}`
                 + ` · ${escapeHtml(t(row.skill ? 'skill.preview_skill' : 'skill.preview_shared'))}</li>`).join('') + '</ul></div>';
@@ -190,11 +194,11 @@ export async function runSkillInstall({ target, credentials, scope, confirm, onP
         let result;
         try { result = await stream('commit'); }
         catch (error) {
-            if (error?.fallbackSafe) return { status: 'error', error_code: 'local_update_required', outcomeUnknown: false };
+            if (error?.fallbackSafe) return { status: 'error', error_code: 'local_update_required', outcomeUnknown: false, plan_id: plan };
         }
-        if (confirmed(result, ready.installed_version)) return result;
+        if (confirmed(result, ready.installed_version)) return { ...result, plan_id: plan };
         if (object(result) && result.status === 'error' && result.outcomeUnknown === false
-                && typeof result.error_code === 'string') return result;
+                && typeof result.error_code === 'string') return { ...result, plan_id: plan };
         if (scope.isCurrent() && !signal.aborted) {
             try {
                 onProgress?.({ stage: 'validate', progress: 99, skillAction: 'status' });
@@ -203,7 +207,7 @@ export async function runSkillInstall({ target, credentials, scope, confirm, onP
                         && confirmed(receipt, ready.installed_version)) return receipt;
             } catch {}
         }
-        return { status: 'error', outcomeUnknown: true };
+        return { status: 'error', outcomeUnknown: true, plan_id: plan };
     } catch (error) {
         throw failure(error?.fallbackSafe ? 'local_update_required' : error?.code || 'install_failed');
     } finally {

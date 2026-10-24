@@ -8,9 +8,14 @@
 // ==========================================
 
 import { request } from "./网络请求_基础设施.js";
-import { API } from "./全局配置.js";
+import { API, CACHE, invalidateCachedProfiles } from "./全局配置.js";
 import { t } from "../components/用户体验_国际化.js";
-import { removeCache } from "./网络请求_缓存管理.js";
+import { removeCache, invalidateFollowCaches, captureCacheWrite } from "./网络请求_缓存管理.js";
+import { requireListResponseData } from "../components/性能优化工具.js";
+
+function requestPublicList(endpoint, options = {}) {
+    return request(endpoint, { ...options, validateResponse: requireListResponseData });
+}
 
 function publicationHeaders(options) {
     if (options?.publicationId === undefined) return undefined;
@@ -58,15 +63,36 @@ const api = {
     },
 
     async getUserProfile(account, options = {}) { return request(`/api/users/${account}`, options); },
-    async updateUserProfile(account, data) { return request(`/api/users/${account}`, { method: "PUT", body: data }); },
-    async updateUserSettings(account, data) { return request(`/api/users/${account}/settings`, { method: "PUT", body: data }); },
-    async updatePrivacy(account, privacy) { return request(`/api/users/${account}/privacy`, { method: "PUT", body: privacy }); },
-    async toggleFollow(userId, targetAccount, isActive) { return request("/api/users/follow", { method: "POST", body: { user_id: userId, target_account: targetAccount, is_active: isActive } }); },
-    async getCreators(sort, limit, options = {}) { return request(`/api/creators?sort=${sort}&limit=${limit}`, options); },
+    async updateUserProfile(account, data) {
+        const response = await request(`/api/users/${account}`, { method: "PUT", body: data });
+        if (response?.status === 'success') invalidateCachedProfiles([account]);
+        return response;
+    },
+    async updateUserSettings(account, data) {
+        const response = await request(`/api/users/${account}/settings`, { method: "PUT", body: data });
+        if (response?.status === 'success') invalidateCachedProfiles([account]);
+        return response;
+    },
+    async updatePrivacy(account, privacy) {
+        const response = await request(`/api/users/${account}/privacy`, { method: "PUT", body: privacy });
+        if (response?.status === 'success') invalidateCachedProfiles([account]);
+        return response;
+    },
+    async toggleFollow(userId, targetAccount, isActive) {
+        const response = await request("/api/users/follow", { method: "POST", body: { user_id: userId, target_account: targetAccount, is_active: isActive } });
+        if (response?.status === 'success') invalidateFollowCaches(userId, targetAccount);
+        return response;
+    },
+    async getCreators(sort, limit, options = {}) { return requestPublicList(`/api/creators?sort=${sort}&limit=${limit}`, options); },
     // 🔍 带上取消分组 ID：用户继续输入时，上一次仍在途的搜索请求可被 requestCancelManager 撤销，
     // 不再占用并发额度与超时预算（调用时机见 侧边栏数据引擎.js 的创作者搜索分支）
-    async searchCreators(keyword, sort, limit = 50, options = {}) { return request(`/api/creators/search?keyword=${encodeURIComponent(keyword)}&sort=${sort}&limit=${limit}`, { componentId: API.SEARCH_COMPONENT_ID, ...options }); },
-    async getCreatorDetails(account, options = {}) { return request(`/api/creators/${account}/details`, options); },
+    async searchCreators(keyword, sort, limit = 50, options = {}) { return requestPublicList(`/api/creators/search?keyword=${encodeURIComponent(keyword)}&sort=${sort}&limit=${limit}`, { componentId: API.SEARCH_COMPONENT_ID, ...options }); },
+    async getCreatorDetails(account, options = {}) {
+        const current = captureCacheWrite(`${CACHE.CREATOR_DETAILS_CACHE_PREFIX}${account}/details`);
+        const response = await request(`/api/creators/${account}/details`, options);
+        if (!current()) throw new Error(t('feedback.list_changed_retry'));
+        return response;
+    },
     async uploadFile(file, fileType, timeout = 120000) {
         const formData = new FormData();
         formData.append("file", file);
@@ -77,7 +103,7 @@ const api = {
     // NOTE: author 未 encodeURIComponent，与 assignee/account 等编码不一致；
     // 但 account 通常为纯字母数字，不影响功能，暂不改动以避免破坏线上缓存匹配
     async updateItem(itemId, author, data) { return request(`/api/items/${itemId}?author=${author}`, { method: "PUT", body: data }); },
-    async getItems(type, sort, limit, options = {}) { return request(`/api/items?type=${type}&sort=${sort}&limit=${limit}`, options); },
+    async getItems(type, sort, limit, options = {}) { return requestPublicList(`/api/items?type=${type}&sort=${sort}&limit=${limit}`, options); },
     async getItemById(itemId, options = {}) { return request(`/api/items/${itemId}`, options); },
     async deleteItem(itemId) { return request(`/api/items/${itemId}`, { method: "DELETE" }); },
     async recordItemUse(itemId) { return request(`/api/items/${itemId}/use`, { method: "POST" }); },
@@ -168,7 +194,7 @@ const api = {
     // 💬 讨论区 API
     // ==========================================
     async getPosts(page = 1, limit = 20, sort = "latest", options = {}) {
-        return request(`/api/posts?page=${page}&limit=${limit}&sort=${sort}`, options);
+        return requestPublicList(`/api/posts?page=${page}&limit=${limit}&sort=${sort}`, options);
     },
     async getPostDetail(postId, options = {}) {
         return request(`/api/posts/${postId}`, options);
@@ -208,7 +234,7 @@ const api = {
         let url = `/api/prompts?page=${page}&limit=${limit}&sort=${sort}`;
         if (promptType) url += `&prompt_type=${promptType}`;
         if (category) url += `&category=${encodeURIComponent(category)}`;
-        return request(url, options);
+        return requestPublicList(url, options);
     },
     async getPromptDetail(promptId, options = {}) {
         return request(`/api/prompts/${promptId}`, options);
@@ -268,7 +294,7 @@ const api = {
     async getTasks(page = 1, limit = 20, status = null, sort = "latest", options = {}) {
         let url = `/api/tasks?page=${page}&limit=${limit}&sort=${sort}`;
         if (status) url += `&status=${status}`;
-        return request(url, options);
+        return requestPublicList(url, options);
     },
     async getTaskDetail(taskId, options = {}) {
         removeCache(`api_/api/tasks/${taskId}`);

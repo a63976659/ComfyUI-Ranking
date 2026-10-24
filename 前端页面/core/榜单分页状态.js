@@ -16,10 +16,11 @@ export function createSidebarPaginationStore() {
             }
             return states.get(key);
         },
-        findCompleteData(tab) {
+        findCompleteData(tab, readData = state => state.allData) {
             for (const [key, state] of states) {
-                if (key.startsWith(`${tab}_`) && state.allData.length > 0 && state.isFullyLoaded) {
-                    return state.allData;
+                if (key.startsWith(`${tab}_`) && state.allData.length > 0 && state.isFullyLoaded && !state.isSearchResult) {
+                    const data = readData(state, key.slice(tab.length + 1));
+                    if (Array.isArray(data) && data.length > 0) return data;
                 }
             }
             return null;

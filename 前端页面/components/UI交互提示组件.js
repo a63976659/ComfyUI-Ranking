@@ -894,10 +894,12 @@ export function createInstallProgress(container) {
 
     return {
         update(progress, message) {
-            const p = Math.max(0, Math.min(100, progress));
-            fill.style.width = `${p}%`;
-            percent.textContent = `${p}%`;
-            progressTrack.setAttribute("aria-valuenow", String(p));
+            if (Number.isFinite(progress)) {
+                const p = Math.max(0, Math.min(100, progress));
+                fill.style.width = `${p}%`;
+                percent.textContent = `${p}%`;
+                progressTrack.setAttribute("aria-valuenow", String(p));
+            }
             if (message) {
                 stage.textContent = message;
                 progressTrack.setAttribute("aria-valuetext", message);

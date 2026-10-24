@@ -16,12 +16,14 @@
 //   - 增强缓存策略
 // ==========================================
 
-import { fetchSidebarList, readSidebarListCache, readCreatorsSessionCache as getCreatorsFromSessionStorage,
+import { fetchSidebarList, getSidebarResponseCacheSource, readSidebarListCache, readCreatorsSessionCache as getCreatorsFromSessionStorage,
     writeCreatorsSessionCache as saveCreatorsToSessionStorage } from "./榜单数据来源.js";
 import { mountSidebarDomainView } from "./榜单视图切换.js";
 import { setupSidebarPagination as _setupPaginationLoader } from "./榜单分页控制.js";
 import { createSidebarPaginationStore } from "./榜单分页状态.js";
 import { sortDataLocally, filterItemsByKeyword, searchCreatorsLocally } from "./榜单本地查询.js";
+import { getSidebarListCacheKey } from "./全局配置.js";
+import { captureCacheSource, captureCacheWrite } from "./网络请求_缓存管理.js";
 
 import { api } from "./网络请求API.js";
 import { proxyImages } from "./网络请求API.js";
@@ -96,13 +98,35 @@ function getCacheExpireTime() {
 /**
  * 从同 tab 的任意排序状态中获取已有数据
  */
-const findExistingTabData = tab => paginationStore.findCompleteData(tab);
+function findExistingTabData(tab, freshOnly = true) {
+    let source;
+    const data = paginationStore.findCompleteData(tab, (_state, sort) => {
+        const key = getSidebarListCacheKey(tab, sort);
+        const metadata = readSidebarListCache(key, { creators: tab === 'creators' });
+        if (!metadata.found || (freshOnly && metadata.expired)) return null;
+        const candidate = captureCacheSource(key);
+        if (!candidate?.isAvailable() || (freshOnly && !candidate.isFresh())) return null;
+        source = candidate;
+        return metadata.value === _state.allData ? _state.allData : proxyImages(metadata.value);
+    });
+    return data ? { data, source } : null;
+}
+
+function saveSidebarResponse(cacheKey, data, rawData) {
+    const cachedResponse = getSidebarResponseCacheSource(rawData);
+    if (cachedResponse) return cachedResponse.source?.copyTo(cacheKey, data) || false;
+    setCache(cacheKey, data, getCacheExpireTime(), true);
+    return true;
+}
 
 // ==========================================
 // 📦 分页状态管理
 // ==========================================
 // 每个标签页独立的分页状态
 const paginationStore = createSidebarPaginationStore();
+const contentReadOwners = new WeakMap();
+const ownedRenderGetters = new WeakMap();
+const expiredRenderToken = Symbol();
 const getPaginationState = (tab, sort) => paginationStore.get(tab, sort);
 
 export function disposeSidebarContent(contentArea) {
@@ -125,6 +149,7 @@ export async function loadSidebarContent({
     tab,
     sort,
     keyword,
+    getViewOptions,
     contentArea,
     currentUser,
     renderToken,
@@ -134,6 +159,12 @@ export async function loadSidebarContent({
     isNavigationCurrent = () => true
 }) {
     if (renderToken !== getRenderToken()) return;
+    const previousGetter = ownedRenderGetters.get(getRenderToken);
+    const getHostRenderToken = previousGetter?.area === contentArea ? previousGetter.getHost : getRenderToken;
+    const readOwner = {};
+    contentReadOwners.set(contentArea, readOwner);
+    getRenderToken = () => contentReadOwners.get(contentArea) === readOwner ? getHostRenderToken() : expiredRenderToken;
+    ownedRenderGetters.set(getRenderToken, { area: contentArea, getHost: getHostRenderToken });
     const canNavigate = () => renderToken === getRenderToken() && isNavigationCurrent();
     // 新榜单取得视图所有权时停止所有旧分页器，保留各榜单已加载数据。
     paginationStore.stopLoaders();
@@ -145,12 +176,13 @@ export async function loadSidebarContent({
         prompts: { loadModule: getPromptsView, factory: 'createPromptsView', errorKey: 'feedback.load_prompts_failed' },
     };
     if (Object.hasOwn(domainViews, tab)) {
-        await mountSidebarDomainView({ contentArea, currentUser, keyword, renderToken, getRenderToken,
+        await mountSidebarDomainView({ contentArea, currentUser, keyword, getViewOptions: force === true
+            ? () => ({ ...getViewOptions?.(), force: true }) : getViewOptions, renderToken, getRenderToken,
             ...domainViews[tab] });
         return;
     }
 
-    const cacheKey = `ListCache_${tab}_${sort}`;
+    const cacheKey = getSidebarListCacheKey(tab, sort);
     const state = getPaginationState(tab, sort);
     const pageSize = tab === "creators" ? CREATORS_PAGE_SIZE : PAGE_SIZE;
     const sameCreatorSearchData = tab === "creators" && keyword && state.isSearchResult &&
@@ -359,9 +391,10 @@ export async function loadSidebarContent({
                 // 防竞态检查1：回调开始执行时验证
                 if (savedToken !== getRenderToken()) return;
 
+                const isReadCurrent = captureCacheWrite(cacheKey);
                 try {
                     const rawData = await fetchSidebarList({ tab: savedTab, sort: savedSort, background: true });
-                    if (savedToken !== getRenderToken()) return;
+                    if (savedToken !== getRenderToken() || !isReadCurrent()) return;
                     const newData = proxyImages(rawData);
 
                     // 防竞态检查2：网络请求完成后再次验证
@@ -377,12 +410,12 @@ export async function loadSidebarContent({
                     }
 
                     // 只有token匹配时才同时更新state.allData和setCache
-                    if (_shouldUpdateData(state.allData, newData)) {
+                    if (_shouldUpdateData(state.allData, newData, savedTab)) {
                         console.log(`✅ ${savedTab}_${savedSort} 检测到新数据，执行静默更新`);
                         state.allData = newData;
                         state.displayedCount = 0; // 重置分页计数
                         // 📴 持久化到 localStorage，保证重启后离线仍可展示
-                        setCache(cacheKey, newData, getCacheExpireTime(), true);
+                        saveSidebarResponse(cacheKey, newData, rawData);
 
                         // 更新创作者 sessionStorage 缓存
                         if (savedTab === "creators") {
@@ -405,7 +438,7 @@ export async function loadSidebarContent({
                         // 导致缓存中的旧版本号被长期锁死、卡片徽章无法出现。
                         // 注意此处刻意不更新 state.allData：首屏已按旧数据渲染，保持二者一致可
                         // 避免分页加载与已渲染卡片错位；新数据在下次进入读取缓存时生效
-                        setCache(cacheKey, newData, getCacheExpireTime(), true);
+                        saveSidebarResponse(cacheKey, newData, rawData);
                     }
                 } catch (err) {
                     if (savedToken !== getRenderToken()) return;
@@ -426,25 +459,25 @@ export async function loadSidebarContent({
     const isCreatorSearchCleared = tab === "creators" && !keyword && state.isSearchResult;
     const skipLocalSort = isCreatorSearching || isCreatorSearchCleared || state.isSearchResult;
     const existingData = findExistingTabData(tab);
-    if (!force && !skipLocalSort && existingData && existingData.length > 0) {
-        const locallySorted = sortDataLocally(existingData, tab, sort);
-        state.allData = locallySorted;
-        state.isFullyLoaded = true;
-        state.displayedCount = 0;  // 重置已显示计数，因为数据重新排序了
+    if (!force && !skipLocalSort && existingData && existingData.data.length > 0 && existingData.source.isFresh()) {
+        const locallySorted = sortDataLocally(existingData.data, tab, sort);
+        if (existingData.source.copyTo(cacheKey, locallySorted)) {
+            state.allData = locallySorted;
+            state.isFullyLoaded = true;
+            state.displayedCount = 0;  // 重置已显示计数，因为数据重新排序了
 
-        // 首屏渲染（先过滤再切片）
-        const scopedSorted = _applySearchScope(locallySorted);
-        renderBatch(scopedSorted.slice(0, pageSize), false);
+            // 首屏渲染（先过滤再切片）
+            const scopedSorted = _applySearchScope(locallySorted);
+            renderBatch(scopedSorted.slice(0, pageSize), false);
 
-        // 启动分页加载器
-        if (scopedSorted.length > pageSize) {
-            _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab, renderToken, getRenderToken);
+            // 启动分页加载器
+            if (scopedSorted.length > pageSize) {
+                _setupPaginationLoader(contentArea, state, pageSize, loadMoreData, keyword, tab, renderToken, getRenderToken);
+            }
+
+            // 存入当前排序的缓存（📴 创作者数据同样持久化到 localStorage，保证重启后离线可展示）
+            return; // 本地排序后直接返回，不需要后台刷新（数据是同一批）
         }
-
-        // 存入当前排序的缓存（📴 创作者数据同样持久化到 localStorage，保证重启后离线可展示）
-        setCache(cacheKey, locallySorted, getCacheExpireTime(), true);
-
-        return; // 本地排序后直接返回，不需要后台刷新（数据是同一批）
     }
 
     // ========== 🚀 缓存先行：阻塞前先用本地已有数据上屏 ==========
@@ -463,6 +496,7 @@ export async function loadSidebarContent({
             const sessionData = getCreatorsFromSessionStorage();
             if (Array.isArray(sessionData) && sessionData.length > 0) instantData = sessionData;
         }
+        if (!instantData && !isCreatorSearching) instantData = findExistingTabData(tab, false)?.data || null;
         if (instantData) {
             console.log(`🚀 ${tab}_${sort} 缓存先行：先用本地数据渲染首屏，网络请求转后台`);
             // 🚀 与上方缓存命中分支同口径：本地数据也过一遍图片代理（proxyImages 内部会先剥除
@@ -493,8 +527,14 @@ export async function loadSidebarContent({
 
     // ========== 从网络加载数据 ==========
     try {
+        const isReadCurrent = captureCacheWrite(cacheKey);
         const rawData = await fetchSidebarList({ tab, sort, keyword, force });
         if (renderToken !== getRenderToken()) return;
+        if (!isReadCurrent()) {
+            const error = new Error();
+            error.name = "ListCacheChangedError";
+            throw error;
+        }
         const realData = proxyImages(rawData);
         if (renderToken !== getRenderToken()) return;
         if (tab === 'creators') {
@@ -510,7 +550,7 @@ export async function loadSidebarContent({
         if (isEmptyOverwrite) {
             console.warn(`🛡️ ${tab}_${sort} 云端返回空列表，保留本地数据，不覆盖缓存`);
         } else if (!isCreatorSearch) {
-            setCache(cacheKey, realData, getCacheExpireTime(), true);
+            saveSidebarResponse(cacheKey, realData, rawData);
         }
 
         // 创作者非搜索数据存入 sessionStorage（用于离线降级）
@@ -528,7 +568,7 @@ export async function loadSidebarContent({
         // 🚀 缓存先行场景：网络数据与已上屏的本地数据无实质差异时不重渲染，避免清屏重画
         // 打断用户已经滚动的阅读位置（与上方后台静默刷新同口径）。缓存已在上面回写权威新数据，
         // 此处刻意不更新 state.allData，保持与已渲染卡片一致，防止分页加载错位
-        if (renderedInstant && !_shouldUpdateData(state.allData, realData)) {
+        if (renderedInstant && !_shouldUpdateData(state.allData, realData, tab)) {
             return;
         }
 
@@ -551,6 +591,17 @@ export async function loadSidebarContent({
         // 并弹提示，缺少守卫会让过期结果覆盖掉新内容
         if (renderToken !== getRenderToken()) {
             console.warn(`⏹️ ${tab}_${sort} 请求已过期，忽略本次失败`);
+            return;
+        }
+        if (error?.name === "ListCacheChangedError") {
+            if (renderedInstant) {
+                if (force) showToast(t('feedback.list_changed_retry'), 'warning');
+                return;
+            }
+            renderListLoadError(contentArea, t('feedback.list_changed_retry'), () => loadSidebarContent({
+                tab, sort, keyword, contentArea, currentUser, renderToken, getRenderToken,
+                force: true, expandItemId, isNavigationCurrent
+            }), t);
             return;
         }
         // 🔍 主动撤销（上方 cancelAll）不是网络故障：用户只是又敲了一个字，
@@ -594,8 +645,8 @@ export async function loadSidebarContent({
             let fallbackData = null;
 
             // 1. 优先从当前内存状态获取
-            if (state.allData && state.allData.length > 0 &&
-                (!state.isSearchResult || state.searchKeyword === keyword)) {
+            if (keyword && state.isSearchResult && state.searchKeyword === keyword &&
+                state.allData && state.allData.length > 0) {
                 fallbackData = state.allData;
             }
             // 2. 从本地列表缓存获取（含过期缓存，搜索结果不入库故不会污染）
@@ -608,7 +659,7 @@ export async function loadSidebarContent({
             }
             // 4. 从其他排序状态获取
             if (!fallbackData) {
-                fallbackData = findExistingTabData("creators");
+                fallbackData = findExistingTabData("creators", false)?.data || null;
             }
 
             if (fallbackData && fallbackData.length > 0) {
@@ -633,6 +684,8 @@ export async function loadSidebarContent({
                 // 按当前排序排序
                 displayData = sortDataLocally(displayData, tab, sort);
                 state.allData = displayData;
+                state.isSearchResult = !!keyword;
+                state.searchKeyword = keyword || '';
                 // 统一走 _applySearchScope（创作者Tab恒等返回，数据已由上方
                 // searchCreatorsLocally 过滤），保证各渲染入口口径完全一致
                 const scopedFallback = _applySearchScope(displayData);
@@ -684,28 +737,45 @@ function _isEmptyOverwrite(newData, ...localData) {
     return localData.some(d => Array.isArray(d) && d.length > 0);
 }
 
-/** 判断是否需要更新数据 —— 对比ID顺序和关键字段 */
-function _shouldUpdateData(oldData, newData) {
+/** 比较列表记录，不比较创作者卡片按需加载的私有详情。 */
+function _shouldUpdateData(oldData, newData, tab) {
     if (!oldData || !newData) return true;
     if (oldData.length !== newData.length) return true;
-
-    // 检查ID顺序是否一致（检测排序变化、新增/删除）
-    // 比对条数覆盖首屏渲染量（PAGE_SIZE），避免首屏可见卡片（第 11~20 条）的版本/数字更新被漏检
-    const checkCount = Math.min(PAGE_SIZE, oldData.length);
-    for (let i = 0; i < checkCount; i++) {
-        const oldId = oldData[i].id || oldData[i].account;
-        const newId = newData[i].id || newData[i].account;
-        if (oldId !== newId) return true;
-
-        // 检查关键数字字段
-        const keyFields = ['likes', 'downloads', 'uses', 'views', 'daily_views', 'recent_tips', 'favorites', 'rating_avg', 'rating_count'];
-        for (const field of keyFields) {
+    const fields = tab === 'creators'
+        ? ['account', 'name', 'shortDesc', 'fullDesc', 'avatar', 'bannerUrl', 'created_at']
+        : ['id', 'title', 'name', 'account', 'shortDesc', 'fullDesc', 'type', 'author', 'price', 'pending_price',
+            'pending_price_effective_at', 'is_original', 'allow_refund', 'has_private_token',
+            'is_netdisk', 'link', 'latest_version', 'created_at', 'coverUrl', 'imageUrls',
+            'commentsData', 'liked_by', 'favorited_by', 'rated_by', 'rating_dist', 'tip_board',
+            'use_history', 'tip_history'];
+    const numbers = ['likes', 'downloads', 'uses', 'views', 'daily_views', 'recent_tips',
+        'favorites', 'rating_avg', 'rating_count', 'comments', 'toolsCount', 'skillsCount',
+        'appsCount', 'followers'];
+    const equalValue = (left, right) => {
+        if (Object.is(left, right)) return true;
+        const leftValues = [left], rightValues = [right];
+        while (leftValues.length) {
+            const a = leftValues.pop(), b = rightValues.pop();
+            if (Object.is(a, b)) continue;
+            if (!a || !b || typeof a !== 'object' || typeof b !== 'object' ||
+                Array.isArray(a) !== Array.isArray(b)) return false;
+            if (Array.isArray(a) && a.length !== b.length) return false;
+            const keys = Object.keys(a);
+            if (keys.length !== Object.keys(b).length) return false;
+            for (const key of keys) {
+                if (!Object.hasOwn(b, key)) return false;
+                leftValues.push(a[key]); rightValues.push(b[key]);
+            }
+        }
+        return true;
+    };
+    for (let i = 0; i < oldData.length; i++) {
+        for (const field of fields) {
+            if (!equalValue(oldData[i][field], newData[i][field])) return true;
+        }
+        for (const field of numbers) {
             if ((oldData[i][field] || 0) !== (newData[i][field] || 0)) return true;
         }
-
-        // 检查版本号（字符串）：云端扫描到插件新版本时往往只有 latest_version 变化，
-        // 点赞/下载/浏览等数字字段全不动；若不比对它，卡片上的"可更新"徽章将永远刷不出来
-        if ((oldData[i].latest_version || '') !== (newData[i].latest_version || '')) return true;
     }
     return false;
 }

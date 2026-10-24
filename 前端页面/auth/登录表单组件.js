@@ -1,11 +1,12 @@
+import { createAuthFormScope, createAuthFieldFeedback } from "./认证表单生命周期.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 
 export function renderLoginForm(container, switchView, onSuccessCallback) {
     container.innerHTML = `
         <div class="auth-login">
-            <div class="auth-login__field"><label for="login-account">${t('auth.account')} <span class="auth-login__required" aria-hidden="true">*</span></label><input type="text" id="login-account" name="username" autocomplete="username" required class="auth-login__input"></div>
-            <div class="auth-login__field"><label for="login-password">${t('auth.password')} <span class="auth-login__required" aria-hidden="true">*</span></label><input type="password" id="login-password" name="password" autocomplete="current-password" required class="auth-login__input"></div>
+            <div class="auth-login__field"><label for="login-account">${t('auth.account')} <span class="auth-login__required ranking-required-marker" aria-hidden="true"></span></label><input type="text" id="login-account" name="username" autocomplete="username" required class="auth-login__input"></div>
+            <div class="auth-login__field"><label for="login-password">${t('auth.password')} <span class="auth-login__required ranking-required-marker" aria-hidden="true"></span></label><input type="password" id="login-password" name="password" autocomplete="current-password" required class="auth-login__input"></div>
             <div class="auth-login__options">
                 <div class="auth-login__remember">
                     <input type="checkbox" id="login-remember" checked>
@@ -21,15 +22,20 @@ export function renderLoginForm(container, switchView, onSuccessCallback) {
         </div>
     `;
 
+    const formScope = createAuthFormScope(container);
+    const field = id => container.querySelector('#' + id);
+    const feedback = createAuthFieldFeedback(container, formScope, { notify: showToast });
     container.querySelector("#toggle-to-register").onclick = (e) => { e.preventDefault(); switchView("register"); };
     container.querySelector("#toggle-to-reset").onclick = (e) => { e.preventDefault(); switchView("reset"); };
     container.querySelector("#toggle-to-recover").onclick = (e) => { e.preventDefault(); switchView("recover"); };
     container.querySelector("#btn-submit-login").onclick = () => {
+        if (!formScope.current()) return;
+        feedback.clear();
         const account = container.querySelector("#login-account").value.trim();
         const password = container.querySelector("#login-password").value;
         const remember = container.querySelector("#login-remember").checked;
 
-        if (!account || !password) return showToast(t('auth.account_password_required'), "warning");
+        if (!account || !password) return feedback.report([['login-account', account], ['login-password', password]].filter(([, value]) => !value).map(([id]) => field(id)), t('auth.account_password_required'));
 
         const formData = { type: "login", account, password, remember };
         if (onSuccessCallback) onSuccessCallback(formData);

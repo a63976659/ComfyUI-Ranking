@@ -48,13 +48,6 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
         container.querySelector('#qr-image')?.removeAttribute('src');
     });
     container._cleanup = () => scope.dispose();
-    let balanceText = t('wallet.recharge.balance_unavailable');
-    try {
-        const wallet = normalizeWalletData(await api.getWallet(account, readOptions));
-        if (!scope.isCurrent()) return;
-        if (Number.isSafeInteger(wallet.balance)) balanceText = String(wallet.balance);
-    } catch (_) { if (!scope.isCurrent()) return; }
-
     container.className = "wallet-modal wallet-modal--recharge";
 
     const rechargeOptions = [
@@ -85,7 +78,7 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
     container.innerHTML = `
         <div class="wallet-recharge__balance">
             <div class="wallet-modal__muted">${t('wallet.recharge.current_balance')}</div>
-            <div class="wallet-recharge__balance-value">${balanceText} <span class="wallet-recharge__balance-unit">${t('wallet.recharge.points_suffix')}</span></div>
+            <div class="wallet-recharge__balance-value" data-recharge-balance role="status" aria-live="polite" aria-busy="true"><span data-recharge-balance-value>${t('common.loading')}</span> <span data-recharge-balance-unit class="wallet-recharge__balance-unit" hidden>${t('wallet.recharge.points_suffix')}</span></div>
         </div>
         
         <div class="wallet-modal__field">
@@ -234,7 +227,7 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
             pollingTimer = setTimeout(poll, UI.RECHARGE_POLL_INTERVAL);
         } catch (error) {
             if (!scope.isCurrent()) return;
-            const rejected = [400, 401, 403, 404, 422, 429].includes(error.status);
+            const rejected = (error.requestBodyRejected === true || [400, 401, 403, 404, 422, 429].includes(error.status));
             qrLoading.textContent = t(rejected ? 'wallet.recharge.order_failed' : 'wallet.recharge.order_uncertain');
             if (rejected) {
                 submitting = false;
@@ -249,4 +242,15 @@ export async function openRechargeModal(currentUser, onBalanceChange) {
     modalElement = globalModal.activeModals.find(modal => modal.contains(container));
     constructing = false;
     observer.observe(document.body, { childList: true, subtree: true });
+
+    let balance;
+    try {
+        const wallet = normalizeWalletData(await api.getWallet(account, readOptions));
+        if (!scope.isCurrent()) return;
+        if (Number.isSafeInteger(wallet.balance)) balance = wallet.balance;
+    } catch (_) { if (!scope.isCurrent()) return; }
+    container.querySelector('[data-recharge-balance-value]').textContent = balance === undefined
+        ? t('wallet.recharge.balance_unavailable') : String(balance);
+    container.querySelector('[data-recharge-balance-unit]').hidden = balance === undefined;
+    container.querySelector('[data-recharge-balance]').setAttribute('aria-busy', 'false');
 }

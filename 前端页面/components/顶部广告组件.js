@@ -311,140 +311,58 @@ export async function refreshBanner() {
  */
 function createBannerDetailView() {
     const wrapper = document.createElement("div");
-    Object.assign(wrapper.style, {
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        backgroundColor: "#1a1a1a",
-        color: "#fff"
-    });
+    wrapper.className = "banner-detail";
 
-    // 顶部返回栏
     const topBar = document.createElement("div");
-    Object.assign(topBar.style, {
-        display: "flex",
-        alignItems: "center",
-        padding: "12px 16px",
-        borderBottom: "1px solid #333",
-        flexShrink: "0"
-    });
+    topBar.className = "banner-detail__header";
 
     const backBtn = document.createElement("button");
-    Object.assign(backBtn.style, {
-        marginLeft: "15px",
-        marginTop: "20px",
-        background: "rgba(51,51,51,0.8)",
-        border: "1px solid rgba(85,85,85,0.8)",
-        color: "#fff",
-        cursor: "pointer",
-        fontSize: "13px",
-        padding: "6px 14px",
-        borderRadius: "6px",
-        fontWeight: "bold",
-        display: "flex",
-        alignItems: "center",
-        gap: "6px",
-        boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
-        transition: "0.2s"
-    });
+    backBtn.type = "button";
+    backBtn.className = "about-back banner-detail__back";
     backBtn.textContent = `⬅ ${t("common.back")}`;
-    backBtn.onmouseover = () => {
-        backBtn.style.background = "#4CAF50";
-        backBtn.style.borderColor = "#4CAF50";
-    };
-    backBtn.onmouseout = () => {
-        backBtn.style.background = "rgba(51,51,51,0.8)";
-        backBtn.style.borderColor = "rgba(85,85,85,0.8)";
-    };
     backBtn.onclick = () => {
         window.dispatchEvent(new CustomEvent("comfy-route-back"));
     };
 
-    const pageTitle = document.createElement("span");
+    const pageTitle = document.createElement("h2");
+    pageTitle.className = "banner-detail__heading";
     pageTitle.textContent = activeConfig.title || t("common.advertisement_details");
-    Object.assign(pageTitle.style, {
-        marginLeft: "12px",
-        fontSize: "16px",
-        fontWeight: "bold"
-    });
-
     topBar.appendChild(backBtn);
     topBar.appendChild(pageTitle);
 
-    // 内容区（可滚动）
     const content = document.createElement("div");
-    Object.assign(content.style, {
-        flex: "1",
-        overflowY: "auto",
-        padding: "24px 20px",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: "20px"
-    });
+    content.className = "banner-detail__content";
 
-    // 广告标题
     if (activeConfig.title) {
         const titleEl = document.createElement("h2");
+        titleEl.className = "banner-detail__title";
         titleEl.textContent = activeConfig.title;
-        Object.assign(titleEl.style, {
-            margin: "0",
-            fontSize: "22px",
-            fontWeight: "bold",
-            textAlign: "center"
-        });
         content.appendChild(titleEl);
     }
 
-    // 广告描述
     if (activeConfig.description) {
         const descEl = document.createElement("p");
+        descEl.className = "banner-detail__description";
         descEl.textContent = activeConfig.description;
-        Object.assign(descEl.style, {
-            margin: "0",
-            fontSize: "15px",
-            color: "#aaa",
-            textAlign: "center",
-            lineHeight: "1.6"
-        });
         content.appendChild(descEl);
     }
 
-    // 广告大图
     if (activeConfig.detailImage) {
         const detailImg = document.createElement("img");
+        detailImg.className = "banner-detail__image";
         detailImg.src = activeConfig.detailImage;
         detailImg.alt = activeConfig.title || t("common.advertisement_details_image");
-        Object.assign(detailImg.style, {
-            maxWidth: "100%",
-            borderRadius: "8px"
-        });
         content.appendChild(detailImg);
     }
 
-    // 详细内容
     if (activeConfig.detailContent) {
         const detailEl = document.createElement("div");
-        Object.assign(detailEl.style, {
-            width: "100%",
-            maxWidth: "600px",
-            padding: "20px",
-            backgroundColor: "#252525",
-            borderRadius: "8px",
-            lineHeight: "1.8",
-            fontSize: "14px",
-            color: "#ddd",
-            whiteSpace: "pre-wrap",
-            wordWrap: "break-word"
-        });
-        // 支持HTML内容
+        detailEl.className = "banner-detail__rich-content";
         detailEl.replaceChildren(sanitizeBannerDetailContent(activeConfig.detailContent));
         content.appendChild(detailEl);
     }
 
     wrapper.appendChild(topBar);
     wrapper.appendChild(content);
-
     return wrapper;
 }

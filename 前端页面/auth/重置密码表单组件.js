@@ -1,4 +1,4 @@
-import { createAuthFormScope } from "./认证表单生命周期.js";
+import { createAuthFormScope, createAuthFieldFeedback } from "./认证表单生命周期.js";
 import { api } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
@@ -6,25 +6,27 @@ import { t } from "../components/用户体验增强.js";
 export function renderResetForm(container, switchView, onSuccessCallback, prefill = null) {
     container.innerHTML = `
         <div class="auth-form">
-            <div class="auth-form__field"><label for="reset-account">${t('auth.current_account')} <span class="auth-form__required" aria-hidden="true">*</span></label><input type="text" id="reset-account" class="auth-form__input" name="username" autocomplete="username" required></div>
+            <div class="auth-form__field"><label for="reset-account">${t('auth.current_account')} <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label><input type="text" id="reset-account" class="auth-form__input" name="username" autocomplete="username" required></div>
             <fieldset class="auth-form__security">
                 <legend>${t('auth.security_verify')}</legend>
-                <label for="reset-verify">${t('auth.bound_email')} <span class="auth-form__required" aria-hidden="true">*</span></label>
+                <label for="reset-verify">${t('auth.bound_email')} <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label>
                 <div class="auth-form__code-row">
                     <input type="email" id="reset-verify" name="email" autocomplete="email" required placeholder="${t('auth.enter_bound_email')}" class="auth-form__input">
                     <button type="button" id="btn-send-code" class="auth-form__button">${t('auth.get_code')}</button>
                 </div>
-                <label for="reset-code">${t('auth.verification_code')} <span class="auth-form__required" aria-hidden="true">*</span></label>
+                <label for="reset-code">${t('auth.verification_code')} <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label>
                 <input type="text" id="reset-code" name="verification-code" autocomplete="one-time-code" inputmode="numeric" required placeholder="${t('auth.enter_6_digit_code')}" maxlength="6" class="auth-form__input">
             </fieldset>
             <div class="auth-form__field"><label for="reset-old-password">${t('auth.old_password')} (${t('auth.old_password_tip')})</label><input type="password" id="reset-old-password" class="auth-form__input" name="old-password" autocomplete="current-password" placeholder="${t('auth.old_password_placeholder')}"></div>
-            <div class="auth-form__field"><label for="reset-new-password">${t('auth.new_password')} (≥6${t('common.chars')}) <span class="auth-form__required" aria-hidden="true">*</span></label><input type="password" id="reset-new-password" class="auth-form__input" name="new-password" autocomplete="new-password" required></div>
-            <div class="auth-form__field"><label for="reset-confirm-password">${t('auth.confirm_new_password')} <span class="auth-form__required" aria-hidden="true">*</span></label><input type="password" id="reset-confirm-password" class="auth-form__input" name="confirm-password" autocomplete="new-password" required></div>
+            <div class="auth-form__field"><label for="reset-new-password">${t('auth.new_password')} (≥6${t('common.chars')}) <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label><input type="password" id="reset-new-password" class="auth-form__input" name="new-password" autocomplete="new-password" required></div>
+            <div class="auth-form__field"><label for="reset-confirm-password">${t('auth.confirm_new_password')} <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label><input type="password" id="reset-confirm-password" class="auth-form__input" name="confirm-password" autocomplete="new-password" required></div>
             <button type="button" id="btn-submit-reset" class="auth-form__button auth-form__primary">${t('auth.change_password')}</button>
             <div class="auth-form__footer"><button type="button" id="toggle-to-login" class="auth-form__link">${t('auth.back_to_login')}</button></div>
         </div>
     `;
     const formScope = createAuthFormScope(container);
+    const field = id => container.querySelector('#' + id);
+    const feedback = createAuthFieldFeedback(container, formScope, { notify: showToast, relatedFields: [[field('reset-new-password'), field('reset-confirm-password')]] });
 
     container.querySelector("#toggle-to-login").onclick = (e) => { e.preventDefault(); switchView("login"); };
 
@@ -60,15 +62,16 @@ export function renderResetForm(container, switchView, onSuccessCallback, prefil
     btnSendCode.onclick = async (e) => {
         e.preventDefault();
         if (!formScope.current() || btnSendCode.disabled) return;
+        feedback.clear([field('reset-account'), field('reset-verify')]);
         
         // 先抓取上方输入的账号，没填就不让发验证码
         const accountInput = container.querySelector("#reset-account").value.trim();
-        if (!accountInput) return showToast(t('auth.enter_account_first'), "warning");
+        if (!accountInput) return feedback.report([field('reset-account')], t('auth.enter_account_first'));
 
         const verifyInput = container.querySelector("#reset-verify").value.trim();
         const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(verifyInput);
         
-        if (!isEmail) return showToast(t('auth.invalid_email'), "error");
+        if (!isEmail) return feedback.report([field('reset-verify')], t('auth.invalid_email'), "error");
         
         const contactType = "email";
         
@@ -93,6 +96,8 @@ export function renderResetForm(container, switchView, onSuccessCallback, prefil
     };
 
     container.querySelector("#btn-submit-reset").onclick = () => {
+        if (!formScope.current()) return;
+        feedback.clear();
         const acc = container.querySelector("#reset-account").value.trim();
         const verify = container.querySelector("#reset-verify").value.trim();
         const code = container.querySelector("#reset-code").value.trim();
@@ -100,12 +105,12 @@ export function renderResetForm(container, switchView, onSuccessCallback, prefil
         const np = container.querySelector("#reset-new-password").value;
         const cp = container.querySelector("#reset-confirm-password").value;
         
-        if (!acc || !verify || !np || !code) return showToast(t('auth.reset_required_fields'), "warning");
-        if (code.length !== 6) return showToast(t('auth.invalid_code'), "warning");
+        if (!acc || !verify || !np || !code) return feedback.report([['reset-account', acc], ['reset-verify', verify], ['reset-new-password', np], ['reset-code', code]].filter(([, value]) => !value).map(([id]) => field(id)), t('auth.reset_required_fields'));
+        if (code.length !== 6) return feedback.report([field('reset-code')], t('auth.invalid_code'));
         
 
-        if (np !== cp) return showToast(t('auth.password_mismatch'), "error");
-        if (np.length < 6) return showToast(t('auth.password_format_error'), "error");
+        if (np !== cp) return feedback.report([field('reset-confirm-password')], t('auth.password_mismatch'), "error");
+        if (np.length < 6) return feedback.report([field('reset-new-password')], t('auth.password_format_error'), "error");
 
         const formData = { 
             type: "reset", 

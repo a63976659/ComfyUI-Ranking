@@ -5,12 +5,16 @@ import { api, captureRequestSession, requestCancelManager } from "../core/网络
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
 import { API, CACHE, PLACEHOLDERS, normalizeProfileImageUrl } from "../core/全局配置.js";
-import { t } from "../components/用户体验增强.js";
+import { t, getLanguage } from "../components/用户体验增强.js";
 import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
 import { eventBus, EVENTS, getUser } from "../core/状态管理.js";
 import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务视图生命周期.js";
 let notificationSequence = 0;
+
+function notificationTimestamp(timestamp) {
+    return timestamp >= 1e12 ? timestamp : timestamp * 1000;
+}
 
 // 🚀 本地存储键管理
 const getNotifCacheKey = (account) => `${CACHE.LOCAL_KEYS.NOTIFICATIONS}_${account}`;
@@ -148,8 +152,8 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             // 【核心新增】：系统公告的正文排版，保留原格式的换行
             else if (isSystem) actionText = `<div class="notification-announcement">${escapeHtml(msg.content)}</div>`;
             
-            const date = new Date(msg.created_at >= 1e12 ? msg.created_at : msg.created_at * 1000);
-            const timeStr = date.toLocaleString();
+            const date = new Date(notificationTimestamp(msg.created_at));
+            const timeStr = date.toLocaleString(getLanguage());
             
             // 【核心新增】：如果是系统消息，增加 📢 标签并改变标题颜色
             // 匿名打赏和系统通知的用户名不显示为链接
@@ -268,9 +272,9 @@ export async function openNotificationCenter(currentUser, bellBtn) {
         if (res?.status !== 'success' || !Array.isArray(res.data)) throw new Error('Invalid notifications');
         messages = res.data.filter(msg => msg && typeof msg === 'object' && !Array.isArray(msg)
             && typeof msg.id === 'string' && msg.id && typeof msg.type === 'string'
-            && Number.isFinite(msg.created_at) && Number.isFinite(new Date(msg.created_at >= 1e12 ? msg.created_at : msg.created_at * 1000).getTime())
-            && (msg.created_at >= 1e12 ? msg.created_at : msg.created_at * 1000) > clearTime)
-            .map(msg => ({ ...msg })).sort((a, b) => b.created_at - a.created_at);
+            && Number.isFinite(msg.created_at) && Number.isFinite(new Date(notificationTimestamp(msg.created_at)).getTime())
+            && notificationTimestamp(msg.created_at) > clearTime)
+            .map(msg => ({ ...msg })).sort((a, b) => notificationTimestamp(b.created_at) - notificationTimestamp(a.created_at));
         renderMsgList(messages);
         if (scope.isCurrent()) void loadUnreadCount(currentUser, bellBtn);
     } catch (_) { if (scope.isCurrent() && messages.length === 0) listArea.innerHTML = `<div class="notification-status" role="alert">${t('common.error')}</div>`; }

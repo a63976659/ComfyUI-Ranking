@@ -10,7 +10,7 @@
 // ==========================================
 
 import { api, proxyImages } from "../core/网络请求API.js";
-import { IS_WEB_MODE, getCachedProfile, setCachedProfile } from "../core/全局配置.js";
+import { IS_WEB_MODE, getCachedProfile, setCachedProfile, captureProfileRead } from "../core/全局配置.js";
 import { normalizeProfileData } from "../profile/个人资料工具.js";
 import { openTipModal } from "../profile/个人中心_赞赏组件.js";
 import { getInstalledVersionStatus, setupResourceInstall } from "./资源安装引擎.js";
@@ -265,8 +265,9 @@ export function createItemDetailView(itemData, currentUser) {
     // 🐛 Bug修复：跳过系统页面的作者信息查询（如关于页面）
     if (!itemData.isSystemPage && itemData.author && scope.isCurrent()) {
         const originalNameEl = container.querySelector("#detail-author-name");
+        const profileCurrent = captureProfileRead(itemData.author);
         api.getUserProfile(itemData.author, scope.readOptions).then(res => {
-            if (!scope.isCurrent() || !originalNameEl?.isConnected || container.querySelector("#detail-author-name") !== originalNameEl) return;
+            if (!profileCurrent() || !scope.isCurrent() || !originalNameEl?.isConnected || container.querySelector("#detail-author-name") !== originalNameEl) return;
             if (res?.status !== 'success') return;
             const profile = normalizeProfileData(res.data, itemData.author);
             setCachedProfile(itemData.author, profile);

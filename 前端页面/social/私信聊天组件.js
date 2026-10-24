@@ -32,9 +32,9 @@ const formatRelativeTime = (timestamp) => {
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
     if (minutes < 1) return t('chat.time_just_now');
-    if (minutes < 60) return `${minutes}${t('chat.time_min_ago')}`;
-    if (hours < 24) return `${hours}${t('chat.time_hour_ago')}`;
-    if (days < 7) return `${days}${t('chat.time_day_ago')}`;
+    if (minutes < 60) return t('time.minutes_ago', { n: minutes });
+    if (hours < 24) return t('time.hours_ago', { n: hours });
+    if (days < 7) return t('time.days_ago', { n: days });
     const date = new Date(msgTime);
     // 🔧 去掉 || '月' / || '日' 兜底：这两个词条的英文值是刻意留空的（中文 9月8日 → 英文 9/8），
     // 加了兜底反而会把中文量词引回英文界面（同文件下方的 chat.chatting_suffix 同理）

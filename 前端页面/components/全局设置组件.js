@@ -11,7 +11,8 @@
 import { showToast } from "./UI交互提示组件.js";
 import { setLanguage, getLanguage, t } from "./用户体验增强.js";
 import { clearAllCache } from "./性能优化工具.js";
-import { IS_WEB_MODE, getSettings, saveSettings } from "../core/全局配置.js";
+import { IS_WEB_MODE, LOCAL_PERFORMANCE, getSettings, saveSettings } from "../core/全局配置.js";
+import { getLocalPerformanceStats, clearLocalPerformanceStats } from "../core/本机性能统计.js";
 export { getSettings, saveSettings };
 import { getDiskCacheStats, clearDiskCache } from './缓存管理请求.js';
 
@@ -151,6 +152,23 @@ export function createSettingsView() {
                 ${t('settings.data_cache')}
             </h2>
 
+            <div class="setting-item">
+                <div class="ranking-settings__copy">
+                    <div class="ranking-settings__label" id="label-local-performance">${t('settings.performance_stats')}</div>
+                    <div class="ranking-settings__description" id="desc-local-performance">${t('settings.performance_stats_desc')}</div>
+                </div>
+                <button type="button" role="switch" id="switch-local-performance" aria-labelledby="label-local-performance" aria-describedby="desc-local-performance" class="setting-switch ${settings.enableLocalPerformanceStats === true ? 'active' : ''}"></button>
+            </div>
+            <section id="local-performance-panel" aria-labelledby="label-local-performance" hidden>
+                <div class="ranking-settings__stack setting-item">
+                    <div class="ranking-settings__stats" id="local-performance-stats" role="status" aria-live="polite"></div>
+                    <div class="ranking-settings__actions">
+                        <button type="button" id="btn-refresh-local-performance" class="cache-clear-btn">${t('settings.performance_refresh')}</button>
+                        <button type="button" id="btn-clear-local-performance" class="cache-clear-btn">${t('settings.performance_clear')}</button>
+                    </div>
+                </div>
+            </section>
+
             <!-- 设置项：缓存刷新间隔（滑条） -->
             <div class="ranking-settings__stack setting-item" >
                 <div class="ranking-settings__copy-wide" >
@@ -226,11 +244,12 @@ export function createSettingsView() {
      */
     function _bindSwitchHandler(selector, settingKey, labelKey, iconOn = '✅') {
         const switchEl = container.querySelector(selector);
+        const strictPreference = settingKey === 'enableKeyboardShortcuts' || settingKey === 'enableLocalPerformanceStats';
         switchEl.setAttribute("aria-checked", String(switchEl.classList.contains("active")));
         switchEl.onclick = () => {
-            if (settingKey === 'enableKeyboardShortcuts' && (cacheViewDisposed || !container.isConnected)) return;
+            if (strictPreference && (cacheViewDisposed || !container.isConnected)) return;
             let currentSettings;
-            try { currentSettings = getSettings(settingKey === 'enableKeyboardShortcuts' ? { strict: true } : undefined); }
+            try { currentSettings = getSettings(strictPreference ? { strict: true } : undefined); }
             catch { showToast(t('common.error'), 'error'); return; }
             const previousValue = switchEl.classList.contains("active");
             const newValue = !previousValue;
@@ -239,11 +258,11 @@ export function createSettingsView() {
             currentSettings[settingKey] = newValue;
             const saved = saveSettings(currentSettings);
             let confirmed = saved === true;
-            if (settingKey === 'enableKeyboardShortcuts') {
-                try { confirmed = confirmed && getSettings({ strict: true }).enableKeyboardShortcuts === newValue; }
+            if (strictPreference) {
+                try { confirmed = confirmed && getSettings({ strict: true })[settingKey] === newValue; }
                 catch { confirmed = false; }
             }
-            if (settingKey === 'enableKeyboardShortcuts' && !confirmed) {
+            if (strictPreference && !confirmed) {
                 switchEl.classList.toggle('active', previousValue);
                 switchEl.setAttribute('aria-checked', String(previousValue));
                 showToast(t('common.error'), 'error');
@@ -303,6 +322,7 @@ export function createSettingsView() {
 
     // 🎛️ 开关控制：创作者背景图 / 榜单切换动画 / 动画音效
     _bindSwitchHandler("#switch-keyboard-shortcuts", "enableKeyboardShortcuts", "settings.keyboard_combinations");
+    _bindSwitchHandler("#switch-local-performance", "enableLocalPerformanceStats", "settings.performance_stats");
     _bindSwitchHandler("#switch-creator-banner", "showCreatorBanner", "settings.creator_banner", "✅");
     _bindSwitchHandler("#switch-animations",     "enableAnimations",  "settings.animations",     "✨");
     _bindSwitchHandler("#switch-sound-effects",  "enableSoundEffects", "settings.sound",         "🔊");
@@ -377,6 +397,11 @@ export function createSettingsView() {
         if (cacheViewDisposed) return;
         cacheViewDisposed = true;
         container.querySelector("#switch-keyboard-shortcuts").onclick = null;
+        container.querySelector("#switch-local-performance").onclick = null;
+        refreshPerformance.onclick = null;
+        clearPerformance.onclick = null;
+        window.removeEventListener('comfy-settings-changed', onPerformancePreference);
+        window.removeEventListener('storage', onPerformancePreference);
         languageGeneration++;
         clearTimeout(languageTimer);
         languageTimer = null;
@@ -384,6 +409,43 @@ export function createSettingsView() {
         statsController?.abort();
         statsController = null;
     };
+
+    const performancePanel = container.querySelector('#local-performance-panel');
+    const performanceStats = container.querySelector('#local-performance-stats');
+    const performanceSwitch = container.querySelector('#switch-local-performance');
+    const refreshPerformance = container.querySelector('#btn-refresh-local-performance');
+    const clearPerformance = container.querySelector('#btn-clear-local-performance');
+    function renderPerformanceStats() {
+        const snapshot = getLocalPerformanceStats();
+        performancePanel.hidden = !snapshot.enabled;
+        performanceSwitch.classList.toggle('active', snapshot.enabled);
+        performanceSwitch.setAttribute('aria-checked', String(snapshot.enabled));
+        performanceStats.replaceChildren();
+        if (!snapshot.enabled) return;
+        if (!snapshot.rows.length) {
+            performanceStats.textContent = t('settings.performance_empty');
+            return;
+        }
+        for (const row of snapshot.rows) {
+            const line = document.createElement('div');
+            line.className = 'ranking-settings__stat';
+            line.textContent = `${t(LOCAL_PERFORMANCE.LABELS[row.category])} · ${t('settings.performance_row', { count: row.count, average: (row.totalMs / row.count).toFixed(1), hits: row.cacheHits })}`;
+            performanceStats.appendChild(line);
+        }
+    }
+    function onPerformancePreference() {
+        if (cacheViewDisposed || !container.isConnected) return;
+        renderPerformanceStats();
+    }
+    refreshPerformance.onclick = onPerformancePreference;
+    clearPerformance.onclick = () => {
+        if (cacheViewDisposed || !container.isConnected) return;
+        clearLocalPerformanceStats();
+        renderPerformanceStats();
+    };
+    window.addEventListener('comfy-settings-changed', onPerformancePreference);
+    window.addEventListener('storage', onPerformancePreference);
+    renderPerformanceStats();
 
     async function loadCacheStats() {
         const generation = ++statsGeneration;

@@ -1,6 +1,6 @@
 import { processImageCore as _processImageCore } from "./有界图片处理.js";
 import { validateImageFile } from "./图片文件检查.js";
-import { IMAGE_PROCESS, TYPE_RULES } from "../core/全局配置.js";
+import { IMAGE_PROCESS, TYPE_RULES, getSidebarListCacheKey } from "../core/全局配置.js";
 // 前端页面/market/发布内容_提交引擎.js
 import { createPublishSubmissionScope } from "./发布提交生命周期.js";
 import { api } from "../core/网络请求API.js";
@@ -42,8 +42,8 @@ function clearItemCacheByType(type) {
     // 清除侧边栏数据引擎缓存（只清除对应类型）
     const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
     for (const sort of sorts) {
-        removeCache(`ListCache_${tab}_${sort}`);
-        removeCache(`ListCache_creators_${sort}`);  // 创作者列表
+        removeCache(getSidebarListCacheKey(tab, sort));
+        removeCache(getSidebarListCacheKey('creators', sort));  // 创作者列表
     }
     
     console.log(`🗑️ 已清除 [${tab}] 类型的列表缓存`);
@@ -294,7 +294,7 @@ export async function handlePublishSubmit(params) {
             return;
         }
         // 已发出的保存可能在服务端提交；仅已知前置拒绝允许原表单重试。
-        const rejected = [400, 401, 403, 404, 409, 422, 429].includes(err?.status);
+        const rejected = (err?.requestBodyRejected === true || [400, 401, 403, 404, 409, 422, 429].includes(err?.status));
         outcomeUnknown = saveAttempted && !rejected;
         if (outcomeUnknown) {
             showToast(t('publish.save_unconfirmed'), "warning");

@@ -68,6 +68,20 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         container.querySelectorAll('input').forEach(input => { input.value = ''; });
     });
     container._cleanup = () => scope.dispose();
+    if (!scope.isCurrent()) return;
+    container.className = "wallet-modal wallet-modal--withdraw";
+    container.setAttribute('aria-busy', 'true');
+    const status = document.createElement('div');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.textContent = t('common.loading');
+    container.append(status);
+    const observer = new MutationObserver(() => { if (!container.isConnected) scope.dispose(); });
+    scope.addCleanup(() => observer.disconnect());
+    globalModal.openModal(t('wallet.withdraw.title'), container, { width: "420px" });
+    modalElement = globalModal.activeModals.find(modal => modal.contains(container));
+    constructing = false;
+    observer.observe(document.body, { childList: true, subtree: true });
     let walletData;
     try {
         walletData = normalizeWalletData(await api.getWallet(account, { noCache: true, componentId,
@@ -76,15 +90,14 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         if (!Number.isSafeInteger(walletData.balance) || !Number.isSafeInteger(walletData.total_withdrawn)) throw new Error('wallet unavailable');
     } catch (_) {
         if (scope.isCurrent()) showToast(t('wallet.withdraw.balance_unavailable'), 'warning');
-        scope.dispose(); return;
+        scope.dispose(); globalModal.closeModal(modalElement); return;
     }
     const maxWithdraw = walletData.balance;
     const totalWithdrawn = walletData.total_withdrawn;
     if (maxWithdraw <= 0) {
-        showToast(t('wallet.withdraw.no_balance'), "warning"); scope.dispose(); return;
+        showToast(t('wallet.withdraw.no_balance'), "warning");
+        scope.dispose(); globalModal.closeModal(modalElement); return;
     }
-
-    container.className = "wallet-modal wallet-modal--withdraw";
 
     container.innerHTML = `
         <div class="wallet-withdraw__summary">
@@ -99,7 +112,7 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         </div>
 
         <div class="wallet-modal__field">
-            <label for="withdraw-amount" class="wallet-modal__label">${t('wallet.withdraw.amount_label')} <span class="wallet-modal__danger">*</span></label>
+            <label for="withdraw-amount" class="wallet-modal__label">${t('wallet.withdraw.amount_label')} <span class="wallet-modal__danger ranking-required-marker"></span></label>
             <input type="number" id="withdraw-amount" placeholder="${t('wallet.withdraw.amount_placeholder')}" max="${maxWithdraw}" min="1" step="1" class="wallet-modal__input">
             
             <div id="fee-calc-box" class="wallet-withdraw__fee" style="display:none;">
@@ -108,17 +121,17 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         </div>
 
         <div class="wallet-modal__field">
-            <label for="withdraw-account" class="wallet-modal__label">${t('wallet.withdraw.alipay_account')} <span class="wallet-modal__danger">*</span></label>
+            <label for="withdraw-account" class="wallet-modal__label">${t('wallet.withdraw.alipay_account')} <span class="wallet-modal__danger ranking-required-marker"></span></label>
             <input type="text" id="withdraw-account" placeholder="${t('wallet.withdraw.alipay_placeholder')}" class="wallet-modal__input">
         </div>
 
         <div class="wallet-modal__field">
-            <label for="withdraw-name" class="wallet-modal__label">${t('wallet.withdraw.real_name')} <span class="wallet-modal__danger">*</span></label>
+            <label for="withdraw-name" class="wallet-modal__label">${t('wallet.withdraw.real_name')} <span class="wallet-modal__danger ranking-required-marker"></span></label>
             <input type="text" id="withdraw-name" placeholder="${t('wallet.withdraw.real_name_placeholder')}" class="wallet-modal__input">
         </div>
 
         <div class="wallet-modal__field wallet-modal__field--last">
-            <label for="withdraw-code" class="wallet-modal__label">${t('wallet.withdraw.security_code')} <span class="wallet-modal__danger">*</span></label>
+            <label for="withdraw-code" class="wallet-modal__label">${t('wallet.withdraw.security_code')} <span class="wallet-modal__danger ranking-required-marker"></span></label>
             <div class="wallet-withdraw__code-row">
                 <input type="text" id="withdraw-code" placeholder="${t('wallet.withdraw.code_placeholder')}" maxlength="6" class="wallet-modal__input wallet-withdraw__code-input">
                 <button type="button" id="btn-send-code" class="wallet-modal__button wallet-modal__button--code">${t('wallet.withdraw.get_code')}</button>
@@ -230,7 +243,7 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         } catch (error) {
             clearTimeout(deadline);
             if (!scope.isCurrent()) return;
-            const rejected = [400, 401, 403, 404, 422, 429].includes(error.status);
+            const rejected = (error.requestBodyRejected === true || [400, 401, 403, 404, 422, 429].includes(error.status));
             showToast(t(rejected ? 'wallet.withdraw.submit_failed' : 'wallet.withdraw.timeout'), 'warning');
             if (rejected) {
                 isSubmitting = false;
@@ -244,10 +257,5 @@ export async function openWithdrawModal(currentUser, onSuccess) {
         const input = label.parentElement.querySelector('input');
         if (input) input.setAttribute('aria-label', label.textContent.trim());
     });
-    const observer = new MutationObserver(() => { if (!container.isConnected) scope.dispose(); });
-    scope.addCleanup(() => observer.disconnect());
-    globalModal.openModal(t('wallet.withdraw.title'), container, { width: "420px" });
-    modalElement = globalModal.activeModals.find(modal => modal.contains(container));
-    constructing = false;
-    observer.observe(document.body, { childList: true, subtree: true });
+    container.setAttribute('aria-busy', 'false');
 }

@@ -37,9 +37,13 @@ const _pendingActions = new WeakMap();
  */
 export async function recordView(apiMethod, contentId, cachePrefix, onSuccess = null) {
     // 🚀 登录检查：未登录时跳过浏览量记录，避免 401 错误
-    const token = localStorage.getItem("ComfyCommunity_Token") || sessionStorage.getItem("ComfyCommunity_Token");
+    let token = null;
+    for (const readStorage of [() => localStorage, () => sessionStorage]) {
+        try { token = readStorage()?.getItem("ComfyCommunity_Token"); } catch {}
+        if (token) break;
+    }
     // 🔒 P0同步：旧版 mock_token 已被后端拒绝，仅标准 JWT 格式才记录浏览量
-    if (!token || token.split(".").length !== 3) {
+    if (typeof token !== "string" || token.split(".").length !== 3) {
         return null;
     }
 

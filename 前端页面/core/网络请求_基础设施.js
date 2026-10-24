@@ -11,8 +11,9 @@
 
 import { removeCache, getCacheWithMeta } from "../components/性能优化工具.js";
 import { API, CACHE } from "./全局配置.js";
+import { beginLocalPerformanceSample } from "./本机性能统计.js";
 import { eventBus, EVENTS, logoutAndClearUserData, isOnline, isCloudReachable, markCloudDown, markCloudUp } from "./状态管理.js";
-import { CACHE_CONFIG, CACHE_INVALIDATION_MAP, invalidateRelatedCache, _getCacheTTL, getCache, setCache, isPrivateApiGet } from "./网络请求_缓存管理.js";
+import { CACHE_CONFIG, CACHE_INVALIDATION_MAP, invalidateRelatedCache, _getCacheTTL, getCache, setCache, isPrivateApiGet, captureCacheWrite, captureCacheSource } from "./网络请求_缓存管理.js";
 import { unproxyImages } from "./网络请求_图片代理.js";
 // 🔧 直接引入 i18n 叶子模块（而非 用户体验增强.js）：本文件处于依赖链最上游，
 // 引入带 DOM 初始化副作用的增强层可能造成启动时序问题；国际化模块无副作用、零循环依赖
@@ -33,6 +34,19 @@ const BASE_URL = API.BASE_URL;
 
 // ⚡ P1性能优化：请求去重（相同GET请求只发一次）
 const pendingRequests = new Map();
+const cacheReadOwners = new Map();
+const pendingRequestGuards = new WeakMap();
+const responseCacheSources = new WeakMap();
+
+function _cachedResponse(value, source) {
+    if (value && typeof value === 'object') responseCacheSources.set(value, { source });
+    return value;
+}
+
+export function getResponseCacheSource(value) {
+    return responseCacheSources.get(value) || null;
+}
+
 
 function withRequestDiagnostic(error, response, data = null) {
     let headerId;
@@ -47,6 +61,10 @@ function withRequestDiagnostic(error, response, data = null) {
 }
 
 function httpErrorMessage(data, status) {
+    if (typeof data.detail === 'string' && Object.hasOwn(API.REQUEST_BODY_ERRORS, data.detail)) {
+        const rule = API.REQUEST_BODY_ERRORS[data.detail];
+        if (rule.status === status) return t(rule.msgKey);
+    }
     if (Array.isArray(data.detail)) return t('feedback.invalid_request_data');
     for (const value of [data.detail, data.message, data.error]) {
         if (typeof value === 'string' && value.trim()) return value;
@@ -276,6 +294,12 @@ const requestQueue = {
 };
 
 async function request(endpoint, options = {}) {
+    const sample = beginLocalPerformanceSample(endpoint, options.method || 'GET');
+    try { return await performRequest(endpoint, options, sample); }
+    finally { sample?.finish(); }
+}
+
+async function performRequest(endpoint, options = {}, sample = null) {
     const privateRead = (options.method || "GET").toUpperCase() === "GET" && isPrivateApiGet(endpoint);
     if (privateRead) {
         removeCache(`api_${endpoint}`);
@@ -285,6 +309,8 @@ async function request(endpoint, options = {}) {
     if (options.noStore) options = { ...options, noCache: true, cache: "no-store" };
     const url = `${BASE_URL}${endpoint}`;
     const method = (options.method || "GET").toUpperCase();
+    const validateResponse = method === "GET" ? options.validateResponse ?? null : null;
+    if (validateResponse !== null && typeof validateResponse !== "function") throw new TypeError("Invalid response validator");
     const headers = { ...options.headers };
     if (!(options.body instanceof FormData)) { headers["Content-Type"] = "application/json"; }
     const token = _safeGetAuthToken();
@@ -321,12 +347,33 @@ async function request(endpoint, options = {}) {
     // 🔑 P0修复：cacheKey 必须包含完整 endpoint（含查询参数），不能截断 '?' 之后的部分
     // 例：'/api/items?type=tool&sort=time' 和 '/api/items?type=tool&sort=views' 必须产生不同的缓存 Key
     const cacheKey = `api_${endpoint}`;
+    const readValidatedCacheMeta = () => {
+        const metadata = getCacheWithMeta(cacheKey, true);
+        if (metadata.found && validateResponse) {
+            const source = captureCacheSource(cacheKey);
+            try { validateResponse(metadata.value); }
+            catch {
+                source?.discard();
+                return { value: null, expired: false, found: false };
+            }
+        }
+        return metadata;
+    };
+    const isRequestCacheCurrent = method === "GET" && !options.noStore ? captureCacheWrite(cacheKey) : null;
+    let isCacheWriteCurrent = isRequestCacheCurrent;
     const trackPendingRequest = method === "GET" && !options.noCache;
+    const trackCacheOwner = method === "GET" && !options.noStore;
     if (method === "GET" && !options.noCache) {
-        const cached = getCache(cacheKey);
+        let cached = getCache(cacheKey);
+        const source = cached ? captureCacheSource(cacheKey) : null;
+        if (cached && validateResponse) {
+            try { validateResponse(cached); }
+            catch { source?.discard(); cached = null; }
+        }
         if (cached) {
             const proxyFn = await getProxyImages();
-            return proxyFn(cached);
+            sample?.cacheHit();
+            return _cachedResponse(proxyFn(cached), source);
         }
     }
     
@@ -334,12 +381,12 @@ async function request(endpoint, options = {}) {
     //   ① 离线/云端不可达时直接返回它；② 判定本次 GET 是否属于「后台补新」（走短预算）；
     //   ③ 重试耗尽后的最终回退仍按原口径自行重读一次（期间可能有并发请求写入更新的数据）
     const fallbackMeta = (method === "GET" && !options.noCache)
-        ? getCacheWithMeta(cacheKey, true)  // 忽略过期
+        ? readValidatedCacheMeta()  // 忽略过期
         : { value: null, expired: false, found: false };
     const conditionalRead = method === "GET" && !options.noStore && options.credentials !== "include"
         && !Object.keys(headers).some(name => name.toLowerCase() === "authorization")
         && API.PUBLIC_CONDITIONAL_GET_PATHS.includes(endpoint.split(/[?#]/)[0]);
-    const conditionalMeta = conditionalRead ? getCacheWithMeta(cacheKey, true) : null;
+    const conditionalMeta = conditionalRead ? readValidatedCacheMeta() : null;
     if (conditionalRead) {
         for (const name of Object.keys(headers)) if (name.toLowerCase() === "if-none-match") delete headers[name];
         if (conditionalMeta?.found && conditionalMeta.etag) headers["If-None-Match"] = conditionalMeta.etag;
@@ -356,8 +403,10 @@ async function request(endpoint, options = {}) {
     if (method === "GET" && (!isOnline() || !isCloudReachable())) {
         if (fallbackMeta.found) {
             console.log(`📴 ${isOnline() ? '☁️ 云端不可达' : '离线模式'}：返回${fallbackMeta.expired ? '过期' : ''}缓存`);
+            const source = captureCacheSource(cacheKey);
             const proxyFn2 = await getProxyImages();
-            return proxyFn2(fallbackMeta.value);
+            sample?.cacheHit();
+            return _cachedResponse(proxyFn2(fallbackMeta.value), source);
         }
         // 🔧 修复：原为硬编码中文，而本错误会被 12+ 处调用方直接 showToast(err.message) 弹给用户，
         // 导致英文界面下仍弹中文提示；现改走词典。云端不可达与本机断网分开用词，
@@ -367,12 +416,16 @@ async function request(endpoint, options = {}) {
     
     // ⚡ P1性能优化：请求去重（相同GET请求只发一次）
     if (trackPendingRequest) {
-        if (pendingRequests.has(cacheKey)) {
-            return pendingRequests.get(cacheKey);
+        const pending = pendingRequests.get(cacheKey);
+        const guard = pendingRequestGuards.get(pending);
+        if (pending && guard?.isCurrent() && guard.validateResponse === validateResponse && cacheReadOwners.get(cacheKey) === pending) {
+            sample?.discard();
+            return pending;
         }
     }
     
     const fetchOptions = { ...options, method, headers };
+    delete fetchOptions.validateResponse;
     
     // 🚀 核心修改：在将 body 转为 JSON 字符串发送前，执行无情剥离！
     if (options.body && !(options.body instanceof FormData) && typeof options.body !== "string") {
@@ -460,6 +513,7 @@ async function request(endpoint, options = {}) {
                     assertReadSession();
                     fetchStarted = true;
                     try {
+                        if (isRequestCacheCurrent) isCacheWriteCurrent = captureCacheWrite(cacheKey);
                         let response = await fetch(url, currentFetchOptions);
                         let validatedData;
                         if (response.status === 304 && conditionalRead) {
@@ -468,12 +522,14 @@ async function request(endpoint, options = {}) {
                                 && response.headers?.get?.('ETag') === conditionalMeta.etag
                                 && currentMeta.found && currentMeta.etag === conditionalMeta.etag
                                 && currentMeta.value === conditionalMeta.value) {
+                                sample?.cacheHit();
                                 validatedData = currentMeta.value;
                             } else {
                                 // 缓存可能在等待期间被清理/写操作失效；同一预算内补取完整响应。
                                 const fullHeaders = { ...currentFetchOptions.headers };
                                 for (const name of Object.keys(fullHeaders)) if (name.toLowerCase() === "if-none-match") delete fullHeaders[name];
                                 if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+                                isCacheWriteCurrent = captureCacheWrite(cacheKey);
                                 response = await fetch(url, { ...currentFetchOptions, headers: fullHeaders, cache: "no-store" });
                                 if (response.status === 304) throw new SyntaxError('Unexpected not-modified response');
                             }
@@ -524,6 +580,10 @@ async function request(endpoint, options = {}) {
                         const error = withRequestDiagnostic(new Error(errorMsg), response, responseData);
                         error.status = response.status;
                         if (typeof responseData.detail === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(responseData.detail)) error.code = responseData.detail;
+                        if (result.bodyConfirmed && Object.hasOwn(API.REQUEST_BODY_ERRORS, error.code)
+                                && API.REQUEST_BODY_ERRORS[error.code].status === error.status) {
+                            error.requestBodyRejected = true;
+                        }
                         throw error;
                     }
 
@@ -557,13 +617,18 @@ async function request(endpoint, options = {}) {
                 // 非 GET 的成功同样算数——写操作是冷却期内唯一还在联网的请求，天然是探针
                 markCloudUp();
 
+                if (validateResponse) {
+                    try { validateResponse(responseData); }
+                    catch (error) { lastError = error; break; }
+                }
+
                 // 🚀 P1优化：精确清除相关缓存（替代暴力清空）
-                if (["POST", "PUT", "DELETE"].includes(method)) {
+                if (["POST", "PUT", "DELETE"].includes(method) && responseData?.status === "success") {
                     invalidateRelatedCache(endpoint, method);
                 }
 
                 // ⚡ P1性能优化：GET 请求结果缓存
-                if (method === "GET" && !options.noStore) {
+                if (method === "GET" && !options.noStore && isCacheWriteCurrent() && cacheReadOwners.get(cacheKey) === requestPromise) {
                     const ttl = _getCacheTTL(endpoint);
                     if (ttl > 0) {
                         // 创作者列表不持久化到 localStorage，避免空间不足
@@ -577,6 +642,10 @@ async function request(endpoint, options = {}) {
                 const proxyFn3 = await getProxyImages();
                 assertReadSession();
                 responseData = proxyFn3(responseData);
+                if (responseData && typeof responseData === "object") {
+                    responseCacheSources.delete(responseData);
+                    if (trackCacheOwner && (!isCacheWriteCurrent() || cacheReadOwners.get(cacheKey) !== requestPromise)) responseCacheSources.set(responseData, { source: null });
+                }
                 return responseData;
             } catch (error) {
                 clearTimeout(timeoutId);  // 清除超时计时器
@@ -644,11 +713,13 @@ async function request(endpoint, options = {}) {
 
         // 所有重试都失败，尝试回退到过期缓存
         if (method === "GET" && !options.noCache) {
-            const fallback = getCacheWithMeta(cacheKey, true);  // true = 允许过期
+            const fallback = readValidatedCacheMeta();  // true = 允许过期
             if (fallback.found) {
                 console.warn('📴 网络请求失败，回退到本地缓存');
+                const source = captureCacheSource(cacheKey);
                 const proxyFn4 = await getProxyImages();
-                return proxyFn4(fallback.value);  // 返回过期缓存数据
+                sample?.cacheHit();
+                return _cachedResponse(proxyFn4(fallback.value), source);  // 返回过期缓存数据
             }
         }
         // 仍无缓存，才抛异常
@@ -657,9 +728,17 @@ async function request(endpoint, options = {}) {
     
     if (privateEntry) requestPromise.finally(() => activePrivateReads.delete(privateEntry)).catch(() => {});
 
+    if (trackCacheOwner) {
+        cacheReadOwners.set(cacheKey, requestPromise);
+        requestPromise.finally(() => {
+            if (cacheReadOwners.get(cacheKey) === requestPromise) cacheReadOwners.delete(cacheKey);
+        }).catch(() => {});
+    }
+
     // 记录进行中的请求
     if (trackPendingRequest) {
         pendingRequests.set(cacheKey, requestPromise);
+        pendingRequestGuards.set(requestPromise, { isCurrent: isRequestCacheCurrent, validateResponse });
     }
     
     // 确保请求完成后清除去重记录
@@ -668,7 +747,7 @@ async function request(endpoint, options = {}) {
     // 原始 requestPromise 仍在下方正常返回给调用方处理，此处只是吞掉这份重复的拒绝
     if (trackPendingRequest) {
         requestPromise.finally(() => {
-            pendingRequests.delete(cacheKey);
+            if (pendingRequests.get(cacheKey) === requestPromise) pendingRequests.delete(cacheKey);
         }).catch(() => {});
     }
     

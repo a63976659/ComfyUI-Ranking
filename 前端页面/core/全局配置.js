@@ -18,12 +18,20 @@
 // 🌐 API 配置
 // ==========================================
 
-/** @type {{ BASE_URL: string, TIMEOUT: number, VIDEO_UPLOAD_TIMEOUT: number, VIDEO_UPLOAD_RESPONSE_MAX_CHARS: number, LOCAL_CACHE_STATS_TIMEOUT: number, LOCAL_CACHE_CLEAR_TIMEOUT: number, LOCAL_CACHE_RESPONSE_MAX_BYTES: number, SSE_MAX_RESPONSE_BYTES: number, SSE_MAX_LINE_BYTES: number, SSE_MAX_LINES: number, SSE_YIELD_LINES: number, SSE_YIELD_BYTES: number, SSE_YIELD_CHUNKS: number, MAX_RETRIES: number, RETRY_DELAY: number, LIST_RETRIES: number, SEARCH_TIMEOUT: number, SEARCH_RETRIES: number, PROFILE_RESOURCE_TIMEOUT: number, CREATOR_CHART_SCRIPT_URL: string, BACKGROUND_TIMEOUT: number, BANNER_IMAGE_TIMEOUT: number, BACKGROUND_RETRIES: number, WORKFLOW_DOWNLOAD_TIMEOUT: number, CLOUD_DOWN_COOLDOWN: number, SEARCH_COMPONENT_ID: string, IMAGE_PROXY_PATH: string, PROFILE_MEDIA_URL_MAX_BYTES: number, LOCAL_IMAGE_PROXY_PREFIX: string, COMPLETE_IMAGE_QUERY_SUFFIX: string, PRIVATE_GET_PATTERNS: RegExp[], PUBLIC_CONDITIONAL_GET_PATHS: string[], CONDITIONAL_ETAG_PATTERN: RegExp, REQUEST_ID_HEADER: string, REQUEST_ID_PATTERN: RegExp, ENDPOINT_ERROR_SCOPE_HEADER: string, ENDPOINT_ERROR_SCOPE_VALUE: string }} */
+/** @type {{ BASE_URL: string, TIMEOUT: number, VIDEO_UPLOAD_TIMEOUT: number, VIDEO_UPLOAD_RESPONSE_MAX_CHARS: number, LOCAL_CACHE_STATS_TIMEOUT: number, LOCAL_CACHE_CLEAR_TIMEOUT: number, LOCAL_CACHE_RESPONSE_MAX_BYTES: number, SSE_MAX_RESPONSE_BYTES: number, SSE_MAX_LINE_BYTES: number, SSE_MAX_LINES: number, SSE_YIELD_LINES: number, SSE_YIELD_BYTES: number, SSE_YIELD_CHUNKS: number, MAX_RETRIES: number, RETRY_DELAY: number, LIST_RETRIES: number, SEARCH_TIMEOUT: number, SEARCH_RETRIES: number, PROFILE_RESOURCE_TIMEOUT: number, CREATOR_CHART_SCRIPT_URL: string, BACKGROUND_TIMEOUT: number, BANNER_IMAGE_TIMEOUT: number, BACKGROUND_RETRIES: number, WORKFLOW_DOWNLOAD_TIMEOUT: number, CLOUD_DOWN_COOLDOWN: number, SEARCH_COMPONENT_ID: string, IMAGE_PROXY_PATH: string, PROFILE_MEDIA_URL_MAX_BYTES: number, LOCAL_IMAGE_PROXY_PREFIX: string, COMPLETE_IMAGE_QUERY_SUFFIX: string, PRIVATE_GET_PATTERNS: RegExp[], PUBLIC_CONDITIONAL_GET_PATHS: string[], CONDITIONAL_ETAG_PATTERN: RegExp, REQUEST_ID_HEADER: string, REQUEST_ID_PATTERN: RegExp, ENDPOINT_ERROR_SCOPE_HEADER: string, ENDPOINT_ERROR_SCOPE_VALUE: string, REQUEST_BODY_ERRORS: Record<string, { status: number, msgKey: string }> }} */
 export const API = {
     REQUEST_ID_HEADER: "X-Ranking-Request-Id",
     REQUEST_ID_PATTERN: /^(?:[a-f0-9]{32}|ERR_[0-9]{10,13}_[a-f0-9]{1,8})$/,
     ENDPOINT_ERROR_SCOPE_HEADER: "X-Ranking-Error-Scope",
     ENDPOINT_ERROR_SCOPE_VALUE: "endpoint",
+    REQUEST_BODY_ERRORS: {
+        request_body_invalid: { status: 400, msgKey: 'feedback.invalid_request_data' },
+        request_body_disconnected: { status: 400, msgKey: 'feedback.network_unavailable' },
+        request_body_too_large: { status: 413, msgKey: 'feedback.request_too_large' },
+        request_body_timeout: { status: 408, msgKey: 'feedback.request_receive_timeout' },
+        request_body_busy: { status: 429, msgKey: 'feedback.request_busy' },
+        request_body_encoding: { status: 415, msgKey: 'feedback.request_encoding_unsupported' },
+    },
     // 仅公开榜单使用由正文派生的条件验证器，私有响应仍禁止留存。
     PUBLIC_CONDITIONAL_GET_PATHS: ['/api/items', '/api/creators', '/api/creators/search', '/api/posts', '/api/prompts', '/api/tasks'],
     CONDITIONAL_ETAG_PATTERN: /^W\/"rk-[a-f0-9]{64}"$/,
@@ -104,6 +112,21 @@ export const API = {
 };
 
 
+export const LOCAL_PERFORMANCE = Object.freeze({
+    MAX_ENDPOINT_CHARS: 4096,
+    MAX_COUNT: 1000000,
+    MAX_DURATION_MS: 600000,
+    ITEM_CATEGORIES: Object.freeze({ tool: 'tools', skill: 'skills', app: 'apps', recommend: 'recommends' }),
+    LIST_CATEGORIES: Object.freeze({ '/api/creators': 'creators', '/api/creators/search': 'creators', '/api/tasks': 'tasks', '/api/posts': 'posts', '/api/prompts': 'prompts' }),
+    LABELS: Object.freeze({ tools: 'nav.tools', skills: 'nav.skills', apps: 'nav.apps', recommends: 'nav.recommends', creators: 'nav.creators', tasks: 'nav.tasks', posts: 'nav.posts', prompts: 'nav.prompts' })
+});
+
+export const LOCAL_INSTALL_DIRECTORY = Object.freeze({
+    PATH: '/community_hub/open_install_directory',
+    TIMEOUT: 25000,
+    RESPONSE_MAX_BYTES: 8192
+});
+
 export const SKILL_INSTALL = Object.freeze({
     PATH: '/community_hub/skill_install',
     PREFLIGHT_TIMEOUT: 30000,
@@ -174,6 +197,11 @@ export function isAdmin(account) {
 // ==========================================
 // 💾 缓存配置
 // ==========================================
+export function getSidebarListCacheKey(tab, sort) {
+    const list = tab === 'creators' ? 'creators_full' : tab;
+    return `ListCache_${list}_${sort}`;
+}
+
 const RESOURCE_LIST_PREFIXES = [
     "ListCache_tools_", "ListCache_skills_", "ListCache_apps_", "ListCache_recommends_"
 ];
@@ -235,6 +263,12 @@ export const CACHE = {
         ...RESOURCE_LIST_PREFIXES
     ],
     RESOURCE_LIST_PREFIXES,
+    CREATOR_DETAILS_CACHE_PREFIX: "api_/api/creators/",
+    PUBLIC_LISTS: {
+        tasks: { prefix: "TasksCache_", endpoint: "/api/tasks" },
+        posts: { prefix: "PostsCache_", endpoint: "/api/posts" },
+        prompts: { prefix: "PromptsCache_", endpoint: "/api/prompts" }
+    },
 
     // 🚀 新增：消息轮询配置
     MESSAGE_POLL: {
@@ -318,6 +352,18 @@ export const TIP_LEVELS = {
 // 🎨 UI 配置
 // ==========================================
 export const UI = {
+    INSTALL_SOURCE: Object.freeze({
+        MAX_URL_BYTES: 4096,
+        CASE_INSENSITIVE_HOSTS: Object.freeze(['github.com'])
+    }),
+    INSTALL_TRANSFER: Object.freeze({
+        MAX_BYTES: 2 * 1024 * 1024 * 1024,
+        MAX_RATE: Number.MAX_SAFE_INTEGER,
+        BASE: 1024,
+        STAGES: Object.freeze(['downloading', 'download_done']),
+        UNIT_KEYS: Object.freeze(['install.transfer_b', 'install.transfer_kib', 'install.transfer_mib', 'install.transfer_gib'])
+    }),
+
     CHAT_MAX_MSG_LENGTH: 1000,
     CHAT_TIME_GAP_SECONDS: 5 * 60,
     MAX_DISPUTE_EVIDENCE: 6,
@@ -583,6 +629,43 @@ export function getTipLevelConfig() {
 // 缓存键：ComfyCommunity_ProfileCache_{account}
 
 const PROFILE_CACHE_PREFIX = "ComfyCommunity_ProfileCache_";
+let profileCacheDefault = { readable: true };
+const profileCacheStates = new Map();
+const profileCacheState = account => profileCacheStates.get(account) || profileCacheDefault;
+function rememberProfileCacheState(account, readable) {
+    if (!profileCacheStates.has(account) && profileCacheStates.size >= CACHE.MAX_MEMORY_ITEMS) {
+        profileCacheStates.clear();
+        profileCacheDefault = { readable: false };
+        for (const pending of _pendingProfileRequests.values()) {
+            clearTimeout(pending.timer);
+            pending.listeners.clear();
+        }
+        _pendingProfileRequests.clear();
+    }
+    const state = { readable };
+    profileCacheStates.set(account, state);
+    return state;
+}
+
+export function captureProfileRead(account) {
+    const state = profileCacheStates.get(account) || rememberProfileCacheState(account, profileCacheDefault.readable);
+    return () => profileCacheState(account) === state;
+}
+
+export function invalidateCachedProfiles(accounts) {
+    for (const account of new Set(accounts)) {
+        if (typeof account !== 'string' || !account.trim()) continue;
+        rememberProfileCacheState(account, false);
+        const pending = _pendingProfileRequests.get(account);
+        if (pending) {
+            _pendingProfileRequests.delete(account);
+            clearTimeout(pending.timer);
+            pending.listeners.clear();
+        }
+        try { localStorage.removeItem(PROFILE_CACHE_PREFIX + account); } catch {}
+    }
+}
+
 const _pendingProfileRequests = new Map();  // 每账号共享请求与全部订阅者
 const PENDING_TIMEOUT = 30000;  // 挂起请求超时清理时间（毫秒）
 let nextAvatarRenderId = 0;
@@ -689,12 +772,16 @@ function _mapAvatarField(profile) {
 }
 
 const PUBLIC_PROFILE_FIELDS = ["account", "name", "avatar", "avatarDataUrl", "intro", "gender", "age",
-    "country", "region", "created_at", "followers", "following", "privacy", "is_admin", "bannerUrl",
+    "country", "region", "created_at", "followers", "following", "following_count", "privacy", "is_admin", "bannerUrl",
     "receivedLikes", "receivedFavorites", "receivedUses"];
 function _publicProfile(profile) {
-    return Object.fromEntries(PUBLIC_PROFILE_FIELDS.filter(key => Object.prototype.hasOwnProperty.call(profile, key))
+    const result = Object.fromEntries(PUBLIC_PROFILE_FIELDS.filter(key => Object.prototype.hasOwnProperty.call(profile, key))
         .map(key => [key, ['avatar', 'avatarDataUrl', 'bannerUrl'].includes(key)
             ? normalizeProfileImageUrl(profile[key]) : profile[key]]));
+    result.following_count = Number.isSafeInteger(result.following_count) && result.following_count >= 0
+        ? result.following_count : (Array.isArray(result.following) ? result.following.length : 0);
+    if (result.privacy?.follows === true) result.following = [];
+    return result;
 }
 
 function _validProfile(profile) {
@@ -708,7 +795,7 @@ function _validProfile(profile) {
  * @returns {Object|null} 缓存的用户资料
  */
 export function getCachedProfile(account) {
-    if (!account) return null;
+    if (!account || !profileCacheState(account).readable) return null;
     try {
         const cached = localStorage.getItem(PROFILE_CACHE_PREFIX + account);
         if (!cached) return null;
@@ -735,6 +822,9 @@ export function setCachedProfile(account, profile) {
     if (!account || !_validProfile(profile)) return;
     try {
         localStorage.setItem(PROFILE_CACHE_PREFIX + account, JSON.stringify(_publicProfile(profile)));
+        const state = profileCacheStates.get(account);
+        if (state) state.readable = true;
+        else rememberProfileCacheState(account, true);
     } catch {}
 }
 
@@ -754,6 +844,7 @@ export function getProfileWithSWR(account, apiFn, onUpdate) {
     // 第二轨：同账号只取一次，但每个视图都订阅结果。
     let entry = _pendingProfileRequests.get(account);
     if (!entry && typeof apiFn === 'function') {
+        const isCurrent = captureProfileRead(account);
         entry = { listeners: new Set(), timer: null };
         _pendingProfileRequests.set(account, entry);
         const release = () => {
@@ -764,7 +855,7 @@ export function getProfileWithSWR(account, apiFn, onUpdate) {
         entry.timer = setTimeout(release, PENDING_TIMEOUT);
         Promise.resolve().then(() => apiFn(account)).then(res => {
             // 超时后的旧结果不能覆盖新请求，也不能重新写入旧资料。
-            if (_pendingProfileRequests.get(account) !== entry) return;
+            if (_pendingProfileRequests.get(account) !== entry || !isCurrent()) return;
             if (res?.status && res.status !== 'success') return;
             const data = res && Object.hasOwn(res, 'data') ? res.data : res;
             if (!_validProfile(data)) return;
@@ -909,6 +1000,7 @@ const SETTINGS_KEY = "ComfyCommunity_Settings";
 // 🔧 默认设置值
 const DEFAULT_SETTINGS = {
     enableKeyboardShortcuts: false,
+    enableLocalPerformanceStats: false,
     showCreatorBanner: true,  // 创作者卡片显示背景图
     enableAnimations: true,   // ✨ 榜单切换动画
     enableSoundEffects: true, // 🔊 动画音效

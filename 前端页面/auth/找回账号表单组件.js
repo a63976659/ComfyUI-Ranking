@@ -1,4 +1,4 @@
-import { createAuthFormScope } from "./认证表单生命周期.js";
+import { createAuthFormScope, createAuthFieldFeedback } from "./认证表单生命周期.js";
 // 前端页面/auth/找回账号表单组件.js
 // ==========================================
 // 🔎 找回账号表单组件
@@ -22,12 +22,12 @@ export function renderRecoverForm(container, switchView) {
             <p class="auth-form__description">${t('auth.recover_desc')}</p>
             <fieldset class="auth-form__security">
                 <legend>${t('auth.security_verify')}</legend>
-                <label for="recover-email">${t('auth.bound_email')} <span class="auth-form__required" aria-hidden="true">*</span></label>
+                <label for="recover-email">${t('auth.bound_email')} <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label>
                 <div class="auth-form__code-row">
                     <input type="email" id="recover-email" name="email" autocomplete="email" required placeholder="${t('auth.enter_bound_email')}" class="auth-form__input">
                     <button type="button" id="btn-recover-send-code" class="auth-form__button">${t('auth.get_code')}</button>
                 </div>
-                <label for="recover-code">${t('auth.verification_code')} <span class="auth-form__required" aria-hidden="true">*</span></label>
+                <label for="recover-code">${t('auth.verification_code')} <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label>
                 <input type="text" id="recover-code" name="verification-code" autocomplete="one-time-code" inputmode="numeric" required placeholder="${t('auth.enter_6_digit_code')}" maxlength="6" class="auth-form__input">
             </fieldset>
             <button type="button" id="btn-submit-recover" class="auth-form__button auth-form__primary">${t('auth.recover_account')}</button>
@@ -35,6 +35,8 @@ export function renderRecoverForm(container, switchView) {
         </div>
     `;
     const formScope = createAuthFormScope(container);
+    const field = id => container.querySelector('#' + id);
+    const feedback = createAuthFieldFeedback(container, formScope, { notify: showToast });
 
     container.querySelector("#recover-to-login").onclick = (e) => { e.preventDefault(); switchView("login"); };
 
@@ -64,10 +66,11 @@ export function renderRecoverForm(container, switchView) {
     btnSendCode.onclick = async (e) => {
         e.preventDefault();
         if (!formScope.current() || btnSendCode.disabled) return;
+        feedback.clear([field('recover-email')]);
 
         const emailInput = container.querySelector("#recover-email").value.trim();
         const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput);
-        if (!isEmail) return showToast(t('auth.invalid_email'), "error");
+        if (!isEmail) return feedback.report([field('recover-email')], t('auth.invalid_email'), "error");
 
         btnSendCode.disabled = true;
         btnSendCode.innerText = t('auth.sending');
@@ -93,11 +96,12 @@ export function renderRecoverForm(container, switchView) {
     const btnSubmit = container.querySelector("#btn-submit-recover");
     btnSubmit.onclick = async () => {
         if (!formScope.current() || btnSubmit.disabled) return;
+        feedback.clear();
         const email = container.querySelector("#recover-email").value.trim();
         const code = container.querySelector("#recover-code").value.trim();
 
-        if (!email) return showToast(t('auth.invalid_email'), "warning");
-        if (code.length !== 6) return showToast(t('auth.invalid_code'), "warning");
+        if (!email) return feedback.report([field('recover-email')], t('auth.invalid_email'));
+        if (code.length !== 6) return feedback.report([field('recover-code')], t('auth.invalid_code'));
 
         btnSubmit.disabled = true;
         btnSubmit.innerText = t('auth.sending');

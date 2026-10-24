@@ -546,6 +546,7 @@ export function buildSidebarDOM() {
     const savedTab = Store.load("activeTab", "tools");
     let currentTab = tabs.some(tab => tab.id === savedTab) ? savedTab : tabs[0].id;
     let currentSort = Store.load("activeSort", "time");
+    let promptFilters = { type: "image", category: null };
     let currentRenderToken = 0;
     let sidebarDisposed = false;
     let searchDebounce = null;
@@ -574,8 +575,13 @@ export function buildSidebarDOM() {
     const triggerLoad = (forceRefresh = false) => {
         if (sidebarDisposed) return;
         currentRenderToken++;
+        const domainSortControl = { tasks: "#task-sort-select", posts: "#posts-sort-select", prompts: "#prompts-sort-select" }[currentTab];
+        const getViewOptions = domainSortControl ? () => ({ sort: sortContainer.querySelector(domainSortControl).value,
+            status: sortContainer.querySelector("#task-status-filter").value,
+            ...(currentTab === "prompts" ? { ...promptFilters,
+                onFiltersChange: filters => { if (!sidebarDisposed) promptFilters = filters; } } : {}) }) : undefined;
         loadSidebarContent({
-            tab: currentTab, sort: currentSort,
+            tab: currentTab, sort: currentSort, getViewOptions,
             keyword: sortContainer.querySelector("#hub-search-input").value.trim().toLowerCase(),
             contentArea: contentArea, currentUser: topNav.getCurrentUser(),
             renderToken: currentRenderToken, getRenderToken: getRenderToken,
@@ -696,11 +702,17 @@ export function buildSidebarDOM() {
         }
     };
     
+    const hubSortSelect = sortContainer.querySelector("#hub-sort-select");
+    hubSortSelect.value = currentSort;
+    if (!hubSortSelect.value) {
+        currentSort = hubSortSelect.options[0].value;
+        hubSortSelect.value = currentSort;
+        Store.save("activeSort", currentSort);
+    }
     // 初始化筛选控件显示状态
     updateFilterVisibility(currentTab);
 
-    sortContainer.querySelector("#hub-sort-select").value = currentSort;
-    sortContainer.querySelector("#hub-sort-select").onchange = (e) => { currentSort = e.target.value; Store.save("activeSort", currentSort); triggerLoad(); };
+    hubSortSelect.onchange = (e) => { currentSort = e.target.value; Store.save("activeSort", currentSort); triggerLoad(); };
     
     // 🔍 搜索防抖：300ms 延迟，避免每次按键都发起网络请求
     searchDebounce = debounce(() => {

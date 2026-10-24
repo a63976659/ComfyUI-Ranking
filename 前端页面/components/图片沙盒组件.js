@@ -111,7 +111,7 @@ export function getCoverSandboxHTML(imageSource, lazyLoad = true) {
             </div>
             <div class="sliders-wrapper">
                 <input type="range" class="slider-x" min="-400" max="400" value="0" aria-label="${escapeHtml(t('image.pan_horizontal'))}">
-                <input type="range" class="slider-y" min="-400" max="400" value="0" aria-label="${escapeHtml(t('image.pan_vertical'))}">
+                <input type="range" class="slider-y" min="-400" max="400" value="0" aria-orientation="vertical" aria-label="${escapeHtml(t('image.pan_vertical'))}">
             </div>
         </div>
     `;

@@ -29,6 +29,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
     let currentReplyTarget = null;
     let sending = false, deleting = false, blocked = false, scope = null, constructing = true, observer;
     let active = true, generation = 0, writePending = false;
+    let sendFocus = null;
     const account = currentUser?.account || null;
     const matches = captureRequestSession();
     const sessionMatches = () => matches() && (getUser()?.account || null) === account;
@@ -56,6 +57,40 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
         inputArea.setAttribute('aria-busy', String(busy));
         listArea.querySelectorAll('.reply-btn,.delete-btn').forEach(button => { button.disabled = busy || blocked; });
     }
+    function clearSendFocus(record = sendFocus) {
+        if (!record || record !== sendFocus) return;
+        document.removeEventListener('focusin', record.onFocus, true);
+        document.removeEventListener('pointerdown', record.onPointer, true);
+        sendFocus = null;
+    }
+    function captureSendFocus() {
+        clearSendFocus();
+        if (document.activeElement !== submitBtn) return null;
+        const record = { generation };
+        record.onFocus = event => {
+            if (event.target !== submitBtn && event.target !== document.body) clearSendFocus(record);
+        };
+        record.onPointer = () => clearSendFocus(record);
+        sendFocus = record;
+        document.addEventListener('focusin', record.onFocus, true);
+        document.addEventListener('pointerdown', record.onPointer, true);
+        return record;
+    }
+    function restoreSendFocus(record) {
+        if (!record || record !== sendFocus) return;
+        const target = blocked ? notice : inputField;
+        const owned = current() && record.generation === generation && document.hasFocus()
+            && (document.activeElement === document.body || document.activeElement === submitBtn)
+            && !container.closest('[inert], [hidden], [aria-hidden="true"]')
+            && target.isConnected && target.getClientRects().length > 0
+            && getComputedStyle(target).visibility !== 'hidden';
+        clearSendFocus(record);
+        if (owned) {
+            if (target === notice) notice.tabIndex = -1;
+            target.focus({ preventScroll: true });
+        }
+    }
+
     function unconfirmed() {
         blocked = true;
         notice.textContent = t('social.comment_unconfirmed');
@@ -227,6 +262,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
         const text = inputField.value.trim();
         if (!text) return;
 
+        const focusRecord = captureSendFocus();
         const operationGeneration = generation;
         sending = true;
         const submittedValue = inputField.value;
@@ -270,6 +306,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
             else unconfirmed();
         } finally {
             if (current() && operationGeneration === generation) { writePending = false; sending = false; setControls(); }
+            restoreSendFocus(focusRecord);
         }
     };
 
@@ -282,6 +319,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
         invalidate: () => { notice.textContent = t('auth.session_changed'); container.append(notice); }
     });
     scope.addCleanup(() => {
+        clearSendFocus();
         active = false; generation++;
         observer?.disconnect(); confirmationAbort.abort();
         inputField.value = ''; currentReplyTarget = null; commentsData = [];
@@ -291,6 +329,7 @@ export function createCommentSection(itemId, commentsData, currentUser, onCountC
         const next = !!value;
         if (next === active) return;
         if (next && !scope.isCurrent()) return;
+        clearSendFocus();
         generation++;
         active = next;
         if (!next) {

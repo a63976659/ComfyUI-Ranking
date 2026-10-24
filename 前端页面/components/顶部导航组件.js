@@ -288,10 +288,9 @@ export function createTopNav() {
     actionWrapper.appendChild(userActionBtn);
     
     userHeader.appendChild(titleWrapper);
-    userHeader.appendChild(actionWrapper);
-    // 广告独占下一行，DOM/键盘顺序与视觉顺序一致。
     const banner = createTopBanner();
     if (banner) userHeader.appendChild(banner);
+    userHeader.appendChild(actionWrapper);
 
     return {
         dom: userHeader,

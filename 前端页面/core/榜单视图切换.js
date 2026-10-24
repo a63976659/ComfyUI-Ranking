@@ -7,7 +7,7 @@ function cleanupView(view) {
 
 // 业务视图仍负责自己的请求/事件；此边界负责原容器的挂载与代次。
 export async function mountSidebarDomainView({
-    contentArea, currentUser, keyword, renderToken, getRenderToken,
+    contentArea, currentUser, keyword, getViewOptions, renderToken, getRenderToken,
     loadModule, factory, errorKey, afterMount,
 }) {
     const isCurrent = () => renderToken === getRenderToken();
@@ -24,7 +24,7 @@ export async function mountSidebarDomainView({
         if (!isCurrent()) return;
         cleanupOld();
         if (!isCurrent()) return;
-        view = module[factory](currentUser, keyword);
+        view = module[factory](currentUser, keyword, getViewOptions?.());
         if (!isCurrent()) {
             cleanupView(view);
             return;

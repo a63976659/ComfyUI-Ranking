@@ -9,7 +9,7 @@
 //   - 性能优化工具.js (重导出缓存函数，保持向后兼容)
 // ==========================================
 
-import { API, CACHE } from "./全局配置.js";
+import { API, CACHE, getSidebarListCacheKey, invalidateCachedProfiles } from "./全局配置.js";
 
 // ==========================================
 // 📦 缓存底层实现
@@ -32,6 +32,90 @@ let lastStorageBudgetSweepAt = 0;
 const memoryCache = new Map();
 const memoryCacheOrder = []; // LRU 顺序追踪
 const memoryOnlyEntries = new WeakSet();
+
+let cacheClearToken = {};
+const cacheWriteScopes = [
+    ...[...CACHE.RESOURCE_LIST_PREFIXES, getSidebarListCacheKey('creators', ''), ...Object.values(CACHE.PUBLIC_LISTS).map(list => list.prefix)].map(prefix =>
+        ({ prefix, matches: key => key.startsWith(prefix), token: {} })),
+    ...API.PUBLIC_CONDITIONAL_GET_PATHS.map(path => {
+        const prefix = `api_${path}`;
+        return { prefix, matches: key => key.split(/[?#]/)[0] === prefix, token: {} };
+    }),
+    { prefix: CACHE.CREATOR_DETAILS_CACHE_PREFIX, matches: key => {
+        const path = key.split(/[?#]/)[0];
+        return path.startsWith(CACHE.CREATOR_DETAILS_CACHE_PREFIX)
+            && /^[^/]+\/details$/.test(path.slice(CACHE.CREATOR_DETAILS_CACHE_PREFIX.length));
+    }, token: {} }
+];
+
+function _cacheScopeKey(key) {
+    return typeof key === 'string' && key.startsWith(CACHE_PREFIX) ? key.slice(CACHE_PREFIX.length) : key;
+}
+
+export function captureCacheWrite(key) {
+    const normalized = key;
+    const scope = typeof normalized === 'string' ? cacheWriteScopes.find(item => item.matches(normalized)) : null;
+    const token = scope?.token, clearToken = cacheClearToken;
+    return () => cacheClearToken === clearToken && (!scope || scope.token === token);
+}
+
+let creatorsSessionCurrent = true;
+export function isCreatorsSessionCacheCurrent() {
+    return creatorsSessionCurrent;
+}
+export function markCreatorsSessionCacheCurrent() {
+    creatorsSessionCurrent = true;
+}
+
+function invalidateCreatorsSession() {
+    creatorsSessionCurrent = false;
+    try { sessionStorage.removeItem(CACHE.LOCAL_KEYS.CREATORS_SESSION); } catch {}
+}
+
+export function invalidateFollowCaches(account, targetAccount) {
+    _removeCacheByPrefixes(['api_/api/creators', getSidebarListCacheKey('creators', '')]);
+    invalidateCachedProfiles([account, targetAccount]);
+    invalidateCreatorsSession();
+}
+
+function _revokeCacheWrites(keys, prefix = false) {
+    const normalized = (prefix ? keys.map(_cacheScopeKey) : keys).filter(key => typeof key === 'string' && key.length > 0);
+    for (const scope of cacheWriteScopes) {
+        if (normalized.some(key => scope.matches(key) || (prefix && scope.prefix.startsWith(key)))) scope.token = {};
+    }
+}
+
+export function captureCacheSource(key) {
+    const fk = _fullKey(key), cached = memoryCache.get(fk);
+    if (!_isValidCacheEntry(cached)) return null;
+    const isAvailable = () => memoryCache.get(fk) === cached && _isValidCacheEntry(cached);
+    const isFresh = () => isAvailable() && !_isExpired(cached);
+    return {
+        isAvailable,
+        isFresh,
+        discard() {
+            if (!isAvailable()) return false;
+            _deleteMemoryEntry(fk);
+            try {
+                const stored = JSON.parse(localStorage.getItem(fk));
+                if (_isValidCacheEntry(stored) && stored.expireAt === cached.expireAt
+                        && stored.etag === cached.etag && JSON.stringify(stored.value) === JSON.stringify(cached.value)) {
+                    localStorage.removeItem(fk);
+                }
+            } catch {}
+            storageUsageBytes = null;
+            return true;
+        },
+        copyTo(targetKey, value) {
+            const normalized = targetKey;
+            if (!isFresh() || typeof normalized !== 'string' ||
+                    !CACHE.RESOURCE_LIST_PREFIXES.concat(getSidebarListCacheKey('creators', ''), Object.values(CACHE.PUBLIC_LISTS).map(list => list.prefix)).some(prefix => normalized.startsWith(prefix))) return false;
+            _storeCache(normalized, value, cached.expireAt, true, {});
+            return true;
+        }
+    };
+}
+
 
 /**
  * 生成完整缓存键（带前缀）
@@ -60,10 +144,13 @@ function _isValidCacheEntry(cached) {
 }
 
 // 同前缀的本地记录/配置使用独立格式；自动缓存清理不能处理它们。
-function _isManagedStorageKey(key) {
+function _storageExclusions() {
+    return Object.values(CACHE.LOCAL_KEYS).map(key => [key, key.endsWith('_') ? key : key + '_']);
+}
+
+function _isManagedStorageKey(key, exclusions) {
     if (!key || !key.startsWith(CACHE_PREFIX)) return false;
-    return !Object.values(CACHE.LOCAL_KEYS).some(localKey => key === localKey
-        || key.startsWith(localKey.endsWith('_') ? localKey : localKey + '_'));
+    return !exclusions.some(([exact, prefix]) => key === exact || key.startsWith(prefix));
 }
 
 /**
@@ -116,8 +203,11 @@ function _safeStorageWrite(fullKey, jsonStr) {
  * @param {{etag?: string}} metadata - 可选的正文验证器，与value一同失效
  */
 export function setCache(key, value, ttl = DEFAULT_TTL, persist = true, metadata = {}) {
+    _storeCache(key, value, Date.now() + ttl, persist, metadata);
+}
+
+function _storeCache(key, value, expireAt, persist, metadata) {
     const fk = _fullKey(key);
-    const expireAt = Date.now() + ttl;
     const cacheData = { schemaVersion: CACHE_SCHEMA_VERSION, value, expireAt, lastAccessAt: Date.now() };
     memoryOnlyEntries.add(cacheData);
     if (typeof metadata?.etag === "string" && API.CONDITIONAL_ETAG_PATTERN.test(metadata.etag)) cacheData.etag = metadata.etag;
@@ -287,8 +377,9 @@ export function getCacheKeysByPrefix(prefix) {
         if (key.startsWith(fullPrefix)) keys.add(key.slice(CACHE_PREFIX.length));
     }
     try {
-        for (let index = 0; index < localStorage.length; index++) {
-            const key = localStorage.key(index);
+        const storage = localStorage;
+        for (let index = 0; index < storage.length; index++) {
+            const key = storage.key(index);
             if (key && key.startsWith(fullPrefix)) keys.add(key.slice(CACHE_PREFIX.length));
         }
     } catch {
@@ -302,9 +393,14 @@ function _touchStorageEntry(key, cached) {
     try {
         const now = Date.now();
         if (Number.isFinite(cached.lastAccessAt) && now - cached.lastAccessAt < 60_000) return;
-        if (localStorage.getItem(key) === null) return;
+        const stored = localStorage.getItem(key);
+        if (stored === null) return;
+        const persisted = JSON.parse(stored);
+        if (!_isValidCacheEntry(persisted)) return;
         cached.lastAccessAt = now;
-        localStorage.setItem(key, JSON.stringify(cached));
+        if (Number.isFinite(persisted.lastAccessAt) && now - persisted.lastAccessAt < 60_000) return;
+        persisted.lastAccessAt = now;
+        localStorage.setItem(key, JSON.stringify(persisted));
     } catch {}
 }
 
@@ -315,13 +411,15 @@ function _enforceStorageBudget(protectedKey = null) {
         && now - lastStorageBudgetSweepAt < 60_000) return;
 
     try {
+        const storage = localStorage;
+        const exclusions = _storageExclusions();
         const entries = [];
         const invalidKeys = [];
         let totalBytes = 0;
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (!_isManagedStorageKey(key)) continue;
-            const raw = localStorage.getItem(key);
+        for (let i = 0; i < storage.length; i++) {
+            const key = storage.key(i);
+            if (!_isManagedStorageKey(key, exclusions)) continue;
+            const raw = storage.getItem(key);
             if (raw === null) continue;
             let cached;
             try {
@@ -339,12 +437,12 @@ function _enforceStorageBudget(protectedKey = null) {
             entries.push({ key, sizeBytes, lastAccessAt: Number.isFinite(cached.lastAccessAt) ? cached.lastAccessAt : writtenAt });
             totalBytes += sizeBytes;
         }
-        invalidKeys.forEach(key => localStorage.removeItem(key));
+        invalidKeys.forEach(key => storage.removeItem(key));
 
         let evicted = 0;
         for (const entry of [...entries]) {
             if (entry.key === protectedKey && entry.sizeBytes > MAX_STORAGE_BYTES) {
-                localStorage.removeItem(entry.key);
+                storage.removeItem(entry.key);
                 totalBytes -= entry.sizeBytes;
                 entries.splice(entries.indexOf(entry), 1);
                 evicted++;
@@ -353,7 +451,7 @@ function _enforceStorageBudget(protectedKey = null) {
         entries.sort((a, b) => a.lastAccessAt - b.lastAccessAt);
         while (totalBytes > MAX_STORAGE_BYTES && entries.length > 0) {
             const oldest = entries.shift();
-            localStorage.removeItem(oldest.key);
+            storage.removeItem(oldest.key);
             totalBytes -= oldest.sizeBytes;
             evicted++;
         }
@@ -373,6 +471,7 @@ function _enforceStorageBudget(protectedKey = null) {
  * @param {string} key - 缓存键
  */
 export function removeCache(key) {
+    _revokeCacheWrites([key]);
     const fk = _fullKey(key);
     _deleteMemoryEntry(fk);
     try {
@@ -398,6 +497,7 @@ export function removeCacheByPrefix(prefix) {
 }
 
 function _removeCacheByPrefixes(prefixes) {
+    _revokeCacheWrites(prefixes, true);
     const candidates = [...new Set(prefixes.flatMap(prefix =>
         prefix.startsWith(CACHE_PREFIX) ? [prefix] : [_fullKey(prefix), prefix]))];
     const isMatch = (key) => candidates.some(p => key.startsWith(p));
@@ -413,13 +513,14 @@ function _removeCacheByPrefixes(prefixes) {
     }
 
     try {
+        const storage = localStorage;
         const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
+        for (let i = 0; i < storage.length; i++) {
+            const k = storage.key(i);
             if (k && isMatch(k)) keysToRemove.push(k);
         }
         keysToRemove.forEach(k => {
-            localStorage.removeItem(k);
+            storage.removeItem(k);
             removed.add(k);
         });
     } catch {}
@@ -432,19 +533,21 @@ function _removeCacheByPrefixes(prefixes) {
  * 清除所有缓存
  */
 export function clearAllCache() {
+    cacheClearToken = {};
     memoryCache.clear();
     memoryCacheOrder.length = 0;
     storageUsageBytes = null;
     
     try {
+        const storage = localStorage;
         const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
+        for (let i = 0; i < storage.length; i++) {
+            const key = storage.key(i);
             if (key && key.startsWith(CACHE_PREFIX)) {
                 keysToRemove.push(key);
             }
         }
-        keysToRemove.forEach(k => localStorage.removeItem(k));
+        keysToRemove.forEach(k => storage.removeItem(k));
         return true;
     } catch {
         return false;
@@ -470,17 +573,19 @@ function _enforceCacheLimit() {
 // @param {boolean} aggressive - 是否激进模式（同时清除所有项而非仅过期项）
 function _cleanExpiredStorage(aggressive = false) {
     try {
+        const storage = localStorage;
+        const exclusions = _storageExclusions();
         const now = Date.now();
         const keysToRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (_isManagedStorageKey(key)) {
+        for (let i = 0; i < storage.length; i++) {
+            const key = storage.key(i);
+            if (_isManagedStorageKey(key, exclusions)) {
                 if (aggressive) {
                     // 激进模式：清除所有缓存项
                     keysToRemove.push(key);
                 } else {
                     let stored;
-                    try { stored = localStorage.getItem(key); } catch { continue; }
+                    try { stored = storage.getItem(key); } catch { continue; }
                     if (stored === null) continue;
                     try {
                         const cached = JSON.parse(stored);
@@ -493,7 +598,7 @@ function _cleanExpiredStorage(aggressive = false) {
                 }
             }
         }
-        keysToRemove.forEach(k => localStorage.removeItem(k));
+        keysToRemove.forEach(k => storage.removeItem(k));
         if (keysToRemove.length > 0) {
             console.log(`🧹 清理 localStorage 过期缓存: ${keysToRemove.length} 个项`);
         }
@@ -503,13 +608,15 @@ function _cleanExpiredStorage(aggressive = false) {
 // LRU 淘汰：按最近使用时间删除最旧的 localStorage 缓存项
 function _evictOldestStorage() {
     try {
+        const storage = localStorage;
+        const exclusions = _storageExclusions();
         const entries = [];
         const invalidKeys = [];
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (_isManagedStorageKey(key)) {
+        for (let i = 0; i < storage.length; i++) {
+            const key = storage.key(i);
+            if (_isManagedStorageKey(key, exclusions)) {
                 let stored;
-                try { stored = localStorage.getItem(key); } catch { continue; }
+                try { stored = storage.getItem(key); } catch { continue; }
                 if (stored === null) continue;
                 try {
                     const cached = JSON.parse(stored);
@@ -525,7 +632,7 @@ function _evictOldestStorage() {
             }
         }
         
-        invalidKeys.forEach(key => localStorage.removeItem(key));
+        invalidKeys.forEach(key => storage.removeItem(key));
         if (entries.length === 0) return invalidKeys.length > 0;
         
         entries.sort((a, b) => a.lastAccessAt - b.lastAccessAt);
@@ -533,7 +640,7 @@ function _evictOldestStorage() {
         // 🧹 批量淘汰策略：每次淘汰最旧的 30%（温和策略，减少频繁全量扫描）
         const evictCount = Math.max(1, Math.ceil(entries.length * 0.3));
         for (let i = 0; i < evictCount; i++) {
-            localStorage.removeItem(entries[i].key);
+            storage.removeItem(entries[i].key);
         }
         console.warn(`⚠️ LRU 淘汰: 删除了 ${evictCount} 个最旧 localStorage 缓存项`);
         return true;
@@ -615,25 +722,31 @@ const CACHE_CONFIG = {
 
 // 🚀 P1优化：精确缓存失效映射（按 HTTP 方法细分）
 // 根据修改的 endpoint 和 HTTP 方法精确清除相关缓存
+const COMMENT_CACHE_PREFIXES = [
+    "api_/api/comments", "api_/api/items", "api_/api/creators", "api_/api/posts", "api_/api/tasks",
+    ...CACHE.RESOURCE_LIST_PREFIXES, getSidebarListCacheKey('creators', ''),
+    CACHE.PUBLIC_LISTS.posts.prefix, CACHE.PUBLIC_LISTS.tasks.prefix, CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX
+];
+
 const CACHE_INVALIDATION_MAP = {
     // 任务相关
     "/api/tasks": {
-        "POST": ["api_/api/tasks", "ComfyRanking_ListCache_tasks"],      // 创建任务，清除列表缓存
-        "PUT": ["api_/api/tasks"],                                        // 更新任务，清除列表缓存
-        "DELETE": ["api_/api/tasks", "ComfyRanking_ListCache_tasks"],    // 删除任务，清除列表缓存
-        "INTERACTION": ["api_/api/tasks", "ComfyRanking_ListCache_tasks"] // 👍 互动操作（view/like/favorite/tip）
+        "POST": ["api_/api/tasks", CACHE.PUBLIC_LISTS.tasks.prefix],      // 创建任务，清除列表缓存
+        "PUT": ["api_/api/tasks", CACHE.PUBLIC_LISTS.tasks.prefix],                                        // 更新任务，清除列表缓存
+        "DELETE": ["api_/api/tasks", CACHE.PUBLIC_LISTS.tasks.prefix],    // 删除任务，清除列表缓存
+        "INTERACTION": ["api_/api/tasks", CACHE.PUBLIC_LISTS.tasks.prefix] // 👍 互动操作（view/like/favorite/tip）
     },
     // 帖子相关
     "/api/posts": {
-        "POST": ["api_/api/posts", "ComfyRanking_ListCache_posts", CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],      // 创建帖子，清除列表缓存
-        "PUT": ["api_/api/posts", CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],                                        // 更新帖子，清除列表缓存
-        "DELETE": ["api_/api/posts", "ComfyRanking_ListCache_posts", CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],    // 删除帖子，清除列表缓存
-        "INTERACTION": ["api_/api/posts", "ComfyRanking_ListCache_posts", CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX] // 👍 互动操作（view/like/favorite/tip）
+        "POST": ["api_/api/posts", CACHE.PUBLIC_LISTS.posts.prefix, CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],      // 创建帖子，清除列表缓存
+        "PUT": ["api_/api/posts", CACHE.PUBLIC_LISTS.posts.prefix, CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],                                        // 更新帖子，清除列表缓存
+        "DELETE": ["api_/api/posts", CACHE.PUBLIC_LISTS.posts.prefix, CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],    // 删除帖子，清除列表缓存
+        "INTERACTION": ["api_/api/posts", CACHE.PUBLIC_LISTS.posts.prefix, CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX] // 👍 互动操作（view/like/favorite/tip）
     },
     // 评论相关
     "/api/comments": {
-        "POST": ["api_/api/comments", "api_/api/posts", "api_/api/items"],  // 创建评论，清除评论和相关内容缓存
-        "DELETE": ["api_/api/comments", "api_/api/posts", "api_/api/items"] // 删除评论，清除评论和相关内容缓存
+        "POST": COMMENT_CACHE_PREFIXES,
+        "DELETE": COMMENT_CACHE_PREFIXES
     },
     // 商品相关
     "/api/items": {
@@ -643,10 +756,10 @@ const CACHE_INVALIDATION_MAP = {
         "INTERACTION": ["api_/api/items", "api_/api/creators", CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX]           // 👍 互动操作（view/like）
     },
     "/api/prompts": {
-        "POST": ["api_/api/prompts", "PromptsCache_", CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],
-        "PUT": ["api_/api/prompts", "PromptsCache_", CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],
-        "DELETE": ["api_/api/prompts", "PromptsCache_", CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],
-        "INTERACTION": ["api_/api/prompts", "PromptsCache_", CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX]
+        "POST": ["api_/api/prompts", CACHE.PUBLIC_LISTS.prompts.prefix, CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],
+        "PUT": ["api_/api/prompts", CACHE.PUBLIC_LISTS.prompts.prefix, CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],
+        "DELETE": ["api_/api/prompts", CACHE.PUBLIC_LISTS.prompts.prefix, CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX],
+        "INTERACTION": ["api_/api/prompts", CACHE.PUBLIC_LISTS.prompts.prefix, CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX]
     },
     "/api/interactions": { "POST": ["api_/api/items", "api_/api/creators", ...CACHE.RESOURCE_LIST_PREFIXES, CACHE.LOCAL_KEYS.PROFILE_LIST_PREFIX] },
     // 用户相关
@@ -709,6 +822,10 @@ export function invalidateRelatedCache(endpoint, method = null) {
         patterns = ["ComfyRanking_ListCache_"];
     }
     
+    if (method === "POST" && /^\/api\/items\/[^/]+\/rating$/.test(endpoint.split(/[?#]/)[0])) {
+        patterns = [...patterns, ...CACHE.RESOURCE_LIST_PREFIXES];
+    }
+
     // 🔧 修复：原实现只遍历 localStorage，漏清 memoryCache —— 而 getCache/getCacheWithMeta
     // 都优先读内存 Map，POST 成功后内存里的旧列表仍会命中并被直接返回（连请求都不发），
     // 表现为「发布/点赞已成功但界面还是旧数据」，要等内存条目 TTL 到期才自愈。
@@ -717,6 +834,8 @@ export function invalidateRelatedCache(endpoint, method = null) {
     // ComfyRanking_ComfyCommunity_ProfileCache_，永远匹配不到，改头像/昵称后该缓存清不掉。
     // 复用两级前缀删除逻辑；同次失效合并为一次存储遍历，兼容带前缀与裸键。
     const cleared = _removeCacheByPrefixes(patterns);
+    if ((method === "POST" || method === "DELETE")
+        && /^\/api\/comments(?:\/|[?#]|$)/.test(endpoint)) invalidateCreatorsSession();
     
     if (cleared > 0) {
         console.log(`🗑️ 精确清除缓存: ${cleared} 个项`);
@@ -725,6 +844,7 @@ export function invalidateRelatedCache(endpoint, method = null) {
 
 // 获取缓存TTL
 export function _getCacheTTL(endpoint) {
+    if (endpoint.split(/[?#]/)[0] === CACHE.PUBLIC_LISTS.prompts.endpoint) return CACHE.TTL.DETAIL_DATA;
     for (const [pattern, ttl] of Object.entries(CACHE_CONFIG)) {
         if (endpoint.startsWith(pattern)) {
             return ttl;
@@ -748,7 +868,8 @@ export function isPrivateApiGet(endpoint) {
 export function purgePrivateApiCache() {
     const keys = new Set(memoryCache.keys());
     try {
-        for (let index = 0; index < localStorage.length; index++) keys.add(localStorage.key(index));
+        const storage = localStorage;
+        for (let index = 0; index < storage.length; index++) keys.add(storage.key(index));
     } catch (_) {}
     const prefix = CACHE_PREFIX + "api_";
     for (const fullKey of keys) {

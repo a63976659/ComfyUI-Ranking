@@ -173,196 +173,233 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
     detailView.className = "resource-detail";
     detailView.style.display = "none";
 
-    const authorInfo = document.createElement("div");
-    authorInfo.className = "resource-detail__author";
+    let commentsContainer, refundArea, chartContainerId;
+    let detailsMounted = false;
+    function mountDetails() {
+        if (detailsMounted) return;
+        const authorInfo = document.createElement("div");
+        authorInfo.className = "resource-detail__author";
     
-    // 🔄 P7后悔模式：检查是否有待生效价格
-    const priceHtml = _generatePriceHTML(itemData, t);
+        // 🔄 P7后悔模式：检查是否有待生效价格
+        const priceHtml = _generatePriceHTML(itemData, t);
     
-    authorInfo.innerHTML = `${t('market.author')}: <button type="button" class="author-name-link card-author-link" ${itemData.author ? '' : 'disabled'}>${t('common.loading')}...</button> ${priceHtml}`;
-    detailView.appendChild(authorInfo);
+        authorInfo.innerHTML = `${t('market.author')}: <button type="button" class="author-name-link card-author-link" ${itemData.author ? '' : 'disabled'}>${t('common.loading')}...</button> ${priceHtml}`;
+        detailView.appendChild(authorInfo);
 
-    const nameDOM = authorInfo.querySelector('.author-name-link');
+        const nameDOM = authorInfo.querySelector('.author-name-link');
     
-    // 使用统一辅助函数加载作者名称
-    _loadAuthorProfile(itemData.author, {
-        onName: (name) => { nameDOM.textContent = name; }
-    });
+        // 使用统一辅助函数加载作者名称
+        _loadAuthorProfile(itemData.author, {
+            onName: (name) => { nameDOM.textContent = name; }
+        });
     
-    nameDOM.onclick = (e) => { e.stopPropagation(); openOtherUserProfileModal(itemData.author, currentUser); };
+        nameDOM.onclick = (e) => { e.stopPropagation(); openOtherUserProfileModal(itemData.author, currentUser); };
 
-    // 原创内容标识
-    if (itemData.is_original) {
-        const originalBadge = document.createElement("div");
-        originalBadge.className = "resource-detail__badge resource-detail__badge--original";
-        originalBadge.textContent = "🎨 " + t('publish.mark_original');
-        detailView.appendChild(originalBadge);
-    }
+        // 原创内容标识
+        if (itemData.is_original) {
+            const originalBadge = document.createElement("div");
+            originalBadge.className = "resource-detail__badge resource-detail__badge--original";
+            originalBadge.textContent = "🎨 " + t('publish.mark_original');
+            detailView.appendChild(originalBadge);
+        }
 
-    // 支持退款标识（仅工具、Skill和应用类型显示，且允许退款时）
-    if (itemData.allow_refund !== false && (itemData.type === 'tool' || itemData.type === 'skill' || itemData.type === 'app')) {
-        const refundBadge = document.createElement("div");
-        refundBadge.className = "resource-detail__badge resource-detail__badge--refundable";
-        refundBadge.textContent = `🛡️ ${t('item.refundable')}`;
-        detailView.appendChild(refundBadge);
-    }
+        // 支持退款标识（仅工具、Skill和应用类型显示，且允许退款时）
+        if (itemData.allow_refund !== false && (itemData.type === 'tool' || itemData.type === 'skill' || itemData.type === 'app')) {
+            const refundBadge = document.createElement("div");
+            refundBadge.className = "resource-detail__badge resource-detail__badge--refundable";
+            refundBadge.textContent = `🛡️ ${t('item.refundable')}`;
+            detailView.appendChild(refundBadge);
+        }
 
-    const actionArea = document.createElement("div");
-    actionArea.className = "resource-detail__actions";
-    const btnLike = document.createElement("button");
-    btnLike.type = "button";
-    const btnFav = document.createElement("button");
-    btnFav.type = "button";
+        const actionArea = document.createElement("div");
+        actionArea.className = "resource-detail__actions";
+        const btnLike = document.createElement("button");
+        btnLike.type = "button";
+        const btnFav = document.createElement("button");
+        btnFav.type = "button";
     
-    // 🚀 根据安装状态显示不同的按钮样式（installStatus 已在上方声明）
-    const btnUse = document.createElement("button");
-    btnUse.type = "button";
-    btnUse.className = "resource-detail__button resource-detail__use";
+        // 🚀 根据安装状态显示不同的按钮样式（installStatus 已在上方声明）
+        const btnUse = document.createElement("button");
+        btnUse.type = "button";
+        btnUse.className = "resource-detail__button resource-detail__use";
     
-    if (installStatus.hasUpdate) {
-        // 有更新可用
-        btnUse.classList.add("resource-detail__button--warning");
-        btnUse.innerHTML = `♻️ ${t('market.update_available')}`;
-    } else if (installStatus.installed) {
-        // 已安装
-        btnUse.classList.add("resource-detail__button--success");
-        btnUse.innerHTML = `✅ ${t('market.installed')}`;
-    } else {
-        // 未安装
-        btnUse.classList.add("resource-detail__button--primary");
-        btnUse.textContent = `🚀 ${t('market.get_now')} ${itemData.uses ? '(' + itemData.uses + ')' : ''}`;
-    }
+        if (installStatus.hasUpdate) {
+            // 有更新可用
+            btnUse.classList.add("resource-detail__button--warning");
+            btnUse.innerHTML = `♻️ ${t('market.update_available')}`;
+        } else if (installStatus.installed) {
+            // 已安装
+            btnUse.classList.add("resource-detail__button--success");
+            btnUse.innerHTML = `✅ ${t('market.installed')}`;
+        } else {
+            // 未安装
+            btnUse.classList.add("resource-detail__button--primary");
+            btnUse.textContent = `🚀 ${t('market.get_now')} ${itemData.uses ? '(' + itemData.uses + ')' : ''}`;
+        }
 
-    actionArea.appendChild(btnLike); actionArea.appendChild(btnFav); actionArea.appendChild(btnUse);
-    detailView.appendChild(actionArea);
+        actionArea.appendChild(btnLike); actionArea.appendChild(btnFav); actionArea.appendChild(btnUse);
+        detailView.appendChild(actionArea);
 
-    // ⭐ 展开详情区完整评分组件（互动按钮栏下方、打赏榜单上方）
-    const ratingSection = createRatingStars({
-        ratingData: {
-            rating_avg: itemData.rating_avg || 0,
-            rating_count: itemData.rating_count || 0,
-            rating_dist: itemData.rating_dist || {"1":0,"2":0,"3":0,"4":0,"5":0},
-            rated_by: itemData.rated_by || {}
-        },
-        currentUser: currentUser,
-        authorAccount: itemData.author,
-        isCurrent: ratingCurrent,
-        onRate: async (score, requestContext) => {
-            const current = () => ratingCurrent() && (!requestContext || requestContext.isCurrent());
-            if (!current()) return null;
-            const res = await api.rateItem(itemData.id, score);
-            if (!current()) return null;
-            if (isValidRatingResponse(res, score)) {
-                itemData.rating_avg = res.rating_avg;
-                itemData.rating_count = res.rating_count;
-                itemData.rating_dist = res.rating_dist;
-                if (!itemData.rated_by) itemData.rated_by = {};
-                itemData.rated_by[currentUser.account] = { score: res.user_score, time: Date.now() / 1000 };
+        // ⭐ 展开详情区完整评分组件（互动按钮栏下方、打赏榜单上方）
+        const ratingSection = createRatingStars({
+            ratingData: {
+                rating_avg: itemData.rating_avg || 0,
+                rating_count: itemData.rating_count || 0,
+                rating_dist: itemData.rating_dist || {"1":0,"2":0,"3":0,"4":0,"5":0},
+                rated_by: itemData.rated_by || {}
+            },
+            currentUser: currentUser,
+            authorAccount: itemData.author,
+            isCurrent: ratingCurrent,
+            onRate: async (score, requestContext) => {
+                const current = () => ratingCurrent() && (!requestContext || requestContext.isCurrent());
+                if (!current()) return null;
+                const res = await api.rateItem(itemData.id, score);
+                if (!current()) return null;
+                if (isValidRatingResponse(res, score)) {
+                    itemData.rating_avg = res.rating_avg;
+                    itemData.rating_count = res.rating_count;
+                    itemData.rating_dist = res.rating_dist;
+                    if (!itemData.rated_by) itemData.rated_by = {};
+                    itemData.rated_by[currentUser.account] = { score: res.user_score, time: Date.now() / 1000 };
 
-                // 同步更新摘要区紧凑评分
-                const oldCompact = summaryView.querySelector(".card-rating-compact");
-                if (oldCompact) {
-                    const newCompact = createRatingStars({
-                        ratingData: {
-                            rating_avg: itemData.rating_avg,
-                            rating_count: itemData.rating_count,
-                            rating_dist: itemData.rating_dist,
-                            rated_by: itemData.rated_by
-                        },
-                        compact: true
-                    });
-                    newCompact.classList.add("card-rating-compact");
-                    oldCompact.parentNode.replaceChild(newCompact, oldCompact);
+                    // 同步更新摘要区紧凑评分
+                    const oldCompact = summaryView.querySelector(".card-rating-compact");
+                    if (oldCompact) {
+                        const newCompact = createRatingStars({
+                            ratingData: {
+                                rating_avg: itemData.rating_avg,
+                                rating_count: itemData.rating_count,
+                                rating_dist: itemData.rating_dist,
+                                rated_by: itemData.rated_by
+                            },
+                            compact: true
+                        });
+                        newCompact.classList.add("card-rating-compact");
+                        oldCompact.parentNode.replaceChild(newCompact, oldCompact);
+                    }
                 }
+                return res;
+            },
+            compact: false
+        });
+        detailView.appendChild(ratingSection);
+
+        const isLiked = currentUser && Array.isArray(itemData.liked_by) && itemData.liked_by.includes(currentUser.account);
+        const isFav = currentUser && Array.isArray(itemData.favorited_by) && itemData.favorited_by.includes(currentUser.account);
+
+        const handleInteraction = async (type, isActive) => {
+            if (!currentUser?.account) {
+                showToast(t('feedback.login_required'), "warning");
+                return { status: "cancelled" };
             }
-            return res;
-        },
-        compact: false
-    });
-    detailView.appendChild(ratingSection);
+            const response = await api.toggleInteraction(itemData.id, currentUser.account, type, isActive);
+            if (response?.status === "success" && Number.isSafeInteger(response.new_count) && response.new_count >= 0) {
+                const membershipKey = type === "like" ? "liked_by" : "favorited_by";
+                const countKey = type === "like" ? "likes" : "favorites";
+                const previousMembers = Array.isArray(itemData[membershipKey]) ? itemData[membershipKey] : [];
+                const members = previousMembers.filter(account => account !== currentUser.account);
+                if (isActive) members.push(currentUser.account);
+                itemData[membershipKey] = members;
+                itemData[countKey] = response.new_count;
+                const summaryCount = summaryView.querySelector(type === "like" ? '[data-stat="likes"]' : '[data-stat="favorites"]');
+                if (summaryCount) summaryCount.textContent = `${type === "like" ? "👍" : "🔖"} ${response.new_count}`;
+            }
+            return response ?? { status: "error" };
+        };
 
-    const isLiked = currentUser && Array.isArray(itemData.liked_by) && itemData.liked_by.includes(currentUser.account);
-    const isFav = currentUser && Array.isArray(itemData.favorited_by) && itemData.favorited_by.includes(currentUser.account);
+        setupToggleButton(btnLike, isLiked, itemData.likes || 0, `👍 ${t('market.liked')}`, `👍 ${t('market.like')}`, "#FF5722", (isActive) => handleInteraction("like", isActive));
+        setupToggleButton(btnFav, isFav, itemData.favorites || 0, `🔖 ${t('market.favorited')}`, `🔖 ${t('market.favorite')}`, "#FFC107", (isActive) => handleInteraction("favorite", isActive));
 
-    const handleInteraction = async (type, isActive) => {
-        if (!currentUser?.account) {
-            showToast(t('feedback.login_required'), "warning");
-            return { status: "cancelled" };
+        const inlineStatusBox = document.createElement("div");
+        inlineStatusBox.className = "resource-detail__status";
+        inlineStatusBox.style.display = "none";
+        detailView.appendChild(inlineStatusBox);
+        setupResourceInstall(btnUse, itemData, currentUser, inlineStatusBox);
+
+        const mediaArea = document.createElement("div");
+        chartContainerId = `chart-${Math.random().toString(36).substr(2, 9)}`;
+        const chartHtml = `<div class="resource-detail__heading">📈 ${t('market.usage_trend')}</div><div id="${chartContainerId}" class="resource-detail__chart"></div>`;
+    
+        mediaArea.innerHTML = `
+            ${chartHtml}
+            ${getCoverSandboxHTML(itemData.imageUrls?.length > 0 ? itemData.imageUrls : itemData.coverUrl)}
+            <div class="resource-detail__heading">📝 ${t('market.full_description')}</div>
+            <div class="resource-detail__description">${escapeHtml(itemData.fullDesc)}</div>
+        `;
+        detailView.appendChild(mediaArea);
+
+        // 🚀 新增：赞赏贡献榜单与打赏按钮（带等级显示）
+        const tipArea = document.createElement("div");
+        tipArea.className = "resource-detail__tips";
+    
+        // 使用统一的打赏榜单渲染工具（带星星/月亮/太阳等级）
+        const boardData = Array.isArray(itemData.tip_board)
+            ? itemData.tip_board.filter(entry => entry && typeof entry === "object" && !Array.isArray(entry))
+            : [];
+        const boardHtml = renderTipBoardHTML(boardData, 5, t('market.no_tips_yet'), "small");
+    
+        tipArea.innerHTML = `
+            <div class="resource-detail__tip-header">
+                <div class="resource-detail__heading resource-detail__tip-heading">💖 ${t('market.tip_board')} (${t('market.tip_board_limit', { count: 5 })})</div>
+                <button type="button" class="btn-tip-item resource-detail__button resource-detail__button--tip">💰 ${t('market.tip')}</button>
+            </div>
+            ${boardHtml}
+        `;
+        detailView.appendChild(tipArea);
+    
+        // 🚀 绑定打赏按钮事件
+        tipArea.querySelector('.btn-tip-item').onclick = (e) => {
+            e.stopPropagation();
+            if (!currentUser) return showToast(t('feedback.login_required'), "warning");
+            // 🐛 Bug修复：防御性校验，防止 itemId 为空
+            if (!itemData.id) {
+                console.warn('⚠️ 列表卡片: itemData.id 为空，已拦截无效打赏请求');
+                return showToast(t('item.invalid_id_tip'), "error");
+            }
+            openTipModal(currentUser, { account: itemData.author }, undefined, itemData.id,
+                { isCurrent: () => card.isConnected });
+        };
+
+        // 🔄 P7后悔模式：退款区域（仅在"我购买的"列表中显示）
+        refundArea = document.createElement("div");
+        refundArea.id = `refund-area-${itemData.id}`;
+        refundArea.className = "resource-detail__refund";
+        refundArea.style.display = "none";
+        detailView.appendChild(refundArea);
+
+        commentsContainer = document.createElement("div");
+        commentsContainer.className = "resource-detail__comments";
+    
+        detailView.appendChild(commentsContainer);
+
+        if (currentUser && currentUser.account === itemData.author) {
+            const authorActionArea = document.createElement("div");
+            authorActionArea.className = "resource-detail__manage";
+        
+            authorActionArea.innerHTML = `
+                <div class="resource-detail__manage-title">👑 ${t('market.creator_manage')}</div>
+                ${IS_WEB_MODE ? '' : `<button type="button" id="btn-edit-item" class="resource-detail__button resource-detail__button--primary">✏️ ${t('market.edit_content')}</button>`}
+                <button type="button" id="btn-del-item" class="resource-detail__button resource-detail__button--danger">🗑️ ${t('market.delete_permanently')}</button>
+            `;
+        
+            // 📱 Web 模式不渲染编辑按钮，此处需空值保护
+            const btnEditItem = authorActionArea.querySelector("#btn-edit-item");
+            if (btnEditItem) btnEditItem.onclick = (e) => {
+                e.stopPropagation();
+                window.dispatchEvent(new CustomEvent("comfy-route-edit-publish", { detail: { itemData, currentUser } }));
+            };
+        
+            authorActionArea.querySelector("#btn-del-item").onclick = async (e) => {
+                e.stopPropagation();
+                await showResourceDeleteDialog({ itemData, currentUser, isCurrent: () => card.isConnected,
+                    onDeleted: () => window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload")) });
+            };
+            detailView.appendChild(authorActionArea);
         }
-        const response = await api.toggleInteraction(itemData.id, currentUser.account, type, isActive);
-        if (response?.status === "success" && Number.isSafeInteger(response.new_count) && response.new_count >= 0) {
-            const membershipKey = type === "like" ? "liked_by" : "favorited_by";
-            const countKey = type === "like" ? "likes" : "favorites";
-            const previousMembers = Array.isArray(itemData[membershipKey]) ? itemData[membershipKey] : [];
-            const members = previousMembers.filter(account => account !== currentUser.account);
-            if (isActive) members.push(currentUser.account);
-            itemData[membershipKey] = members;
-            itemData[countKey] = response.new_count;
-            const summaryCount = summaryView.querySelector(type === "like" ? '[data-stat="likes"]' : '[data-stat="favorites"]');
-            if (summaryCount) summaryCount.textContent = `${type === "like" ? "👍" : "🔖"} ${response.new_count}`;
-        }
-        return response ?? { status: "error" };
-    };
 
-    setupToggleButton(btnLike, isLiked, itemData.likes || 0, `👍 ${t('market.liked')}`, `👍 ${t('market.like')}`, "#FF5722", (isActive) => handleInteraction("like", isActive));
-    setupToggleButton(btnFav, isFav, itemData.favorites || 0, `🔖 ${t('market.favorited')}`, `🔖 ${t('market.favorite')}`, "#FFC107", (isActive) => handleInteraction("favorite", isActive));
-
-    const inlineStatusBox = document.createElement("div");
-    inlineStatusBox.className = "resource-detail__status";
-    inlineStatusBox.style.display = "none";
-    detailView.appendChild(inlineStatusBox);
-    setupResourceInstall(btnUse, itemData, currentUser, inlineStatusBox);
-
-    const mediaArea = document.createElement("div");
-    const chartContainerId = `chart-${Math.random().toString(36).substr(2, 9)}`;
-    const chartHtml = `<div class="resource-detail__heading">📈 ${t('market.usage_trend')}</div><div id="${chartContainerId}" class="resource-detail__chart"></div>`;
-    
-    mediaArea.innerHTML = `
-        ${chartHtml}
-        ${getCoverSandboxHTML(itemData.imageUrls?.length > 0 ? itemData.imageUrls : itemData.coverUrl)}
-        <div class="resource-detail__heading">📝 ${t('market.full_description')}</div>
-        <div class="resource-detail__description">${escapeHtml(itemData.fullDesc)}</div>
-    `;
-    detailView.appendChild(mediaArea);
-
-    // 🚀 新增：赞赏贡献榜单与打赏按钮（带等级显示）
-    const tipArea = document.createElement("div");
-    tipArea.className = "resource-detail__tips";
-    
-    // 使用统一的打赏榜单渲染工具（带星星/月亮/太阳等级）
-    const boardData = Array.isArray(itemData.tip_board)
-        ? itemData.tip_board.filter(entry => entry && typeof entry === "object" && !Array.isArray(entry))
-        : [];
-    const boardHtml = renderTipBoardHTML(boardData, 5, t('market.no_tips_yet'), "small");
-    
-    tipArea.innerHTML = `
-        <div class="resource-detail__tip-header">
-            <div class="resource-detail__heading resource-detail__tip-heading">💖 ${t('market.tip_board')} (TOP 5)</div>
-            <button type="button" class="btn-tip-item resource-detail__button resource-detail__button--tip">💰 ${t('market.tip')}</button>
-        </div>
-        ${boardHtml}
-    `;
-    detailView.appendChild(tipArea);
-    
-    // 🚀 绑定打赏按钮事件
-    tipArea.querySelector('.btn-tip-item').onclick = (e) => {
-        e.stopPropagation();
-        if (!currentUser) return showToast(t('feedback.login_required'), "warning");
-        // 🐛 Bug修复：防御性校验，防止 itemId 为空
-        if (!itemData.id) {
-            console.warn('⚠️ 列表卡片: itemData.id 为空，已拦截无效打赏请求');
-            return showToast(t('item.invalid_id_tip'), "error");
-        }
-        openTipModal(currentUser, { account: itemData.author }, undefined, itemData.id,
-            { isCurrent: () => card.isConnected });
-    };
-
-    // 🔄 P7后悔模式：退款区域（仅在"我购买的"列表中显示）
-    const refundArea = document.createElement("div");
-    refundArea.id = `refund-area-${itemData.id}`;
-    refundArea.className = "resource-detail__refund";
-    refundArea.style.display = "none";
-    detailView.appendChild(refundArea);
+        detailsMounted = true;
+    }
 
     let isRendered = false;
     let commentUI = null;
@@ -370,7 +407,9 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
     let trendChartStopped = false;
     const toggleButton = summaryView.querySelector('.card-summary__toggle');
     const setExpanded = (expanded) => {
+        if (trendChartStopped) return;
         if (expanded) {
+            mountDetails();
             mountComments();
             if (isRendered) setupImageSandboxEvents(detailView);
         } else cleanupImageSandbox(detailView);
@@ -383,6 +422,7 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
         trendChart?.setActive(expanded);
     };
     summaryView.onclick = (event) => {
+        if (trendChartStopped || !ratingCurrent()) return;
         // 摘要中的作者、评分等独立控件不触发折叠；标题按钮使用浏览器原生键盘行为。
         const control = event.target.closest('button, a, input, select, textarea, [role="button"]');
         if (control && control !== toggleButton) return;
@@ -418,11 +458,6 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
         toggleButton.focus();
     });
 
-    const commentsContainer = document.createElement("div");
-    commentsContainer.className = "resource-detail__comments";
-    
-    // 🚀 核心修改：传入一个回调函数，当组件内部发送/删除留言时，外部的数字能实时响应刷新！
-    // 🚀 P0安全修复：传递 itemData.author 作为 contentAuthor，使内容作者可以删除其内容下的评论
     function mountComments() {
         if (commentUI) return;
         commentUI = createCommentSection(itemData.id, itemData.commentsData || [], currentUser, (newCount) => {
@@ -430,32 +465,6 @@ export function createItemCard(itemData, currentUser = null, contextType = null)
             if (badge) badge.innerText = `💬 ${newCount}`;
         }, itemData.author);
         commentsContainer.appendChild(commentUI);
-    }
-    detailView.appendChild(commentsContainer);
-
-    if (currentUser && currentUser.account === itemData.author) {
-        const authorActionArea = document.createElement("div");
-        authorActionArea.className = "resource-detail__manage";
-        
-        authorActionArea.innerHTML = `
-            <div class="resource-detail__manage-title">👑 ${t('market.creator_manage')}</div>
-            ${IS_WEB_MODE ? '' : `<button type="button" id="btn-edit-item" class="resource-detail__button resource-detail__button--primary">✏️ ${t('market.edit_content')}</button>`}
-            <button type="button" id="btn-del-item" class="resource-detail__button resource-detail__button--danger">🗑️ ${t('market.delete_permanently')}</button>
-        `;
-        
-        // 📱 Web 模式不渲染编辑按钮，此处需空值保护
-        const btnEditItem = authorActionArea.querySelector("#btn-edit-item");
-        if (btnEditItem) btnEditItem.onclick = (e) => {
-            e.stopPropagation();
-            window.dispatchEvent(new CustomEvent("comfy-route-edit-publish", { detail: { itemData, currentUser } }));
-        };
-        
-        authorActionArea.querySelector("#btn-del-item").onclick = async (e) => {
-            e.stopPropagation();
-            await showResourceDeleteDialog({ itemData, currentUser, isCurrent: () => card.isConnected,
-                onDeleted: () => window.dispatchEvent(new CustomEvent("comfy-trigger-sidebar-reload")) });
-        };
-        detailView.appendChild(authorActionArea);
     }
 
     // 🖼️ 启用图片懒加载（跳过 data URL 和已处理的）

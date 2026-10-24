@@ -29,6 +29,7 @@
  * @property {number} [created_at] - 注册时间戳
  * @property {string[]} [followers] - 粉丝列表
  * @property {string[]} [following] - 关注列表
+ * @property {number} [following_count] - 关注人数
  * @property {PrivacySettings} [privacy] - 隐私设置
  */
 

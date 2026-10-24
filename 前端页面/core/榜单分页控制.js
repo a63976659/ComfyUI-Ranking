@@ -75,6 +75,7 @@ export function setupSidebarPagination(contentArea, state, pageSize, loadMoreDat
     // 创建分页加载器
     const loader = createPaginationLoader({
         container: scrollContainer,
+        focusContainer: contentArea,
         pageSize: pageSize,
         threshold: 300,
         t,

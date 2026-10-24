@@ -3,9 +3,11 @@ import { showToast, showConfirm, createInstallProgress } from "../components/UI�
 import { api } from "../core/网络请求API.js";
 import { requestSSE, request } from "../core/网络请求_基础设施.js";
 import { openUserProfileModal } from "../profile/个人中心视图.js";
-import { API, CACHE, SKILL_INSTALL, IS_WEB_MODE, escapeHtml } from "../core/全局配置.js";
+import { API, CACHE, SKILL_INSTALL, UI, IS_WEB_MODE, escapeHtml, getSidebarListCacheKey } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 import { createResourceOperationScope } from "./资源操作生命周期.js";
+import { describeInstallSource } from "./安装来源.js";
+import { attachInstallDirectory } from "./安装目录.js";
 import { isValidPurchaseStatus } from "./购买状态生命周期.js";
 import { saveAcquiredItem } from "./资源获取记录.js";
 export { getAcquiredItems } from "./资源获取记录.js";
@@ -42,7 +44,7 @@ function clearUsesCache() {
     const sorts = ['time', 'downloads', 'likes', 'favorites', 'tips', 'views', 'daily_views', 'rating'];
     for (const tab of tabs) {
         for (const sort of sorts) {
-            removeCache(`ListCache_${tab}_${sort}`);
+            removeCache(getSidebarListCacheKey(tab, sort));
         }
     }
     console.log('📊 使用量缓存已清除');
@@ -80,6 +82,7 @@ function _getInstallErrorMessage(result) {
         git_clone_failed: 'install.error_git_clone',
         insufficient_disk_space: 'install.error_disk_space',
         remote_rejected: 'install.error_remote_rejected',
+        source_changed: 'install.error_source_changed',
         package_too_large: 'install.error_package_too_large',
         repository_too_large: 'install.error_repository_too_large',
         process_guard_unavailable: 'install.error_process_guard',
@@ -128,6 +131,27 @@ const INSTALL_STAGE_KEYS = {
     complete: 'install.stage_complete',
     error: 'install.stage_failed'
 };
+
+function _installTransferText(event, message) {
+    const spec = UI.INSTALL_TRANSFER;
+    if (!spec.STAGES.includes(event.stage) || event.status === 'error') return message;
+    const value = event.transfer;
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || !Number.isSafeInteger(value.received_bytes) || value.received_bytes < 0 || value.received_bytes > spec.MAX_BYTES) return message;
+    const total = value.total_bytes;
+    if (total != null && (!Number.isSafeInteger(total) || total <= 0 || total > spec.MAX_BYTES || value.received_bytes > total)) return message;
+    function size(bytes) {
+        let unit = 0;
+        while (bytes >= spec.BASE && unit + 1 < spec.UNIT_KEYS.length) { bytes /= spec.BASE; unit++; }
+        return `${unit ? bytes.toFixed(1) : String(bytes)} ${t(spec.UNIT_KEYS[unit])}`;
+    }
+    const received = size(value.received_bytes);
+    const label = total == null ? t('install.transfer_unknown', { stage: message, received })
+        : t('install.transfer_known', { stage: message, received, total: size(total) });
+    const rate = value.bytes_per_second;
+    return Number.isSafeInteger(rate) && rate >= 0 && rate <= spec.MAX_RATE
+        ? t('install.transfer_rate', { label, rate: size(rate) }) : label;
+}
 
 const WORKFLOW_STAGE_KEYS = {
     validate: 'workflow.stage_validate',
@@ -527,6 +551,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 const controller = new AbortController();
                 const removeCancel = scope.addCleanup(() => controller.abort());
                 progress.addCancelButton(t('install.cancel_in_progress'), () => controller.abort());
+                let directoryPlan;
                 try {
                     const result = await skillFlow.runSkillInstall({
                         target: skillTarget, credentials: { account, token, item_id: String(itemData.id) }, scope,
@@ -537,11 +562,12 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                             const stageKey = Object.hasOwn(INSTALL_STAGE_KEYS, event.stage) ? INSTALL_STAGE_KEYS[event.stage] : 'skill.preparing';
                             const label = event.skillAction === 'status' ? t('skill.checking_result')
                                 : event.skillAction === 'prepare' && event.stage === 'complete' ? t('skill.prepared') : t(stageKey);
-                            progress.update(event.progress, label);
+                            progress.update(event.progress, _installTransferText(event, label));
                         }
                     });
                     if (!isCurrent()) return;
                     if (result.status === 'cancelled') { restoreFocus = true; progress.error(t('skill.cancelled')); return; }
+                    if (typeof result.plan_id === 'string' && /^[a-f0-9]{32}$/.test(result.plan_id)) directoryPlan = result.plan_id;
                     if (result.outcomeUnknown) {
                         phase = 'unknown'; btnUse.removeAttribute('aria-busy');
                         progress.error(t('skill.outcome_unknown')); return;
@@ -559,6 +585,11 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                     if (isCurrent()) progress.error(controller.signal.aborted ? t('skill.cancelled') : skillFlow.skillErrorMessage(error));
                 } finally {
                     removeCancel(); controller.abort();
+                    try {
+                        if (directoryPlan && isCurrent()) attachInstallDirectory(inlineStatusBox, {
+                            plan_id: directoryPlan, account, token, item_id: String(itemData.id)
+                        }, scope, { skill: true });
+                    } catch {}
                     if (phase === 'install') phase = 'idle';
                     releaseButton();
                 }
@@ -566,6 +597,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
             }
 
             if (isTool) {
+                const installSource = describeInstallSource(itemData.link);
                 inlineStatusBox.style.display = "block";
                 inlineStatusBox.textContent = t('install.preview_loading');
                 let installPreview = null;
@@ -624,6 +656,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 inlineStatusBox.innerHTML = `
                     <div class="resource-install__confirmation" role="group" aria-label="${escapeHtml(t('install.confirmation_region'))}">
                         <div role="heading" aria-level="3" class="resource-install__heading">${escapeHtml(installPromptText)}</div>
+                        <div class="resource-install__preview">${escapeHtml(t(installSource ? 'install.source' : 'install.source_unavailable', { source: installSource?.label }))}</div>
                         <div role="status" aria-live="polite" class="resource-install__preview">${escapeHtml(targetStateText)}</div>
                         ${localVersionText ? `<div role="status" aria-live="polite" class="resource-install__preview">${escapeHtml(localVersionText)}</div>` : ''}
                         <div class="resource-install__actions">
@@ -658,6 +691,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                 confirmInstallButton.onclick = async () => {
                     if (!isCurrent() || phase !== "confirm") return;
                     phase = "install";
+                    let directoryAttempted = false;
                     try {
                         removeInstallEscapeHandler();
                         confirmInstallButton.disabled = true;
@@ -666,17 +700,30 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         // noCache: true 绕过前端 GET 请求缓存（5min TTL），确保读取服务器最新 has_private_token 值
                         let freshHasPrivateToken = !!itemData.has_private_token;
                         let apiFetchFailed = false;
+                        let sourceChanged = false;
+                        let sourceUnverified = false;
                         try {
                             const freshRes = await request(`/api/items/${itemData.id}`, scope.readOptions);
                             if (!isCurrent()) return;
                             if (freshRes.status === "success" && freshRes.data) {
                                 freshHasPrivateToken = !!freshRes.data.has_private_token;
+                                const freshSource = describeInstallSource(freshRes.data.link);
+                                sourceUnverified = !installSource || !freshSource;
+                                sourceChanged = !sourceUnverified && freshSource.identity !== installSource.identity;
+                            } else {
+                                apiFetchFailed = true;
                             }
                         } catch (e) {
                             apiFetchFailed = true;
                             if (!isCurrent()) return;
                         }
                         if (!isCurrent()) return;
+                        if (sourceChanged || sourceUnverified) {
+                            const message = sourceChanged ? t('install.error_source_changed') : t('install.source_unavailable');
+                            inlineStatusBox.textContent = message;
+                            showToast(message, 'warning');
+                            return;
+                        }
                         const hasPrivateToken = freshHasPrivateToken;
                         // 路由决策：仅当确认是免费+无私有Token时才走 git clone
                         // 如果 API 获取失败且缓存中无 has_private_token 信息，保守地走 ZIP 代理路径
@@ -685,6 +732,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                             ? "/community_hub/install_tool"
                             : "/community_hub/install_private_tool";
 
+                        directoryAttempted = true;
                         const progress = trackProgress();
                         const cancelController = new AbortController();
                         progress.addCancelButton(t('install.cancel_in_progress'), () => cancelController.abort());
@@ -702,7 +750,7 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                                     const stageKey = Object.hasOwn(INSTALL_STAGE_KEYS, rawStage) ? INSTALL_STAGE_KEYS[rawStage] : "";
                                     progress.update(event.progress, event.status === "error"
                                         ? _getInstallErrorMessage(event)
-                                        : t(stageKey || 'install.stage_installing'));
+                                        : _installTransferText(event, t(stageKey || 'install.stage_installing')));
                                 },
                                 { signal: cancelController.signal }
                             );
@@ -841,7 +889,10 @@ export function setupResourceInstall(btnUse, itemData, currentUser, inlineStatus
                         }
                     } catch (_) {
                         if (isCurrent()) { phase = "unknown"; btnUse.removeAttribute("aria-busy"); inlineStatusBox.textContent = t('install.connection_uncertain'); }
-                    } finally { if (phase === "install") phase = "idle"; releaseButton(); }
+                    } finally {
+                        try { if (directoryAttempted && isCurrent()) attachInstallDirectory(inlineStatusBox, { url: itemData.link }, scope); } catch {}
+                        if (phase === "install") phase = "idle"; releaseButton();
+                    }
                 };
             } else if (isApp) {
                 const progress = trackProgress();

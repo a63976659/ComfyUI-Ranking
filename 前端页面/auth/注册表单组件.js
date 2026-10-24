@@ -1,4 +1,4 @@
-import { createAuthFormScope } from "./认证表单生命周期.js";
+import { createAuthFormScope, createAuthFieldFeedback } from "./认证表单生命周期.js";
 import { api } from "../core/网络请求API.js";
 import { regionData, getSortedCountries } from "./国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
@@ -29,21 +29,21 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
     container.innerHTML = `
         <div class="auth-form">
             <div class="auth-form__grid">
-                <div class="auth-form__field"><label for="reg-account">${t('auth.account')} (>5${t('common.chars')}) <span class="auth-form__required" aria-hidden="true">*</span></label><input type="text" id="reg-account" class="auth-form__input" name="username" autocomplete="username" required></div>
-                <div class="auth-form__field"><label for="reg-name">${t('auth.display_name')} <span class="auth-form__required" aria-hidden="true">*</span></label><input type="text" id="reg-name" class="auth-form__input" name="nickname" autocomplete="nickname" required></div>
+                <div class="auth-form__field"><label for="reg-account">${t('auth.account')} (>5${t('common.chars')}) <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label><input type="text" id="reg-account" class="auth-form__input" name="username" autocomplete="username" required></div>
+                <div class="auth-form__field"><label for="reg-name">${t('auth.display_name')} <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label><input type="text" id="reg-name" class="auth-form__input" name="nickname" autocomplete="nickname" required></div>
             </div>
             <div class="auth-form__grid">
-                <div class="auth-form__field"><label for="reg-password">${t('auth.set_password')} (≥6${t('common.chars')}) <span class="auth-form__required" aria-hidden="true">*</span></label><input type="password" id="reg-password" class="auth-form__input" name="password" autocomplete="new-password" required></div>
-                <div class="auth-form__field"><label for="reg-password-confirm">${t('auth.confirm_password')} <span class="auth-form__required" aria-hidden="true">*</span></label><input type="password" id="reg-password-confirm" class="auth-form__input" name="confirm-password" autocomplete="new-password" required></div>
+                <div class="auth-form__field"><label for="reg-password">${t('auth.set_password')} (≥6${t('common.chars')}) <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label><input type="password" id="reg-password" class="auth-form__input" name="password" autocomplete="new-password" required></div>
+                <div class="auth-form__field"><label for="reg-password-confirm">${t('auth.confirm_password')} <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label><input type="password" id="reg-password-confirm" class="auth-form__input" name="confirm-password" autocomplete="new-password" required></div>
             </div>
             <fieldset class="auth-form__security">
                 <legend>${t('auth.security_verify')}</legend>
-                <label for="reg-email">${t('auth.security_email')} (${t('auth.security_email_desc')}) <span class="auth-form__required" aria-hidden="true">*</span></label>
+                <label for="reg-email">${t('auth.security_email')} (${t('auth.security_email_desc')}) <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label>
                 <div class="auth-form__code-row">
                     <input type="email" id="reg-email" name="email" autocomplete="email" required class="auth-form__input">
                     <button type="button" id="btn-reg-send-code" class="auth-form__button">${t('auth.get_code')}</button>
                 </div>
-                <label for="reg-code">${t('auth.verification_code')} <span class="auth-form__required" aria-hidden="true">*</span></label>
+                <label for="reg-code">${t('auth.verification_code')} <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label>
                 <input type="text" id="reg-code" name="verification-code" autocomplete="one-time-code" inputmode="numeric" placeholder="6${t('common.digits')}" maxlength="6" required class="auth-form__input">
             </fieldset>
             <div class="auth-form__grid auth-form__profile">
@@ -52,7 +52,7 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
                     <div class="auth-form__avatar-row"><img id="avatar-preview" src="${DEFAULT_AVATAR}" alt="" class="auth-form__avatar"><input type="file" id="reg-avatar" accept="image/*" class="auth-form__file"></div>
                     <div id="avatar-error" class="auth-form__error" hidden>${t('auth.file_too_large')}</div>
                 </div>
-                <div class="auth-form__field"><label for="reg-gender">${t('auth.gender')} <span class="auth-form__required" aria-hidden="true">*</span></label><select id="reg-gender" required class="auth-form__input"><option value="male">${t('auth.male')}</option><option value="female">${t('auth.female')}</option></select></div>
+                <div class="auth-form__field"><label for="reg-gender">${t('auth.gender')} <span class="auth-form__required ranking-required-marker" aria-hidden="true"></span></label><select id="reg-gender" required class="auth-form__input"><option value="male">${t('auth.male')}</option><option value="female">${t('auth.female')}</option></select></div>
             </div>
             <div class="auth-form__grid">
                 <div class="auth-form__field">
@@ -69,6 +69,8 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
         </div>
     `;
     const formScope = createAuthFormScope(container);
+    const field = id => container.querySelector('#' + id);
+    const feedback = createAuthFieldFeedback(container, formScope, { notify: showToast, relatedFields: [[field('reg-password'), field('reg-password-confirm')]] });
 
     const genderSelect = container.querySelector("#reg-gender");
     const avatarPreview = container.querySelector("#avatar-preview");
@@ -187,10 +189,11 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
     btnRegSendCode.onclick = async (e) => {
         e.preventDefault();
         if (!formScope.current() || btnRegSendCode.disabled) return;
+        feedback.clear([field('reg-email')]);
         const emailInput = container.querySelector("#reg-email").value.trim();
         const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput);
         
-        if (!isEmail) return showToast(t('auth.invalid_email'), "error");
+        if (!isEmail) return feedback.report([field('reg-email')], t('auth.invalid_email'), "error");
         
         btnRegSendCode.disabled = true;
         btnRegSendCode.innerText = t('auth.sending');
@@ -212,6 +215,8 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
     };
 
     container.querySelector("#btn-submit-register").onclick = () => {
+        if (!formScope.current()) return;
+        feedback.clear();
         const account = container.querySelector("#reg-account").value.trim();
         const name = container.querySelector("#reg-name").value.trim();
         const password = container.querySelector("#reg-password").value;
@@ -220,12 +225,12 @@ export function renderRegisterForm(container, switchView, onSuccessCallback) {
 
         const code = container.querySelector("#reg-code").value.trim();
 
-        if (!account || !name || !password || !email || !code) return showToast(t('auth.required_fields'), "warning");
-        if (code.length !== 6) return showToast(t('auth.invalid_code'), "warning");
+        if (!account || !name || !password || !email || !code) return feedback.report([['reg-account', account], ['reg-name', name], ['reg-password', password], ['reg-email', email], ['reg-code', code]].filter(([, value]) => !value).map(([id]) => field(id)), t('auth.required_fields'));
+        if (code.length !== 6) return feedback.report([field('reg-code')], t('auth.invalid_code'));
         
-        if (!/^[a-zA-Z0-9_]{6,20}$/.test(account)) return showToast(t('auth.account_format_error'), "error");
-        if (password !== pwdConfirm) return showToast(t('auth.password_mismatch'), "error");
-        if (!/^[A-Za-z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]{6,}$/.test(password)) return showToast(t('auth.password_format_error'), "error");
+        if (!/^[a-zA-Z0-9_]{6,20}$/.test(account)) return feedback.report([field('reg-account')], t('auth.account_format_error'), "error");
+        if (password !== pwdConfirm) return feedback.report([field('reg-password-confirm')], t('auth.password_mismatch'), "error");
+        if (!/^[A-Za-z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]{6,}$/.test(password)) return feedback.report([field('reg-password')], t('auth.password_format_error'), "error");
 
         const formData = {
             type: "register", account, password, email, name, gender: genderSelect.value, code,

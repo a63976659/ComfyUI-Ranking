@@ -8,6 +8,13 @@
 
 import { t } from './用户体验增强.js';
 
+function releaseVideoMedia(video) {
+    video.pause();
+    video.removeAttribute('src');
+    for (const source of video.querySelectorAll('source')) source.removeAttribute('src');
+    video.load();
+}
+
 // ==========================================
 // 🎨 CSS 样式（仅注入一次）
 // ==========================================
@@ -24,6 +31,8 @@ function injectVideoPlayerStyles() {
     max-height: 500px;
     background: #000;
     width: 100%;
+    container-type: inline-size;
+    container-name: ranking-video;
     outline: none;
 }
 .video-player-container video {
@@ -90,20 +99,27 @@ function injectVideoPlayerStyles() {
 .video-progress-wrap {
     position: relative;
     width: 100%;
+    height: 24px;
+    cursor: pointer;
+    margin-bottom: 0;
+}
+.video-progress-wrap::before {
+    content: '';
+    position: absolute;
+    top: 10px; left: 0; right: 0;
     height: 4px;
     background: rgba(255,255,255,0.2);
     border-radius: 2px;
-    cursor: pointer;
-    margin-bottom: 8px;
-    transition: height 0.2s ease;
+    pointer-events: none;
 }
-.video-progress-wrap:hover {
+.video-progress-wrap:hover::before {
+    top: 8px;
     height: 8px;
 }
 .video-progress-buffered {
     position: absolute;
-    top: 0; left: 0;
-    height: 100%;
+    top: 10px; left: 0;
+    height: 4px;
     background: rgba(255,255,255,0.3);
     border-radius: 2px;
     width: 0;
@@ -111,13 +127,15 @@ function injectVideoPlayerStyles() {
 }
 .video-progress-played {
     position: absolute;
-    top: 0; left: 0;
-    height: 100%;
+    top: 10px; left: 0;
+    height: 4px;
     background: #4CAF50;
     border-radius: 2px;
     width: 0;
     pointer-events: none;
 }
+.video-progress-wrap:hover .video-progress-buffered,
+.video-progress-wrap:hover .video-progress-played { top: 8px; height: 8px; }
 .video-progress-handle {
     position: absolute;
     top: 50%;
@@ -137,7 +155,7 @@ function injectVideoPlayerStyles() {
 }
 .video-progress-tooltip {
     position: absolute;
-    bottom: 16px;
+    bottom: calc(100% + 4px);
     transform: translateX(-50%);
     background: rgba(0,0,0,0.8);
     color: #fff;
@@ -189,6 +207,7 @@ function injectVideoPlayerStyles() {
 }
 .video-volume-slider {
     width: 60px;
+    height: 24px;
     cursor: pointer;
     accent-color: #4CAF50;
 }
@@ -203,7 +222,11 @@ function injectVideoPlayerStyles() {
     background: rgba(30,30,30,0.95);
     border-radius: 6px;
     padding: 4px 0;
-    min-width: 60px;
+    min-width: 72px;
+    box-sizing: border-box;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
     display: none;
     flex-direction: column;
     z-index: 20;
@@ -212,7 +235,8 @@ function injectVideoPlayerStyles() {
 .video-speed-menu.open {
     display: flex;
 }
-.video-speed-menu > div {
+.video-speed-menu > button {
+    flex-shrink: 0;
     padding: 6px 12px;
     font-size: 12px;
     color: #fff;
@@ -220,8 +244,8 @@ function injectVideoPlayerStyles() {
     text-align: center;
     transition: background 0.15s ease;
 }
-.video-speed-menu > div:hover,
-.video-speed-menu > div.active {
+.video-speed-menu > button:hover,
+.video-speed-menu > button.active {
     background: rgba(76,175,80,0.3);
 }
 .fullscreen-video-overlay {
@@ -274,10 +298,44 @@ function injectVideoPlayerStyles() {
     min-width: 32px;
 }
 .fullscreen-video-overlay .video-progress-wrap {
-    margin-bottom: 10px;
+    margin-bottom: 0;
 }
 .fullscreen-video-overlay .video-volume-slider {
     width: 80px;
+}
+
+.video-controls-bar:focus-within { opacity: 1; pointer-events: auto; }
+.video-progress-wrap:focus-visible,
+.video-controls-row button:focus-visible,
+.video-volume-slider:focus-visible,
+.fullscreen-video-overlay .fs-video-close:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.video-progress-wrap:focus-visible .video-progress-handle { opacity: 1; }
+.video-speed-menu > button { width: 100%; }
+@media (prefers-reduced-motion: reduce) {
+    .fullscreen-video-overlay { animation: none; }
+    .video-controls-bar, .video-progress-wrap, .video-progress-handle,
+    .video-controls-row button, .video-speed-menu > button, .video-poster-overlay { transition: none; }
+}
+@media (forced-colors: active) {
+    .video-controls-bar, .video-speed-menu { background: Canvas; color: CanvasText; }
+    .video-controls-row button { color: CanvasText; }
+    .video-progress-wrap:focus-visible, .video-controls-row button:focus-visible,
+    .video-volume-slider:focus-visible, .fullscreen-video-overlay .fs-video-close:focus-visible { outline-color: Highlight; }
+    .video-speed-menu > button[aria-pressed="true"] { outline: 1px solid Highlight; }
+}
+
+@media (max-width: 480px) {
+    .fullscreen-video-overlay .video-controls-row { gap: 6px; }
+    .fullscreen-video-overlay .video-controls-row button { padding: 6px; }
+    .fullscreen-video-overlay .video-volume-slider { width: 48px; }
+    .fullscreen-video-overlay .video-time { min-width: 64px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
+
+@container ranking-video (max-width: 360px) {
+    .video-controls-row { gap: 4px; }
+    .video-controls-row button { padding: 4px; min-width: 24px; min-height: 24px; }
+    .video-volume-slider { width: 40px; }
+    .video-time { min-width: 0; flex: 1 1 60px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 `;
     document.head.appendChild(style);
@@ -318,6 +376,7 @@ function _updatePlayButton(btnPlay, video) {
     const playing = !video.paused && !video.ended;
     btnPlay.textContent = getPlayIcon(playing);
     btnPlay.title = playing ? t('video.pause') : t('video.play');
+    btnPlay.setAttribute('aria-label', btnPlay.title);
 }
 
 /**
@@ -359,9 +418,158 @@ function _updateBuffered(progressBuffered, video) {
 function _updateVolumeIcon(btnVolume, video) {
     if (!btnVolume) return;
     btnVolume.textContent = getVolumeIcon(video.volume, video.muted);
+    btnVolume.setAttribute('aria-label', video.muted ? t('video.unmute') : t('video.mute'));
 }
 
 // ==========================================
+let videoControlsId = 0;
+
+function setupAccessibleVideoControls(scope, video, showControls) {
+    const progress = scope.querySelector('.video-progress-wrap');
+    const volume = scope.querySelector('.video-volume-slider');
+    const speed = scope.querySelector('.video-btn-speed');
+    const choices = scope.querySelector('.video-speed-menu');
+    const releases = [];
+    let active = true;
+    const current = () => active && scope.isConnected;
+    const listen = (target, type, handler) => {
+        if (!target) return;
+        target.addEventListener(type, handler);
+        releases.push(() => target.removeEventListener(type, handler));
+    };
+    const plainKey = event => !event.defaultPrevented && !event.isComposing
+        && event.keyCode !== 229 && !event.ctrlKey && !event.metaKey
+        && !event.altKey && !event.shiftKey;
+    const closeChoices = restore => {
+        choices?.classList.remove('open');
+        speed?.setAttribute('aria-expanded', 'false');
+        if (restore && current()) speed?.focus();
+    };
+    const layoutChoices = preserveScroll => {
+        if (!current() || !choices?.classList.contains('open')) return;
+        const previousScroll = choices.scrollTop;
+        choices.style.top = '';
+        choices.style.bottom = '';
+        choices.style.left = '';
+        choices.style.maxHeight = '';
+        const parentElement = choices.offsetParent;
+        if (!parentElement) return;
+        const bounds = scope.getBoundingClientRect();
+        if (bounds.width <= 0 || bounds.height <= 0) return;
+        const menu = choices.getBoundingClientRect();
+        const parent = parentElement.getBoundingClientRect();
+        const availableAbove = menu.bottom - bounds.top - 4;
+        if (availableAbove >= 64) {
+            choices.style.maxHeight = `${Math.min(menu.height, availableAbove)}px`;
+        } else {
+            choices.style.bottom = 'auto';
+            choices.style.top = `${bounds.top + 4 - parent.top}px`;
+            choices.style.maxHeight = `${Math.max(0, bounds.height - 8)}px`;
+        }
+        const left = Math.max(bounds.left + 4, Math.min(menu.left, bounds.right - menu.width - 4));
+        choices.style.left = `${left - parent.left + menu.width / 2}px`;
+        if (preserveScroll) choices.scrollTop = previousScroll;
+        else {
+            const selected = choices.querySelector('[aria-pressed="true"]');
+            choices.scrollTop = selected ? selected.offsetTop - (choices.clientHeight - selected.offsetHeight) / 2 : 0;
+        }
+    };
+    const syncRate = () => {
+        if (!current() || !speed || !choices) return;
+        speed.textContent = video.playbackRate + 'x';
+        speed.setAttribute('aria-label', `${t('video.speed')} ${video.playbackRate}x`);
+        choices.querySelectorAll('button[data-speed]').forEach(option => {
+            const selected = Number(option.dataset.speed) === video.playbackRate;
+            option.classList.toggle('active', selected);
+            option.setAttribute('aria-pressed', String(selected));
+        });
+    };
+    if (volume) volume.setAttribute('aria-label', t('video.volume'));
+    if (speed && choices) {
+        choices.id = `ranking-video-speed-${++videoControlsId}`;
+        choices.setAttribute('role', 'group');
+        choices.setAttribute('aria-label', t('video.speed'));
+        speed.setAttribute('aria-controls', choices.id);
+        speed.setAttribute('aria-expanded', 'false');
+        listen(speed, 'click', event => {
+            event.stopPropagation();
+            if (!current()) return;
+            const open = choices.classList.toggle('open');
+            speed.setAttribute('aria-expanded', String(open));
+            if (open) layoutChoices(false);
+        });
+        choices.querySelectorAll('button[data-speed]').forEach(option => {
+            listen(option, 'click', event => {
+                event.stopPropagation();
+                if (!current()) return;
+                video.playbackRate = Number(option.dataset.speed);
+                syncRate();
+                closeChoices(true);
+            });
+        });
+        const resize = new ResizeObserver(() => layoutChoices(true));
+        resize.observe(scope);
+        releases.push(() => resize.disconnect());
+        listen(video, 'ratechange', syncRate);
+        listen(scope, 'keydown', event => {
+            if (!current() || !plainKey(event) || event.key !== 'Escape'
+                    || !choices.classList.contains('open')
+                    || !(choices.contains(event.target) || speed.contains(event.target))) return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeChoices(true);
+        });
+        listen(document, 'click', event => {
+            if (current() && !choices.contains(event.target) && !speed.contains(event.target)) closeChoices(false);
+        });
+        listen(scope, 'focusout', event => {
+            if (!choices.contains(event.relatedTarget) && !speed.contains(event.relatedTarget)) closeChoices(false);
+        });
+        syncRate();
+    }
+    const syncProgress = () => {
+        if (!current() || !progress) return;
+        const available = Number.isFinite(video.duration) && video.duration > 0;
+        const duration = available ? video.duration : 1;
+        const time = Number.isFinite(video.currentTime) ? Math.max(0, Math.min(duration, video.currentTime)) : 0;
+        progress.setAttribute('aria-valuemax', String(duration));
+        progress.setAttribute('aria-valuenow', String(time));
+        progress.setAttribute('aria-valuetext', `${formatTime(time)} / ${formatTime(available ? duration : 0)}`);
+        progress.setAttribute('aria-disabled', String(!available));
+    };
+    if (progress) {
+        progress.setAttribute('role', 'slider');
+        progress.tabIndex = 0;
+        progress.setAttribute('aria-label', t('video.progress'));
+        progress.setAttribute('aria-valuemin', '0');
+        listen(progress, 'keydown', event => {
+            if (!current() || event.target !== progress || !plainKey(event)
+                    || !Number.isFinite(video.duration) || video.duration <= 0) return;
+            const time = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+            let target;
+            if (event.key === 'ArrowRight' || event.key === 'ArrowUp') target = time + 5;
+            else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') target = time - 5;
+            else if (event.key === 'Home') target = 0;
+            else if (event.key === 'End') target = video.duration;
+            else return;
+            event.preventDefault();
+            event.stopPropagation();
+            video.currentTime = Math.max(0, Math.min(video.duration, target));
+            _updateProgressUI(scope.querySelector('.video-progress-played'), scope.querySelector('.video-progress-handle'), scope.querySelector('.video-time'), video);
+            syncProgress();
+            showControls();
+        });
+        for (const type of ['loadedmetadata', 'durationchange', 'timeupdate']) listen(video, type, syncProgress);
+        syncProgress();
+    }
+    listen(scope, 'focusin', () => { if (current()) showControls(); });
+    return () => {
+        active = false;
+        for (const release of releases) release();
+        closeChoices(false);
+    };
+}
+
 // 📺 Part 1: 内嵌播放器
 // ==========================================
 
@@ -378,7 +586,7 @@ export function getVideoPlayerHTML(videoUrl, posterUrl, options = {}) {
     const safePoster = (posterUrl || '').replace(/"/g, '&quot;');
 
     return `
-<div class="video-player-container" data-video-url="${safeVideo}" data-poster-url="${safePoster}" tabindex="0">
+<div class="video-player-container" data-video-url="${safeVideo}" data-poster-url="${safePoster}">
   <video preload="metadata" poster="${safePoster}" playsinline>
     <source src="${safeVideo}">
   </video>
@@ -394,23 +602,23 @@ export function getVideoPlayerHTML(videoUrl, posterUrl, options = {}) {
       <div class="video-progress-tooltip">0:00</div>
     </div>
     <div class="video-controls-row">
-      <button class="video-btn-play" title="${t('video.play')}">${getPlayIcon(false)}</button>
+      <button type="button" class="video-btn-play" title="${t('video.play')}">${getPlayIcon(false)}</button>
       <span class="video-time">0:00 / 0:00</span>
       <div class="video-volume-wrap">
-        <button class="video-btn-volume" title="${t('video.volume')}">🔊</button>
+        <button type="button" class="video-btn-volume" title="${t('video.volume')}">🔊</button>
         <input type="range" class="video-volume-slider" min="0" max="100" value="100">
       </div>
       <div class="video-speed-wrap">
-        <button class="video-btn-speed" title="${t('video.speed')}">1x</button>
+        <button type="button" class="video-btn-speed" title="${t('video.speed')}">1x</button>
         <div class="video-speed-menu">
-          <div data-speed="0.5">0.5x</div>
-          <div data-speed="1" class="active">1x</div>
-          <div data-speed="1.25">1.25x</div>
-          <div data-speed="1.5">1.5x</div>
-          <div data-speed="2">2x</div>
+          <button type="button" data-speed="0.5">0.5x</button>
+          <button type="button" data-speed="1" class="active">1x</button>
+          <button type="button" data-speed="1.25">1.25x</button>
+          <button type="button" data-speed="1.5">1.5x</button>
+          <button type="button" data-speed="2">2x</button>
         </div>
       </div>
-      <button class="video-btn-fullscreen" title="${t('video.fullscreen')}">⛶</button>
+      <button type="button" class="video-btn-fullscreen" title="${t('video.fullscreen')}" aria-label="${t('video.fullscreen')}">⛶</button>
     </div>
   </div>
 </div>
@@ -423,9 +631,12 @@ export function getVideoPlayerHTML(videoUrl, posterUrl, options = {}) {
  */
 export function setupVideoPlayerEvents(container) {
     const player = container.querySelector('.video-player-container');
+    const video = player?.querySelector('video');
+    if (container._videoPlayerCleanup) {
+        container._videoPlayerCleanup(video);
+        container._videoPlayerCleanup = null;
+    }
     if (!player) return;
-
-    const video = player.querySelector('video');
     const posterOverlay = player.querySelector('.video-poster-overlay');
     const controlsBar = player.querySelector('.video-controls-bar');
     const progressWrap = player.querySelector('.video-progress-wrap');
@@ -442,6 +653,14 @@ export function setupVideoPlayerEvents(container) {
     const timeDisplay = player.querySelector('.video-time');
 
     if (!video) return;
+    const source = video.querySelector('source');
+    if (source && !source.hasAttribute('src') && player.dataset.videoUrl) {
+        source.setAttribute('src', player.dataset.videoUrl);
+        video.load();
+    }
+    const listeners = new AbortController();
+    let active = true;
+    const listen = (target, type, handler) => target.addEventListener(type, handler, { signal: listeners.signal });
 
     // 设置按钮文字（fallback）
     if (btnPlay) btnPlay.title = t('video.play');
@@ -452,6 +671,7 @@ export function setupVideoPlayerEvents(container) {
     let isDraggingProgress = false;
     let wasPlayingBeforeDrag = false;
     let hideControlsTimer = null;
+    let hidePosterTimer = null;
     let isFullscreenMode = false;
 
     // 共享辅助函数（闭包适配）
@@ -505,45 +725,45 @@ export function setupVideoPlayerEvents(container) {
 
     // 1. 封面层点击
     if (posterOverlay) {
-        posterOverlay.addEventListener('click', () => {
+        listen(posterOverlay, 'click', () => {
             video.play().catch(() => {});
         });
     }
 
     // 2. 视频区域点击
-    video.addEventListener('click', (e) => {
+    listen(video, 'click', (e) => {
         e.stopPropagation();
         togglePlay();
     });
 
     // 3. 播放/暂停按钮
     if (btnPlay) {
-        btnPlay.addEventListener('click', (e) => {
+        listen(btnPlay, 'click', (e) => {
             e.stopPropagation();
             togglePlay();
         });
     }
 
     // 4. 进度条交互
-    video.addEventListener('timeupdate', () => {
+    listen(video, 'timeupdate', () => {
         if (!isDraggingProgress) updateProgressUI();
     });
-    video.addEventListener('progress', updateBuffered);
-    video.addEventListener('loadedmetadata', () => {
+    listen(video, 'progress', updateBuffered);
+    listen(video, 'loadedmetadata', () => {
         updateProgressUI();
         updateBuffered();
     });
 
     if (progressWrap) {
         // 点击进度条
-        progressWrap.addEventListener('click', (e) => {
+        listen(progressWrap, 'click', (e) => {
             if (isDraggingProgress) return;
             e.stopPropagation();
             seekToRatio(getRatioFromEvent(e, progressWrap));
         });
 
         // 进度条 hover tooltip
-        progressWrap.addEventListener('mousemove', (e) => {
+        listen(progressWrap, 'mousemove', (e) => {
             if (!video.duration || !isFinite(video.duration)) return;
             const ratio = getRatioFromEvent(e, progressWrap);
             const time = ratio * video.duration;
@@ -553,13 +773,13 @@ export function setupVideoPlayerEvents(container) {
                 progressTooltip.classList.add('show');
             }
         });
-        progressWrap.addEventListener('mouseleave', () => {
+        listen(progressWrap, 'mouseleave', () => {
             if (progressTooltip) progressTooltip.classList.remove('show');
         });
 
         // 拖拽把手
         if (progressHandle) {
-            progressHandle.addEventListener('mousedown', (e) => {
+            listen(progressHandle, 'mousedown', (e) => {
                 e.stopPropagation();
                 e.preventDefault();
                 isDraggingProgress = true;
@@ -569,7 +789,7 @@ export function setupVideoPlayerEvents(container) {
             });
         }
         // 在进度条任意位置按下也可以拖拽
-        progressWrap.addEventListener('mousedown', (e) => {
+        listen(progressWrap, 'mousedown', (e) => {
             if (e.target === progressHandle) return;
             isDraggingProgress = true;
             if (progressHandle) progressHandle.classList.add('dragging');
@@ -603,12 +823,12 @@ export function setupVideoPlayerEvents(container) {
         if (wasPlayingBeforeDrag) video.play().catch(() => {});
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    listen(window, 'mousemove', handleMouseMove);
+    listen(window, 'mouseup', handleMouseUp);
 
     // 5. 音量控制
     if (volumeSlider) {
-        volumeSlider.addEventListener('input', () => {
+        listen(volumeSlider, 'input', () => {
             const val = parseInt(volumeSlider.value, 10) / 100;
             video.volume = val;
             if (val > 0 && video.muted) video.muted = false;
@@ -616,45 +836,18 @@ export function setupVideoPlayerEvents(container) {
         });
     }
     if (btnVolume) {
-        btnVolume.addEventListener('click', (e) => {
+        listen(btnVolume, 'click', (e) => {
             e.stopPropagation();
             video.muted = !video.muted;
             updateVolumeIcon();
         });
     }
 
-    // 6. 播放速度
-    function closeSpeedMenu() {
-        if (speedMenu) speedMenu.classList.remove('open');
-    }
-
-    if (btnSpeed && speedMenu) {
-        btnSpeed.addEventListener('click', (e) => {
-            e.stopPropagation();
-            speedMenu.classList.toggle('open');
-        });
-        speedMenu.querySelectorAll('div[data-speed]').forEach(item => {
-            item.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const speed = parseFloat(item.dataset.speed);
-                video.playbackRate = speed;
-                btnSpeed.textContent = speed + 'x';
-                speedMenu.querySelectorAll('div').forEach(d => d.classList.remove('active'));
-                item.classList.add('active');
-                closeSpeedMenu();
-            });
-        });
-    }
-    const handleDocClickForSpeed = (e) => {
-        if (speedMenu && !speedMenu.contains(e.target) && e.target !== btnSpeed) {
-            closeSpeedMenu();
-        }
-    };
-    document.addEventListener('click', handleDocClickForSpeed);
+    const cleanupAccessibleControls = setupAccessibleVideoControls(player, video, showControls);
 
     // 7. 全屏按钮
     if (btnFullscreen) {
-        btnFullscreen.addEventListener('click', (e) => {
+        listen(btnFullscreen, 'click', (e) => {
             e.stopPropagation();
             const currentTime = video.currentTime;
             video.pause(); // 先暂停内嵌播放器，避免与全屏播放器同时出声
@@ -662,11 +855,13 @@ export function setupVideoPlayerEvents(container) {
                 player.dataset.videoUrl || '',
                 player.dataset.posterUrl || '',
                 {
+                    signal: listeners.signal,
                     currentTime,
                     volume: video.volume,
                     muted: video.muted,
                     playbackRate: video.playbackRate,
                     onClose: (returnTime) => {
+                        if (!active || !player.isConnected) return;
                         video.currentTime = returnTime;
                         updateProgressUI();
                         updatePlayButton(); // 同步播放按钮状态为暂停
@@ -677,11 +872,11 @@ export function setupVideoPlayerEvents(container) {
     }
 
     // 9. 控制栏自动隐藏
-    player.addEventListener('mousemove', resetHideTimer);
-    player.addEventListener('mouseenter', resetHideTimer);
-    video.addEventListener('play', showControls);
-    video.addEventListener('pause', showControls);
-    video.addEventListener('ended', () => {
+    listen(player, 'mousemove', resetHideTimer);
+    listen(player, 'mouseenter', resetHideTimer);
+    listen(video, 'play', showControls);
+    listen(video, 'pause', showControls);
+    listen(video, 'ended', () => {
         if (controlsBar) controlsBar.classList.remove('hidden');
     });
 
@@ -690,12 +885,12 @@ export function setupVideoPlayerEvents(container) {
         e.stopPropagation();
         e.preventDefault();
     };
-    player.addEventListener('dragstart', stopDrag);
-    player.addEventListener('dragover', stopDrag);
-    player.addEventListener('drop', stopDrag);
+    listen(player, 'dragstart', stopDrag);
+    listen(player, 'dragover', stopDrag);
+    listen(player, 'drop', stopDrag);
 
     // 11. 视频结束回到封面
-    video.addEventListener('ended', () => {
+    listen(video, 'ended', () => {
         if (posterOverlay) {
             posterOverlay.style.display = 'flex';
             posterOverlay.style.opacity = '1';
@@ -704,18 +899,20 @@ export function setupVideoPlayerEvents(container) {
     });
 
     // 播放时隐藏封面
-    video.addEventListener('play', () => {
+    listen(video, 'play', () => {
         if (posterOverlay) {
             posterOverlay.style.opacity = '0';
-            setTimeout(() => {
-                if (!video.paused) posterOverlay.style.display = 'none';
+            if (hidePosterTimer) clearTimeout(hidePosterTimer);
+            hidePosterTimer = setTimeout(() => {
+                hidePosterTimer = null;
+                if (active && !video.paused) posterOverlay.style.display = 'none';
             }, 300);
         }
         updatePlayButton();
         showControls();
     });
 
-    video.addEventListener('pause', () => {
+    listen(video, 'pause', () => {
         updatePlayButton();
     });
 
@@ -724,12 +921,18 @@ export function setupVideoPlayerEvents(container) {
     updatePlayButton();
 
     // 🔧 清理函数注册
-    const cleanup = () => {
+    const cleanup = (replacementVideo) => {
+        if (!active) return;
+        active = false;
+        listeners.abort();
         if (hideControlsTimer) clearTimeout(hideControlsTimer);
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-        document.removeEventListener('click', handleDocClickForSpeed);
-        video.pause();
+        if (hidePosterTimer) clearTimeout(hidePosterTimer);
+        hideControlsTimer = hidePosterTimer = null;
+        isDraggingProgress = false;
+        cleanupAccessibleControls();
+        if (replacementVideo === video) video.pause();
+        else releaseVideoMedia(video);
+        updatePlayButton();
     };
     container._videoPlayerCleanup = cleanup;
 }
@@ -759,12 +962,18 @@ export function cleanupVideoPlayer(container) {
  * @param {boolean} options.muted - 是否静音
  * @param {number} options.playbackRate - 播放速度
  * @param {Function} options.onClose - 关闭回调(currentTime)
+ * @param {AbortSignal} options.signal - 所属页面的关闭信号
  */
 export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
+    if (options.signal?.aborted) return;
     injectVideoPlayerStyles();
 
+    const previousFocus = document.activeElement;
     const overlay = document.createElement('div');
     overlay.className = 'fullscreen-video-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', t('video.fullscreen'));
 
     const safeVideo = (videoUrl || '').replace(/"/g, '&quot;');
     const safePoster = (posterUrl || '').replace(/"/g, '&quot;');
@@ -774,7 +983,7 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
     const startRate = options.playbackRate || 1;
 
     overlay.innerHTML = `
-    <button class="fs-video-close" title="${t('video.close')}">✕</button>
+    <button type="button" class="fs-video-close" title="${t('video.close')}" aria-label="${t('video.close')}">✕</button>
     <video preload="metadata" poster="${safePoster}" playsinline
         style="width:100vw;height:100vh;object-fit:contain;">
       <source src="${safeVideo}">
@@ -787,23 +996,23 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
         <div class="video-progress-tooltip">0:00</div>
       </div>
       <div class="video-controls-row">
-        <button class="video-btn-play" title="${t('video.play')}">▶</button>
+        <button type="button" class="video-btn-play" title="${t('video.play')}">▶</button>
         <span class="video-time">0:00 / 0:00</span>
         <div class="video-volume-wrap">
-          <button class="video-btn-volume" title="${t('video.volume')}">🔊</button>
+          <button type="button" class="video-btn-volume" title="${t('video.volume')}">🔊</button>
           <input type="range" class="video-volume-slider" min="0" max="100" value="100">
         </div>
         <div class="video-speed-wrap">
-          <button class="video-btn-speed" title="${t('video.speed')}">1x</button>
+          <button type="button" class="video-btn-speed" title="${t('video.speed')}">1x</button>
           <div class="video-speed-menu">
-            <div data-speed="0.5">0.5x</div>
-            <div data-speed="1" class="active">1x</div>
-            <div data-speed="1.25">1.25x</div>
-            <div data-speed="1.5">1.5x</div>
-            <div data-speed="2">2x</div>
+            <button type="button" data-speed="0.5">0.5x</button>
+            <button type="button" data-speed="1" class="active">1x</button>
+            <button type="button" data-speed="1.25">1.25x</button>
+            <button type="button" data-speed="1.5">1.5x</button>
+            <button type="button" data-speed="2">2x</button>
           </div>
         </div>
-        <button class="video-btn-fullscreen" title="${t('video.exit_fullscreen')}">⛶</button>
+        <button type="button" class="video-btn-fullscreen" title="${t('video.exit_fullscreen')}" aria-label="${t('video.exit_fullscreen')}">⛶</button>
       </div>
     </div>
   `;
@@ -841,31 +1050,48 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
     let isDraggingProgress = false;
     let wasPlayingBeforeDrag = false;
     let hideControlsTimer = null;
-    let destroyed = false;
+    const listeners = new AbortController();
+    const listen = (target, type, handler) => target.addEventListener(type, handler, { signal: listeners.signal });
+    let destroyed = false, finished = false, closeTimer = null;
+    let finalTime = 0, restoreFocus = false;
+
+    function finishClose() {
+        if (finished) return;
+        finished = true;
+        if (closeTimer) clearTimeout(closeTimer);
+        closeTimer = null;
+        options.signal?.removeEventListener('abort', handleOwnerAbort);
+        overlay.remove();
+        if (options.signal?.aborted) return;
+        if (typeof options.onClose === 'function') options.onClose(finalTime);
+        if (restoreFocus && previousFocus instanceof HTMLElement && previousFocus.isConnected
+                && (document.activeElement === document.body || overlay.contains(document.activeElement))) previousFocus.focus();
+    }
+
+    function handleOwnerAbort() {
+        if (destroyed) finishClose();
+        else destroy(video.currentTime);
+    }
 
     function destroy(returnTime) {
         if (destroyed) return;
         destroyed = true;
+        finalTime = typeof returnTime === 'number' ? returnTime : video.currentTime;
+        restoreFocus = !options.signal?.aborted && (overlay.contains(document.activeElement) || document.activeElement === document.body);
         if (hideControlsTimer) clearTimeout(hideControlsTimer);
-        overlay.removeEventListener('keydown', handleKeydown);
-        document.removeEventListener('click', handleDocClickForSpeed);
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-        video.pause();
+        listeners.abort();
+        cleanupAccessibleControls();
+        releaseVideoMedia(video);
 
-        // 退出 Fullscreen API
-        if (document.fullscreenElement) {
-            try { document.exitFullscreen(); } catch (e) {}
+        if (document.fullscreenElement === overlay) {
+            try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch {}
         }
 
-        overlay.style.transition = 'opacity 0.25s ease';
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        overlay.style.transition = reducedMotion ? 'none' : 'opacity 0.25s ease';
         overlay.style.opacity = '0';
-        setTimeout(() => {
-            if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-            if (typeof options.onClose === 'function') {
-                options.onClose(typeof returnTime === 'number' ? returnTime : video.currentTime);
-            }
-        }, 250);
+        if (options.signal?.aborted) finishClose();
+        else closeTimer = setTimeout(finishClose, reducedMotion ? 0 : 250);
     }
 
     function updatePlayButton() {
@@ -920,34 +1146,34 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
     }
 
     // 播放/暂停按钮
-    btnPlay.addEventListener('click', (e) => {
+    listen(btnPlay, 'click', (e) => {
         e.stopPropagation();
         togglePlay();
     });
 
     // 视频点击切换
-    video.addEventListener('click', (e) => {
+    listen(video, 'click', (e) => {
         e.stopPropagation();
         togglePlay();
     });
 
     // 进度条
-    video.addEventListener('timeupdate', () => {
+    listen(video, 'timeupdate', () => {
         if (!isDraggingProgress) updateProgressUI();
     });
-    video.addEventListener('progress', updateBuffered);
-    video.addEventListener('loadedmetadata', () => {
+    listen(video, 'progress', updateBuffered);
+    listen(video, 'loadedmetadata', () => {
         updateProgressUI();
         updateBuffered();
     });
 
-    progressWrap.addEventListener('click', (e) => {
+    listen(progressWrap, 'click', (e) => {
         if (isDraggingProgress) return;
         e.stopPropagation();
         seekToRatio(getRatioFromEvent(e, progressWrap));
     });
 
-    progressWrap.addEventListener('mousemove', (e) => {
+    listen(progressWrap, 'mousemove', (e) => {
         if (!video.duration || !isFinite(video.duration)) return;
         const ratio = getRatioFromEvent(e, progressWrap);
         if (progressTooltip) {
@@ -956,11 +1182,11 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
             progressTooltip.classList.add('show');
         }
     });
-    progressWrap.addEventListener('mouseleave', () => {
+    listen(progressWrap, 'mouseleave', () => {
         if (progressTooltip) progressTooltip.classList.remove('show');
     });
 
-    progressHandle.addEventListener('mousedown', (e) => {
+    listen(progressHandle, 'mousedown', (e) => {
         e.stopPropagation();
         e.preventDefault();
         isDraggingProgress = true;
@@ -968,7 +1194,7 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
         wasPlayingBeforeDrag = !video.paused && !video.ended;
         if (wasPlayingBeforeDrag) video.pause();
     });
-    progressWrap.addEventListener('mousedown', (e) => {
+    listen(progressWrap, 'mousedown', (e) => {
         if (e.target === progressHandle) return;
         isDraggingProgress = true;
         progressHandle.classList.add('dragging');
@@ -999,58 +1225,47 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
         if (progressTooltip) progressTooltip.classList.remove('show');
         if (wasPlayingBeforeDrag) video.play().catch(() => {});
     };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    listen(window, 'mousemove', handleMouseMove);
+    listen(window, 'mouseup', handleMouseUp);
 
     // 音量
-    volumeSlider.addEventListener('input', () => {
+    listen(volumeSlider, 'input', () => {
         const val = parseInt(volumeSlider.value, 10) / 100;
         video.volume = val;
         if (val > 0 && video.muted) video.muted = false;
         updateVolumeIcon();
     });
-    btnVolume.addEventListener('click', (e) => {
+    listen(btnVolume, 'click', (e) => {
         e.stopPropagation();
         video.muted = !video.muted;
         updateVolumeIcon();
     });
 
-    // 播放速度
-    function closeSpeedMenu() {
-        if (speedMenu) speedMenu.classList.remove('open');
-    }
-    btnSpeed.addEventListener('click', (e) => {
-        e.stopPropagation();
-        speedMenu.classList.toggle('open');
-    });
-    speedMenu.querySelectorAll('div[data-speed]').forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const speed = parseFloat(item.dataset.speed);
-            video.playbackRate = speed;
-            btnSpeed.textContent = speed + 'x';
-            speedMenu.querySelectorAll('div').forEach(d => d.classList.remove('active'));
-            item.classList.add('active');
-            closeSpeedMenu();
-        });
-    });
-    const handleDocClickForSpeed = (e) => {
-        if (speedMenu && !speedMenu.contains(e.target) && e.target !== btnSpeed) {
-            closeSpeedMenu();
-        }
-    };
-    document.addEventListener('click', handleDocClickForSpeed);
+    const cleanupAccessibleControls = setupAccessibleVideoControls(overlay, video, showControls);
 
     // 全屏按钮（在全屏模式下退出全屏）
-    btnFullscreen.addEventListener('click', (e) => {
+    listen(btnFullscreen, 'click', (e) => {
         e.stopPropagation();
         destroy(video.currentTime);
     });
 
     // 关闭按钮
-    closeBtn.addEventListener('click', () => destroy(video.currentTime));
+    listen(closeBtn, 'click', () => destroy(video.currentTime));
 
     const handleKeydown = event => {
+        if (!event.defaultPrevented && !event.isComposing && event.keyCode !== 229
+                && !event.ctrlKey && !event.metaKey && !event.altKey && event.key === 'Tab') {
+            const focusable = [...overlay.querySelectorAll('button, input, [tabindex]')]
+                .filter(node => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
+            const first = focusable[0], last = focusable.at(-1);
+            if (first && ((event.shiftKey && document.activeElement === first)
+                    || (!event.shiftKey && document.activeElement === last))) {
+                event.preventDefault();
+                event.stopPropagation();
+                (event.shiftKey ? last : first).focus();
+            }
+            return;
+        }
         if (event.defaultPrevented || event.isComposing || event.keyCode === 229
                 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey
                 || event.key !== 'Escape') return;
@@ -1058,22 +1273,25 @@ export function openFullscreenVideo(videoUrl, posterUrl, options = {}) {
         event.stopPropagation();
         destroy(video.currentTime);
     };
-    overlay.addEventListener('keydown', handleKeydown);
+    listen(overlay, 'keydown', handleKeydown);
     closeBtn.focus();
 
     // 控制栏自动隐藏
-    overlay.addEventListener('mousemove', resetHideTimer);
-    overlay.addEventListener('mouseenter', resetHideTimer);
-    video.addEventListener('play', showControls);
-    video.addEventListener('pause', showControls);
-    video.addEventListener('ended', () => {
+    listen(overlay, 'mousemove', resetHideTimer);
+    listen(overlay, 'mouseenter', resetHideTimer);
+    listen(video, 'play', showControls);
+    listen(video, 'pause', showControls);
+    listen(video, 'ended', () => {
         if (controlsBar) controlsBar.classList.remove('hidden');
     });
 
     // 播放/暂停状态更新
-    video.addEventListener('play', updatePlayButton);
-    video.addEventListener('pause', updatePlayButton);
-    video.addEventListener('ended', updatePlayButton);
+    listen(video, 'play', updatePlayButton);
+    listen(video, 'pause', updatePlayButton);
+    listen(video, 'ended', updatePlayButton);
+
+    options.signal?.addEventListener('abort', handleOwnerAbort, { once: true });
+    if (options.signal?.aborted) { handleOwnerAbort(); return; }
 
     // 尝试调用 Fullscreen API
     const requestFS = () => {

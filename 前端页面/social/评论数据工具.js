@@ -16,7 +16,7 @@ export function isConfirmedCommentDeletion(response) {
 }
 
 export function isDefiniteCommentRejection(error) {
-    return Number.isInteger(error?.status) && error.status >= 400 && error.status < 500 && error.status !== 408;
+    return error?.requestBodyRejected === true || (Number.isInteger(error?.status) && error.status >= 400 && error.status < 500 && error.status !== 408);
 }
 
 export function isConfirmedDedicatedCommentResponse(response, account, content) {
