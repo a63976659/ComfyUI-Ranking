@@ -365,7 +365,7 @@ async def _download_app_core(app_id, download_url, account, force_download=False
         if file_path and os.path.exists(file_path) and not force_download:
             cache_invalid = False
             try:
-                print(f"📦 发现本地缓存 [{app_id}]，优先从本地加载...")
+                print("📦 发现本地工作流缓存，优先从本地加载...")
                 # 🔧 P1修复：文件读取移交线程，避免同步 IO 阻塞事件循环
                 content = await _run_workflow_worker(_read_cache_sync, file_path)
                 if response_format is None:
@@ -409,7 +409,7 @@ async def _download_app_core(app_id, download_url, account, force_download=False
         ssl_context = _create_ssl_context()
 
         # 🚀 在线程池中执行同步下载，避免阻塞 aiohttp 事件循环
-        print(f"🔍 开始下载应用 [{app_id}]")
+        print("🔍 开始下载工作流")
         print("📍 请求云端工作流代理（地址和资源链接不写入日志）")
         print(f"⏳ 正在请求云端代理 (超时设置：120 秒)...")
         content = await _run_workflow_worker(_sync_download, proxy_api_url, payload, ssl_context, 120, token)
@@ -431,7 +431,7 @@ async def _download_app_core(app_id, download_url, account, force_download=False
             if file_path:
                 # 🔧 P1修复：缓存写入移交线程，避免同步 IO 阻塞事件循环
                 await _run_workflow_worker(_write_cache_sync, file_path, content)
-                print(f"💾 已缓存到本地：{file_path}")
+                print("💾 工作流已缓存到本地")
         except IOError as e:
             print(f"⚠️ 本地缓存写入失败：{type(e).__name__}")
 

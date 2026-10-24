@@ -6,6 +6,7 @@ import zipfile
 import urllib.request
 import urllib.error
 import http.client
+import math
 import subprocess
 import shutil
 import stat
@@ -1195,6 +1196,14 @@ def _cleanup_install_zip(path):
     print("[ComfyUI-Ranking] ZIP临时文件清理暂未完成")
 
 
+def _zip_transfer_progress(received, length, started, now):
+    elapsed = now - started
+    rate = received / elapsed if math.isfinite(elapsed) and elapsed > 0 else None
+    if rate is not None:
+        rate = int(rate) if math.isfinite(rate) and 0 <= rate <= (1 << 53) - 1 else None
+    return {"received_bytes": received, "total_bytes": length or None, "bytes_per_second": rate}
+
+
 def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decoder=None):
     """单工作线程拥有响应、临时文件和解压；关闭后才清理，取消不重试。"""
     paths = []
@@ -1247,6 +1256,7 @@ def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decode
                 downloaded = 0
                 prefix = b''
                 last_progress = time.monotonic()
+                transfer_started = last_progress
                 next_progress = 5 * 1024 * 1024
                 with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as temporary:
                     downloaded_path = temporary.name
@@ -1272,16 +1282,21 @@ def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decode
                         now = time.monotonic()
                         if downloaded >= next_progress or now - last_progress >= 10:
                             percent = min(30 + int(downloaded / length * 30), 59) if length else min(30 + int(downloaded / (200 * 1024 * 1024) * 30), 59)
-                            report("downloading", percent, "从云端下载资源包...")
+                            report("downloading", percent, "从云端下载资源包...",
+                                   transfer=_zip_transfer_progress(downloaded, length, transfer_started, now))
                             last_progress = now
                             next_progress = downloaded + 5 * 1024 * 1024
                 if length and downloaded != length:
                     raise http.client.IncompleteRead(b'')
                 if prefix != b'PK\x03\x04':
                     raise _ZipInstallError("invalid_archive", "下载内容不是有效安装包，或压缩包结构不受支持。")
+                transfer = _zip_transfer_progress(downloaded, length, transfer_started, now)
                 break
             except urllib.error.HTTPError as exc:
+                source_changed = exc.code == 409
                 exc.close()
+                if source_changed:
+                    raise _ZipInstallError("source_changed", "资源来源已变更，请刷新资源后重新安装。", 409) from None
                 raise _ZipInstallError("remote_rejected", "云端拒绝访问或无法获取资源，请检查权限和资源地址。") from None
             except (http.client.IncompleteRead, urllib.error.URLError, ConnectionResetError, TimeoutError):
                 _raise_if_install_cancelled(cancel_event)
@@ -1302,7 +1317,7 @@ def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decode
                     with contextlib.suppress(Exception):
                         response.close()
         _raise_if_install_cancelled(cancel_event)
-        report("download_done", 60, "下载完成，准备解压...")
+        report("download_done", 60, "下载完成，准备解压...", transfer=transfer)
         report("extracting", 75, "解压安装文件...")
         try:
             _extract_zip_to_target_sync(downloaded_path, self_staging or target, cancel_event,
@@ -1354,9 +1369,10 @@ async def _install_zip_core(data, *, request=None, cancel_event=None, send_progr
             raise _ZipInstallError("invalid_target", "安装目标目录名不合法，已拦截", 400)
     cancel_event = cancel_event if cancel_event is not None else threading.Event()
     events = queue.Queue(maxsize=32)
-    last_event = ("downloading", 30, "正在处理资源包...")
+    last_event = ("downloading", 30, "正在处理资源包...", None)
 
-    def report(*event):
+    def report(stage, percent, message, *, transfer=None):
+        event = (stage, percent, message, transfer)
         while True:
             try:
                 events.put_nowait(event)
@@ -1374,7 +1390,7 @@ async def _install_zip_core(data, *, request=None, cancel_event=None, send_progr
                 break
             last_event = event
             if send_progress:
-                await send_progress(*event)
+                await send_progress(*event[:3], **({"transfer": event[3]} if event[3] is not None else {}))
 
     if request is not None:
         _check_install_request(request, cancel_event)

@@ -5,12 +5,60 @@ from pathlib import Path
 import threading
 import json
 import re
+import os
+import signal
+import subprocess
+import sys
+import time
 from aiohttp import web
 from . import api_tool as api
 
-from .skill_packages import browse_target, parse_source, SkillPackageError
+from .skill_packages import browse_target, parse_source, selected_target, check_selected_target, directory_identity, SkillPackageError
 from .skill_publication import SkillPublications
 from .skill_install_session import SkillInstallSessions, validate_credentials, fetch_install_source, decode_archive_source
+
+
+DIRECTORY_OPEN_SECONDS = 5
+
+
+def _open_directory(value, event):
+    selection = selected_target(value)
+    path = Path(value)
+    if path != Path(selection['path']) or path.anchor.startswith('\\\\'):
+        raise SkillPackageError('invalid_target')
+    check_selected_target(selection)
+    api._raise_if_install_cancelled(event)
+    try:
+        if sys.platform == 'win32':
+            os.startfile(str(path), 'explore')
+        else:
+            commands = ('/usr/bin/open',) if sys.platform == 'darwin' else ('/usr/bin/xdg-open', '/bin/xdg-open') if sys.platform.startswith('linux') else ()
+            command = next((name for name in commands if Path(name).is_file()), None)
+            if command is None:
+                raise SkillPackageError('directory_open_unavailable')
+            arguments = [command, '--', str(path)] if sys.platform == 'darwin' else [command, str(path)]
+            process = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True)
+            try:
+                deadline = time.monotonic() + DIRECTORY_OPEN_SECONDS
+                while process.poll() is None:
+                    api._raise_if_install_cancelled(event)
+                    if time.monotonic() >= deadline:
+                        raise SkillPackageError('directory_open_failed')
+                    event.wait(.05)
+                if process.returncode != 0:
+                    raise SkillPackageError('directory_open_failed')
+            finally:
+                if process.poll() is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except OSError:
+                        process.kill()
+                process.wait()
+    except OSError:
+        raise SkillPackageError('directory_open_failed') from None
+    check_selected_target(selection)
+    api._raise_if_install_cancelled(event)
 
 
 class SkillInstallService:
@@ -62,7 +110,7 @@ class SkillInstallService:
         capacity = None
         try:
             sessions = await self._file(self.initialize, event, request)
-            if action != 'browse':
+            if action not in ('browse', 'tool_open'):
                 validate_credentials(parameters)
             capacity = await self.api._acquire_install_capacity(event, request=request,
                 send_progress=progress, error_class=self.api._ZipInstallError,
@@ -92,6 +140,32 @@ class SkillInstallService:
             if action == 'status':
                 value = await self._file(lambda: sessions.status(parameters, check_cancel=lambda: self.api._raise_if_install_cancelled(event)), event, request)
                 return value | {'status': 'success', 'phase': value['status']}
+            if action in ('open', 'tool_open'):
+                if action == 'open':
+                    value = await self._file(lambda: sessions.status(parameters,
+                        check_cancel=lambda: self.api._raise_if_install_cancelled(event)), event, request)
+                    target = value['target']
+                else:
+                    source = parameters.get('url')
+                    if not isinstance(source, str) or not self.api._valid_git_url(source):
+                        raise SkillPackageError('invalid_repository')
+                    name, target = self.api._resolve_install_target(source)
+                    if name is None:
+                        raise SkillPackageError('invalid_target')
+                def launch():
+                    path = Path(target)
+                    if action == 'tool_open':
+                        try:
+                            directory_identity(path)
+                            resolved = path.resolve(strict=True)
+                            if resolved.parent != Path(self.api.CUSTOM_NODES_DIR).resolve(strict=True):
+                                raise SkillPackageError('invalid_target')
+                            path = resolved
+                        except OSError:
+                            raise SkillPackageError('invalid_target') from None
+                    _open_directory(str(path), event)
+                await self._file(launch, event, request)
+                return dict(status='success', phase='opened', installed=False, opened=True)
             if action == 'discard':
                 await self._file(lambda: sessions.discard(parameters), event, request)
                 return dict(status='success', phase='discarded', installed=False)
@@ -148,7 +222,7 @@ class SkillInstallService:
             value = await self._file(lambda: sessions.ready_owned(parameters['plan_id'], data, version, name,
                 subdirectory, check_cancel=lambda: self.api._raise_if_install_cancelled(event)), event, request)
             failed = False
-            return value | {'status': 'success', 'phase': 'ready'}
+            return value | {'status': 'success', 'phase': 'ready', 'repository': source['repository']}
         finally:
             if entered:
                 await self._file(lambda: owner.__exit__(None, None, None), event, cleanup=True)
@@ -202,6 +276,7 @@ class SkillInstallService:
 
 SERVICE = SkillInstallService(api, Path(api.THIS_DIR) / '缓存' / 'skill-install')
 _ACTIONS = {
+    'open': {'action', 'plan_id', 'account', 'item_id', 'token'},
     'browse': {'action', 'path'},
     'select': {'action', 'target', 'account', 'item_id', 'token'},
     'status': {'action', 'plan_id', 'account', 'item_id', 'token'},
@@ -210,6 +285,7 @@ _ACTIONS = {
     'commit': {'action', 'plan_id', 'account', 'item_id', 'token'},
 }
 _ERROR_STATUS = {
+    'directory_open_unavailable': 503, 'directory_open_failed': 503,
     'invalid_request': 400, 'invalid_target': 400, 'invalid_plan': 400,
     'invalid_repository': 400, 'invalid_skill_package': 400, 'invalid_version': 502,
     'plan_owner_mismatch': 403, 'auth_failed': 403, 'plan_expired': 409,
@@ -288,8 +364,8 @@ async def skill_install_handler(request):
         except (ConnectionError, RuntimeError, asyncio.TimeoutError):
             cancel.set()
             raise api._InstallClientDisconnectedError() from None
-    async def progress(stage, progress, message):
-        await send(dict(stage=stage, progress=progress, message=message))
+    async def progress(stage, progress, message, **extra):
+        await send(dict(stage=stage, progress=progress, message=message, **extra))
     try:
         result = await SERVICE.execute(action, data, request=request, progress=progress, cancel_event=cancel)
         await send(result | {'stage': 'complete', 'progress': 100})
@@ -314,6 +390,28 @@ async def skill_install_handler(request):
     with contextlib.suppress(ConnectionError, RuntimeError, asyncio.TimeoutError):
         await asyncio.wait_for(response.write_eof(), timeout=10)
     return response
+
+
+async def open_install_directory_handler(request):
+    if not api._is_local_request(request):
+        return web.json_response({'error': 'Forbidden: local access only'}, status=403)
+    headers = {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'}
+    try:
+        data = await api._read_install_parameters(request)
+    except api._InstallControlError as error:
+        return await api._control_rejection(request, error)
+    except (ValueError, TypeError):
+        return web.json_response({'status': 'error', 'error_code': 'invalid_request'}, status=400, headers=headers)
+    if not isinstance(data, dict) or set(data) != {'url'}:
+        return web.json_response({'status': 'error', 'error_code': 'invalid_request'}, status=400, headers=headers)
+    try:
+        result = await SERVICE.execute('tool_open', data, request=request)
+        return web.json_response(result, headers=headers)
+    except (asyncio.CancelledError, api._InstallClientDisconnectedError):
+        raise asyncio.CancelledError() from None
+    except Exception as error:
+        status, code = _failure(error)
+        return web.json_response({'status': 'error', 'error_code': code}, status=status, headers=headers)
 
 
 async def _recover_service(service):
