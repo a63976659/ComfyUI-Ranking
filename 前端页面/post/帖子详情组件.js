@@ -564,6 +564,11 @@ async function loadComments(container, postId, currentUser) {
         && commentInput.isConnected && sendBtn.isConnected;
     const generation = context.commentGeneration = (context.commentGeneration || 0) + 1;
     const current = () => isCurrent(container) && context.commentGeneration === generation && commentsList.isConnected;
+    const setReplyButtonsBusy = () => {
+        commentsList.querySelectorAll('.post-detail__comment-reply').forEach(button => {
+            button.disabled = submission.phase !== "idle";
+        });
+    };
 
     try {
         const res = await api.getPostComments(postId, viewContexts.get(container).readOptions);
@@ -581,32 +586,65 @@ async function loadComments(container, postId, currentUser) {
             `;
         } else {
             // 🚀 SWR 头像渲染：评论作者头像
-            commentsList.innerHTML = comments.map((c, idx) => {
-                const cached = getCachedProfile(c.author);
-                const avatar = [cached?.avatar, c.author_avatar].map(value => normalizeProfileImageUrl(value)).find(Boolean) || '';
-                const name = cached?.name || c.author_name || c.author || '';
-
+            const renderedComments = [];
+            const renderComment = (comment, domId, isReply, parentId) => {
+                const cached = getCachedProfile(comment.author);
+                const avatar = [cached?.avatar, comment.author_avatar, comment.avatar].map(value => normalizeProfileImageUrl(value)).find(Boolean) || '';
+                const name = cached?.name || comment.author_name || comment.authorName || comment.author || '';
                 const avatarHtml = _generateAvatarHtml(avatar, name, 24, 'background: var(--comfy-input-bg);');
+                const replyLabel = comment.replyToUserName
+                    ? `<span class="post-detail__comment-reply-label">${t('social.reply_to')} <span class="post-detail__comment-reply-name">@${escapeHtml(comment.replyToUserName)}</span>: </span>`
+                    : '';
+                const replyButton = comment.isDeleted ? '' : `
+                    <div class="post-detail__comment-actions">
+                        <button type="button" class="post-detail__comment-reply" data-account="${escapeHtml(comment.author)}" data-name="${escapeHtml(name)}" data-parent="${escapeHtml(parentId)}">${t('social.reply')}</button>
+                    </div>
+                `;
+                renderedComments.push({ domId, comment });
 
                 return `
-                    <div id="comment-${idx}" data-account="${escapeHtml(c.author)}" class="post-detail__comment">
+                    <div id="${domId}" data-account="${escapeHtml(comment.author)}" class="post-detail__comment${isReply ? ' post-detail__comment--reply' : ''}">
                         <div class="post-detail__comment-author">
                             <div class="swr-avatar-container">${avatarHtml}</div>
                             <span class="post-detail__comment-name swr-name">${escapeHtml(name)}</span>
-                            <span class="post-detail__comment-time">${formatTime(c.created_at)}</span>
+                            <span class="post-detail__comment-time">${formatTime(comment.created_at)}</span>
                         </div>
-                        <div class="post-detail__comment-content">
-                            ${escapeHtml(c.content)}
-                        </div>
+                        <div class="post-detail__comment-content">${replyLabel}${escapeHtml(comment.content)}</div>
+                        ${replyButton}
                     </div>
                 `;
+            };
+
+            commentsList.innerHTML = comments.map((c, idx) => {
+                const replies = Array.isArray(c.replies)
+                    ? c.replies.filter(reply => reply && typeof reply === "object" && !Array.isArray(reply)
+                        && typeof reply.author === "string" && typeof reply.content === "string")
+                    : [];
+                return renderComment(c, `comment-${idx}`, false, c.id)
+                    + replies.map((reply, replyIdx) => renderComment(reply, `comment-${idx}-reply-${replyIdx}`, true, c.id)).join("");
             }).join("");
 
+            commentsList.querySelectorAll('.post-detail__comment-reply').forEach(button => {
+                button.onclick = () => {
+                    if (!current() || submission.phase !== "idle") return;
+                    const parentId = button.dataset.parent || '';
+                    if (!parentId) return;
+                    context.commentReplyTarget = {
+                        account: button.dataset.account || '',
+                        name: button.dataset.name || '',
+                        parentId
+                    };
+                    commentInput.placeholder = `${t('social.reply_to')} @${context.commentReplyTarget.name}:`;
+                    commentInput.setAttribute("aria-label", commentInput.placeholder);
+                    commentInput.focus();
+                };
+            });
+
             // 后台静默校对每个评论作者的头像
-            comments.forEach((c, idx) => {
-                getProfileWithSWR(c.author, api.getUserProfile, (profile) => {
+            renderedComments.forEach(({ domId, comment }) => {
+                getProfileWithSWR(comment.author, api.getUserProfile, (profile) => {
                     if (!current()) return;
-                    const commentEl = commentsList.querySelector(`#comment-${idx}`);
+                    const commentEl = commentsList.querySelector(`#${domId}`);
                     if (!commentEl) return;
                     const avatarContainer = commentEl.querySelector('.swr-avatar-container');
                     const nameEl = commentEl.querySelector('.swr-name');
@@ -616,6 +654,7 @@ async function loadComments(container, postId, currentUser) {
                 });
             });
         }
+        setReplyButtonsBusy();
     } catch (err) {
         if (!current()) return;
         commentsList.innerHTML = `
@@ -647,16 +686,28 @@ async function loadComments(container, postId, currentUser) {
             return;
         }
         commentInput.removeAttribute("aria-invalid");
+        const replyTarget = context.commentReplyTarget && typeof context.commentReplyTarget === "object"
+            && typeof context.commentReplyTarget.account === "string" && context.commentReplyTarget.account
+            && typeof context.commentReplyTarget.parentId === "string" && context.commentReplyTarget.parentId
+            ? context.commentReplyTarget : null;
         submission.phase = "submitting";
         sendBtn.disabled = true;
         sendBtn.setAttribute("aria-busy", "true");
         sendBtn.textContent = t('common.sending');
+        setReplyButtonsBusy();
         try {
-            const result = await api.addPostComment(postId, content);
+            const result = replyTarget
+                ? await api.addPostComment(postId, content, replyTarget.parentId, replyTarget.account)
+                : await api.addPostComment(postId, content);
             if (!submissionCurrent()) return;
             if (!isConfirmedDedicatedCommentResponse(result, account, content)) throw new Error("Unconfirmed comment");
             submission.phase = "committed";
             if (commentInput.value === originalInput) commentInput.value = "";
+            if (replyTarget) {
+                context.commentReplyTarget = null;
+                commentInput.placeholder = t('post.comment_placeholder');
+                commentInput.setAttribute("aria-label", t('post.comment_placeholder'));
+            }
             showToast(t('post.comment_success'), "success");
             await loadComments(container, postId, currentUser);
             if (submissionCurrent()) submission.phase = "idle";
@@ -675,6 +726,7 @@ async function loadComments(container, postId, currentUser) {
             commentInput.readOnly = submission.phase !== "idle";
             sendBtn.removeAttribute("aria-busy");
             sendBtn.textContent = t(submission.phase === "unconfirmed" ? 'social.comment_pending' : 'common.send');
+            setReplyButtonsBusy();
         }
     };
 

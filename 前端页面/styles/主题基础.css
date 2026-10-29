@@ -2171,6 +2171,13 @@ button.ranking-rating__star { cursor: pointer; min-width: 28px; min-height: 28px
 .discussion-detail .post-detail__comment-name, .discussion-modal .post-detail__comment-name { font-size: 13px; color: var(--rk-text, var(--fg-color, #eee)); font-weight: 500; }
 .discussion-detail .post-detail__comment-time, .discussion-modal .post-detail__comment-time { font-size: 11px; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); margin-left: auto; }
 .discussion-detail .post-detail__comment-content, .discussion-modal .post-detail__comment-content { font-size: 13px; color: var(--rk-text, var(--fg-color, #eee)); line-height: 1.5; padding-left: 32px; }
+.discussion-detail .post-detail__comment--reply, .discussion-modal .post-detail__comment--reply { margin-left: 24px; }
+.discussion-detail .post-detail__comment-reply-label, .discussion-modal .post-detail__comment-reply-label { color: var(--rk-muted, var(--descrip-text, #a4a4a4)); }
+.discussion-detail .post-detail__comment-reply-name, .discussion-modal .post-detail__comment-reply-name { color: var(--rk-text, var(--fg-color, #eee)); }
+.discussion-detail .post-detail__comment-actions, .discussion-modal .post-detail__comment-actions { display: flex; gap: 12px; margin-top: 6px; padding-left: 32px; }
+.discussion-detail .post-detail__comment-actions { padding-left: 0; }
+.discussion-detail .post-detail__comment-reply, .discussion-modal .post-detail__comment-reply { background: none; border: 0; padding: 0; color: var(--rk-muted, var(--descrip-text, #a4a4a4)); font-size: 12px; cursor: pointer; }
+.discussion-detail .post-detail__comment-reply:hover, .discussion-modal .post-detail__comment-reply:hover { color: var(--rk-text, var(--fg-color, #eee)); }
 .discussion-detail .post-detail__comments-error, .discussion-modal .post-detail__comments-error { text-align: center; padding: 20px; color: var(--rk-danger, #ef5350); font-size: 12px; }
 .discussion-detail .post-detail__modal-center, .discussion-modal .post-detail__modal-center { text-align: center; }
 .discussion-detail .post-detail__warning-icon, .discussion-modal .post-detail__warning-icon { font-size: 40px; margin-bottom: 15px; }

@@ -220,8 +220,11 @@ const api = {
     async getPostComments(postId, options = {}) {
         return request(`/api/posts/${postId}/comments`, options);
     },
-    async addPostComment(postId, content) { 
-        return request(`/api/posts/${postId}/comments?content=${encodeURIComponent(content)}`, { method: "POST" }); 
+    async addPostComment(postId, content, parentId = null, replyToUser = null) { 
+        let url = `/api/posts/${postId}/comments?content=${encodeURIComponent(content)}`;
+        if (parentId) url += `&parent_id=${encodeURIComponent(parentId)}`;
+        if (replyToUser) url += `&reply_to_user=${encodeURIComponent(replyToUser)}`;
+        return request(url, { method: "POST" }); 
     },
     async getMyPosts() {
         return request("/api/my-posts");

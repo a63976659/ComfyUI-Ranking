@@ -133,6 +133,9 @@ app.registerExtension({
                         if (!isCurrent() || !globalSidebarDOM) return;
                         bindLanguageRefresh(globalSidebarDOM);
                         container.innerHTML = '';
+                        // 宿主给自定义 Tab 的容器没有高度，root 的 height:100% 会退化为内容高度；
+                        // 挂载时直接锁定容器高度，不再依赖侧边栏面板上的 MutationObserver 兜底
+                        container.style.height = "100%";
                         container.appendChild(globalSidebarDOM);
                     } catch {
                         if (!isCurrent()) return;
