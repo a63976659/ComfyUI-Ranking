@@ -313,7 +313,7 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     let selectedImages = [];
     const account = typeof currentUser === 'string' ? currentUser : currentUser?.account;
     const publishBtn = container.querySelector('#btn-publish');
-    const scope = createPublishSubmissionScope(container, publishBtn, account);
+    const scope = createPublishSubmissionScope(container, publishBtn, account, { retainOnSidebarCollapse: true });
     const readers = new Set();
     const readTimers = new Map();
     let submitting = false;

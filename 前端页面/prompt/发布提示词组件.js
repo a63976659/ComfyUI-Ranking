@@ -11,7 +11,7 @@
 // ==========================================
 
 import { createPublishFieldErrors } from "../market/发布字段错误.js";
-import { bindPublishFilePicker, setPublishFilePickerAction } from "../market/发布文件选择可访问性.js";
+import { bindPublishFilePicker, setPublishFilePickerAction, bindPublishImageDrop } from "../market/发布文件选择可访问性.js";
 import { compressPublishImage as compressImage, capturePublishVideoFrame } from "../market/有界图片处理.js";
 import { api } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
@@ -629,7 +629,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     const videoOptionalMark = container.querySelector("#video-optional-mark");
     const submitBtn = container.querySelector("#btn-submit-prompt");
     const account = currentUser?.account;
-    const scope = createPublishSubmissionScope(container, submitBtn, account);
+    const scope = createPublishSubmissionScope(container, submitBtn, account, { retainOnSidebarCollapse: true });
     const refreshImageShortcuts = () => {
         if (scope.isCurrent()) updateCoverMark(imagesPreview);
     };
@@ -951,9 +951,10 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     }
 
     // ========== 多图上传（图像提示词专用：最多9张 + 拖拽排序，首张为封面） ==========
-    imagesInput.onchange = async (e) => {
-        if (!scope.isCurrent() || imageSelectionController || manualCoverController) return;
-        const files = Array.from(e.target.files);
+    imagesInput.onchange = event => { void addImageFiles(event.target.files); };
+    async function addImageFiles(selectedFiles) {
+        if (!scope.isCurrent() || imagesInput.disabled || submitBtn.disabled || imageSelectionController || manualCoverController) return;
+        const files = Array.from(selectedFiles || []);
         imagesInput.value = '';
         const totalImages = existingImageUrls.length + imageFiles.length;
         const remaining = PUBLISH_MEDIA_LIMITS.MAX_IMAGES - totalImages;
@@ -1000,6 +1001,8 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             } else {
                 renderImagePreviews();
             }
+        } catch {
+            if (scope.isCurrent() && !controller.signal.aborted) showToast(t('post.image_invalid_file'), 'warning');
         } finally {
             scope.confirmationSignal.removeEventListener('abort', cancel);
             if (imageSelectionController === controller) imageSelectionController = null;
@@ -1008,7 +1011,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
                 imagesInput.removeAttribute('aria-busy');
             }
         }
-    };
+    }
 
     // 渲染已有图片预览（编辑模式：已有URL与新文件混排）
     function renderExistingImagePreviews() {
@@ -1752,6 +1755,8 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     loadCategories();
     loadRecommendTags();
 
+    scope.addCleanup(bindPublishImageDrop(imageSection, imagesInput, files => { void addImageFiles(files); },
+        () => scope.isCurrent() && !submitBtn.disabled && !imageSelectionController && !manualCoverController, scope.confirmationSignal));
     scope.addCleanup(bindPublishFilePicker(imagesPreview, imagesInput, t('post.upload_images'), scope.confirmationSignal));
     scope.addCleanup(bindPublishFilePicker(videoPreviewArea, videoInput, t('post.upload_video'), scope.confirmationSignal));
     coverInput.setAttribute('aria-label', t('post.upload_cover'));

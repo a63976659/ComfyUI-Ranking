@@ -6,15 +6,24 @@ import { createTaskViewScope, subscribeTaskSessionChanges } from "../task/任务
 
 const bindings = new WeakMap();
 
-export function createPublishSubmissionScope(container, button, account) {
+export function createPublishSubmissionScope(container, button, account, { retainOnSidebarCollapse = false } = {}) {
     const previous = bindings.get(container);
     if (previous?.button === button && previous.account === account) return previous.binding;
     previous?.binding.dispose();
     const matches = captureRequestSession(), confirmation = new AbortController();
     let phase = 'idle', observer;
+    let sidebarRoot = retainOnSidebarCollapse && container.isConnected ? container.closest('.comfy-ranking-root') : null;
+    const connected = () => {
+        if (container.isConnected && button.isConnected) {
+            if (retainOnSidebarCollapse) sidebarRoot = container.closest('.comfy-ranking-root');
+            return true;
+        }
+        return retainOnSidebarCollapse && sidebarRoot !== null && !sidebarRoot.isConnected
+            && sidebarRoot.contains(container) && container.contains(button);
+    };
     const scope = createTaskViewScope({
         sessionMatches: () => !!account && matches() && getUser()?.account === account,
-        connected: () => container.isConnected && button.isConnected,
+        connected,
         subscribe: notify => subscribeTaskSessionChanges(notify, { target: window, eventBus, events: EVENTS,
             userKey: CACHE.LEGACY_KEYS.USER, tokenKey: CACHE.LEGACY_KEYS.TOKEN }),
         cancelReads: () => {},
@@ -29,7 +38,10 @@ export function createPublishSubmissionScope(container, button, account) {
     });
     let wasConnected = container.isConnected;
     observer = new MutationObserver(() => {
-        if (container.isConnected) wasConnected = true;
+        if (container.isConnected) {
+            wasConnected = true;
+            if (retainOnSidebarCollapse) sidebarRoot = container.closest('.comfy-ranking-root');
+        }
         if (wasConnected) scope.isCurrent();
     });
     observer.observe(document.body, { childList: true, subtree: true });

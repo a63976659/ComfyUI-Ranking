@@ -597,7 +597,7 @@ export function createPublishView(currentUser, onBackCallback, onSuccessCallback
 
     // 4. 将提取的参数交接给分离出去的提交引擎
     const submitBtn = container.querySelector("#btn-submit-publish");
-    submissionScope = createPublishSubmissionScope(container, submitBtn, currentUser?.account);
+    submissionScope = createPublishSubmissionScope(container, submitBtn, currentUser?.account, { retainOnSidebarCollapse: true });
     submissionScope.addCleanup(() => { ++previewGeneration; releasePreviews(); imageFiles = []; jsonFile = null; imagesPreview.replaceChildren(); });
     submitBtn.onclick = () => previewPending ? undefined : handlePublishSubmit({
         submissionScope,

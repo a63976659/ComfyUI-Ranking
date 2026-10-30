@@ -42,3 +42,36 @@ export function bindPublishFilePicker(area, input, label, signal) {
     area.addEventListener('keydown', onKey); signal?.addEventListener('abort', dispose, { once: true });
     bindings.set(area, sync); sync(); return dispose;
 }
+
+/** 本地文件拖入与缩略图内部排序分开处理，复用表单原图片接收函数。 */
+export function bindPublishImageDrop(area, input, onFiles, canAccept, signal) {
+    let disposed = false;
+    const hasFiles = event => Array.from(event.dataTransfer?.types || []).includes('Files')
+        || (event.type === 'drop' && event.dataTransfer?.files?.length > 0);
+    const enabled = () => !disposed && !signal?.aborted && !input.disabled
+        && area.isConnected && area.getClientRects().length > 0 && canAccept();
+    const onDrag = event => {
+        if (!hasFiles(event)) return;
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = enabled() ? 'copy' : 'none';
+    };
+    const onDrop = event => {
+        if (!hasFiles(event)) return;
+        event.preventDefault(); event.stopImmediatePropagation();
+        if (enabled()) onFiles(Array.from(event.dataTransfer.files || []));
+    };
+    const dispose = () => {
+        if (disposed) return;
+        disposed = true;
+        area.removeEventListener('dragenter', onDrag, true);
+        area.removeEventListener('dragover', onDrag, true);
+        area.removeEventListener('drop', onDrop, true);
+        signal?.removeEventListener('abort', dispose);
+    };
+    if (signal?.aborted) { dispose(); return dispose; }
+    area.addEventListener('dragenter', onDrag, true);
+    area.addEventListener('dragover', onDrag, true);
+    area.addEventListener('drop', onDrop, true);
+    signal?.addEventListener('abort', dispose, { once: true });
+    return dispose;
+}

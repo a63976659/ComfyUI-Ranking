@@ -134,7 +134,7 @@ export async function handlePublishSubmit(params) {
         imageFiles, jsonFile, onSuccessCallback, submitBtn, submitBtnText  // 🖼️ imageFiles 替换 coverFile
     } = params;
 
-    const scope = params.submissionScope || createPublishSubmissionScope(container, submitBtn, currentUser?.account);
+    const scope = params.submissionScope || createPublishSubmissionScope(container, submitBtn, currentUser?.account, { retainOnSidebarCollapse: true });
     if (!scope.isCurrent()) return;
     const expectedRevision = isEditMode ? (editItemData?.edit_revision === undefined ? 0 : editItemData.edit_revision) : null;
     if (isEditMode && (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)) {
