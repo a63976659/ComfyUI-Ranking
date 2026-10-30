@@ -662,7 +662,7 @@ function createPostCard(post, currentUser = currentUserCache, isCurrent = () => 
         <div class="posts-card__body">
             <!-- 标题 -->
             <button type="button" class="business-list-card__title">
-                ${escapeHtml(post.title)}
+                ${post.post_type === 'music' ? '🎵 ' : ''}${escapeHtml(post.title)}
             </button>
             
             <!-- 作者信息（SWR 缓存头像） -->

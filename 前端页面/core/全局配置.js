@@ -157,6 +157,9 @@ export const PUBLISH_MEDIA_LIMITS = Object.freeze({
     MAX_IMAGES: 9,
     IMAGE_MAX_EDGE: 1920,
     IMAGE_QUALITY: 0.85,
+    POST_AUDIO_UPLOAD_TYPE: 'post_music_audio',
+    POST_AUDIO_MAX_BYTES: 100 * 1024 * 1024,
+    POST_AUDIO_EXTENSIONS: Object.freeze(['mp3', 'wav', 'm4a', 'ogg']),
     VIDEO_MAX_BYTES: 100 * 1024 * 1024,
     VIDEO_MAX_SECONDS: 180,
     VIDEO_METADATA_TIMEOUT: 15000

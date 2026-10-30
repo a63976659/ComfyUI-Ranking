@@ -207,6 +207,7 @@ async function loadPostDetail(container, postId, currentUser) {
             <!-- 图片展示区 -->
             <div id="images-area" class="post-detail__media">
                 ${mediaHTML}
+                ${post.post_type === 'music' && post.audio_url ? `<audio controls preload="metadata" aria-label="${escapeHtml(t('post.mode_music'))}" src="${escapeHtml(post.audio_url)}" class="post-detail__audio"></audio>` : ''}
             </div>
             
             <!-- 标题 -->

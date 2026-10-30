@@ -1,15 +1,15 @@
 // 前端页面/post/发布帖子组件.js
 // ==========================================
-// ✏️ 发布帖子组件（支持图文/视频双模式）
+// ✏️ 发布帖子组件（支持图文/视频/音乐模式）
 // ==========================================
-// 功能：上传图片或视频、输入标题和正文、发布帖子
+// 功能：上传图片、视频或音乐、输入标题和正文、发布帖子
 // 关联文件：
 //   - 网络请求API.js (上传图片、发布帖子)
 //   - UI交互提示组件.js (提示信息)
 // ==========================================
 
 import { createPublishFieldErrors } from "../market/发布字段错误.js";
-import { bindPublishFilePicker, setPublishFilePickerAction } from "../market/发布文件选择可访问性.js";
+import { bindPublishFilePicker, setPublishFilePickerAction, bindPublishImageDrop } from "../market/发布文件选择可访问性.js";
 import { compressPublishImage as compressImage, capturePublishVideoFrame } from "../market/有界图片处理.js";
 import { api } from "../core/网络请求API.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
@@ -293,9 +293,9 @@ function _createRemoveButtonHandler(removeCallback, options = {}) {
 }
 
 /**
- * 🎬 使用 XMLHttpRequest 上传视频并支持进度回调
+ * 🎬 使用 XMLHttpRequest 上传帖子媒体并支持进度回调
  */
-function uploadVideoWithProgress(file, onProgress, { signal } = {}) {
+function uploadVideoWithProgress(file, onProgress, { signal, fileType = 'post_video' } = {}) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         let settled = false;
@@ -319,7 +319,7 @@ function uploadVideoWithProgress(file, onProgress, { signal } = {}) {
         try {
             const formData = new FormData();
             formData.append('file', file);
-            formData.append('file_type', 'post_video');
+            formData.append('file_type', fileType);
             xhr.open('POST', `${API.BASE_URL}/api/upload`);
             const token = tokenFrom(() => localStorage) || tokenFrom(() => sessionStorage);
             if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
@@ -397,6 +397,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                     <button type="button" id="mode-video" class="post-publish__mode-video">
                         🎬 ${t('post.mode_video')}
                     </button>
+                    <button type="button" id="mode-music" class="post-publish__mode-video">🎵 ${t('post.mode_music')}</button>
                 </div>
             </div>
             
@@ -459,6 +460,16 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 </div>
             </div>
             
+            <div id="audio-upload-section" hidden class="post-publish__upload-section">
+                <label for="audio-input" class="post-publish__field-label">🎵 ${t('post.music_audio_label')}</label>
+                <div class="post-publish__hint">${t('post.music_audio_hint', { megabytes: PUBLISH_MEDIA_LIMITS.POST_AUDIO_MAX_BYTES / (1024 * 1024) })}</div>
+                <input type="file" id="audio-input" accept="${PUBLISH_MEDIA_LIMITS.POST_AUDIO_EXTENSIONS.map(ext => `.${ext}`).join(',')}">
+                <div id="audio-player-wrap" hidden>
+                    <audio id="audio-player" controls preload="metadata" class="post-publish__audio"></audio>
+                    <div id="audio-name"></div>
+                    <button type="button" id="btn-remove-audio" class="ranking-publish-secondary">${t('post.music_remove_audio')}</button>
+                </div>
+            </div>
             <!-- 标题输入 -->
             <div class="post-publish__field-group">
                 <label for="title-input" class="post-publish__field-label">
@@ -508,7 +519,9 @@ export function createPublishPostView(currentUser, editPostData = null) {
     `;
     
     // ========== 状态变量 ==========
-    let postMode = isEditMode && editPostType === 'video' ? 'video' : 'image';
+    let postMode = isEditMode && ['video', 'music'].includes(editPostType) ? editPostType : 'image';
+    let audioFile = null, audioObjectUrl = null;
+    let currentAudioUrl = isEditMode ? (editPostData.audio_url || '') : '';
     let imageFiles = [];
     let existingImageUrls = [];
     let videoFile = null;
@@ -522,6 +535,22 @@ export function createPublishPostView(currentUser, editPostData = null) {
     // ========== DOM 引用 ==========
     const modeImageBtn = container.querySelector("#mode-image");
     const modeVideoBtn = container.querySelector("#mode-video");
+    const modeMusicBtn = container.querySelector("#mode-music");
+    const audioSection = container.querySelector("#audio-upload-section");
+    const audioInput = container.querySelector("#audio-input");
+    const audioPlayer = container.querySelector("#audio-player");
+    const audioPlayerWrap = container.querySelector("#audio-player-wrap");
+    function clearAudio() {
+        audioPlayer.pause(); audioPlayer.removeAttribute('src'); audioPlayer.load();
+        if (audioObjectUrl) URL.revokeObjectURL(audioObjectUrl);
+        audioFile = audioObjectUrl = null; currentAudioUrl = ''; audioInput.value = '';
+        audioPlayerWrap.hidden = true;
+    }
+    function renderAudio() {
+        audioPlayerWrap.hidden = !audioFile && !currentAudioUrl;
+        if (!audioPlayerWrap.hidden) audioPlayer.src = audioObjectUrl || currentAudioUrl;
+        container.querySelector('#audio-name').textContent = audioFile?.name || (currentAudioUrl ? t('post.existing_audio') : '');
+    }
     const imageSection = container.querySelector("#image-upload-section");
     const videoSection = container.querySelector("#video-upload-section");
     const imagesInput = container.querySelector("#images-input");
@@ -551,7 +580,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
     const submitBtn = container.querySelector("#btn-submit-post");
     const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
     const account = currentUser?.account;
-    const scope = createPublishSubmissionScope(container, submitBtn, account);
+    const scope = createPublishSubmissionScope(container, submitBtn, account, { retainOnSidebarCollapse: true });
     const refreshImageShortcuts = () => {
         if (scope.isCurrent()) updateCoverMark(imagesPreview);
     };
@@ -598,6 +627,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
     }
 
     scope.addCleanup(() => {
+        clearAudio();
         imageSelectionController?.abort();
         coverController?.abort(); coverController = null;
         manualCoverController?.abort();
@@ -620,7 +650,9 @@ export function createPublishPostView(currentUser, editPostData = null) {
     function updateModeUI() {
         modeImageBtn.setAttribute('aria-pressed', String(postMode === 'image'));
         modeVideoBtn.setAttribute('aria-pressed', String(postMode === 'video'));
-        if (postMode === 'image') {
+        modeMusicBtn.setAttribute('aria-pressed', String(postMode === 'music'));
+        audioSection.hidden = postMode !== 'music';
+        if (postMode !== 'video') {
             imageSection.style.display = 'block';
             videoSection.style.display = 'none';
         } else {
@@ -630,13 +662,15 @@ export function createPublishPostView(currentUser, editPostData = null) {
     }
     
     function switchMode(mode) {
-        if (postMode === mode) return;
+        if (!scope.isCurrent() || modeMusicBtn.disabled || postMode === mode) return;
         fieldErrors.clearAll();
         imageSelectionController?.abort();
         invalidateVideoSelection();
+        videoPlayer.pause();
         postMode = mode;
         // 清空用户新选择的文件内容，防止混合；保留编辑模式下的原始URL数据
-        if (mode === 'image') {
+        if (mode !== 'music') clearAudio();
+        if (mode !== 'video') {
             videoFile = null;
             videoCoverFile = null;
             videoDuration = 0;
@@ -662,6 +696,22 @@ export function createPublishPostView(currentUser, editPostData = null) {
     
     modeImageBtn.onclick = () => switchMode('image');
     modeVideoBtn.onclick = () => switchMode('video');
+    modeMusicBtn.onclick = () => switchMode('music');
+    audioInput.onchange = () => {
+        if (!scope.isCurrent() || postMode !== 'music' || audioInput.disabled) return;
+        const file = audioInput.files?.[0]; audioInput.value = '';
+        if (!file) return;
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (!PUBLISH_MEDIA_LIMITS.POST_AUDIO_EXTENSIONS.includes(ext)) {
+            showToast(t('post.error_audio_format'), 'warning'); return;
+        }
+        if (!file.size || file.size > PUBLISH_MEDIA_LIMITS.POST_AUDIO_MAX_BYTES) {
+            showToast(t('post.music_audio_size', { megabytes: PUBLISH_MEDIA_LIMITS.POST_AUDIO_MAX_BYTES / (1024 * 1024) }), 'warning'); return;
+        }
+        clearAudio(); audioFile = file; audioObjectUrl = URL.createObjectURL(file); renderAudio();
+    };
+    container.querySelector('#btn-remove-audio').onclick = () => { if (scope.isCurrent() && !audioInput.disabled) clearAudio(); };
+    renderAudio();
     
     // 编辑模式：加载已有的图片
     if (isEditMode && editImageUrls.length > 0) {
@@ -678,7 +728,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
             titleVal ||
             contentVal ||
             imageFiles?.length > 0 ||
-            videoFile
+            videoFile || audioFile
         );
 
         if (hasChanges) {
@@ -709,9 +759,10 @@ export function createPublishPostView(currentUser, editPostData = null) {
     };
     
     // ========== 图片相关逻辑 ==========
-    imagesInput.onchange = async (e) => {
-        if (!scope.isCurrent() || imageSelectionController || manualCoverController) return;
-        const files = Array.from(e.target.files);
+    imagesInput.onchange = event => { void addImageFiles(event.target.files); };
+    async function addImageFiles(selectedFiles) {
+        if (!scope.isCurrent() || imagesInput.disabled || submitBtn.disabled || imageSelectionController || manualCoverController) return;
+        const files = Array.from(selectedFiles || []);
         imagesInput.value = '';
         const totalImages = existingImageUrls.length + imageFiles.length;
         const remaining = PUBLISH_MEDIA_LIMITS.MAX_IMAGES - totalImages;
@@ -750,6 +801,8 @@ export function createPublishPostView(currentUser, editPostData = null) {
             } else {
                 renderImagePreviews();
             }
+        } catch {
+            if (scope.isCurrent() && !controller.signal.aborted) showToast(t('post.image_invalid_file'), 'warning');
         } finally {
             scope.confirmationSignal.removeEventListener('abort', cancel);
             if (imageSelectionController === controller) imageSelectionController = null;
@@ -758,7 +811,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 imagesInput.removeAttribute('aria-busy');
             }
         }
-    };
+    }
 
     // 渲染已有图片预览（编辑模式）
     function renderExistingImagePreviews() {
@@ -1207,6 +1260,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         // 一次提交只使用点击时的内容和媒体，异步等待不再读取可变编辑状态。
         const submission = Object.freeze({
             postMode: postMode,
+            audioFile, currentAudioUrl,
             imageFiles: Object.freeze([...imageFiles]),
             existingImageUrls: Object.freeze([...existingImageUrls]),
             videoFile: videoFile,
@@ -1269,6 +1323,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                     cover_image: coverUrl,
                     images: [],
                     post_type: "video",
+                    audio_url: '',
                     video_url: videoUrl,
                     is_original: isOriginal
                 };
@@ -1311,8 +1366,11 @@ export function createPublishPostView(currentUser, editPostData = null) {
             return;
         }
         
-        // ========== 图文模式（原有逻辑完全保留） ==========
+        // ========== 图文与音乐模式 ==========
         const totalImages = submission.existingImageUrls.length + submission.imageFiles.length;
+        if (submission.postMode === 'music' && !submission.audioFile && !submission.currentAudioUrl) {
+            showToast(t('post.music_audio_required'), 'warning'); return;
+        }
         if (totalImages === 0) {
             showToast(t('post.error_no_image'), "warning");
             return;
@@ -1346,6 +1404,16 @@ export function createPublishPostView(currentUser, editPostData = null) {
             }
             
             const allImages = [...submission.existingImageUrls, ...uploadedUrls];
+            let audioUrl = submission.currentAudioUrl;
+            if (submission.postMode === 'music' && submission.audioFile) {
+                submitBtn.textContent = t('post.music_uploading');
+                const result = await uploadVideoWithProgress(submission.audioFile, percent => {
+                    if (scope.isCurrent()) submitBtn.textContent = `${t('post.music_uploading')} ${percent}%`;
+                }, { signal: scope.confirmationSignal, fileType: PUBLISH_MEDIA_LIMITS.POST_AUDIO_UPLOAD_TYPE });
+                if (!scope.isCurrent()) return;
+                audioUrl = requirePostUpload(result);
+            }
+            const mediaFields = { post_type: submission.postMode, video_url: '', audio_url: submission.postMode === 'music' ? audioUrl : '' };
             
             if (isEditMode) {
                 submitBtn.textContent = `⏳ ${t('common.saving')}...`;
@@ -1355,6 +1423,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                     content,
                     cover_image: allImages[0],
                     images: allImages,
+                    ...mediaFields,
                     is_original: isOriginal
                 });
                 if (!scope.isCurrent()) return;
@@ -1369,6 +1438,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
                     content,
                     cover_image: allImages[0],
                     images: allImages,
+                    ...mediaFields,
                     author: account,
                     is_original: isOriginal
                 }, { publicationId: scope.publicationId });
@@ -1408,6 +1478,8 @@ export function createPublishPostView(currentUser, editPostData = null) {
         renderVideoPreview();
     }
     
+    scope.addCleanup(bindPublishImageDrop(imageSection, imagesInput, files => { void addImageFiles(files); },
+        () => scope.isCurrent() && !submitBtn.disabled && !imageSelectionController && !manualCoverController, scope.confirmationSignal));
     scope.addCleanup(bindPublishFilePicker(imagesPreview, imagesInput, t('post.upload_images'), scope.confirmationSignal));
     scope.addCleanup(bindPublishFilePicker(videoPreviewArea, videoInput, t('post.upload_video'), scope.confirmationSignal));
     coverInput.setAttribute('aria-label', t('post.upload_cover'));
