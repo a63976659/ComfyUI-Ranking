@@ -645,7 +645,7 @@ async def _media_download_capacity(request):
 
 
 @contextlib.asynccontextmanager
-async def _video_download_capacity(request, url_hash):
+async def _video_download_capacity(request, url_hash, range_request=False):
     async with _media_download_capacity(request) as deadline:
         lock = None
         acquired = False
@@ -656,13 +656,14 @@ async def _video_download_capacity(request, url_hash):
                     raise _media.MediaTransferError(503)
                 async with asyncio.timeout(remaining):
                     lock = await _get_video_lock(url_hash)
-                    await lock.acquire()
-                    acquired = True
+                    if not (range_request and lock.locked()):
+                        await lock.acquire()
+                        acquired = True
             except asyncio.TimeoutError:
                 raise _media.MediaTransferError(503) from None
             if time.monotonic() >= deadline:
                 raise _media.MediaTransferError(503)
-            yield
+            yield not acquired
         finally:
             if acquired:
                 lock.release()
@@ -1046,10 +1047,23 @@ async def cache_video_handler(request):
     if _upstream_circuit_open():
         return web.Response(status=503, text="Upstream circuit open, retry later")
 
+    range_header = request.headers.get('Range')
+    requested_range = None
+    if range_header is not None:
+        try:
+            requested_range = _media.parse_video_range(range_header)
+        except _media.MediaTransferError:
+            return web.Response(status=416, headers={'Cache-Control': 'no-store'})
+    # 起始开放区间仍负责完整缓存；探测/seek与进行中的下载独立读取。
+    range_only = requested_range is not None and requested_range != (0, None)
+    capacity = (_media_download_capacity(request) if range_only
+                else _video_download_capacity(request, url_hash, range_request=requested_range is not None))
+
     # 优先级2：本地无缓存或缓存无效，尝试从网络下载
     resp = None
     try:
-        async with _video_download_capacity(request, url_hash):
+        async with capacity as concurrent_range:
+            range_only = range_only or bool(concurrent_range)
             # 双重检查：锁获取后再次确认缓存是否已存在（其他协程可能已下载完成）
             cached_size = await _cached_file_size_owned(local_path)
             if cached_size == -2:
@@ -1067,15 +1081,25 @@ async def cache_video_handler(request):
                 async with asyncio.timeout(_media.VIDEO_TOTAL_SECONDS), _new_safe_session() as session:
                     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                                'Accept-Encoding': 'identity'}
+                    if range_only:
+                        headers['Range'] = range_header
+                        if request.headers.get('If-Range'):
+                            headers['If-Range'] = request.headers['If-Range']
                     async with await _get_with_safe_redirects(session, url, headers=headers,
                             timeout=VIDEO_TIMEOUT, auto_decompress=False) as response:
                         _record_upstream_success()  # 收到任何应答即证明云端可达
-                        if response.status != 200:
+                        if response.status not in ((200, 206) if range_only else (200,)):
                             print(f"[ComfyUI-Ranking] [!] Video upstream failure (status: {response.status}, key: {url_hash})")
-                            return web.Response(status=response.status, text=f"Upstream returned {response.status}")
+                            failure_headers = {'Cache-Control': 'no-store'}
+                            unsatisfied = response.headers.get('Content-Range', '')
+                            if (range_only and response.status == 416 and len(unsatisfied) <= 28
+                                    and re.fullmatch(r'bytes \*/[0-9]{1,19}', unsatisfied)):
+                                failure_headers['Content-Range'] = unsatisfied
+                            return web.Response(status=response.status, text=f"Upstream returned {response.status}",
+                                                headers=failure_headers)
 
-                        expected_size = _media.video_expected_length(response)
-                        cacheable = expected_size is None or expected_size <= MAX_VIDEO_SIZE
+                        expected_size = _media.video_expected_length(response, requested_range if range_only else None)
+                        cacheable = not range_only and (expected_size is None or expected_size <= MAX_VIDEO_SIZE)
                         chunks = _media.iter_video_body(response, expected_size,
                                                        MAX_VIDEO_SIZE if cacheable else None)
                         # 首块在发送成功响应头前确认；未知长度空体/首块超限不能变成200。
@@ -1091,7 +1115,11 @@ async def cache_video_handler(request):
                         if expected_size is not None:
                             headers['Content-Length'] = str(expected_size)
 
-                        resp = web.StreamResponse(status=200, headers=headers)
+                        if response.status == 206:
+                            headers['Content-Range'] = response.headers['Content-Range']
+                        if range_only:
+                            headers['Cache-Control'] = 'no-store'
+                        resp = web.StreamResponse(status=response.status, headers=headers)
                         await resp.prepare(request)
 
                         # 已知大视频保留只转发规则，与缓存候选共用校验/响应收尾。

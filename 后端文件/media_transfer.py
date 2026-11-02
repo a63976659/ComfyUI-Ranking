@@ -25,11 +25,26 @@ class MediaTransferError(Exception):
         self.status = status
 
 
-def video_expected_length(response):
-    """只接受单一、未压缩的完整视频表示，避免SDK隐式解压与长度歧义。"""
+def parse_video_range(value):
+    if not isinstance(value, str) or len(value) > 48:
+        raise MediaTransferError(416)
+    match = re.fullmatch(r'bytes=([0-9]{0,19})-([0-9]{0,19})', value)
+    if not match or not any(match.groups()):
+        raise MediaTransferError(416)
+    start, end = (int(part) if part else None for part in match.groups())
+    maximum = (1 << 63)-1
+    if (any(part is not None and part > maximum for part in (start, end))
+            or (start is None and end == 0)
+            or (start is not None and end is not None and start > end)):
+        raise MediaTransferError(416)
+    return start, end
+
+
+def video_expected_length(response, requested_range=None):
+    """校验未压缩视频表示；206必须与请求的单一区间和声明长度一致。"""
     names = [name.lower() for name, _ in getattr(response, 'raw_headers', ())]
     if (any(names.count(name) > 1 for name in
-            (b'content-length', b'content-encoding', b'transfer-encoding'))
+            (b'content-length', b'content-encoding', b'transfer-encoding', b'content-range'))
             or (response.headers.get('Content-Length') is not None
                 and response.headers.get('Transfer-Encoding') is not None)):
         raise MediaTransferError()
@@ -37,11 +52,30 @@ def video_expected_length(response):
         raise MediaTransferError()
     if response.headers.get('Transfer-Encoding', '').strip().lower() not in ('', 'chunked'):
         raise MediaTransferError()
-    if response.headers.get('Content-Range') is not None:
+    range_size = None
+    content_range = response.headers.get('Content-Range')
+    if getattr(response, 'status', 200) == 206:
+        if requested_range is None or not isinstance(content_range, str) or len(content_range) > 80:
+            raise MediaTransferError()
+        match = re.fullmatch(r'bytes ([0-9]{1,19})-([0-9]{1,19})/([0-9]{1,19})', content_range)
+        if not match:
+            raise MediaTransferError()
+        start, end, total = map(int, match.groups())
+        if not 0 <= start <= end < total <= (1 << 63)-1:
+            raise MediaTransferError()
+        wanted_start, wanted_end = requested_range
+        if wanted_start is None:
+            wanted_start, wanted_end = max(0, total-wanted_end), total-1
+        else:
+            wanted_end = min(total-1, wanted_end) if wanted_end is not None else total-1
+        if (start, end) != (wanted_start, wanted_end):
+            raise MediaTransferError()
+        range_size = end-start+1
+    elif content_range is not None:
         raise MediaTransferError()
     declared = response.headers.get('Content-Length')
     if declared is None:
-        return None
+        return range_size
     declared = declared.strip()
     if not re.fullmatch(r'[0-9]+', declared):
         raise MediaTransferError()
@@ -50,7 +84,10 @@ def video_expected_length(response):
     if (declared == '0' or len(declared) > len(maximum)
             or (len(declared) == len(maximum) and declared > maximum)):
         raise MediaTransferError()
-    return int(declared)
+    size = int(declared)
+    if range_size is not None and size != range_size:
+        raise MediaTransferError()
+    return size
 
 
 async def iter_video_body(response, expected, limit):
