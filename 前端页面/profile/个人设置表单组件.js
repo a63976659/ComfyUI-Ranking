@@ -4,7 +4,7 @@ import { regionData, getSortedCountries } from "../auth/国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { uploadFile } from "../market/发布内容_提交引擎.js";
 import { openImageCropper } from "../components/图片裁剪组件.js";
-import { CACHE, IMAGE_PROCESS, getBackgroundKey, getBannerCacheKey, PLACEHOLDERS, escapeHtml, normalizeProfileImageUrl } from "../core/全局配置.js";
+import { CACHE, IMAGE_PROCESS, getBackgroundKey, getBannerCacheKey, PLACEHOLDERS, escapeHtml, normalizeProfileImageUrl, calculateAge } from "../core/全局配置.js";
 import { t } from "../components/用户体验增强.js";
 import { normalizeProfileData, mergeStoredProfile } from "./个人资料工具.js";
 
@@ -24,19 +24,6 @@ function _cssBackgroundImage(value) {
 function _cloudImageValue(value) {
     const image = normalizeProfileImageUrl(value, true);
     return /^https?:\/\//i.test(image) ? image : null;
-}
-
-// 计算年龄工具函数
-function calculateAge(birthDate) {
-    if (!birthDate) return null;
-    const today = new Date();
-    const birth = new Date(birthDate);
-    let age = today.getFullYear() - birth.getFullYear();
-    const monthDiff = today.getMonth() - birth.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
-        age--;
-    }
-    return age >= 0 && age <= 150 ? age : null;
 }
 
 // 图像上传处理通用函数：绑定触发按钮 → 文件选择 → 裁剪 → 回调

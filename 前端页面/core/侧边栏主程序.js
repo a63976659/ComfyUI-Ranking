@@ -304,6 +304,7 @@ export function buildSidebarDOM() {
     // =========================================================================
 
     let activeInlineView = null;
+    let restoreInlineReturnFocus = null;
     let listNavigationGeneration = 0;
     const captureListNavigation = () => {
         const generation = listNavigationGeneration;
@@ -322,6 +323,7 @@ export function buildSidebarDOM() {
         if (!activeInlineView) return;
         const view = activeInlineView;
         activeInlineView = null;
+        restoreInlineReturnFocus = null;
         try { view._cleanup?.(); }
         catch { console.warn('Sidebar inline view cleanup failed'); }
         try { cleanupImageSandbox(view); }
@@ -329,7 +331,11 @@ export function buildSidebarDOM() {
     };
     _sidebarInlineViewCleanup = releaseInlineView;
 
-    const showInlineView = (viewDOM) => {
+    const showInlineView = (viewDOM, { entryFocus, returnFocus } = {}) => {
+        const canTransferFocus = returnFocus && !activeInlineView && document.hasFocus()
+            && returnFocus === document.activeElement
+            && contentArea.contains(returnFocus) && returnFocus.getClientRects().length
+            && entryFocus instanceof HTMLElement && viewDOM.contains(entryFocus);
         listNavigationGeneration++;
         releaseInlineView();
         tabsContainer.style.display = "none";
@@ -338,24 +344,39 @@ export function buildSidebarDOM() {
         footerContainer.style.display = "none"; // 【核心】：打开详情/发布页时隐藏底部
         activeInlineView = viewDOM;
         container.appendChild(activeInlineView);
+        if (canTransferFocus && entryFocus.isConnected && entryFocus.getClientRects().length) {
+            const renderToken = getRenderToken();
+            const matchesSession = captureRequestSession();
+            restoreInlineReturnFocus = () => {
+                if (sidebarDisposed || renderToken !== getRenderToken() || !matchesSession()
+                    || !container.isConnected || !document.hasFocus() || document.activeElement !== document.body) return;
+                const destination = contentArea.contains(returnFocus) && returnFocus.getClientRects().length
+                    ? returnFocus : tabsContainer.querySelector('[aria-selected="true"]');
+                destination?.focus({ preventScroll: true });
+            };
+            entryFocus.focus({ preventScroll: true });
+        }
     };
 
-    const hideInlineView = () => {
+    const hideInlineView = (returnFromRoute = false) => {
+        const restoreFocus = returnFromRoute && restoreInlineReturnFocus
+            && activeInlineView?.contains(document.activeElement) ? restoreInlineReturnFocus : null;
         listNavigationGeneration++;
         releaseInlineView();
         tabsContainer.style.display = "flex"; 
         sortContainer.style.display = "flex"; 
         contentBoxWrapper.style.display = "flex";
         footerContainer.style.display = "block"; // 【核心】：返回列表时恢复底部
+        restoreFocus?.();
         container._onListReturn?.();
     };
 
     _onSidebarWindow("comfy-route-view", (e) => {
-        showInlineView(e.detail.view);
+        showInlineView(e.detail.view, e.detail);
     });
 
     _onSidebarWindow("comfy-route-back", () => {
-        hideInlineView();
+        hideInlineView(true);
     });
 
     _onSidebarWindow("comfy-open-detail", (e) => {

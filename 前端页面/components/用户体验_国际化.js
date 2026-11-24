@@ -677,14 +677,27 @@ const translations = {
         'notif.income_received': '，收益已入账！',
         'notif.refunded': '退回了作品',
         'notif.tipped_you': '打赏了您！',
+        'notif.tip_amount_named': '您收到来自 {sender} 的 {amount} 积分打赏',
+        'notif.tip_amount_anonymous': '您收到了一份 {amount} 积分的匿名打赏',
+        'notif.tip_amount_named_target': '您收到来自 {sender} 的 {amount} 积分{target}打赏',
+        'notif.tip_amount_anonymous_target': '您收到了一份 {amount} 积分的匿名{target}打赏',
+        'notif.tip_target_post': '帖子',
+        'notif.tip_target_prompt': '提示词',
+        'notif.tip_target_task': '任务',
         'notif.task_apply': '申请了您的任务',
-        'notif.task_assigned': '您已被指派接单',
-        'notif.task_submitted': '已提交任务成果',
+        'notif.task_assigned': '您已被选为接单者，订金已托管。',
+        'notif.task_submitted': '接单者已提交成果，请验收。',
+        'notif.task_updated': '任务内容已更新，请查看任务详情。',
+        'notif.task_payment': '任务验收通过，款项已到账。',
+        'notif.task_refund': '任务退款',
+        'notif.task_refund_amount': '任务已过期，已退还 {amount} 积分。',
         'notif.task_completed': '任务已完成',
-        'notif.task_rejected': '任务验收未通过',
-        'notif.task_disputed': '对任务发起了申诉',
-        'notif.dispute_responded': '已回应您的申诉',
+        'notif.task_rejected': '验收未通过，请修改后重新提交。',
+        'notif.task_disputed': '发起了任务申诉，请回应。',
+        'notif.dispute_responded': '已回应您的任务申诉。',
         'notif.dispute_resolved': '申诉已裁决',
+        'notif.dispute_resolved_amount': '任务申诉已裁决，您获得 {amount} 积分。',
+        'notif.system_notification': '系统通知',
         'notif.system_announcement': '系统公告',
         'notif.clear_confirm': '确定要清空本地的所有通知记录吗？云端7天前的记录不会再同步下来。',
         'notif.cleared': '通知已清空',
@@ -873,14 +886,19 @@ const translations = {
         'task.cached_readonly': '正在显示上次保存的公开内容，联网确认后可操作。',
         'task.cached_refresh_failed': '暂时无法刷新，仍显示公开缓存内容；操作需联网确认。',
         'feedback.cache_fallback': '⚠️ 网络连接失败，展示的是缓存数据',
-        'feedback.refresh_failed_cached': '网络刷新失败，仍显示上次结果',
+        'feedback.refresh_failed_cached': '刷新失败，仍显示上次结果。',
+        'feedback.list_offline': '当前网络已断开。',
+        'feedback.list_service_unavailable': '云端服务暂不可用，请稍后重试。',
+        'feedback.list_auth_required': '身份验证未通过，请登录后重试。',
+        'feedback.list_forbidden': '当前账号无权读取此列表。',
+        'feedback.list_rate_limited': '请求过于频繁，请稍后重试。',
         'feedback.list_changed_retry': '列表已更新，请重新加载。',
         // 🔧 新增：以下三条原为散落在各组件里的硬编码中文，现收口到词典以支持多语言
         'feedback.offline_no_cache': '网络已断开，且无本地缓存',
         // ☁️ 云端不可达冷却期内、且本地无缓存可兜底时抛出（详见 网络请求_基础设施.js）。
         // 与上条刻意分开：本机明明有网时说「网络已断开」会把用户误导去查自己的路由器
         'feedback.cloud_unreachable_no_cache': '云端服务暂时连不上，本地也没有可显示的内容',
-        'feedback.search_local_result': '⚠️ 网络不可用，显示本地搜索结果',
+        'feedback.search_local_result': '云端搜索未完成，显示本地搜索结果。',
         // 🔍 搜索请求被新关键词取代时抛出的错误消息（详见 网络请求_基础设施.js 的主动取消分支）
         'feedback.request_cancelled': '请求已取消',
         'feedback.stream_idle_timeout': '连接长时间未收到数据，操作结果暂时无法确认。',
@@ -1442,6 +1460,7 @@ const translations = {
         'task.deposit_ratio': '订金比例',
         'task.min_10_credits': '最低10积分',
         'task.price_range': '请输入 0–{max} 的整数任务赏金。',
+        'task.reward_invalid': '任务赏金无效。',
         'task.deposit_invalid': '请选择有效的订金比例。',
         'task.deposit_deducted_on_assign': '接单时扣除',
         'task.price_description': '价格说明',
@@ -2503,14 +2522,27 @@ const translations = {
         'notif.income_received': ', income received!',
         'notif.refunded': 'refunded your work',
         'notif.tipped_you': 'tipped you!',
+        'notif.tip_amount_named': 'You received a {amount}-point tip from {sender}',
+        'notif.tip_amount_anonymous': 'You received an anonymous {amount}-point tip',
+        'notif.tip_amount_named_target': 'You received a {amount}-point tip from {sender} for {target}',
+        'notif.tip_amount_anonymous_target': 'You received an anonymous {amount}-point tip for {target}',
+        'notif.tip_target_post': 'a post',
+        'notif.tip_target_prompt': 'a prompt',
+        'notif.tip_target_task': 'a task',
         'notif.task_apply': 'applied for your task',
-        'notif.task_assigned': 'You have been assigned',
-        'notif.task_submitted': 'submitted task result',
+        'notif.task_assigned': 'You have been assigned. The deposit is held in escrow.',
+        'notif.task_submitted': 'The assignee submitted their work. Please review it.',
+        'notif.task_updated': 'The task has been updated. Please review the details.',
+        'notif.task_payment': 'The task was approved and payment has been credited.',
+        'notif.task_refund': 'Task refund',
+        'notif.task_refund_amount': 'The task expired. Your {amount}-point refund was processed.',
         'notif.task_completed': 'Task completed',
-        'notif.task_rejected': 'Task rejected',
-        'notif.task_disputed': 'filed a dispute',
-        'notif.dispute_responded': 'responded to your dispute',
+        'notif.task_rejected': 'The submission was rejected. Please revise and resubmit.',
+        'notif.task_disputed': 'filed a task dispute. Please respond.',
+        'notif.dispute_responded': 'responded to your task dispute.',
         'notif.dispute_resolved': 'Dispute resolved',
+        'notif.dispute_resolved_amount': 'The dispute was resolved. You received a {amount}-point credit.',
+        'notif.system_notification': 'System notification',
         'notif.system_announcement': 'System Announcement',
         'notif.clear_confirm': 'Clear all local notifications? Records older than 7 days will not be synced again.',
         'notif.cleared': 'Notifications cleared',
@@ -2694,10 +2726,15 @@ const translations = {
         'task.cached_refresh_failed': 'Refresh unavailable. Saved public content remains visible; actions require an online check.',
         'feedback.cache_fallback': '⚠️ Network failed, showing cached data',
         'feedback.refresh_failed_cached': 'Refresh failed. The previous results are still shown.',
+        'feedback.list_offline': 'You are offline.',
+        'feedback.list_service_unavailable': 'The cloud service is temporarily unavailable. Try again later.',
+        'feedback.list_auth_required': 'Authentication failed. Sign in and try again.',
+        'feedback.list_forbidden': 'Your account cannot access this list.',
+        'feedback.list_rate_limited': 'Too many requests. Try again later.',
         'feedback.list_changed_retry': 'The list has changed. Please reload it.',
         'feedback.offline_no_cache': 'Network disconnected, and no local cache available',
         'feedback.cloud_unreachable_no_cache': 'Cloud service is unreachable, and there is no local content to show',
-        'feedback.search_local_result': '⚠️ Network unavailable, showing local search results',
+        'feedback.search_local_result': 'The cloud search did not complete. Showing local results.',
         'feedback.request_cancelled': 'Request cancelled',
         'feedback.stream_idle_timeout': 'No data has arrived for a while. The operation result is not yet confirmed.',
         'feedback.stream_missing_final': 'The connection ended without a final result. Check the operation status before continuing.',
@@ -2899,6 +2936,7 @@ const translations = {
         'task.reference_link_optional': 'Reference link (optional)',
         'task.min_10_credits': 'Minimum 10 credits',
         'task.price_range': 'Enter a whole-number task reward from 0 to {max}.',
+        'task.reward_invalid': 'The task reward is invalid.',
         'task.deposit_invalid': 'Select a valid deposit ratio.',
         'task.deposit_deducted_on_assign': 'Deducted on assignment',
         'task.price_description': 'Price Breakdown',
@@ -3648,16 +3686,13 @@ export function t(key, params = {}) {
     //   profile.transactions_unit  5笔 → 5
     // 旧逻辑下英文界面实际显示为 9/8日、Chatting with X 聊天、Plugins: 12 个、(5笔)。
     // 现改为：词条存在即采用（含空串），仅在真正缺键时才回退到中文。
-    let text = Object.prototype.hasOwnProperty.call(lang, key)
+    const text = Object.prototype.hasOwnProperty.call(lang, key)
         ? lang[key]
         : (translations['zh-CN'][key] || key);
-    
-    // 处理插值 {name}
-    Object.entries(params).forEach(([k, v]) => {
-        text = text.replace(new RegExp(`\\{${k}\\}`, 'g'), v);
-    });
-    
-    return text;
+
+    // 只替换原模板中的占位符，插入值中的美元符号和花括号按原文字面保留。
+    return text.replace(/\{([A-Za-z_][A-Za-z_0-9]*)\}/g, (placeholder, name) =>
+        Object.hasOwn(params, name) ? String(params[name]) : placeholder);
 }
 
 /**

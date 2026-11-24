@@ -4,7 +4,7 @@ export { loadUnreadCount };
 import { api, captureRequestSession, requestCancelManager } from "../core/网络请求API.js";
 import { openOtherUserProfileModal } from "../profile/个人中心视图.js";
 import { showToast, showConfirm } from "../components/UI交互提示组件.js";
-import { API, CACHE, PLACEHOLDERS, normalizeProfileImageUrl } from "../core/全局配置.js";
+import { API, CACHE, PLACEHOLDERS, TASK_LIMITS, normalizeProfileImageUrl } from "../core/全局配置.js";
 import { t, getLanguage } from "../components/用户体验增强.js";
 import { escapeHtml } from "../components/互动工具函数.js";  // 🧹 P2归一：局部副本已移除
 
@@ -14,6 +14,41 @@ let notificationSequence = 0;
 
 function notificationTimestamp(timestamp) {
     return timestamp >= 1e12 ? timestamp : timestamp * 1000;
+}
+
+function matchNotice(content, pattern) {
+    if (typeof content !== 'string') return null;
+    const match = pattern.exec(content);
+    return match?.[0] === content ? match : null;
+}
+
+function formatTaskNoticeAmount(content, pattern) {
+    const match = matchNotice(content, pattern);
+    if (!match) return null;
+    const amount = Number(match[1]);
+    return Number.isSafeInteger(amount) && amount <= TASK_LIMITS.MAX_PRICE
+        ? amount.toLocaleString(getLanguage()) : null;
+}
+
+function formatTipNotice(content, anonymous) {
+    const match = matchNotice(content, anonymous
+        ? /^您收到了一份 (?<value>100000|[1-9][0-9]{0,4}) 积分的匿名(?<kind>帖子|提示词|任务)?打赏$/
+        : /^您收到来自 (?<sender>[\s\S]+) 的 (?<value>100000|[1-9][0-9]{0,4}) 积分(?<kind>帖子|提示词|任务)?打赏$/);
+    if (!match) return null;
+
+    const { sender, value, kind } = match.groups;
+    const amount = Number(value).toLocaleString(getLanguage());
+    let target;
+    if (kind === '帖子') target = t('notif.tip_target_post');
+    else if (kind === '提示词') target = t('notif.tip_target_prompt');
+    else if (kind === '任务') target = t('notif.tip_target_task');
+
+    if (anonymous) return target
+        ? t('notif.tip_amount_anonymous_target', { amount, target })
+        : t('notif.tip_amount_anonymous', { amount });
+    return target
+        ? t('notif.tip_amount_named_target', { sender, amount, target })
+        : t('notif.tip_amount_named', { sender, amount });
 }
 
 // 🚀 本地存储键管理
@@ -138,17 +173,34 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             else if (msg.type === "reply") actionText = `${t('notif.replied_on')} ${titleLink}：<br><span class="notification-copy">${escapeHtml(msg.content)}</span>`;
             else if (msg.type === "purchase") actionText = `${t('notif.purchased')} ${titleLink}${t('notif.income_received')}`;
             else if (msg.type === "refund") actionText = `${t('notif.refunded')} ${titleLink}`;
-            else if (msg.type === "tip") actionText = `${t('notif.tipped_you')}<br><span class="notification-accent">"${escapeHtml(msg.content)}"</span>`;
-            // 任务类通知 - 保持现有模板不变
-            else if (msg.type === "task_apply") actionText = `<span class="notification-accent">🙋</span> ${escapeHtml(msg.content) || t('notif.task_apply')}`;
-            else if (msg.type === "task_assigned") actionText = `<span>🎯</span> ${escapeHtml(msg.content) || t('notif.task_assigned')}`;
-            else if (msg.type === "task_submitted") actionText = `<span>📤</span> ${escapeHtml(msg.content) || t('notif.task_submitted')}`;
+            else if (msg.type === "tip") {
+                const content = formatTipNotice(msg.content, isAnonymous) ?? msg.content;
+                actionText = `${t('notif.tipped_you')}<br><span class="notification-accent">"${escapeHtml(content)}"</span>`;
+            }
+            else if (msg.type === "task_apply") actionText = `<span class="notification-accent">🙋</span> ${t('notif.task_apply')} ${titleLink}`;
+            else if (msg.type === "task_assigned") actionText = `<span>🎯</span> ${t('notif.task_assigned')} ${titleLink}`;
+            else if (msg.type === "task_submitted") actionText = `<span>📤</span> ${t('notif.task_submitted')} ${titleLink}`;
+            else if (msg.type === "task_updated") actionText = `<span>📝</span> ${t('notif.task_updated')} ${titleLink}`;
+            else if (msg.type === "task_payment") actionText = `<span>✅</span> ${t('notif.task_payment')} ${titleLink}`;
+            else if (msg.type === "task_refund") {
+                const amount = formatTaskNoticeAmount(msg.content, /^任务已过期，(0|[1-9][0-9]{0,9})积分已退还$/);
+                if (amount !== null) {
+                    actionText = `<span>↩️</span> ${t('notif.task_refund_amount', { amount })} ${titleLink}`;
+                } else {
+                    const original = escapeHtml(msg.content);
+                    actionText = `<span>↩️</span> ${t('notif.task_refund')} ${titleLink}${original ? `<br><span class="notification-copy">${original}</span>` : ''}`;
+                }
+            }
             else if (msg.type === "task_completed") actionText = `<span>✅</span> ${escapeHtml(msg.content) || t('notif.task_completed')}`;
-            else if (msg.type === "task_rejected") actionText = `<span>❌</span> ${escapeHtml(msg.content) || t('notif.task_rejected')}`;
-            // 申诉仲裁通知 - 保持现有模板不变
-            else if (msg.type === "task_disputed") actionText = `<span>⚖️</span> ${escapeHtml(msg.content) || t('notif.task_disputed')}`;
-            else if (msg.type === "dispute_responded") actionText = `<span>💬</span> ${escapeHtml(msg.content) || t('notif.dispute_responded')}`;
-            else if (msg.type === "dispute_resolved") actionText = `<span>🔨</span> ${escapeHtml(msg.content) || t('notif.dispute_resolved')}`;
+            else if (msg.type === "task_rejected") actionText = `<span>❌</span> ${t('notif.task_rejected')} ${titleLink}`;
+            else if (msg.type === "task_disputed") actionText = `<span>⚖️</span> ${t('notif.task_disputed')} ${titleLink}`;
+            else if (msg.type === "dispute_responded") actionText = `<span>💬</span> ${t('notif.dispute_responded')} ${titleLink}`;
+            else if (msg.type === "dispute_resolved") {
+                const amount = formatTaskNoticeAmount(msg.content, /^任务申诉已裁决，您获得(0|[1-9][0-9]{0,9})积分$/);
+                actionText = amount === null
+                    ? `<span>🔨</span> ${escapeHtml(msg.content) || t('notif.dispute_resolved')}`
+                    : `<span>🔨</span> ${t('notif.dispute_resolved_amount', { amount })} ${titleLink}`;
+            }
             // 【核心新增】：系统公告的正文排版，保留原格式的换行
             else if (isSystem) actionText = `<div class="notification-announcement">${escapeHtml(msg.content)}</div>`;
             
@@ -160,8 +212,11 @@ export async function openNotificationCenter(currentUser, bellBtn) {
             let nameLabel;
             if (isSystem) {
                 nameLabel = `<strong class="notification-system-name">📢 [${t('notif.system_announcement')}] ${escapeHtml(msg.from_name)}</strong>`;
+            } else if (msg.type === "task_refund" && msg.from_user === "system") {
+                nameLabel = `<strong>${t('notif.system_notification')}</strong>`;
             } else if (isAnonymous) {
-                nameLabel = `<strong>${escapeHtml(msg.from_name || msg.from_user)}</strong>`;
+                const name = msg.type === 'tip' ? t('creator.anonymous') : msg.from_name || msg.from_user;
+                nameLabel = `<strong>${escapeHtml(name)}</strong>`;
             } else {
                 // 🔒 XSS防护：from_user 是他人账号，写入 HTML 属性前必须转义
                 // （dataset.account 经浏览器解码后仍是原始值，下方跳转行为不变）

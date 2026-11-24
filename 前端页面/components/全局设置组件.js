@@ -389,6 +389,7 @@ export function createSettingsView() {
     const cacheStatsPanel = container.querySelector("#cache-stats-panel");
     cacheStatsPanel.setAttribute('role', 'status');
     cacheStatsPanel.setAttribute('aria-live', 'polite');
+    cacheStatsPanel.tabIndex = -1;
     let statsGeneration = 0;
     let statsController = null;
     let lastStatsHTML = null;
@@ -531,7 +532,9 @@ export function createSettingsView() {
         if (clearingCache || cacheViewDisposed || !container.isConnected) return;
         clearingCache = true;
         const originalText = btn.textContent;
+        const returnFocus = document.hasFocus() && document.activeElement === btn;
         btn.textContent = t('settings.cache_clearing');
+        if (returnFocus) cacheStatsPanel.focus({ preventScroll: true });
         clearButtons.forEach(button => { button.disabled = true; button.setAttribute('aria-busy', 'true'); });
 
         try {
@@ -552,6 +555,9 @@ export function createSettingsView() {
             btn.textContent = originalText;
             clearingCache = false;
             clearButtons.forEach(button => { button.disabled = false; button.removeAttribute('aria-busy'); });
+            if (returnFocus && !cacheViewDisposed && btn.isConnected && document.hasFocus() && document.activeElement === cacheStatsPanel) {
+                btn.focus({ preventScroll: true });
+            }
         }
     }
 

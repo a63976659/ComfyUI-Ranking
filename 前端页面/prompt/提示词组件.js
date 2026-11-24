@@ -22,7 +22,7 @@ import { api, proxyImages, captureRequestSession } from "../core/网络请求API
 import { showToast } from "../components/UI交互提示组件.js";
 // 📦 列表缓存走 readListCache/writeListCache 统一口径；分类缓存形态不同（空数组也是
 // 有效缓存态），仍用底层 setCache/getCacheWithMeta
-import { setCache, getCacheWithMeta, readListCache, isEmptyListRefreshWithExistingData, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
+import { setCache, getCacheWithMeta, readListCache, isEmptyListRefreshWithExistingData, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage, getListRefreshFailureMessage } from "../components/性能优化工具.js";
 import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t, tIfExists } from "../components/用户体验增强.js";
 import { API, CACHE, getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl } from "../core/全局配置.js";
@@ -280,7 +280,7 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
     };
 
     // 🚀 自动分页加载回调
-    const loadMorePrompts = async (page, pageSize, { isCurrent = () => true } = {}) => {
+    const loadMorePrompts = async (page, pageSize, { isCurrent = () => true, reportFailure } = {}) => {
         if (disposed || !isCurrent()) return [];
         try {
             const readResponse = captureListRead(promptListCacheKey(currentType, currentCategory, currentSort));
@@ -325,7 +325,8 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
             if (disposed || !isCurrent()) return [];
             console.error("分页加载提示词失败");
             promptsGrid.querySelector('.list-search-message')?.remove();
-            return null;  // 返回 null 表示加载失败（区别于空数组表示没有更多数据）
+            reportFailure?.(err);
+            return null;
         }
     };
 
@@ -341,7 +342,7 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
         currentPaginator = createPaginationLoader({
             container: scrollContainer,
             focusContainer: promptsGrid,
-            canLoad: () => !disposed && firstPageReady && !isLoadingFromNetwork,
+            canLoad: () => !disposed && firstPageReady && allPromptsData.length > 0 && !isLoadingFromNetwork,
             loadMore: loadMorePrompts,
             pageSize: PAGE_SIZE,
             threshold: 200,
@@ -388,14 +389,19 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
         if (sort) {
             listViewGeneration++;
             currentSort = sort;
+            firstPageReady = false;
 
             // 🚀 重置分页器
             resetPagination();
 
             // 🚀 本地排序优先：已有数据时直接本地排序渲染
             if (allPromptsData.length > 0) {
-                const sorted = sortPromptsLocally(allPromptsData, currentSort);
-                renderPromptsFromCache(sorted, true);
+                const cached = readPromptListCache(currentType, currentCategory, currentSort);
+                if (cached) {
+                    allPromptsData = proxyImages(cached);
+                    firstPageReady = true;
+                }
+                renderPromptsFromCache(cached ? allPromptsData : sortPromptsLocally(allPromptsData, currentSort), true);
                 // 后台静默刷新最新数据
                 silentRefresh();
             } else {
@@ -457,6 +463,7 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
         if (!append && page === 1) {
             const cachedData = readPromptListCache(requestedType, requestedCategory, requestedSort);
             if (cachedData) {
+                firstPageReady = true;
                 allPromptsData = proxyImages(cachedData);
                 renderPromptsFromCache(allPromptsData, true);
                 // 后台静默更新
@@ -566,11 +573,12 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
             if (!append) {
                 const cachedData = readPromptListCache(requestedType, requestedCategory, requestedSort);
                 if (cachedData) {
+                    firstPageReady = true;
                     allPromptsData = proxyImages(cachedData);
                     renderPromptsFromCache(allPromptsData);
                     showToast(t('prompt.network_cache'), "warning");
                 } else {
-                    renderListLoadError(promptsGrid, err?.name === 'ListCacheChangedError' ? t('feedback.list_changed_retry') : t('prompt.load_failed'), () => {
+                    renderListLoadError(promptsGrid, t('prompt.load_failed'), () => {
                         if (disposed || isLoadingFromNetwork || requestedType !== currentType || requestedCategory !== currentCategory || requestedSort !== currentSort) return;
                         return loadPrompts(1, false, forceRefresh);
                     }, t, err);
@@ -581,7 +589,6 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
 
     // 从缓存渲染提示词列表
     const renderPromptsFromCache = (prompts, deferSearchScan = false) => {
-        firstPageReady = true;
         const restoreFocus = cardNavigation.captureListFocus(promptsGrid);
         promptsGrid.innerHTML = "";
 
@@ -590,10 +597,10 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
 
         if (filteredPrompts.length === 0) {
             if (searchKeyword) {
-                renderListSearchMessage(promptsGrid, t('pagination.searching'));
-                startAutoPagination();
+                renderListSearchMessage(promptsGrid, t(prompts.length ? 'pagination.searching' : 'pagination.search_empty'));
+                if (prompts.length) startAutoPagination();
                 loadMoreWrapper.style.display = "none";
-                if (!deferSearchScan) currentPaginator?.load();
+                if (prompts.length && !deferSearchScan) currentPaginator?.load();
             } else {
                 promptsGrid.innerHTML = _renderEmptyState();
                 loadMoreWrapper.style.display = "none";
@@ -621,7 +628,7 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
         startAutoPagination();
 
         // 显示加载更多
-        if (filteredPrompts.length > PAGE_SIZE) {
+        if (firstPageReady && filteredPrompts.length > PAGE_SIZE) {
             loadMoreWrapper.style.display = "block";
         } else {
             loadMoreWrapper.style.display = "none";
@@ -657,14 +664,15 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
             const prompts = responseData.data;
             isLoadingFromNetwork = false;
 
-            if (isEmptyListRefreshWithExistingData(prompts, allPromptsData)) {
+            if (firstPageReady && isEmptyListRefreshWithExistingData(prompts, allPromptsData)) {
                 console.warn(`🛡️ 提示词 ${requestedType}/${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
                 // 更新缓存
                 responseData.write(getCacheTTL());
 
                 // 对比新旧数据，有变化时重新渲染
-                if (_promptsDataChanged(allPromptsData, prompts)) {
+                if (!firstPageReady || _promptsDataChanged(allPromptsData, prompts)) {
+                    firstPageReady = true;
                     console.log(`✅ 提示词 ${currentType}/${currentSort} 检测到新数据，执行静默更新`);
                     allPromptsData = proxyImages(prompts);
                     renderPromptsFromCache(allPromptsData);
@@ -682,8 +690,13 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
             }
             isLoadingFromNetwork = false;
             console.warn("后台更新提示词失败（保留当前内容）");
-            if (notifyFailure === true) showToast(t(err?.name === 'ListCacheChangedError'
-                ? 'feedback.list_changed_retry' : 'feedback.refresh_failed_cached'), 'warning');
+            if (!firstPageReady && allPromptsData.length) {
+                promptsGrid.querySelector('.list-search-message')?.remove();
+                renderListLoadError(promptsGrid, t('prompt.load_failed'), () => {
+                    if (viewGeneration === listViewGeneration) return silentRefresh();
+                }, t, err, { preserveContent: true, describeCache: false });
+            }
+            if (notifyFailure === true) showToast(getListRefreshFailureMessage(err, t), 'warning');
         }
         if (searchKeyword && !allPromptsData.some(prompt => _matchesSearch(prompt, searchKeyword))) {
             currentPaginator?.load();
@@ -740,7 +753,9 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
 
     // 初始加载
     syncTypeTabState();
-    loadCategoriesAndReload();
+    queueMicrotask(() => {
+        if (!disposed) loadCategoriesAndReload();
+    });
 
     // 🔧 组件生命周期清理方法
     container._cleanup = () => {
@@ -781,6 +796,7 @@ function createPromptCard(prompt, currentUser = currentUserCache, isCurrent = ()
 
     // 判断是否为视频封面
     const isVideo = prompt.media_type === "video";
+    const coverPlaceholder = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23222" width="200" height="200"/%3E%3C/svg%3E';
     const initialAuthor = isCurrent() && typeof prompt.author === 'string' ? getCachedProfile(prompt.author) : null;
     const initialAuthorName = [initialAuthor?.name, prompt.author_name, prompt.author].find(value => typeof value === 'string' && value) || '';
 
@@ -793,7 +809,7 @@ function createPromptCard(prompt, currentUser = currentUserCache, isCurrent = ()
     card.innerHTML = `
         <!-- 封面图 -->
         <div class="prompt-card__cover">
-            <img class="prompt-card__image" src="${escapeHtml(prompt.cover_image || 'data:image/svg+xml,...')}" alt="">
+            <img class="prompt-card__image" src="${escapeHtml(prompt.cover_image || coverPlaceholder)}" alt="">
             ${isVideo ? `
             <!-- 视频播放按钮 -->
             <div class="prompt-card__play">
@@ -844,13 +860,13 @@ function createPromptCard(prompt, currentUser = currentUserCache, isCurrent = ()
 
         const account = prompt.author;
         const cached = initialAuthor;
-        const avatar = [cached?.avatar, prompt.author_avatar].map(value => normalizeProfileImageUrl(value)).find(Boolean) || '';
+        const avatar = normalizeProfileImageUrl(cached?.avatar) || normalizeProfileImageUrl(prompt.author_avatar);
         const name = initialAuthorName;
 
-        // 渲染初始头像
-        const avatarHtml = _generateAvatarHtml(avatar, name);
-
-        authorContainer.innerHTML = `${avatarHtml}<span class="swr-name prompt-card__name">${escapeHtml(name)}</span>`;
+        if (avatar) {
+            const avatarEl = authorContainer.querySelector('.swr-avatar');
+            if (avatarEl) avatarEl.outerHTML = _generateAvatarHtml(avatar, name);
+        }
 
         // 后台静默校对
         const updateAuthor = (profile) => {
@@ -873,10 +889,10 @@ function createPromptCard(prompt, currentUser = currentUserCache, isCurrent = ()
         if (latestCached) updateAuthor(latestCached);
     }, 0);
 
-    const cover = card.querySelector('img');
-    if (cover) cover.onerror = () => {
+    const cover = card.querySelector('.prompt-card__image');
+    if (cover && prompt.cover_image) cover.onerror = () => {
         cover.onerror = null;
-        cover.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="200"%3E%3Crect fill="%23222" width="200" height="200"/%3E%3C/svg%3E';
+        cover.src = coverPlaceholder;
     };
 
     let opening = false;
@@ -891,7 +907,9 @@ function createPromptCard(prompt, currentUser = currentUserCache, isCurrent = ()
             if (!isNavigationCurrent() || !card.isConnected || !card.getClientRects().length) return;
             const view = module.createPromptDetailView(prompt.id, currentUser);
             if (!isNavigationCurrent() || !card.isConnected) { view._cleanup?.(); return; }
-            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+            const returnFocus = card.querySelector('.business-list-card__title');
+            const entryFocus = view.querySelector("#btn-back-prompt-detail");
+            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view, entryFocus, returnFocus } }));
         } catch {
             if (isNavigationCurrent() && card.isConnected && card.getClientRects().length) showToast(t('prompt.load_failed'), 'error');
         } finally {

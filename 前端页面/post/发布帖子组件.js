@@ -548,7 +548,10 @@ export function createPublishPostView(currentUser, editPostData = null) {
     }
     function renderAudio() {
         audioPlayerWrap.hidden = !audioFile && !currentAudioUrl;
-        if (!audioPlayerWrap.hidden) audioPlayer.src = audioObjectUrl || currentAudioUrl;
+        if (!audioPlayerWrap.hidden) {
+            fieldErrors.clear(audioInput);
+            audioPlayer.src = audioObjectUrl || currentAudioUrl;
+        }
         container.querySelector('#audio-name').textContent = audioFile?.name || (currentAudioUrl ? t('post.existing_audio') : '');
     }
     const imageSection = container.querySelector("#image-upload-section");
@@ -581,6 +584,12 @@ export function createPublishPostView(currentUser, editPostData = null) {
     const isOriginalCheckbox = container.querySelector("#is-original-checkbox");
     const account = currentUser?.account;
     const scope = createPublishSubmissionScope(container, submitBtn, account, { retainOnSidebarCollapse: true });
+    const fieldErrors = createPublishFieldErrors([
+        titleInput, contentInput, imagesPreview, videoPreviewArea,
+        { control: btnUploadCover, anchor: btnUploadCover.closest('.ranking-publish-cover-controls') },
+        { control: audioInput, clearOnChange: false }
+    ], scope.confirmationSignal);
+    scope.addCleanup(fieldErrors.dispose);
     const refreshImageShortcuts = () => {
         if (scope.isCurrent()) updateCoverMark(imagesPreview);
     };
@@ -759,7 +768,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
     };
     
     // ========== 图片相关逻辑 ==========
-    imagesInput.onchange = event => { void addImageFiles(event.target.files); };
+    imagesInput.onchange = event => addImageFiles(event.target.files);
     async function addImageFiles(selectedFiles) {
         if (!scope.isCurrent() || imagesInput.disabled || submitBtn.disabled || imageSelectionController || manualCoverController) return;
         const files = Array.from(selectedFiles || []);
@@ -815,6 +824,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
 
     // 渲染已有图片预览（编辑模式）
     function renderExistingImagePreviews() {
+        if (existingImageUrls.length || imageFiles.length) fieldErrors.clear(imagesPreview);
         const generation = beginImagePreviews();
         const totalImages = existingImageUrls.length + imageFiles.length;
         
@@ -924,6 +934,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
     
     // 渲染图片预览（新建模式）
     function renderImagePreviews() {
+        if (imageFiles.length) fieldErrors.clear(imagesPreview);
         const generation = beginImagePreviews();
         if (imageFiles.length === 0) {
             imagesPreview.innerHTML = `
@@ -1060,6 +1071,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
     function renderVideoPreview() {
         const generation = videoGeneration;
         if (!videoFile && !currentVideoUrl) {
+            fieldErrors.clear(btnUploadCover);
             videoEmptyState.style.display = 'flex';
             videoPlayerWrap.style.display = 'none';
             videoPreviewArea.style.borderStyle = 'dashed';
@@ -1068,6 +1080,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
             return;
         }
         
+        fieldErrors.clear(videoPreviewArea);
         videoEmptyState.style.display = 'none';
         videoPlayerWrap.style.display = 'block';
         videoPreviewArea.style.borderStyle = 'solid';
@@ -1108,6 +1121,7 @@ export function createPublishPostView(currentUser, editPostData = null) {
         if (coverObjectUrl) { URL.revokeObjectURL(coverObjectUrl); coverObjectUrl = null; }
         const url = videoCoverFile ? URL.createObjectURL(videoCoverFile) : currentCoverUrl;
         if (url) {
+            fieldErrors.clear(btnUploadCover);
             coverThumb.src = url;
             coverThumb.style.display = 'block';
             coverLabel.style.display = 'block';
@@ -1246,8 +1260,6 @@ export function createPublishPostView(currentUser, editPostData = null) {
     };
     
     // ========== 提交发布/保存 ==========
-    const fieldErrors = createPublishFieldErrors([titleInput, contentInput], scope.confirmationSignal);
-    scope.addCleanup(fieldErrors.dispose);
     let submissionPhase = 'idle';
     submitBtn.onclick = async () => {
         if (!scope.isCurrent()) return;
@@ -1281,11 +1293,11 @@ export function createPublishPostView(currentUser, editPostData = null) {
                 return;
             }
             if (!submission.videoFile && !submission.currentVideoUrl) {
-                showToast(t('post.error_no_video'), "warning");
+                fieldErrors.show(videoPreviewArea, t('post.error_no_video'));
                 return;
             }
             if (!submission.videoCoverFile && !submission.currentCoverUrl) {
-                showToast(t('post.error_no_cover'), "warning");
+                fieldErrors.show(btnUploadCover, t('post.error_no_cover'));
                 return;
             }
             
@@ -1369,10 +1381,10 @@ export function createPublishPostView(currentUser, editPostData = null) {
         // ========== 图文与音乐模式 ==========
         const totalImages = submission.existingImageUrls.length + submission.imageFiles.length;
         if (submission.postMode === 'music' && !submission.audioFile && !submission.currentAudioUrl) {
-            showToast(t('post.music_audio_required'), 'warning'); return;
+            fieldErrors.show(audioInput, t('post.music_audio_required')); return;
         }
         if (totalImages === 0) {
-            showToast(t('post.error_no_image'), "warning");
+            fieldErrors.show(imagesPreview, t('post.error_no_image'));
             return;
         }
         if (!title) {

@@ -860,7 +860,7 @@ export function createInstallProgress(container) {
     wrapper.innerHTML = `
         <div class="install-progress">
             <div class="install-progress__header">
-                <span class="install-progress__stage" role="status" aria-live="polite">${escapeHtml(preparingLabel)}</span>
+                <span class="install-progress__stage" role="status" aria-live="polite" tabindex="-1">${escapeHtml(preparingLabel)}</span>
                 <span class="install-progress__elapsed" role="timer" aria-live="off"></span>
                 <span class="install-progress__percent">0%</span>
             </div>
@@ -890,37 +890,44 @@ export function createInstallProgress(container) {
     };
     const elapsedTimer = setInterval(updateElapsed, 1000);
     const stopElapsedTimer = () => clearInterval(elapsedTimer);
+    const setStage = message => {
+        stage.textContent = message;
+        progressTrack.setAttribute("aria-valuetext", message);
+    };
+    const moveCancelFocusToStage = () => {
+        if (cancelButton && cancelButton === document.activeElement && wrapper.isConnected && document.hasFocus()) {
+            stage.focus({ preventScroll: true });
+        }
+    };
     updateElapsed();
 
     return {
         update(progress, message) {
+            if (cancelButton?.disabled) return;
             if (Number.isFinite(progress)) {
                 const p = Math.max(0, Math.min(100, progress));
                 fill.style.width = `${p}%`;
                 percent.textContent = `${p}%`;
                 progressTrack.setAttribute("aria-valuenow", String(p));
             }
-            if (message) {
-                stage.textContent = message;
-                progressTrack.setAttribute("aria-valuetext", message);
-            }
+            if (message) setStage(message);
         },
         complete(message) {
             stopElapsedTimer();
-            cancelButton?.remove();
             fill.style.width = "100%";
             percent.textContent = "100%";
             progressTrack.setAttribute("aria-valuenow", "100");
             wrapper.classList.add("is-complete");
-            stage.textContent = message || `✅ ${t('install.complete')}`;
-            progressTrack.setAttribute("aria-valuetext", stage.textContent);
+            setStage(message || `✅ ${t('install.complete')}`);
+            moveCancelFocusToStage();
+            cancelButton?.remove();
         },
         error(message) {
             stopElapsedTimer();
-            cancelButton?.remove();
             wrapper.classList.add("is-error");
-            stage.textContent = message || `❌ ${t('install.failed')}`;
-            progressTrack.setAttribute("aria-valuetext", stage.textContent);
+            setStage(message || `❌ ${t('install.failed')}`);
+            moveCancelFocusToStage();
+            cancelButton?.remove();
         },
         showDiagnostics(entries, error = null) {
             if (destroyed) return;
@@ -962,8 +969,11 @@ export function createInstallProgress(container) {
             cancelButton.textContent = label;
             cancelButton.addEventListener("click", () => {
                 if (cancelButton.disabled) return;
+                const message = t('install.cancelling');
+                setStage(message);
+                moveCancelFocusToStage();
                 cancelButton.disabled = true;
-                cancelButton.textContent = t('install.cancelling');
+                cancelButton.textContent = message;
                 onCancel();
             });
             wrapper.appendChild(cancelButton);

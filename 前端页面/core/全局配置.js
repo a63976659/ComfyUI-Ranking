@@ -211,6 +211,8 @@ const RESOURCE_LIST_PREFIXES = [
 export const CACHE = {
     // 缓存键前缀
     PREFIX: "ComfyRanking_",
+
+    RANKING_DAY_OFFSET_MS: 8 * 60 * 60 * 1000, // 与云端今日热度使用同一 UTC+8 日期
     
     // 默认缓存时间（毫秒）
     DEFAULT_TTL: 2 * 60 * 60 * 1000,  // 2小时
@@ -693,6 +695,19 @@ export function escapeHtml(str) {
               .replace(/>/g, "&gt;")
               .replace(/"/g, "&quot;")
               .replace(/'/g, "&#039;");
+}
+
+export function calculateAge(birthDate) {
+    if (typeof birthDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)
+        || birthDate.startsWith('0000')) return null;
+    const birth = new Date(birthDate);
+    if (!Number.isFinite(birth.getTime()) || birth.toISOString().slice(0, 10) !== birthDate) return null;
+
+    const today = new Date();
+    let age = today.getFullYear() - birth.getUTCFullYear();
+    const monthDiff = today.getMonth() - birth.getUTCMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getUTCDate())) age--;
+    return age >= 0 && age <= 150 ? age : null;
 }
 
 /** 资料图片只接受明确的图片表示或网络地址，不相对宿主解析业务路径。 */

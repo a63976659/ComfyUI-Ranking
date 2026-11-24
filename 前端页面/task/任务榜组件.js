@@ -21,7 +21,7 @@ import { api, captureRequestSession } from "../core/网络请求API.js";
 import { getTaskApplicantCount } from "./任务数据工具.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { readListCache, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
+import { readListCache, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage, getListRefreshFailureMessage } from "../components/性能优化工具.js";
 import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { API, CACHE, getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl } from "../core/全局配置.js";
@@ -154,11 +154,12 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
     const handleFilterChange = (e) => {
         if (disposed) return;
         const { status, sort } = e.detail;
-        listViewGeneration++;
         
         // 状态变化时，需要重新加载数据（因为后端按状态过滤）
         if (status !== undefined && status !== currentStatus) {
             currentStatus = status;
+            currentSort = sort || currentSort;
+            allTasksData = [];
             if (paginator) paginator.reset();
             loadTasks(1, false);
             return;
@@ -166,18 +167,20 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
         
         // 排序变化时，本地排序优先
         if (sort) {
+            listViewGeneration++;
             currentSort = sort;
+            firstPageReady = false;
             if (paginator) paginator.reset();
             
             // 🚀 本地排序优先：已有数据时直接本地排序渲染
             if (allTasksData.length > 0) {
-                // 先应用状态过滤（如果有），再排序
-                let filtered = allTasksData;
-                if (currentStatus) {
-                    filtered = allTasksData.filter(t => t.status === currentStatus);
+                const cached = readListCache(getCacheKey());
+                if (cached) {
+                    allTasksData = proxyImages(cached);
+                    firstPageReady = true;
                 }
-                const sorted = sortTasksLocally(filtered, currentSort);
-                renderTasksFromCache(sorted);
+                const preview = currentStatus ? allTasksData.filter(task => task.status === currentStatus) : allTasksData;
+                renderTasksFromCache(cached ? allTasksData : sortTasksLocally(preview, currentSort));
                 // 后台静默刷新最新数据
                 silentRefresh();
             } else {
@@ -249,6 +252,7 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
         if (!append && page === 1) {
             const cachedData = readListCache(cacheKey);
             if (cachedData) {
+                firstPageReady = true;
                 // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
                 allTasksData = proxyImages(cachedData);
                 renderTasksFromCache(allTasksData);
@@ -345,13 +349,14 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
             if (!append) {
                 const cachedData = readListCache(cacheKey);
                 if (cachedData) {
+                    firstPageReady = true;
                     // 🚀 缓存数据也需要过一遍图片代理
                     allTasksData = proxyImages(cachedData);
                     renderTasksFromCache(allTasksData);
                     showToast(t('task.network_cache'), "warning");
                     continueSearchPagination();
                 } else {
-                    renderListLoadError(tasksList, err?.name === 'ListCacheChangedError' ? t('feedback.list_changed_retry') : t('task.load_failed'), () => {
+                    renderListLoadError(tasksList, t('task.load_failed'), () => {
                         if (disposed || isLoadingFromNetwork || requestedStatus !== currentStatus || requestedSort !== currentSort) return;
                         return loadTasks(1, false, forceRefresh);
                     }, t, err);
@@ -362,7 +367,6 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
     
     // 从缓存渲染任务列表
     const renderTasksFromCache = (tasks) => {
-        firstPageReady = true;
         const restoreFocus = cardNavigation.captureListFocus(tasksList);
         tasksList.innerHTML = "";
         
@@ -371,8 +375,8 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
         
         if (filteredTasks.length === 0) {
             if (searchKeyword) {
-                renderListSearchMessage(tasksList, t('pagination.searching'));
-                loadMoreWrapper.style.display = "block";
+                renderListSearchMessage(tasksList, t(tasks.length ? 'pagination.searching' : 'pagination.search_empty'));
+                loadMoreWrapper.style.display = firstPageReady && tasks.length ? "block" : "none";
             } else {
                 tasksList.innerHTML = _renderNoTasksView();
                 loadMoreWrapper.style.display = "none";
@@ -397,7 +401,7 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
         applyViewportAnimations(tasksList, cards, 'dataflow', true);
         
         // 显示加载更多
-        if (filteredTasks.length > PAGE_SIZE) {
+        if (firstPageReady && filteredTasks.length > PAGE_SIZE) {
             loadMoreWrapper.style.display = "block";
         } else {
             loadMoreWrapper.style.display = "none";
@@ -432,14 +436,15 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
             const tasks = responseData.data;
             isLoadingFromNetwork = false;
             
-            if (isEmptyListRefreshWithExistingData(tasks, allTasksData)) {
+            if (firstPageReady && isEmptyListRefreshWithExistingData(tasks, allTasksData)) {
                 console.warn(`🛡️ 任务榜 ${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
                 // 更新缓存
                 responseData.write(getCacheTTL());
 
                 // 对比新旧数据，有变化时重新渲染
-                if (_tasksDataChanged(allTasksData, tasks)) {
+                if (!firstPageReady || _tasksDataChanged(allTasksData, tasks)) {
+                    firstPageReady = true;
                     console.log(`✅ 任务榜 ${currentSort} 检测到新数据，执行静默更新`);
                     allTasksData = proxyImages(tasks);
                     renderTasksFromCache(allTasksData);
@@ -457,8 +462,13 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
             }
             isLoadingFromNetwork = false;
             console.warn("后台更新任务失败（保留当前内容）");
-            if (notifyFailure === true) showToast(t(err?.name === 'ListCacheChangedError'
-                ? 'feedback.list_changed_retry' : 'feedback.refresh_failed_cached'), 'warning');
+            if (!firstPageReady && allTasksData.length) {
+                tasksList.querySelector('.list-search-message')?.remove();
+                renderListLoadError(tasksList, t('task.load_failed'), () => {
+                    if (viewGeneration === listViewGeneration) return silentRefresh();
+                }, t, err, { preserveContent: true, describeCache: false });
+            }
+            if (notifyFailure === true) showToast(getListRefreshFailureMessage(err, t), 'warning');
         }
         continueSearchPagination();
     };
@@ -507,9 +517,9 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
             paginator = createPaginationLoader({
                 container: scrollContainer,
                 focusContainer: tasksList,
-                canLoad: () => !disposed && firstPageReady && !isLoadingFromNetwork,
+                canLoad: () => !disposed && firstPageReady && allTasksData.length > 0 && !isLoadingFromNetwork,
                 autoFill: () => Boolean(searchKeyword) && !allTasksData.some(task => _filterTasksByKeyword([task], searchKeyword).length),
-                loadMore: async (page, pageSize, { isCurrent = () => true } = {}) => {
+                loadMore: async (page, pageSize, { isCurrent = () => true, reportFailure } = {}) => {
                     if (disposed || !isCurrent()) return [];
                     try {
                         const readResponse = captureListRead(`${CACHE_KEY_PREFIX}_${currentStatus}_${currentSort}`);
@@ -552,6 +562,7 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
                         if (disposed || !isCurrent()) return [];
                         console.error("自动分页加载任务失败");
                         tasksList.querySelector('.list-search-message')?.remove();
+                        reportFailure?.(err);
                         return null;
                     }
                 },
@@ -717,7 +728,9 @@ function createTaskCard(task, currentUser = currentUserCache, isCurrent = () => 
             if (!isNavigationCurrent() || !card.isConnected || !card.getClientRects().length) return;
             const view = module.createTaskDetailView(task.id, currentUser);
             if (!isNavigationCurrent() || !card.isConnected) { view._cleanup?.(); return; }
-            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+            const returnFocus = card;
+            const entryFocus = view.querySelector("#btn-back");
+            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view, entryFocus, returnFocus } }));
         } catch {
             if (isNavigationCurrent() && card.isConnected && card.getClientRects().length) showToast(t('task.load_failed'), 'error');
         } finally {

@@ -25,6 +25,7 @@ const DEFAULT_TTL = CACHE.DEFAULT_TTL;
 const MAX_MEMORY_ITEMS = CACHE.MAX_MEMORY_ITEMS;
 const CACHE_SCHEMA_VERSION = 2;
 const MAX_STORAGE_BYTES = CACHE.MAX_STORAGE_BYTES;
+const DAY_MS = 24 * 60 * 60 * 1000;
 let storageUsageBytes = null;
 let lastStorageBudgetSweepAt = 0;
 
@@ -34,19 +35,31 @@ const memoryCacheOrder = []; // LRU 顺序追踪
 const memoryOnlyEntries = new WeakSet();
 
 let cacheClearToken = {};
-const cacheWriteScopes = [
+const rankingCacheScopes = [
     ...[...CACHE.RESOURCE_LIST_PREFIXES, getSidebarListCacheKey('creators', ''), ...Object.values(CACHE.PUBLIC_LISTS).map(list => list.prefix)].map(prefix =>
         ({ prefix, matches: key => key.startsWith(prefix), token: {} })),
     ...API.PUBLIC_CONDITIONAL_GET_PATHS.map(path => {
         const prefix = `api_${path}`;
         return { prefix, matches: key => key.split(/[?#]/)[0] === prefix, token: {} };
-    }),
+    })
+];
+const cacheWriteScopes = [
+    ...rankingCacheScopes,
     { prefix: CACHE.CREATOR_DETAILS_CACHE_PREFIX, matches: key => {
         const path = key.split(/[?#]/)[0];
         return path.startsWith(CACHE.CREATOR_DETAILS_CACHE_PREFIX)
             && /^[^/]+\/details$/.test(path.slice(CACHE.CREATOR_DETAILS_CACHE_PREFIX.length));
     }, token: {} }
 ];
+
+function _rankingDay(now) {
+    return Math.floor((now + CACHE.RANKING_DAY_OFFSET_MS) / DAY_MS);
+}
+
+function _rankingCacheDay(key, now = Date.now()) {
+    if (typeof key !== 'string' || !rankingCacheScopes.some(scope => scope.matches(key))) return null;
+    return _rankingDay(now);
+}
 
 function _cacheScopeKey(key) {
     return typeof key === 'string' && key.startsWith(CACHE_PREFIX) ? key.slice(CACHE_PREFIX.length) : key;
@@ -56,7 +69,9 @@ export function captureCacheWrite(key) {
     const normalized = key;
     const scope = typeof normalized === 'string' ? cacheWriteScopes.find(item => item.matches(normalized)) : null;
     const token = scope?.token, clearToken = cacheClearToken;
-    return () => cacheClearToken === clearToken && (!scope || scope.token === token);
+    const rankingDay = rankingCacheScopes.includes(scope) ? _rankingDay(Date.now()) : null;
+    return () => cacheClearToken === clearToken && (!scope || scope.token === token)
+        && (rankingDay === null || rankingDay === _rankingDay(Date.now()));
 }
 
 let creatorsSessionCurrent = true;
@@ -89,7 +104,7 @@ export function captureCacheSource(key) {
     const fk = _fullKey(key), cached = memoryCache.get(fk);
     if (!_isValidCacheEntry(cached)) return null;
     const isAvailable = () => memoryCache.get(fk) === cached && _isValidCacheEntry(cached);
-    const isFresh = () => isAvailable() && !_isExpired(cached);
+    const isFresh = () => isAvailable() && !_isExpired(cached, key);
     return {
         isAvailable,
         isFresh,
@@ -99,6 +114,7 @@ export function captureCacheSource(key) {
             try {
                 const stored = JSON.parse(localStorage.getItem(fk));
                 if (_isValidCacheEntry(stored) && stored.expireAt === cached.expireAt
+                        && stored.rankingDay === cached.rankingDay
                         && stored.etag === cached.etag && JSON.stringify(stored.value) === JSON.stringify(cached.value)) {
                     localStorage.removeItem(fk);
                 }
@@ -106,11 +122,11 @@ export function captureCacheSource(key) {
             storageUsageBytes = null;
             return true;
         },
-        copyTo(targetKey, value) {
+        copyTo(targetKey, value, { sidebarRanked = false } = {}) {
             const normalized = targetKey;
             if (!isFresh() || typeof normalized !== 'string' ||
                     !CACHE.RESOURCE_LIST_PREFIXES.concat(getSidebarListCacheKey('creators', ''), Object.values(CACHE.PUBLIC_LISTS).map(list => list.prefix)).some(prefix => normalized.startsWith(prefix))) return false;
-            _storeCache(normalized, value, cached.expireAt, true, {});
+            _storeCache(normalized, value, cached.expireAt, true, { sidebarRanked }, cached.rankingDay);
             return true;
         }
     };
@@ -128,11 +144,15 @@ function _fullKey(key) {
 
 /**
  * 检查缓存条目是否已过期
- * @param {{expireAt: number}} cached - 缓存条目
+ * @param {{expireAt: number, rankingDay?: number}} cached - 缓存条目
+ * @param {string} key - 原始键
  * @returns {boolean}
  */
-function _isExpired(cached) {
-    return Date.now() >= cached.expireAt;
+function _isExpired(cached, key) {
+    const now = Date.now();
+    if (now >= cached.expireAt) return true;
+    const day = _rankingCacheDay(key, now);
+    return day !== null && cached.rankingDay !== day;
 }
 
 function _isValidCacheEntry(cached) {
@@ -200,17 +220,21 @@ function _safeStorageWrite(fullKey, jsonStr) {
  * @param {any} value - 缓存值
  * @param {number} ttl - 过期时间（毫秒），默认2小时
  * @param {boolean} persist - 是否持久化到 localStorage
- * @param {{etag?: string}} metadata - 可选的正文验证器，与value一同失效
+ * @param {{etag?: string, sidebarRanked?: boolean}} metadata - 与正文一同失效的验证信息
  */
 export function setCache(key, value, ttl = DEFAULT_TTL, persist = true, metadata = {}) {
     _storeCache(key, value, Date.now() + ttl, persist, metadata);
 }
 
-function _storeCache(key, value, expireAt, persist, metadata) {
+function _storeCache(key, value, expireAt, persist, metadata, sourceDay) {
     const fk = _fullKey(key);
-    const cacheData = { schemaVersion: CACHE_SCHEMA_VERSION, value, expireAt, lastAccessAt: Date.now() };
+    const now = Date.now();
+    const cacheData = { schemaVersion: CACHE_SCHEMA_VERSION, value, expireAt, lastAccessAt: now };
+    const day = _rankingCacheDay(key, now);
+    if (day !== null) cacheData.rankingDay = sourceDay ?? day;
     memoryOnlyEntries.add(cacheData);
     if (typeof metadata?.etag === "string" && API.CONDITIONAL_ETAG_PATTERN.test(metadata.etag)) cacheData.etag = metadata.etag;
+    if (metadata?.sidebarRanked === true) cacheData.sidebarRanked = true;
     
     // 内存缓存
     memoryCache.set(fk, cacheData);
@@ -262,7 +286,7 @@ export function getCache(key) {
         const cached = memoryCache.get(fk);
         if (!_isValidCacheEntry(cached)) _deleteMemoryEntry(fk);
         else {
-            if (!_isExpired(cached)) {
+            if (!_isExpired(cached, key)) {
                 _updateLRU(fk);
                 _touchStorageEntry(fk, cached);
                 return cached.value;
@@ -280,7 +304,7 @@ export function getCache(key) {
                 localStorage.removeItem(fk);
                 return null;
             }
-            if (!_isExpired(cached)) {
+            if (!_isExpired(cached, key)) {
                 // 回填内存缓存
                 memoryCache.set(fk, cached);
                 _updateLRU(fk);
@@ -299,11 +323,18 @@ export function getCache(key) {
     return null;
 }
 
+function _cacheHit(cached, expired) {
+    const hit = { value: cached.value, expired, found: true };
+    if (typeof cached.etag === "string" && API.CONDITIONAL_ETAG_PATTERN.test(cached.etag)) hit.etag = cached.etag;
+    if (cached.sidebarRanked === true) hit.sidebarRanked = true;
+    return hit;
+}
+
 /**
- * 🚀 P3优化：获取缓存（带元信息，支持离线模式）
+ * 获取缓存及其验证信息，离线模式允许读取过期副本。
  * @param {string} key - 缓存键
- * @param {boolean} ignoreExpiry - 是否忽略过期时间（离线模式使用）
- * @returns {{value: any, expired: boolean, found: boolean}} 缓存结果
+ * @param {boolean} ignoreExpiry - 是否忽略过期时间
+ * @returns {{value: any, expired: boolean, found: boolean, etag?: string, sidebarRanked?: boolean}}
  */
 export function getCacheWithMeta(key, ignoreExpiry = false) {
     const fk = _fullKey(key);
@@ -313,12 +344,12 @@ export function getCacheWithMeta(key, ignoreExpiry = false) {
         const cached = memoryCache.get(fk);
         if (!_isValidCacheEntry(cached)) _deleteMemoryEntry(fk);
         else {
-            const expired = _isExpired(cached);
+            const expired = _isExpired(cached, key);
 
             if (!expired || ignoreExpiry) {
                 _updateLRU(fk);
                 _touchStorageEntry(fk, cached);
-                return { value: cached.value, expired, found: true, ...(typeof cached.etag === "string" && API.CONDITIONAL_ETAG_PATTERN.test(cached.etag) ? { etag: cached.etag } : {}) };
+                return _cacheHit(cached, expired);
             }
             // 新鲜度检查不删除数据；淘汰仍由 LRU 和显式失效负责。
         }
@@ -333,7 +364,7 @@ export function getCacheWithMeta(key, ignoreExpiry = false) {
                 localStorage.removeItem(fk);
                 return { value: null, expired: false, found: false };
             }
-            const expired = _isExpired(cached);
+            const expired = _isExpired(cached, key);
             
             if (!expired || ignoreExpiry) {
                 // 回填内存缓存
@@ -341,7 +372,7 @@ export function getCacheWithMeta(key, ignoreExpiry = false) {
                 _updateLRU(fk);
                 _enforceCacheLimit();
                 _touchStorageEntry(fk, cached);
-                return { value: cached.value, expired, found: true, ...(typeof cached.etag === "string" && API.CONDITIONAL_ETAG_PATTERN.test(cached.etag) ? { etag: cached.etag } : {}) };
+                return _cacheHit(cached, expired);
             }
             // 与内存层一致，保留过期条目供离线兜底。
         }

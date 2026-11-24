@@ -130,10 +130,7 @@ export function renderInteractionButtonsHTML(data, currentAccount, options = {})
  * @param {string} options.actionPrefix - 防重复key前缀，如 'like' / 'favorite'
  * @param {string} options.countField - 响应中的计数字段名，如 'likes' / 'favorites'
  * @param {string} options.activeAction - 激活时的 res.action 值，如 'liked' / 'favorited'
- * @param {string} options.activeColor - 激活时的按钮背景色
  * @param {string} options.activeToastKey - 激活时 toast 的 i18n key
- * @param {string} [options.activeTextColor] - 激活时的按钮文字色（可选）
- * @param {string} [options.inactiveTextColor] - 取消激活时的按钮文字色（可选）
  * @param {string} options.inactiveAction - 服务端取消动作值
  * @param {Function} [options.isCurrent] - 原视图仍有效的检查
  * @returns {Promise<Object|null>}
@@ -143,10 +140,7 @@ async function _handleToggleAction(apiMethod, contentId, buttonEl, countEl, curr
         actionPrefix,
         countField,
         activeAction,
-        activeColor,
         activeToastKey,
-        activeTextColor = null,
-        inactiveTextColor = null,
         inactiveAction,
         isCurrent: viewCurrent = () => true
     } = options;
@@ -180,17 +174,9 @@ async function _handleToggleAction(apiMethod, contentId, buttonEl, countEl, curr
         const count = res[countField];
         if (countEl) countEl.textContent = count;
 
-        if (res.action === activeAction) {
-            if (buttonEl) buttonEl.style.background = activeColor;
-            if (buttonEl) buttonEl.style.borderColor = activeColor;
-            if (buttonEl && activeTextColor) buttonEl.style.color = activeTextColor;
-            showToast(t(activeToastKey), "success");
-        } else {
-            if (buttonEl) buttonEl.style.background = "#333";
-            if (buttonEl) buttonEl.style.borderColor = "#555";
-            if (buttonEl && inactiveTextColor) buttonEl.style.color = inactiveTextColor;
-        }
-        if (buttonEl) buttonEl.setAttribute("aria-pressed", String(res.action === activeAction));
+        const active = res.action === activeAction;
+        if (active) showToast(t(activeToastKey), "success");
+        if (buttonEl) buttonEl.setAttribute("aria-pressed", String(active));
         return res;
     } catch (_) {
         if (current()) showToast(t('task.operation_failed'), "error");
@@ -216,7 +202,6 @@ export async function handleToggleLike(apiMethod, contentId, buttonEl, countEl, 
         actionPrefix: 'like',
         countField: 'likes',
         activeAction: 'liked',
-        activeColor: '#FF5722',
         activeToastKey: 'post.liked',
         inactiveAction: 'unliked',
         isCurrent: options.isCurrent
@@ -238,10 +223,7 @@ export async function handleToggleFavorite(apiMethod, contentId, buttonEl, count
         actionPrefix: 'favorite',
         countField: 'favorites',
         activeAction: 'favorited',
-        activeColor: '#FFC107',
         activeToastKey: 'post.favorited',
-        activeTextColor: '#000',
-        inactiveTextColor: '#fff',
         inactiveAction: 'unfavorited',
         isCurrent: options.isCurrent
     });

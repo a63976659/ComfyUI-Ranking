@@ -145,6 +145,14 @@ function notifyTokenExpired() {
     }).catch(() => {});
 }
 
+function createReadUnavailableError() {
+    const offline = !isOnline();
+    const error = new Error(t(offline ? 'feedback.offline_no_cache' : 'feedback.cloud_unreachable_no_cache'));
+    error.name = 'CloudUnavailableError';
+    error.code = offline ? 'network_offline' : 'cloud_unreachable';
+    return error;
+}
+
 function handleAuthExpired(failedToken) {
     // 竞态防护：若用户在 401 返回前已重新登录（存储中的 Token 已更换），
     // 不清理新凭证；失败请求未携带 Token 时 401 与登录态无关，同样不打扰
@@ -377,20 +385,11 @@ async function performRequest(endpoint, options = {}, sample = null) {
         }
     }
     
-    // 📴 本地兜底数据（含过期缓存）——一次读取，供下面三处复用：
-    //   ① 离线/云端不可达时直接返回它；② 判定本次 GET 是否属于「后台补新」（走短预算）；
-    //   ③ 重试耗尽后的最终回退仍按原口径自行重读一次（期间可能有并发请求写入更新的数据）
+    // 本地兜底数据供离线返回、短预算和条件请求复用。
+    // 重试耗尽后重新读取，允许回退到等待期间写入的最新有效副本。
     const fallbackMeta = (method === "GET" && !options.noCache)
         ? readValidatedCacheMeta()  // 忽略过期
         : { value: null, expired: false, found: false };
-    const conditionalRead = method === "GET" && !options.noStore && options.credentials !== "include"
-        && !Object.keys(headers).some(name => name.toLowerCase() === "authorization")
-        && API.PUBLIC_CONDITIONAL_GET_PATHS.includes(endpoint.split(/[?#]/)[0]);
-    const conditionalMeta = conditionalRead ? readValidatedCacheMeta() : null;
-    if (conditionalRead) {
-        for (const name of Object.keys(headers)) if (name.toLowerCase() === "if-none-match") delete headers[name];
-        if (conditionalMeta?.found && conditionalMeta.etag) headers["If-None-Match"] = conditionalMeta.etag;
-    }
 
     // 🚀 P3优化：离线模式支持（网络状态取自 状态管理.js 的 isOnline()）
     // ☁️ 云端不可达冷却与本机断网同等对待：两者的结论都是「这次联网注定拿不到东西」，
@@ -411,7 +410,7 @@ async function performRequest(endpoint, options = {}, sample = null) {
         // 🔧 修复：原为硬编码中文，而本错误会被 12+ 处调用方直接 showToast(err.message) 弹给用户，
         // 导致英文界面下仍弹中文提示；现改走词典。云端不可达与本机断网分开用词，
         // 否则本机明明有网的用户会被「网络已断开」误导去查自己的路由器
-        throw new Error(isOnline() ? t('feedback.cloud_unreachable_no_cache') : t('feedback.offline_no_cache'));
+        throw createReadUnavailableError();
     }
     
     // ⚡ P1性能优化：请求去重（相同GET请求只发一次）
@@ -422,6 +421,18 @@ async function performRequest(endpoint, options = {}, sample = null) {
             sample?.discard();
             return pending;
         }
+    }
+
+    // 只有准备联网时才读取验证器，普通 GET 复用已校验的正文。
+    const conditionalRead = method === "GET" && !options.noStore && options.credentials !== "include"
+        && !Object.keys(headers).some(name => name.toLowerCase() === "authorization")
+        && API.PUBLIC_CONDITIONAL_GET_PATHS.includes(endpoint.split(/[?#]/)[0]);
+    const conditionalMeta = conditionalRead
+        ? (options.noCache ? readValidatedCacheMeta() : fallbackMeta)
+        : null;
+    if (conditionalRead) {
+        for (const name of Object.keys(headers)) if (name.toLowerCase() === "if-none-match") delete headers[name];
+        if (conditionalMeta?.found && conditionalMeta.etag) headers["If-None-Match"] = conditionalMeta.etag;
     }
     
     const fetchOptions = { ...options, method, headers };
@@ -478,6 +489,10 @@ async function performRequest(endpoint, options = {}, sample = null) {
             assertReadSession();
             // 🚀 P1优化：指数退避延迟
             if (attempt > 0) {
+                if (method === "GET" && !isOnline()) {
+                    lastError = createReadUnavailableError();
+                    break;
+                }
                 // ☁️ 冷却已生效就停止重试：另一个并发请求可能刚刚确证云端不可达，
                 // 继续重试只是白烧一轮超时预算、白占一个并发额度，直接跳去下方缓存兜底
                 if (method === "GET" && !isCloudReachable()) break;
@@ -492,7 +507,7 @@ async function performRequest(endpoint, options = {}, sample = null) {
             const currentFetchOptions = { ...fetchOptions, signal: controller.signal };
             let timeoutId = null;
             let timedOut = false;
-            let fetchStarted = false;
+            let fetchStartedOnline = false;
             let transportFailed = false;
             const onTimeout = () => { timedOut = true; controller.abort(); };
             // 已有缓存时排队也计入预算，避免被无缓存的慢请求无限拖住。
@@ -504,14 +519,10 @@ async function performRequest(endpoint, options = {}, sample = null) {
                     // 请求可能在云端故障被另一个并发请求确认前进入队列；出队发出 fetch
                     // 前复查共享状态，避免队列继续逐个访问已知不可达的 HF endpoint。
                     if (method === "GET" && (!isOnline() || !isCloudReachable())) {
-                        const unavailableError = new Error(
-                            isOnline() ? t('feedback.cloud_unreachable_no_cache') : t('feedback.offline_no_cache')
-                        );
-                        unavailableError.name = 'CloudUnavailableError';
-                        throw unavailableError;
+                        throw createReadUnavailableError();
                     }
                     assertReadSession();
-                    fetchStarted = true;
+                    fetchStartedOnline = isOnline();
                     try {
                         if (isRequestCacheCurrent) isCacheWriteCurrent = captureCacheWrite(cacheKey);
                         let response = await fetch(url, currentFetchOptions);
@@ -679,6 +690,11 @@ async function performRequest(endpoint, options = {}, sample = null) {
                 );
                 
                 if (isRetryable) {
+                    const online = isOnline();
+                    if (method === "GET" && !online) {
+                        lastError = createReadUnavailableError();
+                        break;
+                    }
                     // 🔧 修复：重试耗尽时不再直接 throw（否则循环后的「过期缓存兜底」
                     // 分支永远不可达，断网时无法无缝切换本地数据）。记录友好错误后跳出循环，
                     // 让 GET 请求走过期缓存回退；无缓存时仍以该友好错误抛出。
@@ -687,14 +703,15 @@ async function performRequest(endpoint, options = {}, sample = null) {
                         ? new Error(t('feedback.network_timeout'))
                         : new Error(t('feedback.network_unavailable'));
                     lastError.code = isTimeout ? 'network_timeout' : 'network_unavailable';
-                    if (fetchStarted) networkLevelFailure = true;
+                    const cloudTransportFailure = fetchStartedOnline && online;
+                    if (cloudTransportFailure) networkLevelFailure = true;
                     // ☁️ 连接层失败（被墙 / DNS 污染 / 拒绝连接 / 证书错误）几乎不会是偶发抖动，
                     // 打上冷却后其它界面与轮询就不用再各自烧一遍预算。但单次失败不足以定论，
                     // 故分两种口径：已配重试时要求第二次尝试仍失败才定论（连接层失败是毫秒级的，
                     // 多等一轮只多花约 1 秒，却能挡住偶发抖动误伤 60 秒）；
                     // 未配重试时（后台补新短预算，界面已用缓存上屏）误判零代价，立即定论。
                     // 超时则可能是 HF Space 冷启动（慢但能成功），不在此定论，耗尽后由下方统一处理
-                    if (!isTimeout && (attempt >= 1 || maxRetries === 0)) markCloudDown(endpoint);
+                    if (cloudTransportFailure && !isTimeout && (attempt >= 1 || maxRetries === 0)) markCloudDown(endpoint);
                     if (attempt < maxRetries) continue;  // 重试
                     break;  // 重试耗尽 → 跳到过期缓存兜底
                 }
@@ -709,7 +726,7 @@ async function performRequest(endpoint, options = {}, sample = null) {
         
         // ☁️ 所有尝试都因网络层原因失败（超时耗尽重试也走这里）→ 打上冷却，
         // 接下来 API.CLOUD_DOWN_COOLDOWN 内的 GET 全部就地走缓存，不再重复等待
-        if (networkLevelFailure) markCloudDown(endpoint);
+        if (networkLevelFailure && lastError?.code !== 'network_offline') markCloudDown(endpoint);
 
         // 所有重试都失败，尝试回退到过期缓存
         if (method === "GET" && !options.noCache) {

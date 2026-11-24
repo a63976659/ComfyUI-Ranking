@@ -12,6 +12,7 @@ import { removeCache, removeCacheByPrefix } from "../components/性能优化工�
 import { compressImageForUpload } from "../market/发布内容_提交引擎.js";
 import { escapeHtml, TASK_LIMITS, IMAGE_PROCESS } from "../core/全局配置.js";
 import { createPublishSubmissionScope } from "../market/发布提交生命周期.js";
+import { createPublishFieldErrors } from "../market/发布字段错误.js";
 
 function readTaskDeadline(value) {
     if (typeof value !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value)) return null;
@@ -272,6 +273,9 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
         }
     };
 
+    const titleInput = container.querySelector("#task-title");
+    const deadlineInput = container.querySelector("#deadline");
+
     // 描述字数统计
     const descInput = container.querySelector("#task-description");
     const descCount = container.querySelector("#desc-count");
@@ -314,6 +318,8 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     const account = typeof currentUser === 'string' ? currentUser : currentUser?.account;
     const publishBtn = container.querySelector('#btn-publish');
     const scope = createPublishSubmissionScope(container, publishBtn, account, { retainOnSidebarCollapse: true });
+    const fieldErrors = createPublishFieldErrors([titleInput, descInput, totalPriceInput, depositRatioSelect, deadlineInput], scope.confirmationSignal);
+    scope.addCleanup(fieldErrors.dispose);
     const readers = new Set();
     const readTimers = new Map();
     let submitting = false;
@@ -395,8 +401,14 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
             btn.onclick = () => {
                 if (!scope.isCurrent() || submitting) return;
                 const index = parseInt(btn.dataset.index);
+                const restoreFocus = document.activeElement === btn;
                 selectedImages.splice(index, 1);
                 renderImagePreview();
+                if (restoreFocus) {
+                    const removeButtons = imagePreview.querySelectorAll(".btn-remove-img");
+                    const target = removeButtons[index] ?? removeButtons[index - 1] ?? btnAddImage;
+                    target.focus();
+                }
             };
         });
         
@@ -416,26 +428,31 @@ export function createPublishTaskView(currentUser, editTaskData = null) {
     }
     
     // 发布/保存按钮
-    container.querySelector("#btn-publish").onclick = async () => {
-        if (!scope.isCurrent() || leaving) return;
+    publishBtn.onclick = async () => {
+        if (!scope.isCurrent() || leaving || submitting) return;
         if (readers.size > 0) { showToast(t('task.images_reading'), 'warning'); return; }
-        const title = container.querySelector("#task-title").value.trim();
+        fieldErrors.clearAll();
+        const title = titleInput.value.trim();
         const description = descInput.value.trim();
         const refLink = container.querySelector("#ref-link").value.trim();
         const totalPrice = readTaskPrice(totalPriceInput.value);
         const depositRatio = readDepositRatio(depositRatioSelect.value);
-        const deadline = readTaskDeadline(container.querySelector("#deadline").value);
+        const deadline = readTaskDeadline(deadlineInput.value);
         
         // 验证
         const validations = [
-            [!title, t('task.please_enter_title')],
-            [!description, t('task.please_enter_description')],
-            [!isLockedStatus && totalPrice === null, t('task.price_range', { max: TASK_LIMITS.MAX_PRICE })],
-            [!isLockedStatus && depositRatio === null, t('task.deposit_invalid')],
-            [!isLockedStatus && deadline === null, t('task.deadline_invalid')]
+            [titleInput, !title, t('task.please_enter_title')],
+            [descInput, !description, t('task.please_enter_description')],
+            [totalPriceInput, !isLockedStatus && totalPrice === null, t('task.reward_invalid')],
+            [depositRatioSelect, !isLockedStatus && depositRatio === null, t('task.deposit_invalid')],
+            [deadlineInput, !isLockedStatus && deadline === null, t('task.deadline_invalid')]
         ];
-        const failed = validations.find(([cond]) => cond);
-        if (failed) { showToast(failed[1], "warning"); return; }
+        const failed = validations.find(([, invalid]) => invalid);
+        if (failed) {
+            const [field, , message] = failed;
+            fieldErrors.show(field, message);
+            return;
+        }
         if (!scope.begin()) return;
         submitting = true;
         refImagesInput.disabled = btnAddImage.disabled = true;

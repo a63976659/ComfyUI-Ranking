@@ -379,13 +379,18 @@ export function createPaginationLoader(options) {
         
         try {
             currentPage++;  // 先递增，再加载（首屏已渲染第1页，从第2页开始）
+            let reportedFailure;
             const result = await loadMore(currentPage, pageSize, {
-                isCurrent: () => savedGen === generation
+                isCurrent: () => savedGen === generation,
+                reportFailure: error => { reportedFailure = error; }
             });
             if (savedGen !== generation) return;  // reset 被调用了，丢弃结果
             
             // 加载失败，允许重试
             if (result === null) {
+                retryMessage.textContent = reportedFailure
+                    ? (listReadFailureReason(reportedFailure, translate, true) ?? translate("pagination.failed"))
+                    : translate("pagination.failed");
                 currentPage = Math.max(1, currentPage - 1);
                 hasMore = false;
                 loadingIndicator.style.display = "none";
@@ -403,6 +408,7 @@ export function createPaginationLoader(options) {
             }
         } catch (error) {
             if (savedGen === generation) {
+                retryMessage.textContent = translate("pagination.failed");
                 currentPage = Math.max(1, currentPage - 1);
                 hasMore = false;
                 retryIndicator.style.display = "flex";
@@ -1455,11 +1461,44 @@ export function isEmptyListRefreshWithExistingData(nextItems, currentItems) {
         && Array.isArray(currentItems) && currentItems.length > 0;
 }
 
+// 只消费请求层的固定类别，不展示服务端或异常原文。
+function listReadFailureReason(error, translate, describeCache = true) {
+    if (error?.name === 'ListCacheChangedError') return translate('feedback.list_changed_retry');
+    switch (error?.status) {
+        case 401: return translate('feedback.list_auth_required');
+        case 403: return translate('feedback.list_forbidden');
+        case 429: return translate('feedback.list_rate_limited');
+        case 502:
+        case 503:
+        case 504: return translate('feedback.list_service_unavailable');
+        case undefined: break;
+        default: return null;
+    }
+    if (error?.name === 'CloudUnavailableError') {
+        if (error.code === 'network_offline') {
+            return translate(describeCache ? 'feedback.offline_no_cache' : 'feedback.list_offline');
+        }
+        if (error.code === 'cloud_unreachable') {
+            return translate(describeCache ? 'feedback.cloud_unreachable_no_cache' : 'feedback.list_service_unavailable');
+        }
+    }
+    if (error?.code === 'network_timeout') return translate('feedback.network_timeout');
+    if (error?.code === 'network_unavailable') return translate('feedback.network_unavailable');
+    return null;
+}
+
+export function getListRefreshFailureMessage(error, translate, cachedMessageKey = 'feedback.refresh_failed_cached') {
+    const reason = listReadFailureReason(error, translate, false);
+    if (error?.name === 'ListCacheChangedError') return reason;
+    const cached = translate(cachedMessageKey);
+    return reason ? `${cached} ${reason}` : cached;
+}
+
 /**
  * 渲染可访问的列表首屏失败状态，并提供显式重试入口。
  * 使用 DOM/textContent，避免错误文案进入 HTML sink。
  */
-export function renderListLoadError(container, message, onRetry, t, error = null) {
+export function renderListLoadError(container, message, onRetry, t, error = null, { describeCache = true, preserveContent = false } = {}) {
     if (!container) return;
     const status = document.createElement("div");
     status.className = "comfy-ranking-list-error";
@@ -1468,7 +1507,7 @@ export function renderListLoadError(container, message, onRetry, t, error = null
 
     const text = document.createElement("p");
     text.className = "comfy-ranking-list-error__message";
-    text.textContent = message;
+    text.textContent = listReadFailureReason(error, t, describeCache) ?? message;
 
     const retry = document.createElement("button");
     retry.type = "button";
@@ -1480,6 +1519,12 @@ export function renderListLoadError(container, message, onRetry, t, error = null
     });
 
     status.append(text, retry);
+    if (preserveContent) {
+        container.querySelector(':scope > .comfy-ranking-list-error')?.remove();
+        container.appendChild(status);
+        appendRequestDiagnostic(status, error, t);
+        return;
+    }
     container.replaceChildren(status);
     appendRequestDiagnostic(container, error, t);
 }

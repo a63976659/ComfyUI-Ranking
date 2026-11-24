@@ -19,7 +19,7 @@ import { createCardNavigationScope } from "../components/卡片导航生命周�
 import { api, captureRequestSession } from "../core/网络请求API.js";
 import { proxyImages } from "../core/网络请求API.js";
 import { showToast } from "../components/UI交互提示组件.js";
-import { readListCache, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage } from "../components/性能优化工具.js";
+import { readListCache, isEmptyListRefreshWithExistingData, createSkeleton, createPaginationLoader, lazyLoadImages, renderListLoadError, renderListSearchMessage, getListRefreshFailureMessage } from "../components/性能优化工具.js";
 import { applyViewportAnimations, stopViewportAnimations } from "../components/动画音效引擎.js";
 import { t } from "../components/用户体验增强.js";
 import { API, CACHE, getCachedProfile, getProfileWithSWR, normalizeProfileImageUrl } from "../core/全局配置.js";
@@ -135,7 +135,7 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
     const loadMoreBtn = container.querySelector("#btn-load-more");
     
     // 🚀 自动分页加载回调
-    const loadMorePosts = async (page, pageSize, { isCurrent = () => true } = {}) => {
+    const loadMorePosts = async (page, pageSize, { isCurrent = () => true, reportFailure } = {}) => {
         if (disposed || !isCurrent()) return [];
         try {
             const readResponse = captureListRead(`${CACHE_KEY_PREFIX}_${currentSort}`);
@@ -180,7 +180,8 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
             if (disposed || !isCurrent()) return [];
             console.error("分页加载帖子失败");
             postsGrid.querySelector('.list-search-message')?.remove();
-            return null;  // 返回 null 表示加载失败（区别于空数组表示没有更多数据）
+            reportFailure?.(err);
+            return null;
         }
     };
     
@@ -196,7 +197,7 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
         currentPaginator = createPaginationLoader({
             container: scrollContainer,
             focusContainer: postsGrid,
-            canLoad: () => !disposed && firstPageReady && !isLoadingFromNetwork,
+            canLoad: () => !disposed && firstPageReady && allPostsData.length > 0 && !isLoadingFromNetwork,
             loadMore: loadMorePosts,
             pageSize: PAGE_SIZE,
             threshold: 200,
@@ -256,6 +257,7 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
         if (sort) {
             listViewGeneration++;
             currentSort = sort;
+            firstPageReady = false;
             
             // 🚀 重置分页器
             if (currentPaginator) {
@@ -264,8 +266,12 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
             
             // 🚀 本地排序优先：已有数据时直接本地排序渲染
             if (allPostsData.length > 0) {
-                const sorted = sortPostsLocally(allPostsData, currentSort);
-                renderPostsFromCache(sorted, true);
+                const cached = readListCache(`${CACHE_KEY_PREFIX}_${currentSort}`);
+                if (cached) {
+                    allPostsData = proxyImages(cached);
+                    firstPageReady = true;
+                }
+                renderPostsFromCache(cached ? allPostsData : sortPostsLocally(allPostsData, currentSort), true);
                 // 后台静默刷新最新数据
                 silentRefresh();
             } else {
@@ -331,6 +337,7 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
         if (!append && page === 1) {
             const cachedData = readListCache(cacheKey);
             if (cachedData) {
+                firstPageReady = true;
                 // 🚀 缓存数据也需要过一遍图片代理，确保新字段也被处理
                 allPostsData = proxyImages(cachedData);
                 renderPostsFromCache(allPostsData, true);
@@ -441,12 +448,13 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
             if (!append) {
                 const cachedData = readListCache(cacheKey);
                 if (cachedData) {
+                    firstPageReady = true;
                     // 🚀 缓存数据也需要过一遍图片代理
                     allPostsData = proxyImages(cachedData);
                     renderPostsFromCache(allPostsData);
                     showToast(t('post.network_cache'), "warning");
                 } else {
-                    renderListLoadError(postsGrid, err?.name === 'ListCacheChangedError' ? t('feedback.list_changed_retry') : t('post.load_failed'), () => {
+                    renderListLoadError(postsGrid, t('post.load_failed'), () => {
                         if (disposed || isLoadingFromNetwork || requestedSort !== currentSort) return;
                         return loadPosts(1, false, forceRefresh);
                     }, t, err);
@@ -457,7 +465,6 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
     
     // 从缓存渲染帖子列表
     const renderPostsFromCache = (posts, deferSearchScan = false) => {
-        firstPageReady = true;
         const restoreFocus = cardNavigation.captureListFocus(postsGrid);
         postsGrid.innerHTML = "";
         
@@ -466,10 +473,10 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
         
         if (filteredPosts.length === 0) {
             if (searchKeyword) {
-                renderListSearchMessage(postsGrid, t('pagination.searching'));
-                startAutoPagination();
+                renderListSearchMessage(postsGrid, t(posts.length ? 'pagination.searching' : 'pagination.search_empty'));
+                if (posts.length) startAutoPagination();
                 loadMoreWrapper.style.display = "none";
-                if (!deferSearchScan) currentPaginator?.load();
+                if (posts.length && !deferSearchScan) currentPaginator?.load();
             } else {
                 postsGrid.innerHTML = _renderEmptyState(t);
                 loadMoreWrapper.style.display = "none";
@@ -497,7 +504,7 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
         startAutoPagination();
         
         // 显示加载更多
-        if (filteredPosts.length > PAGE_SIZE) {
+        if (firstPageReady && filteredPosts.length > PAGE_SIZE) {
             loadMoreWrapper.style.display = "block";
         } else {
             loadMoreWrapper.style.display = "none";
@@ -531,14 +538,15 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
             const posts = responseData.data;
             isLoadingFromNetwork = false;
             
-            if (isEmptyListRefreshWithExistingData(posts, allPostsData)) {
+            if (firstPageReady && isEmptyListRefreshWithExistingData(posts, allPostsData)) {
                 console.warn(`🛡️ 讨论区 ${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
                 // 更新缓存
                 responseData.write(getCacheTTL());
 
                 // 对比新旧数据，有变化时重新渲染
-                if (_postsDataChanged(allPostsData, posts)) {
+                if (!firstPageReady || _postsDataChanged(allPostsData, posts)) {
+                    firstPageReady = true;
                     console.log(`✅ 讨论区 ${currentSort} 检测到新数据，执行静默更新`);
                     allPostsData = proxyImages(posts);
                     renderPostsFromCache(allPostsData);
@@ -556,8 +564,13 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
             }
             isLoadingFromNetwork = false;
             console.warn("后台更新帖子失败（保留当前内容）");
-            if (notifyFailure === true) showToast(t(err?.name === 'ListCacheChangedError'
-                ? 'feedback.list_changed_retry' : 'feedback.refresh_failed_cached'), 'warning');
+            if (!firstPageReady && allPostsData.length) {
+                postsGrid.querySelector('.list-search-message')?.remove();
+                renderListLoadError(postsGrid, t('post.load_failed'), () => {
+                    if (viewGeneration === listViewGeneration) return silentRefresh();
+                }, t, err, { preserveContent: true, describeCache: false });
+            }
+            if (notifyFailure === true) showToast(getListRefreshFailureMessage(err, t), 'warning');
         }
         if (searchKeyword && !allPostsData.some(post => _matchesSearch(post, searchKeyword))) {
             currentPaginator?.load();
@@ -598,7 +611,9 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
     };
     
     // 初始加载
-    loadPosts(1);
+    queueMicrotask(() => {
+        if (!disposed) loadPosts(1);
+    });
     
     // 🔧 组件生命周期清理方法
     container._cleanup = () => {
@@ -735,7 +750,9 @@ function createPostCard(post, currentUser = currentUserCache, isCurrent = () => 
             if (!isNavigationCurrent() || !card.isConnected || !card.getClientRects().length) return;
             const view = module.createPostDetailView(post.id, currentUser);
             if (!isNavigationCurrent() || !card.isConnected) { view._cleanup?.(); return; }
-            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view } }));
+            const returnFocus = card.querySelector('.business-list-card__title');
+            const entryFocus = view.querySelector("#btn-back-detail");
+            window.dispatchEvent(new CustomEvent("comfy-route-view", { detail: { view, entryFocus, returnFocus } }));
         } catch {
             if (isNavigationCurrent() && card.isConnected && card.getClientRects().length) showToast(t('post.load_failed'), 'error');
         } finally {

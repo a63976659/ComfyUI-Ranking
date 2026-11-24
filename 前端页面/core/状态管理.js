@@ -463,9 +463,6 @@ export function setNetworkStatus(online) {
     if (wasOnline !== online) {
         console.log(online ? '🌐 网络已恢复' : '📴 网络已断开');
         eventBus.emit(EVENTS.NETWORK_CHANGE, { online });
-        // 🔗 本机网卡一旦真正断开，云端必然不可达，直接打上冷却，
-        // 免得每个界面还要各自烧一遍重试预算才能得出同一个结论
-        if (!online) markCloudDown('本机网络已断开');
     }
 }
 

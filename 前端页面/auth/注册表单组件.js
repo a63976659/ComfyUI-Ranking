@@ -4,22 +4,9 @@ import { regionData, getSortedCountries } from "./国家地区数据.js";
 import { showToast } from "../components/UI交互提示组件.js";
 import { t } from "../components/用户体验增强.js";
 import { openImageCropper } from "../components/图片裁剪组件.js";
-import { PLACEHOLDERS } from "../core/全局配置.js";
+import { PLACEHOLDERS, calculateAge } from "../core/全局配置.js";
 
 const DEFAULT_AVATAR = PLACEHOLDERS.AVATAR;
-
-// 计算年龄工具函数
-function calculateAge(birthDate) {
-    if (!birthDate) return null;
-    const today = new Date();
-    const birth = new Date(birthDate);
-    let age = today.getFullYear() - birth.getFullYear();
-    const monthDiff = today.getMonth() - birth.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
-        age--;
-    }
-    return age >= 0 && age <= 150 ? age : null;
-}
 
 export function renderRegisterForm(container, switchView, onSuccessCallback) {
     // 使用排序后的国家列表（常用国家置顶）

@@ -630,6 +630,11 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     const submitBtn = container.querySelector("#btn-submit-prompt");
     const account = currentUser?.account;
     const scope = createPublishSubmissionScope(container, submitBtn, account, { retainOnSidebarCollapse: true });
+    const fieldErrors = createPublishFieldErrors([
+        categorySelect, titleInput, contentInput, textInput, imagesPreview, videoPreviewArea, audioPreviewArea,
+        { control: btnUploadCover, anchor: btnUploadCover.closest('.ranking-publish-cover-controls') }
+    ], scope.confirmationSignal);
+    scope.addCleanup(fieldErrors.dispose);
     const refreshImageShortcuts = () => {
         if (scope.isCurrent()) updateCoverMark(imagesPreview);
     };
@@ -951,7 +956,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     }
 
     // ========== 多图上传（图像提示词专用：最多9张 + 拖拽排序，首张为封面） ==========
-    imagesInput.onchange = event => { void addImageFiles(event.target.files); };
+    imagesInput.onchange = event => addImageFiles(event.target.files);
     async function addImageFiles(selectedFiles) {
         if (!scope.isCurrent() || imagesInput.disabled || submitBtn.disabled || imageSelectionController || manualCoverController) return;
         const files = Array.from(selectedFiles || []);
@@ -1015,6 +1020,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
     // 渲染已有图片预览（编辑模式：已有URL与新文件混排）
     function renderExistingImagePreviews() {
+        if (existingImageUrls.length || imageFiles.length) fieldErrors.clear(imagesPreview);
         const generation = beginImagePreviews();
         const totalImages = existingImageUrls.length + imageFiles.length;
 
@@ -1124,6 +1130,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
 
     // 渲染图片预览（新建模式）
     function renderImagePreviews() {
+        if (imageFiles.length) fieldErrors.clear(imagesPreview);
         const generation = beginImagePreviews();
         if (imageFiles.length === 0) {
             imagesPreview.innerHTML = `
@@ -1267,6 +1274,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     function renderVideoPreview() {
         const generation = videoGeneration;
         if (!videoFile && !currentVideoUrl) {
+            fieldErrors.clear(btnUploadCover);
             videoEmptyState.style.display = 'flex';
             videoPlayerWrap.style.display = 'none';
             videoPreviewArea.style.borderStyle = 'dashed';
@@ -1276,6 +1284,11 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             return;
         }
 
+        fieldErrors.clear(videoPreviewArea);
+        if (promptType === 'music') {
+            fieldErrors.clear(imagesPreview);
+            fieldErrors.clear(audioPreviewArea);
+        }
         videoEmptyState.style.display = 'none';
         videoPlayerWrap.style.display = 'block';
         videoPreviewArea.style.borderStyle = 'solid';
@@ -1316,6 +1329,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
         if (coverObjectUrl) { URL.revokeObjectURL(coverObjectUrl); coverObjectUrl = null; }
         const url = videoCoverFile ? URL.createObjectURL(videoCoverFile) : currentCoverUrl;
         if (url) {
+            fieldErrors.clear(btnUploadCover);
             coverThumb.src = url;
             coverThumb.style.display = 'block';
             coverLabel.style.display = 'block';
@@ -1481,6 +1495,7 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
             return;
         }
 
+        fieldErrors.clear(audioPreviewArea);
         audioEmptyState.style.display = 'none';
         audioPlayerWrap.style.display = 'block';
         audioPreviewArea.style.borderStyle = 'solid';
@@ -1520,8 +1535,6 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
     audioPreviewArea.ondrop = (e) => e.stopPropagation();
 
     // ========== 提交发布/保存 ==========
-    const fieldErrors = createPublishFieldErrors([categorySelect, titleInput, contentInput, textInput], scope.confirmationSignal);
-    scope.addCleanup(fieldErrors.dispose);
     let submissionPhase = 'idle';
     submitBtn.onclick = async () => {
         if (!scope.isCurrent()) return;
@@ -1573,32 +1586,32 @@ export function createPublishPromptView(currentUser, editPromptData = null) {
         // 音乐提示词：有视频时封面必填；无视频时图片+音频必填
         if (submission.promptType === 'video') {
             if (!submission.videoFile && !submission.currentVideoUrl) {
-                showToast(t('post.error_no_video'), "warning");
+                fieldErrors.show(videoPreviewArea, t('post.error_no_video'));
                 return;
             }
             if (!submission.videoCoverFile && !submission.currentCoverUrl) {
-                showToast(t('post.error_no_cover'), "warning");
+                fieldErrors.show(btnUploadCover, t('post.error_no_cover'));
                 return;
             }
         } else if (submission.promptType === 'music') {
             if (submission.videoFile || submission.currentVideoUrl) {
                 if (!submission.videoCoverFile && !submission.currentCoverUrl) {
-                    showToast(t('post.error_no_cover'), "warning");
+                    fieldErrors.show(btnUploadCover, t('post.error_no_cover'));
                     return;
                 }
             } else {
                 if (submission.existingImageUrls.length + submission.imageFiles.length === 0) {
-                    showToast(t('post.error_no_image'), "warning");
+                    fieldErrors.show(imagesPreview, t('post.error_no_image'));
                     return;
                 }
                 if (!submission.audioFile && !submission.currentAudioUrl) {
-                    showToast(t('post.error_no_audio'), "warning");
+                    fieldErrors.show(audioPreviewArea, t('post.error_no_audio'));
                     return;
                 }
             }
         } else {
             if (submission.existingImageUrls.length + submission.imageFiles.length === 0) {
-                showToast(t('post.error_no_image'), "warning");
+                fieldErrors.show(imagesPreview, t('post.error_no_image'));
                 return;
             }
         }
