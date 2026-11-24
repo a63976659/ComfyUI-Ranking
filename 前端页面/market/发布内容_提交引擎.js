@@ -21,13 +21,13 @@ function getSubmitRules(mainType) {
  * @param {string} type - 发布类型: tool/skill/app/recommend/recommend_tool/recommend_skill/recommend_app/recommend_link
  */
 function clearItemCacheByType(type) {
-    // 确定当前类型对应的 tab
+    // 推荐子类型与推荐榜查询共用同一组缓存键。
     let tab = 'recommends';
-    if (type === 'tool' || type === 'recommend_tool') {
+    if (type === 'tool') {
         tab = 'tools';
-    } else if (type === 'skill' || type === 'recommend_skill') {
+    } else if (type === 'skill') {
         tab = 'skills';
-    } else if (type === 'app' || type === 'recommend_app') {
+    } else if (type === 'app') {
         tab = 'apps';
     }
     

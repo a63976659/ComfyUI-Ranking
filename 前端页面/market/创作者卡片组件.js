@@ -121,11 +121,12 @@ async function handleTipCreator(creatorData, currentUser, onTipSuccess, parentCu
 /**
  * 渲染打赏榜单条目HTML（匿名/非匿名共用外层结构）
  */
-function _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml, containerId = '') {
+function _renderTipBoardEntry(entry, idx, levelHtml, userHtml, containerId = '') {
     const idAttr = containerId ? ` id="${escapeHtml(containerId)}"` : '';
-    return `<div${idAttr} class="creator-tip-entry">` +
-        `<div class="creator-tip-entry__identity"><span class="creator-tip-entry__rank" aria-hidden="true">${rankIcon}</span>${userHtml}</div>` +
-        `<div class="creator-tip-entry__value">${levelHtml}<span class="creator-tip-entry__amount">${escapeHtml(entry.amount)}</span></div></div>`;
+    const rankClass = idx < 3 ? ['gold', 'silver', 'bronze'][idx] : 'default';
+    return `<div${idAttr} class="tip-board-item tip-board-item--small creator-tip-entry">` +
+        `<span class="tip-board-group creator-tip-entry__identity"><span class="tip-board-badge tip-board-badge--${rankClass}" aria-hidden="true">${idx + 1}</span>${userHtml}</span>` +
+        `<span class="tip-board-group creator-tip-entry__value">${levelHtml}<span class="tip-board-amount">${escapeHtml(entry.amount)}</span></span></div>`;
 }
 
 /**
@@ -178,14 +179,12 @@ export function createTipBoardSection(tipBoard = [], title = t('creator.tip_boar
 
     // 🚀 使用统一的打赏等级工具渲染星星/月亮/太阳
     let listHtml = top10.map((entry, idx) => {
-        const rankIcon = idx < 3 ? ["🥇", "🥈", "🥉"][idx] : `#${idx + 1}`;
-
         // 使用统一等级工具获取等级图标
         const levelHtml = renderTipLevelHTML(entry.amount, true);
 
         if (entry.is_anon) {
-            const userHtml = `<span class="creator-tip-entry__anonymous">${t('creator.anonymous')}</span>`;
-            return _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml);
+            const userHtml = `<span class="tip-board-anonymous">🔒 ${t('creator.anonymous')}</span>`;
+            return _renderTipBoardEntry(entry, idx, levelHtml, userHtml);
         }
 
         // 🚀 SWR 模式：非匿名用户显示头像+用户名
@@ -221,8 +220,8 @@ export function createTipBoardSection(tipBoard = [], title = t('creator.tip_boar
         // 🔒 XSS防护：昵称/头像均来自用户可修改的资料，写入 HTML 前必须转义
         // （下方 SWR 刷新路径用的是 .src / .textContent，本身就是安全的）
         const userTag = onUserClick ? 'button' : 'span';
-        const userHtml = `<${userTag} ${onUserClick ? 'type="button"' : ''} class="tip-board-user" data-account="${escapeHtml(entry.account)}" data-anon="false" aria-label="${escapeHtml(`${t('creator.visit_profile')}: ${userName}`)}"><img class="tip-board-avatar" src="${escapeHtml(avatarUrl)}" alt=""><span class="tip-board-name">${escapeHtml(userName)}</span></${userTag}>`;
-        return _renderTipBoardEntry(entry, idx, rankIcon, levelHtml, userHtml, containerId);
+        const userHtml = `<${userTag} ${onUserClick ? 'type="button"' : ''} class="tip-board-user tip-board-group" data-account="${escapeHtml(entry.account)}" data-anon="false" aria-label="${escapeHtml(`${t('creator.visit_profile')}: ${userName}`)}"><img class="tip-board-avatar" src="${escapeHtml(avatarUrl)}" alt=""><span class="tip-board-name">${escapeHtml(userName)}</span></${userTag}>`;
+        return _renderTipBoardEntry(entry, idx, levelHtml, userHtml, containerId);
     }).join("");
 
     container.innerHTML = `

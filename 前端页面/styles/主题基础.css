@@ -1596,17 +1596,8 @@ button.ranking-rating__star { cursor: pointer; min-width: 28px; min-height: 28px
 .creator-tip-board__rule { font-size:11px; line-height:1.6; color:var(--rk-muted,var(--descrip-text,#a4a4a4)); padding:6px 0; margin-bottom:6px; overflow-wrap:anywhere; }
 .creator-tip-board__empty { padding:15px 0; text-align:center; color:var(--rk-muted,var(--descrip-text,#a4a4a4)); font-size:12px; }
 .creator-tip-board__list { max-height:200px; overflow-y:auto; }
-.creator-tip-entry { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; padding:7px 6px; border-radius:4px; font-size:12px; }
-.creator-tip-entry:nth-child(odd) { background:var(--rk-panel,var(--comfy-input-bg,#292929)); }
-.creator-tip-entry__identity { display:flex; align-items:center; gap:6px; min-width:0; flex:1 1 100px; }
-.creator-tip-entry__rank { width:24px; flex-shrink:0; }
-.tip-board-user { display:flex; align-items:center; gap:6px; min-height:32px; line-height:1.4; }
-.tip-board-avatar { width:20px; height:20px; border-radius:50%; object-fit:cover; flex-shrink:0; }
-.tip-board-name { min-width:0; overflow-wrap:anywhere; }
-.creator-tip-entry__value { display:flex; align-items:center; gap:6px; min-width:0; max-width:100%; margin-left:auto; }
-.creator-tip-entry__amount { font-weight:700; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
-.creator-tip-entry__anonymous { color:var(--rk-muted,var(--descrip-text,#a4a4a4)); font-style:italic; }
-@container ranking-creator (max-width:280px) { .creator-card__summary, .creator-card__detail { padding:10px; } .creator-card__stats, .creator-card__outputs { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; } .creator-card__stat strong { font-size:12px; } .creator-tip-entry__identity { flex-basis:100%; } .creator-tip-entry__value { margin-left:30px; } }
+.tip-board-user { display:flex; align-items:center; gap:6px; min-height:var(--tip-avatar-size,1.25rem); line-height:1.4; }
+@container ranking-creator (max-width:280px) { .creator-card__summary, .creator-card__detail { padding:10px; } .creator-card__stats, .creator-card__outputs { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; } .creator-card__stat strong { font-size:12px; } .creator-tip-entry.tip-board-item > .creator-tip-entry__identity.tip-board-group:first-child { flex-basis:100%; } .creator-tip-entry.tip-board-item > .creator-tip-entry__value.tip-board-group:last-child { margin-left:30px; } }
 @media (prefers-reduced-motion:reduce) { .creator-card *, .creator-tip-board * { transition:none !important; animation:none !important; } }
 
 /* 任务申诉发起弹窗：局部主题与原生控件状态。 */
@@ -2356,7 +2347,9 @@ button.ranking-rating__star { cursor: pointer; min-width: 28px; min-height: 28px
 .prompt-publish__media-meta { gap: 8px; align-items: flex-start; }
 .prompt-publish__meta-copy { flex: 1; }
 .prompt-publish .prompt-publish__notice, .prompt-publish .prompt-publish__error { border-inline-start: 3px solid currentColor; }
-.prompt-publish .prompt-publish__error, .prompt-publish .ranking-publish-field-error { color: inherit; border-inline-start: 3px solid var(--rk-danger, #ef5350); padding-inline-start: 8px; }
+.prompt-publish .prompt-publish__error,
+.prompt-publish .ranking-publish-field-error,
+.task-publish .ranking-publish-field-error { color: inherit; border-inline-start: 3px solid var(--rk-danger, #ef5350); padding-inline-start: 8px; }
 .prompt-publish__audio { min-width: 0; }
 .prompt-publish .prompt-publish__cover-frame .prompt-publish__cover-badge { max-width: calc(100% - 8px); }
 @container prompt-publish (max-width: 260px) {

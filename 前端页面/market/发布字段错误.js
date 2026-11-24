@@ -29,13 +29,17 @@ export function createPublishFieldErrors(inputs, signal) {
         const tokens = new Set((input.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)); tokens.add(entry.error.id);
         input.setAttribute('aria-describedby', [...tokens].join(' ')); input.setAttribute('aria-invalid', 'true'); input.focus();
     };
-    if (signal?.aborted) { disposed = true; return { show, clearAll, dispose }; }
-    for (const input of inputs) {
+    if (signal?.aborted) { disposed = true; return { show, clear, clearAll, dispose }; }
+    for (const field of inputs) {
+        const { control: input = field, anchor = input, clearOnChange = true } = field;
         const error = document.createElement('div'); error.id = `${input.id}-error`; error.className = 'ranking-publish-field-error';
-        error.hidden = true; error.setAttribute('role', 'alert'); input.insertAdjacentElement('afterend', error);
+        error.hidden = true; error.setAttribute('role', 'alert'); anchor.insertAdjacentElement('afterend', error);
         const entry = { error, active: false, previousInvalid: null, onChange: () => clear(input) };
-        entries.set(input, entry); input.addEventListener('input', entry.onChange); input.addEventListener('change', entry.onChange);
+        entries.set(input, entry);
+        if (clearOnChange) {
+            input.addEventListener('input', entry.onChange); input.addEventListener('change', entry.onChange);
+        }
     }
     signal?.addEventListener('abort', dispose, { once: true });
-    return { show, clearAll, dispose };
+    return { show, clear, clearAll, dispose };
 }
