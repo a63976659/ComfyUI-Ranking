@@ -111,7 +111,8 @@ class BoundedZipArchive:
         self.deadline = time.monotonic() + self.max_seconds
         self.check()
         try:
-            self.source = open(self.path, 'rb')
+            # 下载者保留传入描述符的所有权，路径则由读取器打开和关闭。
+            self.source = open(self.path, 'rb', closefd=not isinstance(self.path, int))
             info = os.fstat(self.source.fileno())
             if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= self.max_zip_bytes:
                 _fail()

@@ -1,6 +1,7 @@
 """进程树保护及启动门闩；仅标准库，无业务/宿主依赖。"""
 import asyncio
 import ctypes
+import importlib.util
 import os
 from pathlib import Path
 import signal
@@ -454,7 +455,90 @@ async def start_owned_stdio(script,arguments=(),*,timeout=15,
     if not success:raise result
     return result
 
+def _run_windows_git_clone(command, owner_closed):
+    """在监护进程之外的 Job 内启动 Git，退出前等待全部成员终止。"""
+    if owner_closed.is_set():
+        return 125
+    interpreter = getattr(sys, '_base_executable', None)
+    if not interpreter or not Path(interpreter).is_absolute() or not Path(interpreter).is_file():
+        raise OSError('Git gate interpreter unavailable')
+    job = WindowsProcessJob()
+    gate = None
+    assigned = False
+    try:
+        gate = subprocess.Popen(
+            [interpreter, '-I', '-S', str(Path(__file__).resolve()), *command],
+            stdin=subprocess.PIPE,
+            close_fds=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        with gate.stdin as start:
+            job.assign(gate.pid)
+            assigned = True
+            if owner_closed.is_set():
+                return 125
+            start.write(b'\x01')
+            start.flush()
+        while True:
+            status = gate.poll()
+            if status is not None:
+                return status
+            if owner_closed.wait(.05):
+                return 125
+    finally:
+        try:
+            if assigned:
+                job.terminate()
+                gate.wait()
+                while job.active():
+                    time.sleep(.05)
+            elif gate is not None:
+                # 未入 Job 的门闩未收到启动字节，但仍需收回门闩本身。
+                try:
+                    if gate.poll() is None:
+                        gate.kill()
+                finally:
+                    gate.wait()
+        finally:
+            job.close()
+
+
+def _windows_git_clone_owner(arguments):
+    if (sys.platform != 'win32' or len(arguments) < 4
+            or not Path(arguments[0]).is_absolute() or not Path(arguments[2]).is_absolute()):
+        return 125
+    staging, generation, lock_directory, *command = arguments
+    try:
+        owner_fd = sys.stdin.fileno()
+        if os.read(owner_fd, 1) != b'\x01':
+            return 125
+        owner_closed = threading.Event()
+
+        def watch_owner():
+            try:
+                # GO 之后没有更多数据，EOF 或额外的字节都停止本次命令。
+                os.read(owner_fd, 1)
+            except OSError:
+                pass
+            finally:
+                owner_closed.set()
+
+        threading.Thread(target=watch_owner, daemon=True).start()
+        recovery_path = Path(__file__).with_name('git_staging_recovery.py')
+        spec = importlib.util.spec_from_file_location('ranking_git_staging_recovery', recovery_path)
+        recovery = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = recovery
+        spec.loader.exec_module(recovery)
+        with recovery.windows_clone_writer(staging, generation, lock_directory):
+            return _run_windows_git_clone(command, owner_closed)
+    except (Exception, KeyboardInterrupt):
+        # 未证实整个 Job 终止时保留 active 记录，输出不含命令、路径和凭据。
+        return 125
+
+
 def main():
+    if sys.argv[1:2] == ['--git-clone-owner']:
+        return _windows_git_clone_owner(sys.argv[2:])
     if sys.platform.startswith('linux') and sys.argv[1:2]==['--owner-fd']:
         return linux_main(sys.argv[1:])
     command=sys.argv[1:]

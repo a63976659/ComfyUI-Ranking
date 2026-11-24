@@ -25,14 +25,23 @@ from urllib.parse import urlsplit
 from pathlib import Path
 from aiohttp import web
 try:
-    from ..update_engine import directory_lease
+    from . import git_staging_recovery as _clone_records
+except ImportError:
+    import importlib.util
+    _clone_spec = importlib.util.spec_from_file_location(
+        'ranking_git_staging_recovery', Path(__file__).with_name('git_staging_recovery.py'))
+    _clone_records = importlib.util.module_from_spec(_clone_spec)
+    _clone_spec.loader.exec_module(_clone_records)
+
+try:
+    from .. import update_engine as _lease_module
 except ImportError:
     # 独立源码加载及旧启动模块缓存均从当前插件文件取得标准库协调入口。
     import importlib.util
     _lease_spec=importlib.util.spec_from_file_location('ranking_directory_lease',Path(__file__).resolve().parents[1] / 'update_engine.py')
     _lease_module=importlib.util.module_from_spec(_lease_spec)
     _lease_spec.loader.exec_module(_lease_module)
-    directory_lease=_lease_module.directory_lease
+directory_lease = _lease_module.directory_lease
 
 try:
     from . import zip_install_reader as _zip_reader
@@ -107,17 +116,30 @@ _WINDOWS_RESERVED_ZIP_NAMES = {"CON", "PRN", "AUX", "NUL"}
 _WINDOWS_RESERVED_ZIP_NAMES.update(f"COM{i}" for i in range(1, 10))
 _WINDOWS_RESERVED_ZIP_NAMES.update(f"LPT{i}" for i in range(1, 10))
 _INVALID_WINDOWS_ZIP_CHARS = set('<>:"|?*')
+_ZIP_EXTRACTION_RECORD_PREFIX = '.ranking-zip-extract.'
+_ZIP_EXTRACTION_RECORD_GLOB = _ZIP_EXTRACTION_RECORD_PREFIX + '[0-9a-f]' * 32 + '.json'
+_INSTALL_REPARSE_POINT = getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
+
+
+def _git_repository_name(item_url: str):
+    if not isinstance(item_url, str) or re.search(r'[\x00-\x20\x7f?#]', item_url):
+        return None
+    try:
+        parsed = urlsplit(item_url)
+        if (parsed.scheme != "https" or parsed.hostname not in _VALID_GIT_HOSTS
+                or parsed.username is not None or parsed.password is not None
+                or parsed.netloc.endswith(":") or parsed.port not in (None, 443)):
+            return None
+    except ValueError:
+        return None
+    match = re.fullmatch(r"/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/?", parsed.path)
+    if match is None or match[1] in (".", ".."):
+        return None
+    return match[2].removesuffix(".git")
 
 
 def _valid_git_url(item_url: str) -> bool:
-    try:
-        parsed = urlsplit(item_url)
-        return (parsed.scheme == "https" and parsed.hostname in _VALID_GIT_HOSTS
-                and parsed.username is None and parsed.password is None
-                and parsed.port in (None, 443)
-                and bool(re.fullmatch(r"/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?/?", parsed.path)))
-    except (TypeError, ValueError):
-        return False
+    return bool(_git_repository_name(item_url))
 
 
 @contextlib.contextmanager
@@ -149,9 +171,10 @@ def _install_journal_path(target_path):
 
 def _install_directory_identity(path):
     path = Path(os.path.realpath(Path(path).absolute().parent)) / Path(path).name
-    if os.path.normcase(str(path.resolve())) != os.path.normcase(str(path.absolute())) or not path.is_dir():
+    info = path.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or getattr(info, 'st_file_attributes', 0) & _INSTALL_REPARSE_POINT
+            or os.path.normcase(str(path.resolve())) != os.path.normcase(str(path.absolute()))):
         raise ValueError('invalid installation directory')
-    info = path.stat()
     return [info.st_dev, info.st_ino]
 
 
@@ -167,6 +190,86 @@ def _write_install_journal(path, data):
         with contextlib.suppress(OSError): os.unlink(temporary)
 
 
+def _is_install_staging_name(target_name, name, flags=0):
+    if not isinstance(name, str):
+        return False
+    pattern = re.escape(target_name) + r'\.__(?:staging|extracting)__\.[0-9a-f]{32}\.disabled'
+    if re.fullmatch(pattern, name, flags):
+        return True
+    return os.name == 'nt' and bool(re.fullmatch(
+        re.escape(_clone_records.windows_staging_prefix(target_name)) + r'[0-9a-f]{20}\.disabled', name, flags))
+
+
+def _zip_extraction_paths(record, name):
+    generation = record.name.removeprefix(_ZIP_EXTRACTION_RECORD_PREFIX).removesuffix('.json')
+    if (not re.fullmatch(r'[0-9a-f]{32}', generation)
+            or record.name != _ZIP_EXTRACTION_RECORD_PREFIX + generation + '.json'
+            or not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+', name)
+            or '..' in name or not _is_safe_zip_member_path(name)):
+        raise ValueError('invalid ZIP extraction record path')
+    target = record.parent / name
+    staging = target.with_name(f'{name}.__extracting__.{generation}.disabled')
+    return target, staging
+
+
+def _read_zip_extraction_record(record):
+    def regular(info):
+        return (stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= 16384
+                and not getattr(info, 'st_file_attributes', 0) & _INSTALL_REPARSE_POINT)
+
+    before = record.lstat()
+    if not regular(before):
+        raise ValueError('invalid ZIP extraction record file')
+    fd = os.open(record, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0))
+    with os.fdopen(fd, 'rb') as stream:
+        current = os.fstat(stream.fileno())
+        if not regular(current) or not os.path.samestat(before, current):
+            raise ValueError('ZIP extraction record replaced')
+        raw = stream.read(16385)
+    if len(raw) > 16384:
+        raise ValueError('invalid ZIP extraction record size')
+    data = json.loads(raw.decode('utf-8'))
+    if not isinstance(data, dict) or type(data.get('schema')) is not int or data['schema'] != 1:
+        raise ValueError('invalid ZIP extraction record')
+    for key in ('parent_identity', 'stage_identity'):
+        identity = data.get(key)
+        if (not isinstance(identity, list) or len(identity) != 2
+                or any(type(value) is not int or value < 0 for value in identity)):
+            raise ValueError('invalid ZIP extraction record identity')
+    return data, (current.st_dev, current.st_ino)
+
+
+def _discard_zip_extraction(record, target, staging, data):
+    # 调用方持有暂存租约；已交给正式日志的暂存只能由发布恢复处理。
+    if os.path.lexists(_install_journal_path(target)):
+        return False
+    if _install_directory_identity(staging.parent) != data['parent_identity']:
+        raise ValueError('ZIP extraction parent changed')
+    if os.path.lexists(staging):
+        if _install_directory_identity(staging) != data['stage_identity']:
+            raise ValueError('ZIP extraction directory changed')
+        _remove_install_staging(staging)
+    record.unlink()
+    return True
+
+
+def _recover_zip_extractions(root):
+    recovered = 0
+    for record in root.glob(_ZIP_EXTRACTION_RECORD_GLOB):
+        try:
+            data, identity = _read_zip_extraction_record(record)
+            target, staging = _zip_extraction_paths(record, data.get('target'))
+            with directory_lease(staging), _install_publish_guard(target, timeout=.1):
+                if _read_zip_extraction_record(record) != (data, identity):
+                    raise ValueError('ZIP extraction record changed')
+                recovered += bool(_discard_zip_extraction(record, target, staging, data))
+        except (FileNotFoundError, TimeoutError):
+            continue
+        except (OSError, ValueError) as error:
+            print('[ComfyUI-Ranking] ZIP extraction recovery deferred: ' + type(error).__name__)
+    return recovered
+
+
 def _recover_install_target_locked(target_path):
     """调用方持有发布锁；验证磁盘记录和目录身份后恢复，不猜测外部变更。"""
     target = Path(os.path.realpath(Path(target_path).absolute().parent)) / Path(target_path).name
@@ -178,21 +281,21 @@ def _recover_install_target_locked(target_path):
     if (not isinstance(data, dict) or type(data.get('schema')) is not int or data['schema'] != 1
             or data.get('state') not in ('prepared', 'committed')
             or type(data.get('had_target')) is not bool
-            or os.path.normcase(str(data.get('target'))) != os.path.normcase(target.name)):
+            or not isinstance(data.get('target'), str)
+            or os.path.normcase(data['target']) != os.path.normcase(target.name)):
         raise ValueError('invalid installation journal')
-    paths = {}
-    for field, kind in [('staging','(?:staging|extracting)'), ('backup','backup')]:
-        name = data.get(field)
-        pattern = re.escape(data['target']) + r'\.__' + kind + r'__\.[0-9a-f]{32}\.disabled'
-        if not isinstance(name, str) or not re.fullmatch(pattern, name, flags=re.IGNORECASE if os.name == 'nt' else 0):
-            raise ValueError('invalid installation journal path')
-        paths[field] = target.parent / name
+    staging_name, backup_name = data.get('staging'), data.get('backup')
+    flags = re.IGNORECASE if os.name == 'nt' else 0
+    backup_pattern = re.escape(data['target']) + r'\.__backup__\.[0-9a-f]{32}\.disabled'
+    if (not _is_install_staging_name(data['target'], staging_name, flags)
+            or not isinstance(backup_name, str) or not re.fullmatch(backup_pattern, backup_name, flags)):
+        raise ValueError('invalid installation journal path')
     for field in ['source_identity','old_identity']:
         value = data.get(field)
         if value is None and field == 'old_identity' and not data['had_target']: continue
         if not isinstance(value,list) or len(value)!=2 or any(type(n) is not int or n<0 for n in value):
             raise ValueError('invalid installation journal identity')
-    stage, backup = paths['staging'], paths['backup']
+    stage, backup = target.parent / staging_name, target.parent / backup_name
     exists = {name:os.path.lexists(path) for name,path in [('target',target),('stage',stage),('backup',backup)]}
     if exists['stage'] and _install_directory_identity(stage) != data['source_identity']:
         raise ValueError('installation source changed')
@@ -221,13 +324,14 @@ def _recover_install_target_locked(target_path):
 def recover_installations(directory):
     """启动时按记录逐项恢复；繁忙/损坏项保留，不阻断其它插件路由。"""
     recovered = 0
-    for journal in Path(os.path.realpath(directory)).glob('.ranking-install.' + '[0-9a-f]' * 64 + '.json'):
+    root = Path(os.path.realpath(directory))
+    for journal in root.glob('.ranking-install.' + '[0-9a-f]' * 64 + '.json'):
         try:
             if journal.is_symlink() or journal.stat().st_size > 16384: raise ValueError()
             data = json.loads(journal.read_text(encoding='utf-8'))
             name = data.get('target') if isinstance(data,dict) else None
             if (not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9_.-]+',name)
-                    or name in ('.','..') or not _is_safe_zip_member_path(name)):
+                    or name == '.' or '..' in name or not _is_safe_zip_member_path(name)):
                 raise ValueError('invalid recovery target')
             target = journal.parent / name
             if _install_journal_path(target) != journal: raise ValueError('journal target mismatch')
@@ -235,7 +339,48 @@ def recover_installations(directory):
                 recovered += bool(_recover_install_target_locked(target))
         except Exception as error:
             print('[ComfyUI-Ranking] Installation recovery deferred: ' + type(error).__name__)
+    if os.name == 'nt':
+        recovered += _recover_unpublished_clones(root)
+    recovered += _recover_zip_extractions(root)
     return recovered
+
+
+def _recover_unpublished_clones(root):
+    recovered = 0
+    for journal in root.glob(_clone_records.RECORD_GLOB):
+        try:
+            # Windows 读取句柄可能挡住记录原子替换，因此先从文件名定位并加锁。
+            stage = _clone_records.staging_for_record(journal)
+            with directory_lease(stage):
+                recovered += _discard_recorded_clone(stage, None, recovering=True)
+        except (FileNotFoundError, TimeoutError):
+            # 另一个实例已处理，或持有暂存、写入者或发布租约。
+            continue
+        except Exception as error:
+            print('[ComfyUI-Ranking] Clone staging recovery deferred: ' + type(error).__name__)
+    return recovered
+
+
+def _discard_recorded_clone(stage, generation, *, recovering=False):
+    with _clone_records.idle_clone_record(stage, generation, directory_lease) as (record, data):
+        if not _is_safe_zip_member_path(data['target']):
+            raise ValueError('invalid clone target')
+        target = record.parent / data['target']
+        # 当前安装已停止发布，不会再为自己的独占暂存创建发布记录。
+        # 启动恢复仍需排除另一实例正在处理正式目录的情况。
+        guard = contextlib.nullcontext()
+        if recovering:
+            own = Path(THIS_DIR).resolve()
+            # 自身启动可能已持有正式目录租约。自更新标记只引用移出短目录后的暂存，
+            # 回收短目录时仍独占其租约和克隆记录，并核对普通安装事务。
+            if target != own or not os.path.samestat(target.lstat(), own.stat()):
+                guard = _install_publish_guard(str(target), timeout=.1)
+        with guard:
+            if os.path.lexists(_install_journal_path(target)):
+                return False
+            _remove_install_staging(stage)
+            record.unlink()
+            return True
 
 
 def _replace_directory_with_staging(staging_path: str, target_path: str, *, check_cancel=None):
@@ -244,7 +389,7 @@ def _replace_directory_with_staging(staging_path: str, target_path: str, *, chec
         _recover_install_target_locked(target_path)
         target, stage = Path(target_path).absolute(), Path(staging_path).absolute()
         if (stage.parent.resolve()!=target.parent.resolve()
-                or not re.fullmatch(re.escape(target.name)+r'\.__(?:staging|extracting)__\.[0-9a-f]{32}\.disabled', stage.name)):
+                or not _is_install_staging_name(target.name, stage.name)):
             raise ValueError('invalid publication staging')
         backup_path = target_path + f".__backup__.{uuid.uuid4().hex}.disabled"
         journal = _install_journal_path(target_path)
@@ -272,15 +417,9 @@ def _resolve_install_target(item_url: str):
     """🔒 P0安全加固：从 URL 推导安装目标目录，防御路径穿越
     返回 (target_dir_name, target_path)；非法时返回 (None, None)
     """
-    if not isinstance(item_url, str):
-        return None, None
-    target_dir_name = item_url.rstrip("/").split("/")[-1]
-    if target_dir_name.endswith(".git"):
-        target_dir_name = target_dir_name[:-4]
+    target_dir_name = _git_repository_name(item_url)
     # 目录名白名单校验 + 显式拒绝相对路径段，杜绝 ".." 逃逸出 custom_nodes 目录
     if (not target_dir_name
-            or not re.fullmatch(r'[A-Za-z0-9_\-.]+', target_dir_name)
-            or target_dir_name in (".", "..")
             or ".." in target_dir_name
             or not _is_safe_zip_member_path(target_dir_name)):
         return None, None
@@ -288,6 +427,25 @@ def _resolve_install_target(item_url: str):
     base = os.path.normpath(CUSTOM_NODES_DIR)
     if not target_path.startswith(base + os.sep):
         return None, None
+
+    self_dir_name = os.path.basename(THIS_DIR)
+    if target_dir_name != self_dir_name and os.path.normcase(target_dir_name) == os.path.normcase(self_dir_name):
+        # Windows 可按目录启用大小写敏感。仅在两个名字指向同一实际目录时归一自更新路径。
+        try:
+            own_dir = os.stat(THIS_DIR)
+        except OSError:
+            return None, None
+        try:
+            selected_dir = os.lstat(target_path)
+        except FileNotFoundError:
+            return target_dir_name, target_path
+        except OSError:
+            return None, None
+        if (not stat.S_ISDIR(selected_dir.st_mode)
+                or getattr(selected_dir, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            return None, None
+        if os.path.samestat(selected_dir, own_dir):
+            return self_dir_name, os.path.join(base, self_dir_name)
     return target_dir_name, target_path
 
 
@@ -438,6 +596,11 @@ def _prepare_git_env():
 
 def _force_remove_readonly(func, path, exc_info):
     """Windows 下强制删除只读文件（如 .git/objects/pack/*.idx）"""
+    info = os.lstat(path)
+    if (stat.S_ISLNK(info.st_mode)
+            or getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)
+            or (stat.S_ISREG(info.st_mode) and info.st_nlink != 1)):
+        raise exc_info[1]
     os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
     func(path)
 
@@ -533,7 +696,50 @@ def _publish_update_staging(extracted, staging, plugin_target, cancel_event):
         os.replace(str(extracted),str(staging))
 
 
-def _extract_zip_to_target_sync(zip_path, extract_target_path, cancel_event=None, *, update_target=None):
+@contextlib.contextmanager
+def _zip_extraction_directory(staging_path, target_path, *, tracked):
+    if not tracked:
+        os.makedirs(staging_path, exist_ok=False)
+        try:
+            yield staging_path
+        except Exception:
+            _remove_install_staging(staging_path)
+            raise
+        return
+
+    target = Path(os.path.realpath(Path(target_path).absolute().parent)) / Path(target_path).name
+    generation = Path(staging_path).name.rsplit('.', 2)[-2]
+    record = target.parent / (_ZIP_EXTRACTION_RECORD_PREFIX + generation + '.json')
+    target, staging = _zip_extraction_paths(record, target.name)
+    with directory_lease(staging):
+        staging.mkdir()
+        try:
+            if os.path.lexists(record):
+                raise ValueError('ZIP extraction record already exists')
+            data = dict(schema=1, target=target.name, parent_identity=_install_directory_identity(staging.parent),
+                        stage_identity=_install_directory_identity(staging))
+            _write_install_journal(record, data)
+            saved = _read_zip_extraction_record(record)
+            if saved[0] != data:
+                raise ValueError('ZIP extraction record changed')
+        except Exception:
+            with contextlib.suppress(OSError):
+                staging.rmdir()
+            raise
+        try:
+            yield str(staging)
+        finally:
+            try:
+                # 当前线程的发布已结束，仍持有本次独占暂存租约。
+                if _read_zip_extraction_record(record) != saved:
+                    raise ValueError('ZIP extraction record changed')
+                _discard_zip_extraction(record, target, staging, data)
+            except (OSError, ValueError) as error:
+                print('[ComfyUI-Ranking] ZIP extraction cleanup deferred: ' + type(error).__name__)
+
+
+def _extract_zip_to_target_sync(zip_path, extract_target_path, cancel_event=None, *,
+                                update_target=None, track_extraction=True):
     """同步解压例程，由安装资源拥有线程调用，避免阻塞事件循环。
     含三层路径穿越防护；压缩包为空抛 ValueError，旧目录被占用抛 _ZipTargetOccupiedError
     """
@@ -544,11 +750,11 @@ def _extract_zip_to_target_sync(zip_path, extract_target_path, cancel_event=None
             max_directory_bytes=MAX_ZIP_DIRECTORY_BYTES,
             check_cancel=lambda: _raise_if_install_cancelled(cancel_event)) as zip_ref:
         infos = zip_ref.infolist()
-        namelist = [info.filename for info in infos]
-        if not infos:
-            raise ValueError("下载的压缩包结构为空")
         if len(infos) > MAX_ZIP_FILE_COUNT:
             raise ValueError("压缩包文件数量超出限制")
+        if not any(not info.is_dir() for info in infos):
+            raise ValueError("压缩包没有可安装的文件")
+        namelist = [info.filename for info in infos]
         total_size = 0
         member_paths = {}
         path_text_bytes = 0
@@ -589,9 +795,8 @@ def _extract_zip_to_target_sync(zip_path, extract_target_path, cancel_event=None
 
         top_level_dir = _detect_zip_top_level(namelist)
         _require_install_space(os.path.dirname(os.path.abspath(staging_path)), total_size)
-        os.makedirs(staging_path, exist_ok=False)
-
-        try:
+        with _zip_extraction_directory(staging_path, extract_target_path,
+                                       tracked=track_extraction) as staging_path:
             total_written = 0
             for info in infos:
                 _raise_if_install_cancelled(cancel_event)
@@ -653,10 +858,6 @@ def _extract_zip_to_target_sync(zip_path, extract_target_path, cancel_event=None
                     raise _ZipTargetOccupiedError() from exc
                 raise
             return len(namelist)
-        except Exception as exc:
-            if os.path.exists(staging_path):
-                shutil.rmtree(staging_path, onerror=_force_remove_readonly)
-            raise
 
 
 def _is_self_update(target_dir_name: str) -> bool:
@@ -670,7 +871,15 @@ def _get_staging_path(clone_target_path: str) -> str:
     return clone_target_path + f".__staging__.{uuid.uuid4().hex}.disabled"
 
 
-def _write_update_pending_marker(target_path: str, staging_path: str, *, check_cancel=None):
+def _get_git_staging_path(target_path: str) -> str:
+    if os.name != 'nt':
+        return _get_staging_path(target_path)
+    parent, name = os.path.split(target_path)
+    # Git for Windows 会单独限制内部仓库路径；同级短名无需改变发布位置。
+    return os.path.join(parent, _clone_records.windows_staging_prefix(name) + uuid.uuid4().hex[:20] + '.disabled')
+
+
+def _write_update_pending_marker(target_path: str, staging_path: str, *, check_cancel=None, promote_from=None):
     """写入待应用更新标记"""
     marker = {
         "staging_dir": staging_path,
@@ -678,18 +887,32 @@ def _write_update_pending_marker(target_path: str, staging_path: str, *, check_c
         "timestamp": time.time()
     }
     marker_path = os.path.join(target_path, ".update_pending")
-    fd, temporary_path = tempfile.mkstemp(prefix=".update_pending.", suffix=".tmp", dir=target_path)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(marker, f, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
-        with _install_publish_guard(target_path, check_cancel=check_cancel):
-            os.replace(temporary_path, marker_path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            os.remove(temporary_path)
-        raise
+    with _install_publish_guard(target_path, check_cancel=check_cancel):
+        fd, temporary_path = tempfile.mkstemp(prefix=".update_pending.", suffix=".tmp", dir=target_path)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(marker, f, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            if check_cancel is not None:
+                check_cancel()
+            if promote_from is not None:
+                # Windows rename 不覆盖既有目录；只在启动所用目标租约内暴露长暂存。
+                os.rename(promote_from, staging_path)
+            try:
+                if promote_from is not None and check_cancel is not None:
+                    check_cancel()
+                os.replace(temporary_path, marker_path)
+            except (OSError, _InstallClientDisconnectedError):
+                if promote_from is not None:
+                    try:
+                        os.rename(staging_path, promote_from)
+                    except OSError as error:
+                        print('[ComfyUI-Ranking] Update staging cleanup deferred: ' + type(error).__name__)
+                raise
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(temporary_path)
 
 
 class _JobProcess:
@@ -702,7 +925,24 @@ class _JobProcess:
         self.job.close()
 
 
-async def _spawn_git_process(*command,lease_fd=None,**options):
+class _CloneOwnerProcess:
+    def __init__(self, process):
+        self.process = process
+
+    def __getattr__(self, name):
+        return getattr(self.process, name)
+
+    def kill(self):
+        # EOF 请求独立监护进程终止并排空 Job。
+        self.process.stdin.close()
+
+    async def wait(self):
+        result = await self.process.wait()
+        self.process.stdin.close()
+        return result
+
+
+async def _spawn_git_process(*command,lease_fd=None,clone_generation=None,**options):
     if sys.platform!='win32' and not sys.platform.startswith('linux'):
         return await asyncio.create_subprocess_exec(*command,**options)
     if command[0]=='git' and not shutil.which('git',path=options.get('env',os.environ).get('PATH')):
@@ -716,7 +956,7 @@ async def _spawn_git_process(*command,lease_fd=None,**options):
         if sys.platform == 'win32' and (not isinstance(helper_python, str)
                 or not Path(helper_python).is_absolute() or not Path(helper_python).is_file()):
             raise OSError('standard-library guard interpreter unavailable')
-        job=guard.WindowsProcessJob() if sys.platform=='win32' else None
+        job=guard.WindowsProcessJob() if sys.platform=='win32' and clone_generation is None else None
     except (OSError,ImportError):
         raise _GitInstallError('process_guard_unavailable','无法建立安装进程保护，请检查插件文件与宿主环境。') from None
     if sys.platform.startswith('linux'):
@@ -742,6 +982,22 @@ async def _spawn_git_process(*command,lease_fd=None,**options):
         finally:
             if read_fd is not None: os.close(read_fd)
             if process is None and owner_fd is not None: os.close(owner_fd)
+    if clone_generation is not None:
+        owner = None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                helper_python, '-I', '-S', str(helper), '--git-clone-owner', command[-1], clone_generation,
+                str(_lease_module.LEASE_DIRECTORY.absolute()), *command,
+                stdin=asyncio.subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW, **options)
+            owner = _CloneOwnerProcess(process)
+            process.stdin.write(b'\x01')
+            await process.stdin.drain()
+            return owner
+        except BaseException as error:
+            await _stop_git_clone(owner, None)
+            if isinstance(error, OSError):
+                raise _GitInstallError('process_guard_unavailable', '无法建立安装进程保护，请检查插件文件与宿主环境。') from None
+            raise
     process=None
     assigned=False
     try:
@@ -777,7 +1033,13 @@ def _git_clone_environment(url, environment):
     return env
 
 
-async def _run_git_clone(url, target, env, timeout=1200, *, check_cancel=None, heartbeat=None, resource_check=None, lease_fd=None):
+def _confirm_clone_writer_exit(target, generation):
+    with _clone_records.idle_clone_record(target, generation, directory_lease, require_settled=True):
+        pass
+
+
+async def _run_git_clone(url, target, env, timeout=1200, *, check_cancel=None, heartbeat=None,
+                         resource_check=None, lease_fd=None, clone_generation=None):
     """共享非交互克隆；输出不进内存，取消/超时均终止并收回子进程。"""
     if check_cancel:
         check_cancel()
@@ -788,7 +1050,8 @@ async def _run_git_clone(url, target, env, timeout=1200, *, check_cancel=None, h
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
         env=env,
-        **({'lease_fd':lease_fd} if lease_fd is not None else {})
+        **({'lease_fd':lease_fd} if lease_fd is not None else {}),
+        **({'clone_generation': clone_generation} if clone_generation is not None else {})
     )
     clone_task = asyncio.create_task(proc.wait())
     started = time.monotonic()
@@ -811,7 +1074,13 @@ async def _run_git_clone(url, target, env, timeout=1200, *, check_cancel=None, h
             check_cancel()
         if resource_check:
             await resource_check()
-        return await clone_task, b"", b""
+        status = await clone_task
+        if status == 0 and clone_generation is not None:
+            try:
+                await asyncio.to_thread(_confirm_clone_writer_exit, target, clone_generation)
+            except (OSError, ValueError):
+                raise _GitInstallError('process_guard_unavailable', '无法确认安装进程已结束，请重试。') from None
+        return status, b"", b""
     finally:
         await _stop_git_clone(proc, clone_task)
 
@@ -1034,15 +1303,18 @@ async def _install_git_core(item_url, account, *, request=None, cancel_event=Non
     if prepare_target is not None:
         target = _skill_preparation_target(prepare_target)
     is_self = prepare_target is None and _is_self_update(name)
-    staging = _get_staging_path(target)
+    record_clone = os.name == 'nt' and prepare_target is None
+    staging = (_get_staging_path(target) if prepare_target is not None
+               else _get_git_staging_path(target))
     committed = False
     staging_owned = False
+    clone_generation = None
     staging_lease = None
     staging_lease_fd = None
     capacity_lease = None
 
     def prepare_staging():
-        nonlocal staging_owned, staging_lease, staging_lease_fd
+        nonlocal staging_owned, staging_lease, staging_lease_fd, clone_generation
         _raise_if_install_cancelled(cancel_event)
         staging_lease=directory_lease(staging)
         staging_lease_fd=staging_lease.__enter__()
@@ -1050,18 +1322,46 @@ async def _install_git_core(item_url, account, *, request=None, cancel_event=Non
             raise _GitInstallError('process_guard_unavailable','无法建立安装进程保护，请检查插件文件与宿主环境。')
         os.mkdir(staging)
         staging_owned = True
+        if record_clone:
+            clone_generation = _clone_records.create_clone_record(staging, target)
+
+    def discard_staging():
+        if clone_generation is None:
+            _remove_install_staging(staging)
+            return
+        if not _discard_recorded_clone(staging, clone_generation):
+            raise ValueError('installation publication recovery pending')
 
     def clear_staging():
-        nonlocal staging_owned, staging_lease
-        _remove_install_staging(staging)
+        nonlocal staging_owned, staging_lease, clone_generation
+        discard_staging()
         staging_owned = False
+        clone_generation = None
         if staging_lease is not None:
             staging_lease.__exit__(None,None,None); staging_lease=None
 
     def publish_installation():
         nonlocal committed
         thread_check = lambda: _raise_if_install_cancelled(cancel_event)
-        if is_self:
+        # Git 可以成功克隆没有工作树文件的仓库，不能用它覆盖现有安装。
+        with os.scandir(staging) as entries:
+            if not any(entry.name != '.git' for entry in entries):
+                raise _GitInstallError('git_clone_failed', '仓库没有可安装的文件。')
+        if clone_generation is not None:
+            with _clone_records.idle_clone_record(staging, clone_generation, directory_lease) as (record, data):
+                if data['target'] != Path(target).name:
+                    raise ValueError('clone target changed')
+                if is_self:
+                    _write_update_pending_marker(target, _get_staging_path(target),
+                                                 check_cancel=thread_check, promote_from=staging)
+                else:
+                    _replace_directory_with_staging(staging, target, check_cancel=thread_check)
+                committed = True
+                try:
+                    record.unlink()
+                except OSError as error:
+                    print('[ComfyUI-Ranking] Clone record cleanup deferred: ' + type(error).__name__)
+        elif is_self:
             _write_update_pending_marker(target, staging, check_cancel=thread_check)
         else:
             _replace_directory_with_staging(staging, target, check_cancel=thread_check)
@@ -1091,7 +1391,8 @@ async def _install_git_core(item_url, account, *, request=None, cancel_event=Non
         await progress("git_mirror", 25, "尝试镜像源克隆...")
         await progress("git_cloning", 50, "正在克隆仓库（浅克隆模式）...")
         rc, _, _ = await _run_git_clone(mirror, staging, env, check_cancel=check_cancel,
-                                      heartbeat=heartbeat,resource_check=resource_check,lease_fd=staging_lease_fd)
+                                      heartbeat=heartbeat,resource_check=resource_check,lease_fd=staging_lease_fd,
+                                      **({'clone_generation': clone_generation} if clone_generation is not None else {}))
         if rc != 0:
             check_cancel()
             await progress("git_fallback", 55, "镜像失败，切换直连源...")
@@ -1100,7 +1401,8 @@ async def _install_git_core(item_url, account, *, request=None, cancel_event=Non
             await progress("git_direct", 70, "正在直连克隆（浅克隆模式）...")
             await resource_check()
             rc, _, _ = await _run_git_clone(item_url, staging, env, check_cancel=check_cancel,
-                                          heartbeat=heartbeat,resource_check=resource_check,lease_fd=staging_lease_fd)
+                                          heartbeat=heartbeat,resource_check=resource_check,lease_fd=staging_lease_fd,
+                                          **({'clone_generation': clone_generation} if clone_generation is not None else {}))
             if rc != 0:
                 raise _GitInstallError("git_clone_failed", "仓库克隆失败，请检查网络、代理或仓库权限。")
         check_cancel()
@@ -1130,7 +1432,12 @@ async def _install_git_core(item_url, account, *, request=None, cancel_event=Non
         try:
             if staging_owned and not committed:
                 # 清理不检查已设置的取消事件；仍由一个线程持有，重复取消也等其收尾。
-                await _run_install_file_worker(lambda: _remove_install_staging(staging), cancel_event)
+                try:
+                    await _run_install_file_worker(discard_staging, cancel_event)
+                except (OSError, ValueError) as error:
+                    if clone_generation is None:
+                        raise
+                    print('[ComfyUI-Ranking] Clone staging cleanup deferred: ' + type(error).__name__)
         finally:
             try:
                 if staging_lease is not None: staging_lease.__exit__(None,None,None)
@@ -1181,21 +1488,6 @@ def _cloud_opener(url):
         urllib.request.ProxyHandler(_cloud_proxy.system_proxies(url)), _ZipNoRedirect())
 
 
-def _cleanup_install_zip(path):
-    if not path:
-        return
-    for attempt in range(5):
-        try:
-            os.unlink(path)
-            return
-        except FileNotFoundError:
-            return
-        except OSError:
-            if attempt < 4:
-                time.sleep(0.5)
-    print("[ComfyUI-Ranking] ZIP临时文件清理暂未完成")
-
-
 def _zip_transfer_progress(received, length, started, now):
     elapsed = now - started
     rate = received / elapsed if math.isfinite(elapsed) and elapsed > 0 else None
@@ -1206,7 +1498,7 @@ def _zip_transfer_progress(received, length, started, now):
 
 def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decoder=None):
     """单工作线程拥有响应、临时文件和解压；关闭后才清理，取消不重试。"""
-    paths = []
+    downloads = contextlib.ExitStack()
     is_self = skill_source_decoder is None and _is_self_update(os.path.basename(target))
     self_staging = _get_staging_path(target) if is_self else None
     self_staging_owned = False
@@ -1221,7 +1513,6 @@ def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decode
         if data.get("token"):
             headers['Authorization'] = f"Bearer {data['token']}"
         opener = _cloud_opener(_ZIP_PROXY_URL)
-        downloaded_path = None
         installed_version = None
         skill_source = None
         for attempt in range(3):
@@ -1252,40 +1543,41 @@ def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decode
                 length = int(raw_length) if raw_length is not None else 0
                 if length > MAX_ZIP_SIZE:
                     raise _ZipInstallError("package_too_large", "ZIP 文件体积超过安全上限", 413)
-                _require_install_space(tempfile.gettempdir(), length)
+                download_directory = tempfile.gettempdir()
+                _require_install_space(download_directory, length)
                 downloaded = 0
                 prefix = b''
                 last_progress = time.monotonic()
                 transfer_started = last_progress
                 next_progress = 5 * 1024 * 1024
-                with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as temporary:
-                    downloaded_path = temporary.name
-                    paths.append(downloaded_path)
-                    while True:
-                        _raise_if_install_cancelled(cancel_event)
-                        if time.monotonic() - started >= _ZIP_ATTEMPT_TIMEOUT:
-                            raise TimeoutError()
-                        # HTTPResponse.read1只做一次底层读取，慢速小块也能及时检查取消。
-                        chunk = read_chunk(1024 * 1024)
-                        _raise_if_install_cancelled(cancel_event)
-                        if not chunk:
-                            break
-                        downloaded += len(chunk)
-                        if downloaded > MAX_ZIP_SIZE:
-                            raise _ZipInstallError("package_too_large", "ZIP 文件体积超过安全上限", 413)
-                        if len(prefix) < 4:
-                            prefix = (prefix + chunk)[:4]
-                            if len(prefix) == 4 and prefix != b'PK\x03\x04':
-                                raise _ZipInstallError("remote_rejected", "云端拒绝访问或无法获取资源，请检查权限和资源地址。", 403)
-                        _require_install_space(os.path.dirname(temporary.name), len(chunk))
-                        temporary.write(chunk)
-                        now = time.monotonic()
-                        if downloaded >= next_progress or now - last_progress >= 10:
-                            percent = min(30 + int(downloaded / length * 30), 59) if length else min(30 + int(downloaded / (200 * 1024 * 1024) * 30), 59)
-                            report("downloading", percent, "从云端下载资源包...",
-                                   transfer=_zip_transfer_progress(downloaded, length, transfer_started, now))
-                            last_progress = now
-                            next_progress = downloaded + 5 * 1024 * 1024
+                # 临时包随文件句柄终止而回收，解压直接借用句柄，避免按路径重开。
+                temporary = downloads.enter_context(tempfile.TemporaryFile(suffix='.zip', dir=download_directory))
+                while True:
+                    _raise_if_install_cancelled(cancel_event)
+                    if time.monotonic() - started >= _ZIP_ATTEMPT_TIMEOUT:
+                        raise TimeoutError()
+                    # HTTPResponse.read1只做一次底层读取，慢速小块也能及时检查取消。
+                    chunk = read_chunk(1024 * 1024)
+                    _raise_if_install_cancelled(cancel_event)
+                    if not chunk:
+                        break
+                    downloaded += len(chunk)
+                    if downloaded > MAX_ZIP_SIZE:
+                        raise _ZipInstallError("package_too_large", "ZIP 文件体积超过安全上限", 413)
+                    if len(prefix) < 4:
+                        prefix = (prefix + chunk)[:4]
+                        if len(prefix) == 4 and prefix != b'PK\x03\x04':
+                            raise _ZipInstallError("remote_rejected", "云端拒绝访问或无法获取资源，请检查权限和资源地址。", 403)
+                    _require_install_space(download_directory, len(chunk))
+                    temporary.write(chunk)
+                    now = time.monotonic()
+                    if downloaded >= next_progress or now - last_progress >= 10:
+                        percent = min(30 + int(downloaded / length * 30), 59) if length else min(30 + int(downloaded / (200 * 1024 * 1024) * 30), 59)
+                        report("downloading", percent, "从云端下载资源包...",
+                               transfer=_zip_transfer_progress(downloaded, length, transfer_started, now))
+                        last_progress = now
+                        next_progress = downloaded + 5 * 1024 * 1024
+                temporary.flush()
                 if length and downloaded != length:
                     raise http.client.IncompleteRead(b'')
                 if prefix != b'PK\x03\x04':
@@ -1304,9 +1596,8 @@ def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decode
                     with contextlib.suppress(Exception):
                         response.close()
                     response = None
-                if downloaded_path:
-                    _cleanup_install_zip(downloaded_path)
-                    downloaded_path = None
+                with contextlib.suppress(OSError):
+                    downloads.close()
                 if attempt == 2:
                     raise _ZipInstallError("download_failed", "下载多次中断（已重试3次），请检查网络后重试。") from None
                 report("downloading", 10, "下载中断，准备重试...")
@@ -1320,8 +1611,9 @@ def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decode
         report("download_done", 60, "下载完成，准备解压...", transfer=transfer)
         report("extracting", 75, "解压安装文件...")
         try:
-            _extract_zip_to_target_sync(downloaded_path, self_staging or target, cancel_event,
-                                       update_target=target if is_self else None)
+            _extract_zip_to_target_sync(temporary.fileno(), self_staging or target, cancel_event,
+                                       update_target=target if is_self else None,
+                                       track_extraction=skill_source_decoder is None)
             self_staging_owned = is_self
         except _ZipTargetOccupiedError:
             raise _ZipInstallError("target_occupied", "旧版本文件正在被 ComfyUI 进程占用，无法覆盖更新。请彻底关闭控制台黑框，重新启动 ComfyUI 后再点击更新。") from None
@@ -1345,8 +1637,8 @@ def _install_zip_sync(data, target, cancel_event, report, *, skill_source_decode
         raise
     finally:
         try:
-            for path in paths:
-                _cleanup_install_zip(path)
+            with contextlib.suppress(OSError):
+                downloads.close()
             if self_staging_owned and not committed and os.path.exists(self_staging):
                 shutil.rmtree(self_staging, onerror=_force_remove_readonly)
         finally:

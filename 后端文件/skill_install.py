@@ -224,11 +224,13 @@ class SkillInstallService:
             failed = False
             return value | {'status': 'success', 'phase': 'ready', 'repository': source['repository']}
         finally:
-            if entered:
-                await self._file(lambda: owner.__exit__(None, None, None), event, cleanup=True)
-            if failed and started:
-                with contextlib.suppress(OSError, ValueError):
-                    await self._file(lambda: sessions.discard(parameters), event, cleanup=True)
+            try:
+                if entered:
+                    await self._file(lambda: owner.__exit__(None, None, None), event, cleanup=True)
+            finally:
+                if failed and started:
+                    with contextlib.suppress(OSError, ValueError):
+                        await self._file(lambda: sessions.discard(parameters), event, cleanup=True)
 
     async def recover(self):
         if self.closing:
