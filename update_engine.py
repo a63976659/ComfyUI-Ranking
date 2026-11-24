@@ -93,6 +93,14 @@ PENDING = ".update_pending"
 JOURNAL = ".update_journal"
 BOOTSTRAP = ("update_engine.py", "__init__.py")
 PRESERVED = {PENDING, JOURNAL, "缓存", "__pycache__"}
+REQUIRED_UPDATE_FILES = (
+    "__init__.py", "update_engine.py", "后端文件/api_app.py", "后端文件/api_cache.py",
+    "后端文件/api_tool.py", "后端文件/control_request.py", "后端文件/frontend_assets.py",
+    "后端文件/git_staging_recovery.py", "后端文件/media_proxy.py", "后端文件/media_transfer.py",
+    "后端文件/process_guard.py", "后端文件/workflow_response.py", "后端文件/zip_install_reader.py",
+    "后端文件/skill_packages.py", "后端文件/skill_publication.py",
+    "后端文件/skill_install_session.py", "后端文件/skill_install.py", "前端页面/core/侧边栏入口注册.js",
+)
 
 
 def _sibling(plugin, value, kind):
@@ -157,35 +165,70 @@ def _replace_bootstrap(source, destination):
     os.replace(source, destination)
 
 
+def _is_linked(path, info):
+    return (stat.S_ISLNK(info.st_mode)
+            or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            or os.path.normcase(str(path.resolve())) != os.path.normcase(str(path.absolute())))
+
+
+def _validate_update_files(root, members):
+    member_keys = {os.path.normcase(name) for name in members}
+    if len(member_keys) != len(members):
+        raise ValueError("Duplicate update paths")
+    paths = [root / name for name in members]
+    while paths:
+        path = paths.pop()
+        info = path.lstat()
+        if _is_linked(path, info):
+            raise ValueError("Update contains linked paths")
+        if stat.S_ISDIR(info.st_mode):
+            paths.extend(path.iterdir())
+        elif not stat.S_ISREG(info.st_mode):
+            raise ValueError("Update contains unsupported files")
+        elif path.suffix == ".py":
+            compile(path.read_bytes(), str(path), "exec", dont_inherit=True)
+    if any(os.path.normcase(name.split("/")[0]) not in member_keys or not (root / name).is_file()
+           for name in REQUIRED_UPDATE_FILES):
+        raise ValueError("Incomplete update")
+
+
 def _validate_staging(staging):
     if not staging.is_dir():
         raise ValueError("Missing staging directory")
-    required = ('__init__.py', 'update_engine.py', '后端文件/api_app.py', '后端文件/api_cache.py', '后端文件/api_tool.py', '后端文件/control_request.py', '后端文件/frontend_assets.py', '后端文件/media_proxy.py', '后端文件/media_transfer.py', '后端文件/process_guard.py', '后端文件/workflow_response.py', '后端文件/zip_install_reader.py', '后端文件/skill_packages.py', '后端文件/skill_publication.py', '后端文件/skill_install_session.py', '后端文件/skill_install.py', '前端页面/core/侧边栏入口注册.js')
-    for name in required:
-        if not (staging / name).is_file():
-            raise ValueError("Incomplete update")
-    if any((staging / name).exists() for name in (PENDING, JOURNAL)):
+    if any(os.path.lexists(staging / name) for name in (PENDING, JOURNAL)):
         raise ValueError("Update contains control files")
-    for directory, directories, files in os.walk(staging, followlinks=False):
-        for name in directories + files:
-            path = Path(directory) / name
-            if (path.is_symlink()
-                    or os.path.normcase(str(path.resolve())) != os.path.normcase(str(path.absolute()))):
-                raise ValueError("Update contains linked paths")
-            if path.suffix == ".py" and path.is_file():
-                compile(path.read_bytes(), str(path), "exec", dont_inherit=True)
+    _validate_update_files(staging, [path.name for path in staging.iterdir()])
+
+
+def _pending_staging(plugin):
+    marker = plugin / PENDING
+    try:
+        info = marker.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode) or _is_linked(marker, info):
+        raise ValueError("Invalid update marker")
+    data = json.loads(marker.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Invalid update marker")
+    return _sibling(plugin, data.get("staging_dir"), "staging")
 
 
 def _finish_committed(plugin, staging, backup):
     # 保留日志直到清理全部成功，下次启动只重试清理，不回滚已提交版本。
+    try:
+        pending_staging = _pending_staging(plugin)
+    except ValueError:
+        pending_staging = None  # 无法确认归属的标记保留原样。
     _remove(backup)
     _remove(staging)
     _remove(plugin / "__pycache__")
-    _remove(plugin / PENDING)
+    if pending_staging == staging:
+        _remove(plugin / PENDING)
     _remove(plugin / JOURNAL)
 
 
-def _recover(plugin, data):
+def _recover(plugin, data, *, staging_owned=True):
     if not isinstance(data, dict) or data.get("schemaVersion") != 1:
         raise ValueError("Unsupported update journal")
     staging = _sibling(plugin, data.get("staging_dir"), "staging")
@@ -193,9 +236,19 @@ def _recover(plugin, data):
     old_names = _names(data.get("old_names"))
     new_names = _names(data.get("new_names"))
     if data.get("state") == "committed":
-        _finish_committed(plugin, staging, backup)
+        new_keys = {os.path.normcase(name) for name in new_names}
+        if any(os.path.lexists(plugin / name) for name in old_names if os.path.normcase(name) not in new_keys):
+            raise ValueError("Unexpected old update members")
+        _validate_update_files(plugin, new_names)
+        if staging_owned:
+            try:
+                _finish_committed(plugin, staging, backup)
+            except OSError as error:
+                print("[ComfyUI-Ranking] Committed update cleanup deferred: " + type(error).__name__)
+        else:
+            print("[ComfyUI-Ranking] Committed update cleanup deferred: active staging owner")
         return "committed"
-    if data.get("state") != "prepared" or not staging.is_dir() or not backup.is_dir():
+    if not staging_owned or data.get("state") != "prepared" or not staging.is_dir() or not backup.is_dir():
         raise ValueError("Incomplete recovery data")
     # staging 中缺失且目标中存在的条目已安装，移回 staging 后才能恢复旧版本。
     for name in reversed(new_names):
@@ -214,8 +267,20 @@ def _recover(plugin, data):
                 _replace_bootstrap(saved, current)
             else:
                 os.replace(saved, current)
+    old_keys = {os.path.normcase(name) for name in old_names}
+    if (any(not os.path.lexists(plugin / name) for name in old_names)
+            or any(not os.path.lexists(staging / name) for name in new_names)
+            or any(os.path.lexists(plugin / name) for name in new_names if os.path.normcase(name) not in old_keys)
+            or next(backup.iterdir(), None) is not None):
+        raise ValueError("Incomplete rollback data")
+    # 删除日志是回滚提交点。恢复的旧启动器仍只需要识别原有标记和事务格式。
     _remove(plugin / JOURNAL)
-    _remove(backup)
+    try:
+        backup.rmdir()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        print("[ComfyUI-Ranking] Rollback backup cleanup deferred: " + type(error).__name__)
     return "rolled_back"
 
 
@@ -293,7 +358,17 @@ def _apply_with_staging_lease(plugin):
     except (OSError,ValueError,TypeError,AttributeError):
         pass  # 原事务函数负责报告控制记录异常，不能猜测暂存来源。
     with contextlib.ExitStack() as leases:
-        if staging is not None: leases.enter_context(directory_lease(staging))
+        if staging is not None:
+            try:
+                leases.enter_context(directory_lease(staging))
+            except TimeoutError:
+                if control.name != JOURNAL or info.get("state") != "committed":
+                    raise
+                try:
+                    return _recover(plugin, info, staging_owned=False)
+                except Exception as error:
+                    print("[ComfyUI-Ranking] Update recovery failed: " + type(error).__name__)
+                    return "recovery_failed"
         return _apply_pending_update_unlocked(plugin)
 
 
@@ -305,7 +380,7 @@ def startup_session(plugin_dir, timeout=30):
         try:
             status=_apply_with_staging_lease(plugin)
         except TimeoutError:
-            # 只有未提交准备可以继续加载现有版本；事务现场必须先完成恢复。
+            # 尚未进入事务的暂存可留待下次启动；未验证的事务不能加载。
             if (plugin/JOURNAL).exists(): raise
             status='busy'
             print('[ComfyUI-Ranking] Update deferred: active staging owner')
@@ -333,20 +408,21 @@ def apply_pending_update(plugin_dir):
 
 
 def _cleanup_stale_staging_unlocked(plugin_dir):
-    """事务存在时不清理；只删除名称与边界验证通过的兄弟暂存目录。"""
+    """事务存在时不清理；核对同级残留暂存和空备份的路径边界。"""
     plugin = Path(plugin_dir).resolve()
     if (plugin / JOURNAL).exists():
         return
-    pending = None
-    marker = plugin / PENDING
-    if marker.exists():
-        try:
-            info = json.loads(marker.read_text(encoding="utf-8"))
-            pending = _sibling(plugin, info.get("staging_dir"), "staging")
-        except (OSError, ValueError, TypeError, AttributeError):
-            # 标记异常时保留所有暂存，避免删除可能用于恢复的数据。
-            return
+    try:
+        pending = _pending_staging(plugin)
+    except (OSError, ValueError):
+        # 标记异常时保留所有暂存，避免删除可能用于恢复的数据。
+        return
     for candidate in plugin.parent.iterdir():
+        if candidate.name.startswith(plugin.name + ".__rollback__."):
+            # 正式目录锁排除并发事务；rmdir 只删除空目录，不触碰残留备份数据。
+            with contextlib.suppress(OSError, ValueError):
+                _sibling(plugin, str(candidate), "rollback").rmdir()
+            continue
         if not candidate.name.startswith(plugin.name + ".__staging__") or candidate == pending:
             continue
         try:
