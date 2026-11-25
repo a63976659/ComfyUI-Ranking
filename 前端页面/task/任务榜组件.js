@@ -436,7 +436,7 @@ export function createTasksView(currentUser, keyword = "", { sort: initialSort =
             const tasks = responseData.data;
             isLoadingFromNetwork = false;
             
-            if (firstPageReady && isEmptyListRefreshWithExistingData(tasks, allTasksData)) {
+            if (isEmptyListRefreshWithExistingData(tasks, allTasksData)) {
                 console.warn(`🛡️ 任务榜 ${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
                 // 更新缓存

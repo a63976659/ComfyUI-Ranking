@@ -664,7 +664,7 @@ export function createPromptsView(currentUser, keyword = "", { sort: initialSort
             const prompts = responseData.data;
             isLoadingFromNetwork = false;
 
-            if (firstPageReady && isEmptyListRefreshWithExistingData(prompts, allPromptsData)) {
+            if (isEmptyListRefreshWithExistingData(prompts, allPromptsData)) {
                 console.warn(`🛡️ 提示词 ${requestedType}/${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
                 // 更新缓存

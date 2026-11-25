@@ -538,7 +538,7 @@ export function createPostsView(currentUser, keyword = "", { sort: initialSort =
             const posts = responseData.data;
             isLoadingFromNetwork = false;
             
-            if (firstPageReady && isEmptyListRefreshWithExistingData(posts, allPostsData)) {
+            if (isEmptyListRefreshWithExistingData(posts, allPostsData)) {
                 console.warn(`🛡️ 讨论区 ${requestedSort} 后台返回空列表，保留当前数据与缓存`);
             } else {
                 // 更新缓存
